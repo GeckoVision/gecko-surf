@@ -168,3 +168,72 @@ def test_server_returns_payload_but_logs_no_payload(caplog, tmp_path, monkeypatc
 
     # and nothing was persisted to disk.
     assert list(tmp_path.iterdir()) == []
+
+
+# --- Phase-0 corpus capture: opt-in, off by default, metadata-only ---
+
+
+def test_no_corpus_written_when_capture_disabled(tmp_path, monkeypatch):
+    # Capture is OFF unless a path is given (the §7-#1 data-path decision stays
+    # the founder's to flip); a normal call must persist nothing.
+    monkeypatch.chdir(tmp_path)
+    _call(_app(), "state", {"symbol": "USDC"})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_corpus_capture_records_outcome_when_enabled(tmp_path):
+    from surfcall.corpus import ALLOWED_KEYS
+
+    corpus = tmp_path / "corpus.jsonl"
+    app = build_http_app(
+        PEGANA,
+        mode="recorded",
+        allowed_hosts=[ALLOWED_HOST],
+        allowed_origins=[BASE],
+        corpus_path=str(corpus),
+    )
+    raw = _call(app, "state", {"symbol": "USDC"})
+    assert json.loads(raw)["status"] == 200
+
+    lines = corpus.read_text().strip().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert set(rec) == ALLOWED_KEYS  # allowlist, full record
+    assert rec["operation_id"] == "state"
+    assert rec["status"] == 200 and rec["ok"] is True
+    assert rec["first_call_correct"] is True
+    assert "{" in rec["path_template"]  # templated, not the filled /v1/assets/USDC/state
+    assert "USDC" not in corpus.read_text()  # no param VALUE leaks
+
+
+def test_search_capabilities_is_not_recorded(tmp_path):
+    # The synthetic intent tool is not an upstream API call — it must not pollute
+    # the per-operation correctness corpus.
+    corpus = tmp_path / "corpus.jsonl"
+    app = build_http_app(
+        PEGANA,
+        allowed_hosts=[ALLOWED_HOST],
+        allowed_origins=[BASE],
+        corpus_path=str(corpus),
+    )
+    _call(app, "search_capabilities", {"query": "peg state for an asset"})
+    assert not corpus.exists() or corpus.read_text().strip() == ""
+
+
+def test_capture_records_metadata_never_the_payload(tmp_path):
+    # The strongest control-plane proof: real proxy path, body returned to the
+    # agent, but the corpus file carries ONLY allowlisted metadata.
+    corpus = tmp_path / "corpus.jsonl"
+    surface = McpSurface(_SentinelClient(), mode="recorded")  # type: ignore[arg-type]
+    app = build_http_app(
+        surface,
+        allowed_hosts=[ALLOWED_HOST],
+        allowed_origins=[BASE],
+        corpus_path=str(corpus),
+    )
+    raw = _call(app, "get_thing", {})
+    assert SENTINEL in raw  # agent receives the payload...
+    body = corpus.read_text()
+    assert SENTINEL not in body  # ...but the corpus never does
+    rec = json.loads(body.strip())
+    assert rec["operation_id"] == "get_thing" and rec["ok"] is True
