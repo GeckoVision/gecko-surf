@@ -1,0 +1,212 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SOS Venezuela 2026 — API pública",
+    "description": "Superficie pública de solo lectura de la plataforma humanitaria SOS Venezuela 2026 (doble terremoto del 24/06/2026). Endpoints abiertos, sin autenticación, CORS abierto, ~90 req/min por IP. Datos con privacidad: cédulas enmascaradas, coordenadas aproximadas (anti-saqueo), menores protegidos. Cita la fuente como «SOS Venezuela 2026». Stub OpenAPI hecho a mano desde /docs, /llms.txt y schema.sql, validado contra respuestas en vivo. NO oficial del proyecto.",
+    "version": "0.1.0",
+    "license": { "name": "MIT", "identifier": "MIT" }
+  },
+  "servers": [{ "url": "https://sosvenezuela2026.com" }],
+  "paths": {
+    "/api/reports": {
+      "get": {
+        "operationId": "getReports",
+        "summary": "Reportes recientes del mapa de peligros (edificios colapsados/dañados, fugas de gas, vías bloqueadas, refugios, centros de acopio).",
+        "description": "Devuelve los últimos reportes del mapa con coordenadas aproximadas por privacidad. Incluye respuesta sísmica del suelo (site_vs30, site_class).",
+        "responses": {
+          "200": {
+            "description": "Lista de reportes de peligro.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Report" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/persons/list": {
+      "get": {
+        "operationId": "searchPersons",
+        "summary": "Directorio público de personas reportadas como desaparecidas o encontradas. Búscalas por nombre.",
+        "description": "Directorio enmascarado. Para buscar por nombre usa q (mínimo 2 caracteres). Filtra por estado con estado. Cédulas enmascaradas, menores mostrados como «Menor reportado», fallecidos excluidos.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Búsqueda difusa por nombre (mínimo 2 caracteres).",
+            "schema": { "type": "string", "minLength": 2 }
+          },
+          {
+            "name": "estado",
+            "in": "query",
+            "required": false,
+            "description": "Filtra por estado de la persona. Valores aceptados por el filtro público.",
+            "schema": { "type": "string", "enum": ["seeking_info", "found_alive"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Cantidad de resultados (1–100).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 100 }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Desplazamiento para paginación.",
+            "schema": { "type": "integer", "minimum": 0, "default": 0 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de personas (enmascaradas).",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Person" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/persons/stats": {
+      "get": {
+        "operationId": "getPersonStats",
+        "summary": "Cifras agregadas del directorio de personas (desaparecidos, encontrados, totales y menores).",
+        "responses": {
+          "200": {
+            "description": "Conteos agregados.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PersonStats" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/damage/recent": {
+      "get": {
+        "operationId": "getRecentDamage",
+        "summary": "Últimas validaciones de daño estructural con su veredicto comunitario (habitable/inhabitable).",
+        "responses": {
+          "200": {
+            "description": "Lista de validaciones de daño.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/DamageSubmission" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/news": {
+      "get": {
+        "operationId": "getNews",
+        "summary": "Feed de noticias de prensa verificadas sobre el terremoto.",
+        "responses": {
+          "200": {
+            "description": "Lista de artículos de noticias.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/NewsArticle" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Report": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "category": {
+            "type": "string",
+            "description": "Tipo de reporte.",
+            "enum": ["collapsed_building", "damaged_building", "trapped_people", "fire", "gas_leak", "blocked_road", "flooding", "medical_need", "shelter", "water_point", "aid_point"]
+          },
+          "severity": { "type": "string", "enum": ["verde", "amarillo", "naranja", "rojo"] },
+          "resource_status": { "type": "string", "enum": ["open", "full", "closed"] },
+          "verification": {
+            "type": "string",
+            "enum": ["unverified", "community_confirmed", "official_verified", "resolved", "false_report"]
+          },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "lat_pub": { "type": "number", "description": "Latitud aproximada (truncada por privacidad)." },
+          "lng_pub": { "type": "number", "description": "Longitud aproximada (truncada por privacidad)." },
+          "municipio": { "type": "string" },
+          "parroquia": { "type": "string" },
+          "building_type": { "type": "string", "enum": ["casa", "apartamento", "hospital", "escuela", "otro"] },
+          "people_trapped_count": { "type": "integer" },
+          "source_url": { "type": "string" },
+          "image_url": { "type": "string" },
+          "site_vs30": { "type": "integer", "description": "Velocidad de onda de corte Vs30 del suelo (m/s)." },
+          "site_class": { "type": "string", "description": "Clase NEHRP del sitio (B–E)." },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Person": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": {
+            "type": "string",
+            "enum": ["seeking_info", "self_safe", "found_alive", "injured", "hospitalized", "sheltered", "deceased", "unknown"]
+          },
+          "cedula_masked": { "type": "string", "description": "Cédula enmascarada, p. ej. «V-****1234»." },
+          "display_name": { "type": "string", "description": "Nombre mostrado (inicial del apellido); menores como «Menor reportado»." },
+          "municipio": { "type": "string" },
+          "parroquia": { "type": "string" },
+          "hospital_name": { "type": "string" },
+          "source_date": { "type": "string", "format": "date-time" },
+          "photo_path": { "type": "string" }
+        }
+      },
+      "PersonStats": {
+        "type": "object",
+        "properties": {
+          "missing": { "type": "integer" },
+          "found": { "type": "integer" },
+          "total": { "type": "integer" },
+          "missing_minors": { "type": "integer" },
+          "found_minors": { "type": "integer" }
+        }
+      },
+      "DamageSubmission": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "zona": { "type": "string" },
+          "municipio": { "type": "string" },
+          "building_type": { "type": "string" },
+          "photo_ids": { "type": "array", "items": { "type": "string" } },
+          "habitable_votes": { "type": "integer" },
+          "inhabitable_votes": { "type": "integer" },
+          "uncertain_votes": { "type": "integer" },
+          "validations": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "NewsArticle": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string" },
+          "url": { "type": "string" },
+          "source": { "type": "string" },
+          "summary": { "type": "string" },
+          "image_url": { "type": "string" },
+          "published_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

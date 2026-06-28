@@ -10,6 +10,13 @@ serve = [
     "mcp[cli]>=1.28.1",
     "uvicorn>=0.49.0",
 ]
+# The SOS Venezuela Telegram bot example (examples/sos_vzla_bot). Needed only to
+# RUN the bot live; the recorded test path needs only the engine (Pattern B).
+sosbot = [
+    "anthropic>=0.40",
+    "openai>=1.40",
+    "python-telegram-bot>=21",
+]
 
 [dependency-groups]
 dev = [
@@ -26,8 +33,9 @@ pythonpath = ["."]
 [tool.mypy]
 python_version = "3.11"
 
-# The serve transport (mcp/starlette/uvicorn) is an OPTIONAL extra. Keep mypy clean
-# whether or not it is installed — the engine itself stays dep-light.
+# The serve transport (mcp/starlette/uvicorn) and the sosbot example
+# (anthropic/telegram) are OPTIONAL extras. Keep mypy clean whether or not they are
+# installed — the engine itself stays dep-light.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*"]
 ignore_missing_imports = true

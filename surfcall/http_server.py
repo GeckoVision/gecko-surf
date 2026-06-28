@@ -22,9 +22,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import corpus
 from .access import public_session
+from .caller import CallError
 from .client import AgentApiClient
 from .mcp_server import McpSurface
 
@@ -75,11 +79,21 @@ def build_http_app(
     server_name: str = DEFAULT_SERVER_NAME,
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
+    corpus_path: str | Path | None = None,
+    surface_id: str | None = None,
+    surface_rev: str = "0",
 ) -> Starlette:
     """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
 
     Factored out of ``serve_http`` so tests can mount it in-process (offline) with an
     ASGI transport. ``allowed_hosts``/``allowed_origins`` drive DNS-rebinding defense.
+
+    ``corpus_path`` enables Phase-0 correctness-corpus capture: when set, each proxied
+    operation appends one control-plane-safe metadata record (see ``surfcall.corpus``).
+    It is **off by default** — sitting in the data path and persisting any metadata is
+    the founder-ratified decision (spec §7-#1), so the caller must opt in explicitly.
+    Capture is metadata-only by construction: the writer never receives the response
+    body or filled URL.
     """
     try:
         import mcp.types as mcp_types
@@ -94,6 +108,48 @@ def build_http_app(
 
     surface = _surface_from(spec_or_client, base_url, mode)
     tools = surface.list_tools()
+
+    # Build the capture context once (zero request scope): the templated _invoke per
+    # operation, and whether the session carries auth. Comes from the underlying
+    # client's FULL tool defs — never from `surface.list_tools()`, which strips _invoke.
+    invoke_by_name: dict[str, dict[str, Any]] = {}
+    session_has_auth = False
+    if corpus_path is not None:
+        client = getattr(surface, "client", None)
+        for t in getattr(client, "list_tools", list)():
+            inv = t.get("_invoke")
+            if isinstance(inv, dict):
+                invoke_by_name[t["name"]] = inv
+        session_has_auth = bool(getattr(client, "_session_has_auth", False))
+    cid = surface_id or server_name
+
+    def _capture(
+        name: str,
+        status: int | None,
+        exc: BaseException | None,
+        args: dict[str, Any],
+        latency_ms: int | None,
+    ) -> None:
+        # search_capabilities is synthetic (no upstream call) — never a corpus record.
+        invoke = invoke_by_name.get(name)
+        if invoke is None:
+            return
+        corpus.record(
+            corpus.outcome_from(
+                operation_id=name,
+                tool_invoke=invoke,
+                args=args,
+                status=status,
+                error_class=corpus.error_class_for(status, exc),
+                latency_ms=latency_ms,
+                mode=mode,
+                auth_injected=session_has_auth,
+                ts=int(time.time() * 1000),
+                surface_id=cid,
+                surface_rev=surface_rev,
+            ),
+            corpus_path,  # type: ignore[arg-type]
+        )
 
     server: Any = Server(server_name)
 
@@ -110,8 +166,22 @@ def build_http_app(
 
     @server.call_tool()
     async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
-        result = surface.call_tool(name, arguments or {})
+        args = arguments or {}
+        start = time.perf_counter()
+        try:
+            result = surface.call_tool(name, args)
+        except CallError as exc:
+            # A pre-flight failure (missing path param / auth-gated) is itself a
+            # first-call outcome worth capturing; record it, then propagate as before.
+            if corpus_path is not None:
+                _capture(name, None, exc, args, None)
+            raise
+        status = result.get("status") if isinstance(result, dict) else None
         _log_outcome(name, result)
+        if corpus_path is not None:
+            _capture(
+                name, status, None, args, int((time.perf_counter() - start) * 1000)
+            )
         # Return as unstructured JSON text; never cache/persist the body.
         return [
             mcp_types.TextContent(type="text", text=json.dumps(result, default=str))
