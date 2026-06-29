@@ -114,7 +114,7 @@ Cursor" strings:
 # from a clone (the `serve` extra adds mcp + uvicorn):
 uv run --extra serve gecko https://api.example.com/openapi.json
 # without cloning (PyPI publish pending):
-uvx --from "gecko-surf[serve] @ git+https://github.com/GeckoVision/surfcall" gecko <openapi-url>
+uvx --from "gecko-surf[serve] @ git+https://github.com/GeckoVision/gecko-surf" gecko <openapi-url>
 ```
 
 It prints the comprehension summary, the MCP URL, and a one-click `claude mcp add` /
@@ -139,8 +139,8 @@ see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
 ## Develop / falsify offline ($0, no keys, no subscription)
 
 ```bash
-git clone https://github.com/GeckoVision/surfcall
-cd surfcall && uv sync
+git clone https://github.com/GeckoVision/gecko-surf
+cd gecko-surf && uv sync
 uv run pytest                       # 131 passing
 uv run python -m gecko.demo      # E2E: goal → discover → correct call → data (recorded, $0)
 ```
