@@ -33,6 +33,32 @@ PUBLIC_READS: set[str] = {
 }
 
 
+def _cap(payload: dict[str, Any], max_chars: int) -> str:
+    """Serialize ``payload`` to JSON within ``max_chars``, keeping it VALID.
+
+    For a list ``data`` (e.g. getNews, ~57KB), drop trailing items until it fits
+    rather than byte-truncating mid-structure — the model needs parseable JSON, and
+    the newest items lead the list. A ``truncated`` flag tells the agent the tail was
+    dropped. Falls back to a byte cap only for an oversized non-list payload.
+    """
+    text = json.dumps(payload, ensure_ascii=False, default=str)
+    if len(text) <= max_chars:
+        return text
+    data = payload.get("data")
+    if isinstance(data, list) and data:
+        keep = list(data)
+        while keep:
+            trial = json.dumps(
+                {**payload, "data": keep, "truncated": True},
+                ensure_ascii=False,
+                default=str,
+            )
+            if len(trial) <= max_chars:
+                return trial
+            keep = keep[:-1]
+    return text[:max_chars]
+
+
 class SurfcallTools:
     def __init__(
         self,
@@ -86,5 +112,4 @@ class SurfcallTools:
             }
         else:
             payload = {"data": result}
-        text = json.dumps(payload, ensure_ascii=False, default=str)
-        return text[: self.max_chars]
+        return _cap(payload, self.max_chars)
