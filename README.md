@@ -38,7 +38,7 @@ makes an API actually *usable* by an agent.
 V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
 comprehend → catalog → access (a two-token on-chain subscribe) → first-call-correct →
 real data. A **$0 recorded mode** runs the entire path offline with no subscription.
-**31 tests pass.**
+**131 tests pass.**
 
 What is **not** proven: **consumer willingness-to-pay** — the actual decider for the
 business. That is discovery-interview work, not a demo claim. So: never read this repo
@@ -93,20 +93,55 @@ flowchart TD
 
 | Surface | Entry point | Status |
 |---|---|---|
+| **Serve any API to agents** (paste a spec → hosted MCP + one-click "add to Claude/Cursor") | `surfcall <openapi-url>` | shipped |
+| **Embed the SDK** (`search / list_tools / prepare / call`) | `from surfcall import AgentApiClient` | shipped |
+| **Forkable starter** (an app on any API, ~20 lines, $0) | `examples/_starter/` | shipped |
 | **$0 recorded demo** (goal → discover → correct call → data, offline) | `python -m surfcall.demo` | runnable now |
 | **Live demo** against real TxODDS World Cup data | `surfcall.demo:live_demo` (after subscribe) | mainnet-proven |
-| **Agent surface** (list/search capabilities, call a tool) | `surfcall.mcp_server:McpSurface` | shipped |
-| **Programmatic client** (`search / list_tools / prepare / call`) | `surfcall.client:AgentApiClient` | shipped |
 | **Correctness harness** (first-call-correct + flywheel log) | `surfcall.validator` | shipped |
 
 ---
 
-## Quickstart ($0, no keys, no subscription)
+## Make any API agent-usable
+
+Point it at an OpenAPI and your agent can call it — no client code, auth handled,
+first call correct.
+
+**Serve it to your agent over MCP** — prints the MCP URL + one-click "add to Claude /
+Cursor" strings:
 
 ```bash
-git clone <surfcall repo>
+# from a clone (the `serve` extra adds mcp + uvicorn):
+uv run --extra serve surfcall https://api.example.com/openapi.json
+# without cloning (PyPI publish pending):
+uvx --from "surfcall[serve] @ git+https://github.com/GeckoVision/surfcall" surfcall <openapi-url>
+```
+
+It prints the comprehension summary, the MCP URL, and a one-click `claude mcp add` /
+Cursor / VS Code string — then serves the API to your agent over Streamable-HTTP.
+
+**Or embed the SDK** in your own app:
+
+```python
+from surfcall import AgentApiClient, public_session
+
+client = AgentApiClient(spec, session=public_session())
+hit = client.search("what you want")[0]            # intent → right endpoint
+client.call(hit["name"], {...}, mode="recorded")   # correct call; "live" for real data
+```
+
+A complete forkable example: [`examples/_starter/`](examples/_starter/) — an app on
+*any* API in ~20 lines, runnable at $0. For a full agent (Telegram + an LLM tool-loop),
+see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
+
+---
+
+## Develop / falsify offline ($0, no keys, no subscription)
+
+```bash
+git clone https://github.com/GeckoVision/surfcall
 cd surfcall && uv sync
-uv run pytest                       # 31 passing
+uv run pytest                       # 131 passing
 uv run python -m surfcall.demo      # E2E: goal → discover → correct call → data (recorded, $0)
 ```
 
@@ -146,6 +181,8 @@ client.call(tool, args, mode="live")   # same path as recorded
 | `surfcall/mcp_server.py` | `McpSurface` — the agent-facing MCP surface |
 | `surfcall/validator.py` | replay + first-call-correct + JSONL outcome log (moat seed) |
 | `surfcall/demo.py` | `run()` (recorded) + `live_demo()` |
+| `surfcall/serve.py` | `surfcall <url>` CLI — comprehend + serve over Streamable-HTTP MCP (+ one-click add) |
+| `examples/_starter/` | forkable "app on any API" (engine-only, $0); `examples/sos_vzla_bot/` is the full LLM agent |
 | `scripts/subscribe.py` | one-time on-chain subscribe (solders); simulate by default |
 | `docs/` · `private/` | strategy & PRD · gitignored business docs (canvas, pitch, numbers) |
 
@@ -162,7 +199,7 @@ server, the client, and scripts are thin transport.
 | Engine | stdlib-first (`urllib`); minimal deps; `pyyaml` for spec loading |
 | Agent surface | `mcp` (Model Context Protocol) |
 | Access / payments | x402; on-chain subscribe via `solders`; modes `stub` / `live` |
-| Quality | `ruff` · `mypy` · `pytest` (31 tests) |
+| Quality | `ruff` · `mypy` · `pytest` (131 tests) |
 
 ---
 
