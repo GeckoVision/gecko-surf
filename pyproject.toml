@@ -1,14 +1,14 @@
 [project]
-name = "surfcall"
+name = "gecko-surf"
 version = "0.1.0"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 
-# `uvx surfcall serve <openapi-url>` / `python -m surfcall.serve`. Thin CLI; the
+# `uvx gecko ...` (dist: gecko-surf) / `python -m gecko.serve`. Thin CLI; the
 # entry only parses args + formats output (real logic lives in the package).
 [project.scripts]
-surfcall = "surfcall.serve:_run"
+gecko = "gecko.serve:_run"
 
 [project.optional-dependencies]
 serve = [
@@ -28,7 +28,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["surfcall"]
+packages = ["gecko"]
 
 [dependency-groups]
 dev = [

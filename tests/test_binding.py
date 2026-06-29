@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from surfcall.binding import BindingError, CustomerBinder
-from surfcall.entitlements import Entitlements
-from surfcall.surfaces import SurfaceRegistry
+from gecko.binding import BindingError, CustomerBinder
+from gecko.entitlements import Entitlements
+from gecko.surfaces import SurfaceRegistry
 
 # A surface with one public op and one auth-gated op (per-op security).
 SPEC = {

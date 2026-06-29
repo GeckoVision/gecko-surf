@@ -6,7 +6,7 @@ the comprehension layer must survive a real, human-shaped API.
 
 from pathlib import Path
 
-from surfcall.ingest import Operation, extract_operations, load_spec, resolve_refs
+from gecko.ingest import Operation, extract_operations, load_spec, resolve_refs
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

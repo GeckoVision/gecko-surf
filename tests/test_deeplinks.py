@@ -4,7 +4,7 @@ import base64
 import json
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from surfcall.deeplinks import (
+from gecko.deeplinks import (
     all_add_strings,
     claude_add_command,
     cursor_deeplink,

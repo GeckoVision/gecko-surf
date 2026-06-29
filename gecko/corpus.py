@@ -200,4 +200,4 @@ def record(outcome: CallOutcome, path: str | Path) -> None:
     except Exception:  # noqa: BLE001 - best-effort; never break the call
         import logging
 
-        logging.getLogger("surfcall.corpus").warning("corpus write failed (redacted)")
+        logging.getLogger("gecko.corpus").warning("corpus write failed (redacted)")

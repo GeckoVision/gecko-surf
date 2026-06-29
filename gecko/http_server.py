@@ -35,7 +35,7 @@ from .mcp_server import McpSurface
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from starlette.applications import Starlette
 
-logger = logging.getLogger("surfcall.http_server")
+logger = logging.getLogger("gecko.http_server")
 
 DEFAULT_SERVER_NAME = "gecko"
 MCP_PATH = "/mcp"
@@ -89,7 +89,7 @@ def build_http_app(
     ASGI transport. ``allowed_hosts``/``allowed_origins`` drive DNS-rebinding defense.
 
     ``corpus_path`` enables Phase-0 correctness-corpus capture: when set, each proxied
-    operation appends one control-plane-safe metadata record (see ``surfcall.corpus``).
+    operation appends one control-plane-safe metadata record (see ``gecko.corpus``).
     It is **off by default** — sitting in the data path and persisting any metadata is
     the founder-ratified decision (spec §7-#1), so the caller must opt in explicitly.
     Capture is metadata-only by construction: the writer never receives the response

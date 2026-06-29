@@ -3,7 +3,7 @@ is injected via a fake resolver, so these run fully offline."""
 
 import pytest
 
-from surfcall.netguard import UnsafeUrlError, validate_public_url
+from gecko.netguard import UnsafeUrlError, validate_public_url
 
 
 def _resolver(mapping: dict[str, list[str]]):

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from surfcall import serve
+from gecko import serve
 
 PEGANA = str(Path(__file__).resolve().parent / "fixtures" / "pegana_openapi.json")
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from surfcall.ingest import extract_operations, load_spec
-from surfcall.sample import example_from_schema
+from gecko.ingest import extract_operations, load_spec
+from gecko.sample import example_from_schema
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

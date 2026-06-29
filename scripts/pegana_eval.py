@@ -3,7 +3,7 @@
 Ingests the committed Pegana OpenAPI surface unilaterally (it is NOT in any catalog),
 comprehends it with a PUBLIC (no-auth) session, and scores first-call-correctness on
 representative tasks — including the real gotchas from Gecko's hand-integration. Thin
-CLI: the logic lives in ``surfcall.evaluate`` and the engine; this file is transport.
+CLI: the logic lives in ``gecko.evaluate`` and the engine; this file is transport.
 
     uv run python scripts/pegana_eval.py
 """
@@ -17,10 +17,10 @@ from pathlib import Path
 # Make the package importable when run as a plain script (python scripts/pegana_eval.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from surfcall.access import public_session  # noqa: E402
-from surfcall.caller import CallError  # noqa: E402
-from surfcall.client import AgentApiClient  # noqa: E402
-from surfcall.evaluate import evaluate_tasks  # noqa: E402
+from gecko.access import public_session  # noqa: E402
+from gecko.caller import CallError  # noqa: E402
+from gecko.client import AgentApiClient  # noqa: E402
+from gecko.evaluate import evaluate_tasks  # noqa: E402
 
 SPEC = str(
     Path(__file__).resolve().parent.parent
@@ -65,7 +65,7 @@ def main() -> None:
     client = AgentApiClient(SPEC, session=public_session())
     surfaced = client.list_tools()
     hidden = len(client.operations) - len(surfaced)
-    print("surfcall — Pegana first-call-correct scorecard (recorded, $0)")
+    print("Gecko — Pegana first-call-correct scorecard (recorded, $0)")
     print("=" * 64)
     print(
         f"ingested {len(client.operations)} ops · surfaced to agent (public) {len(surfaced)} · "

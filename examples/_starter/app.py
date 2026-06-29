@@ -1,4 +1,4 @@
-"""A minimal app on ANY API — surfcall engine only, no LLM, no keys, $0.
+"""A minimal app on ANY API — Gecko engine only, no LLM, no keys, $0.
 
     python -m examples._starter.app <openapi-spec> "<what you want>" [arg=value ...]
 
@@ -12,7 +12,7 @@ response from the schema. That proves the call is well-formed before you spend a
 cent or a token. This is the whole point: first-call-correct, falsifiable offline.
 
 FORK THIS:
-  - real data: pass a real `Session` and `mode="live"` (see surfcall.access).
+  - real data: pass a real `Session` and `mode="live"` (see gecko.access).
   - a full agent: wrap `client.search` / `client.call` in an LLM tool-use loop —
     `examples/sos_vzla_bot/` is exactly that (Telegram + Claude/OpenRouter).
 """
@@ -23,7 +23,7 @@ import json
 import sys
 from typing import Any
 
-from surfcall import AgentApiClient, public_session
+from gecko import AgentApiClient, public_session
 
 
 def run(

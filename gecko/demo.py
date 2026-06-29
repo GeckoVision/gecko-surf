@@ -1,7 +1,7 @@
 """End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data.
 
 No human reads the docs, no integration code is written. Run:
-    uv run python -m surfcall.demo
+    uv run python -m gecko.demo
 """
 
 from __future__ import annotations

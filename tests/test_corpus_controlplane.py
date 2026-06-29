@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from surfcall.caller import CallError
-from surfcall.corpus import (
+from gecko.caller import CallError
+from gecko.corpus import (
     ALLOWED_KEYS,
     ERROR_CLASSES,
     CallOutcome,
@@ -118,7 +118,7 @@ def test_to_record_rejects_unknown_key():
     tampered["data"] = "a response body sneaking in"
     with pytest.raises(CorpusError):
         # re-validating a tampered mapping must reject the non-allowlisted key
-        from surfcall.corpus import assert_allowlisted
+        from gecko.corpus import assert_allowlisted
 
         assert_allowlisted(tampered)
 

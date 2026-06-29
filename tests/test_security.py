@@ -3,11 +3,11 @@ auth-gated op its session can't satisfy. Uses a tiny synthetic spec for control.
 
 import pytest
 
-from surfcall.access import NoAuthSession, Session, public_session
-from surfcall.caller import CallError
-from surfcall.client import AgentApiClient
-from surfcall.ingest import extract_operations
-from surfcall.tools import to_tool
+from gecko.access import NoAuthSession, Session, public_session
+from gecko.caller import CallError
+from gecko.client import AgentApiClient
+from gecko.ingest import extract_operations
+from gecko.tools import to_tool
 
 
 def _resp() -> dict:

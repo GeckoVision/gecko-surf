@@ -3,7 +3,7 @@
 The agent loop is written to the Anthropic Messages shape. ``OpenAICompatLLM``
 adapts an OpenAI-compatible client (OpenRouter) to that shape, so ``agent.respond``
 works unchanged against a free OpenRouter model. Tested offline with a fake OpenAI
-client + recorded surfcall — no network, no keys.
+client + recorded Gecko — no network, no keys.
 """
 
 from __future__ import annotations
