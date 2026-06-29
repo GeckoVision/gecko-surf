@@ -35,7 +35,7 @@ stamped on everything: the cached comprehension in the Surface Registry
 (`gecko/surfaces.py`), and **every correctness record** in the corpus (`surface_rev` on
 `CallOutcome`, `gecko/corpus.py`).
 
-<!-- 🎬 GIF: side-by-side — edit one field name in `openapi.json`, watch `surface_rev` flip and the affected tool's schema regenerate, while every untouched tool keeps its rev. -->
+![Editing one field flips surface_rev and regenerates the affected tool](assets/surfacerev.gif)
 
 ## The stay-correct loop (design — coming in V2, not yet shipped)
 

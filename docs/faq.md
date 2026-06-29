@@ -34,6 +34,8 @@ handles, or logs a secret. For APIs with a real access handshake, the access sea
 it end-to-end — V1 does a full two-token on-chain subscribe against the real, paywalled
 TxODDS API without the agent ever learning the flow.
 
+![The agent sees a tool with no auth field; Gecko injects the credentials into the real request (BYOK)](assets/auth.gif)
+
 ## What data does Gecko store?
 The API *surface* and nothing else: the spec, the generated tool definitions, and
 correctness metadata. Gecko is a **control plane** — it **never** stores response

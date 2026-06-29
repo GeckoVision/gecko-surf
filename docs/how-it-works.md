@@ -59,7 +59,7 @@ This is the **control-plane invariant in code**: ingest captures the *surface on
 (methods, params, request/response *schemas*) — never response payloads, user data, or
 secrets.
 
-<!-- 🎬 GIF: `gecko https://…/openapi.json` printing "comprehended N operations -> M usable" plus the MCP add strings. -->
+![gecko comprehends an API and prints the MCP URL + one-click add strings](assets/hero.gif)
 
 ## 2. Catalog — intent → endpoint (`gecko/catalog.py`)
 
@@ -97,7 +97,7 @@ OpenAPI at a model. Each `Operation` becomes an MCP-compatible tool with:
   and a hidden `_invoke` block (`method`, `path`, `param_locations`) so the caller builds
   the real request without re-parsing the spec.
 
-<!-- 🎬 GIF: side-by-side of a raw OpenAPI operation vs. the generated question-shaped tool + JSON Schema. -->
+![A raw OpenAPI operation → a question-shaped tool with a JSON schema, auth removed](assets/rawtool.gif)
 
 ## 4. Caller — build the correct request — `gecko/caller.py`
 

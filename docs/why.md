@@ -12,7 +12,7 @@ version, nothing tells you — your agent just starts calling it wrong.
 That's days of glue code per API, repeated for every API, and you *still* can't prove
 the call is correct until it fails in production.
 
-<!-- 🎬 GIF: split screen — left, a dev scrolling API reference docs and hand-typing a client; right, an agent calling the same API correctly on the first try seconds after running `gecko <url>`. -->
+![An agent asks in plain language → the right tool, right params, 200 on the first try](assets/first-try.gif)
 
 ## With Gecko: a comprehension layer the agent calls through
 
