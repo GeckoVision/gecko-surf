@@ -22,8 +22,8 @@ mcp = pytest.importorskip("mcp")  # skip cleanly if the serve extra isn't instal
 from mcp.client.session import ClientSession  # noqa: E402
 from mcp.client.streamable_http import streamable_http_client  # noqa: E402
 
-from surfcall.http_server import build_http_app  # noqa: E402
-from surfcall.mcp_server import McpSurface  # noqa: E402
+from gecko.http_server import build_http_app  # noqa: E402
+from gecko.mcp_server import McpSurface  # noqa: E402
 
 PEGANA = str(Path(__file__).resolve().parent / "fixtures" / "pegana_openapi.json")
 BASE = "http://test"
@@ -161,7 +161,7 @@ def test_server_returns_payload_but_logs_no_payload(caplog, tmp_path, monkeypatc
 
     # ...but Gecko's own logs carry ONLY redacted correctness metadata.
     gecko_logs = "\n".join(
-        r.getMessage() for r in caplog.records if r.name.startswith("surfcall")
+        r.getMessage() for r in caplog.records if r.name.startswith("gecko")
     )
     assert SENTINEL not in gecko_logs
     assert "call tool=get_thing status=200 ok=True" in gecko_logs
@@ -182,7 +182,7 @@ def test_no_corpus_written_when_capture_disabled(tmp_path, monkeypatch):
 
 
 def test_corpus_capture_records_outcome_when_enabled(tmp_path):
-    from surfcall.corpus import ALLOWED_KEYS
+    from gecko.corpus import ALLOWED_KEYS
 
     corpus = tmp_path / "corpus.jsonl"
     app = build_http_app(

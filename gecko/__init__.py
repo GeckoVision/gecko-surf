@@ -1,4 +1,4 @@
-"""surfcall — make any API agent-usable without integration code.
+"""Gecko — make any API agent-usable without integration code.
 
 V1 = the comprehension layer: ingest a human-shaped OpenAPI surface and emit
 question-shaped, first-call-correct agent tools. No data is ingested — only the
@@ -7,13 +7,13 @@ the upstream API directly for data.
 
 The names re-exported here are the **stable SDK surface** a builder embeds:
 
-    from surfcall import AgentApiClient, public_session
+    from gecko import AgentApiClient, public_session
     client = AgentApiClient(spec, session=public_session())
     client.call(tool, args, mode="recorded")  # $0, offline, falsifiable
 
 Everything here resolves engine-only — no `serve`/`sosbot` extra needed to import.
-The MCP transport (mcp/uvicorn/starlette) stays in `surfcall.http_server`/`serve`,
-imported lazily by those modules so `import surfcall` stays dep-light.
+The MCP transport (mcp/uvicorn/starlette) stays in `gecko.http_server`/`serve`,
+imported lazily by those modules so `import gecko` stays dep-light.
 """
 
 from __future__ import annotations

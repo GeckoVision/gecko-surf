@@ -1,4 +1,4 @@
-"""``python -m surfcall.serve <openapi-url>`` — paste an API, serve it to agents.
+"""``python -m gecko.serve <openapi-url>`` — paste an API, serve it to agents.
 
 The whole M1 distribution flow as a CLI: SSRF-validate the spec URL, comprehend it
 with the unchanged engine, print the MCP URL + one-click add strings for each host
@@ -45,7 +45,7 @@ def _mcp_url(host: str, port: int, public_url: str | None) -> str:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="python -m surfcall.serve",
+        prog="python -m gecko.serve",
         description="Comprehend a public OpenAPI URL and serve it to agents over MCP.",
     )
     p.add_argument("spec", help="Public OpenAPI 3.x URL (or local path for dev).")
@@ -82,7 +82,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _print_banner(name: str, mcp_url: str, summary: str) -> None:
-    print("Gecko — make any API agent-usable (surfcall engine)\n" + "=" * 56)
+    print("Gecko — make any API agent-usable (gecko-surf)\n" + "=" * 56)
     print(summary)
     print("Control plane: Gecko stores only the API surface — never your data,")
     print("never response payloads, never secrets.\n")

@@ -284,6 +284,52 @@ wheels = [
 ]
 
 [[package]]
+name = "gecko-surf"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+serve = [
+    { name = "mcp", extra = ["cli"] },
+    { name = "uvicorn" },
+]
+sosbot = [
+    { name = "anthropic" },
+    { name = "openai" },
+    { name = "python-telegram-bot" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'sosbot'", specifier = ">=0.40" },
+    { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
+    { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
+    { name = "python-telegram-bot", marker = "extra == 'sosbot'", specifier = ">=21" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.49.0" },
+]
+provides-extras = ["serve", "sosbot"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=2.1.0" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "ruff", specifier = ">=0.15.20" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1213,52 +1259,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
-]
-
-[[package]]
-name = "surfcall"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "pyyaml" },
-]
-
-[package.optional-dependencies]
-serve = [
-    { name = "mcp", extra = ["cli"] },
-    { name = "uvicorn" },
-]
-sosbot = [
-    { name = "anthropic" },
-    { name = "openai" },
-    { name = "python-telegram-bot" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'sosbot'", specifier = ">=0.40" },
-    { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
-    { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
-    { name = "python-telegram-bot", marker = "extra == 'sosbot'", specifier = ">=21" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.49.0" },
-]
-provides-extras = ["serve", "sosbot"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=2.1.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.15.20" },
-    { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from surfcall.client import AgentApiClient
-from surfcall.mcp_server import McpSurface
+from gecko.client import AgentApiClient
+from gecko.mcp_server import McpSurface
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

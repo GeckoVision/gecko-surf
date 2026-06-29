@@ -10,7 +10,7 @@ hostname must be present verbatim.
 bypasses the rebinding guard, so the ALB target-group health check (``Host:
 <task-ip>:8000``) passes without allowlisting the private IP.
 
-Thin by design — all logic lives in ``surfcall.http_server``. Do NOT reuse
+Thin by design — all logic lives in ``gecko.http_server``. Do NOT reuse
 ``examples/.../serve_sos_mcp.py`` here: that binds ``127.0.0.1`` with no allowlist.
 """
 

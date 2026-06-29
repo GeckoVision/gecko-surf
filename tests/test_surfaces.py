@@ -13,7 +13,7 @@ import inspect
 
 import pytest
 
-from surfcall.surfaces import (
+from gecko.surfaces import (
     Surface,
     SurfaceError,
     SurfaceRegistry,

@@ -1,8 +1,8 @@
-"""The Claude tool-use loop, exercised offline with a fake LLM + recorded surfcall.
+"""The Claude tool-use loop, exercised offline with a fake LLM + recorded gecko.
 
 No network, no Anthropic, no Telegram — Pattern B. The fake LLM is scripted to
 drive the manual agentic loop (Anthropic Messages shape: content blocks with
-`type`/`id`/`name`/`input`/`text` + `stop_reason`), and the real surfcall engine
+`type`/`id`/`name`/`input`/`text` + `stop_reason`), and the real Gecko engine
 executes the tool in recorded mode.
 """
 

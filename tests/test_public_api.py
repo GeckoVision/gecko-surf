@@ -1,6 +1,6 @@
-"""The public SDK surface — `from surfcall import ...`.
+"""The public SDK surface — `from gecko import ...`.
 
-Builders embed surfcall as a library; these top-level imports are the contract.
+Builders embed Gecko as a library; these top-level imports are the contract.
 They must resolve engine-only (no `serve`/`sosbot` extras installed), so nothing
 exported here may pull in mcp/uvicorn/anthropic at import time.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 def test_sdk_symbols_exported_from_package_root() -> None:
     # The contract a builder relies on.
-    from surfcall import (
+    from gecko import (
         AgentApiClient,
         McpSurface,
         NoAuthSession,
@@ -19,11 +19,11 @@ def test_sdk_symbols_exported_from_package_root() -> None:
     )
 
     # Same objects as their defining modules — re-export, not a shadow copy.
-    from surfcall.access import NoAuthSession as _NoAuth
-    from surfcall.access import Session as _Session
-    from surfcall.access import public_session as _public_session
-    from surfcall.client import AgentApiClient as _Client
-    from surfcall.mcp_server import McpSurface as _Surface
+    from gecko.access import NoAuthSession as _NoAuth
+    from gecko.access import Session as _Session
+    from gecko.access import public_session as _public_session
+    from gecko.client import AgentApiClient as _Client
+    from gecko.mcp_server import McpSurface as _Surface
 
     assert AgentApiClient is _Client
     assert McpSurface is _Surface
@@ -33,7 +33,7 @@ def test_sdk_symbols_exported_from_package_root() -> None:
 
 
 def test_all_declares_the_public_surface() -> None:
-    import surfcall
+    import gecko
 
     for name in (
         "AgentApiClient",
@@ -43,12 +43,12 @@ def test_all_declares_the_public_surface() -> None:
         "public_session",
         "__version__",
     ):
-        assert name in surfcall.__all__, f"{name} missing from __all__"
+        assert name in gecko.__all__, f"{name} missing from __all__"
 
 
 def test_console_entry_point_is_importable_and_callable() -> None:
-    # Backs `[project.scripts] surfcall = "surfcall.serve:_run"`.
-    from surfcall.serve import _run, main
+    # Backs `[project.scripts] gecko = "gecko.serve:_run"`.
+    from gecko.serve import _run, main
 
     assert callable(_run)
     assert callable(main)

@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from surfcall.client import AgentApiClient
-from surfcall.demo import run as run_demo
-from surfcall.validator import validate_all
+from gecko.client import AgentApiClient
+from gecko.demo import run as run_demo
+from gecko.validator import validate_all
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

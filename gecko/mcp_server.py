@@ -59,7 +59,7 @@ def serve_stdio(
         ) from exc
 
     surface = McpSurface(AgentApiClient(spec, base_url=base_url), mode=mode)
-    server = FastMCP("surfcall")
+    server = FastMCP("gecko")
     for tool in surface.list_tools():
 
         def _make(tool_name):

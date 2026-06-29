@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from surfcall.http_server import serve_http
+from gecko.http_server import serve_http
 
 from .config import SPEC_PATH
 

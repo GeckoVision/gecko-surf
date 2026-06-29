@@ -1,4 +1,4 @@
-from surfcall.access import (
+from gecko.access import (
     AUTH_APITOKEN_HEADER,
     AUTH_JWT_HEADER,
     Session,

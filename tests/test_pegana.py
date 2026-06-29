@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from surfcall.access import public_session
-from surfcall.caller import CallError, build_request
-from surfcall.client import AgentApiClient
-from surfcall.evaluate import evaluate_tasks
-from surfcall.ingest import extract_operations, load_spec
-from surfcall.tools import to_tool
+from gecko.access import public_session
+from gecko.caller import CallError, build_request
+from gecko.client import AgentApiClient
+from gecko.evaluate import evaluate_tasks
+from gecko.ingest import extract_operations, load_spec
+from gecko.tools import to_tool
 
 FIXTURE = Path(__file__).parent / "fixtures" / "pegana_openapi.json"
 JITO_MINT = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from surfcall.catalog import Catalog
-from surfcall.ingest import extract_operations, load_spec
+from gecko.catalog import Catalog
+from gecko.ingest import extract_operations, load_spec
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

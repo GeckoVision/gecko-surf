@@ -19,9 +19,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from surfcall.access import public_session
-from surfcall.client import AgentApiClient
-from surfcall.mcp_server import McpSurface
+from gecko.access import public_session
+from gecko.client import AgentApiClient
+from gecko.mcp_server import McpSurface
 
 # The SOS Venezuela 2026 public, no-auth, read-only surface — the agent's whole world.
 PUBLIC_READS: set[str] = {

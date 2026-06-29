@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from surfcall.caller import CallError, build_request
-from surfcall.ingest import extract_operations, load_spec
-from surfcall.tools import to_tool
+from gecko.caller import CallError, build_request
+from gecko.ingest import extract_operations, load_spec
+from gecko.tools import to_tool
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 

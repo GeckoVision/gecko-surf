@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("mcp")  # skip cleanly without the serve extra
 
-from surfcall.http_server import build_http_app  # noqa: E402
+from gecko.http_server import build_http_app  # noqa: E402
 
 PEGANA = str(Path(__file__).resolve().parent / "fixtures" / "pegana_openapi.json")
 

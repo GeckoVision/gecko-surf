@@ -13,7 +13,7 @@ import inspect
 
 import pytest
 
-from surfcall.entitlements import Entitlement, EntitlementError, Entitlements
+from gecko.entitlements import Entitlement, EntitlementError, Entitlements
 
 
 def test_grant_public_and_lookup():
