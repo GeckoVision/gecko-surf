@@ -36,6 +36,8 @@ one-click add strings → serve Streamable-HTTP MCP. Or embed the SDK:
 `from gecko import AgentApiClient` — `search / list_tools / prepare /
 call(mode="recorded"|"live")`, `gecko/client.py`.)
 
+![An agent asks in plain language → Gecko's tool with the right params → 200 on the first try](assets/first-try.gif)
+
 ## Before vs. after
 
 | | **Without Gecko** | **With Gecko** |
