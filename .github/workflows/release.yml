@@ -24,9 +24,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest      # linux x86_64
+          - runner: ubuntu-22.04       # linux x86_64 — older glibc (2.35) for portability
             asset: gecko-linux-x86_64
-          - runner: ubuntu-24.04-arm   # linux arm64 (GitHub-hosted Arm runner)
+          - runner: ubuntu-22.04-arm   # linux arm64 — older glibc (2.35); GitHub-hosted Arm
             asset: gecko-linux-arm64
           - runner: macos-13           # darwin x86_64 (Intel)
             asset: gecko-darwin-x86_64
