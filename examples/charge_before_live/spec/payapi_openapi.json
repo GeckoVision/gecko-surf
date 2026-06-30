@@ -1,0 +1,231 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PayAPI",
+    "version": "1.0.0",
+    "description": "A small, self-contained payment API stub used to show that Gecko can verify a charge call is first-call-correct offline, before a cent moves. It embodies the failure modes that make real payment APIs painful: amounts in the smallest currency unit (centavos, integer-only), a required idempotency key, and bearer auth. This is a fixture, not a live endpoint."
+  },
+  "servers": [
+    {
+      "url": "https://sandbox.payapi.example.com",
+      "description": "Sandbox. No real funds move. Used only for offline comprehension/recorded checks in this example."
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/charges": {
+      "post": {
+        "operationId": "createCharge",
+        "summary": "Charge a customer's card",
+        "description": "Create a charge against a customer's card. amount MUST be an integer in centavos (the smallest currency unit) - e.g. R$5.00 is 500, never 5 or 5.00. An Idempotency-Key header is required so a retried request never double-charges. Returns the created charge with an id and a status.",
+        "tags": ["charges"],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Unique key that makes this charge safe to retry without double-charging. Reuse the same key to retry; use a fresh key for a new charge.",
+            "schema": {
+              "type": "string",
+              "example": "idem_8f3a2b1c9d"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChargeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Charge created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Charge"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request (e.g. amount not an integer, missing required field)."
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          }
+        }
+      }
+    },
+    "/v1/transfers": {
+      "post": {
+        "operationId": "createTransfer",
+        "summary": "Transfer funds to a recipient",
+        "description": "Move funds to a recipient account. amount MUST be an integer in centavos (the smallest currency unit) - e.g. R$5.00 is 500. An Idempotency-Key header is required so a retried request never double-pays. Returns the created transfer with an id and a status.",
+        "tags": ["transfers"],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Unique key that makes this transfer safe to retry without double-paying.",
+            "schema": {
+              "type": "string",
+              "example": "idem_2c7e44a0f1"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Transfer created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request."
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer token. Injected by Gecko's access layer at call time; never exposed to the agent."
+      }
+    },
+    "schemas": {
+      "ChargeRequest": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Amount in centavos (smallest currency unit), integer only. R$5.00 = 500. Never send a decimal.",
+            "example": 500
+          },
+          "currency": {
+            "type": "string",
+            "enum": ["BRL", "USD"],
+            "description": "ISO 4217 currency code.",
+            "example": "BRL"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional statement descriptor shown to the customer.",
+            "example": "Order #1042"
+          }
+        }
+      },
+      "Charge": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Charge identifier.",
+            "example": "ch_3Nf8aQ2eZvKYlo2C"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["succeeded", "pending", "failed"],
+            "example": "succeeded"
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Echoed amount in centavos.",
+            "example": 500
+          },
+          "currency": {
+            "type": "string",
+            "example": "BRL"
+          }
+        }
+      },
+      "TransferRequest": {
+        "type": "object",
+        "required": ["amount", "currency", "destination"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Amount in centavos (smallest currency unit), integer only. R$5.00 = 500.",
+            "example": 500
+          },
+          "currency": {
+            "type": "string",
+            "enum": ["BRL", "USD"],
+            "description": "ISO 4217 currency code.",
+            "example": "BRL"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Recipient account id.",
+            "example": "acct_9c1f2e"
+          }
+        }
+      },
+      "Transfer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "tr_7Kp2bX9mLqWz"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["succeeded", "pending", "failed"],
+            "example": "pending"
+          },
+          "amount": {
+            "type": "integer",
+            "example": 500
+          },
+          "currency": {
+            "type": "string",
+            "example": "BRL"
+          }
+        }
+      }
+    }
+  }
+}
