@@ -44,7 +44,7 @@ makes an API actually *usable* by an agent.
 V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
 comprehend → catalog → access (a two-token on-chain subscribe) → first-call-correct →
 real data. A **$0 recorded mode** runs the entire path offline with no subscription.
-**160 tests pass.**
+**343 tests pass.**
 
 What is **not** proven: **consumer willingness-to-pay** — the actual decider for the
 business. That is discovery-interview work, not a demo claim. So: never read this repo
@@ -150,7 +150,7 @@ see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
 ```bash
 git clone https://github.com/GeckoVision/gecko-surf
 cd gecko-surf && uv sync
-uv run pytest                       # 160 passing
+uv run pytest                       # 343 passing
 uv run python -m gecko.demo      # E2E: goal → discover → correct call → data (recorded, $0)
 ```
 
@@ -208,7 +208,7 @@ server, the client, and scripts are thin transport.
 | Engine | stdlib-first (`urllib`); minimal deps; `pyyaml` for spec loading |
 | Agent surface | `mcp` (Model Context Protocol) |
 | Access / payments | x402; on-chain subscribe via `solders`; modes `stub` / `live` |
-| Quality | `ruff` · `mypy` · `pytest` (131 tests) |
+| Quality | `ruff` · `mypy` · `pytest` (343 tests) |
 
 ---
 
