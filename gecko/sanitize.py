@@ -278,6 +278,13 @@ _TEXT_KEYS = frozenset({"description", "title", "$comment"})
 _VALUE_KEYS = frozenset({"default", "example", "const"})
 # List value channels (enum + the 3.1 / 2020-12 array form of examples).
 _VALUE_LIST_KEYS = frozenset({"enum", "examples"})
+# Value channels whose members ROUTE INTO the arg — const/default are sent verbatim / on
+# omission, and the agent must pick an enum member — so a crypto ADDRESS in them is
+# drop-worthy on the request side. example/examples are HINTS the agent reads (a legit
+# example may show an address), so address-shape is NOT flagged there; they are still
+# scanned for secrets + injection. This is the mandated-vs-hint carve-out that keeps
+# zero-FP on the fixtures' request-example OBJECTS with base58 pubkeys.
+_ADDR_ROUTING_KEYS = frozenset({"const", "default", "enum"})
 # Maps of {agent-facing-name: subschema} whose KEYS also reach the agent as field names.
 _PROP_MAP_KEYS = frozenset({"properties", "patternProperties"})
 
@@ -296,23 +303,52 @@ def looks_like_address_value(value: Any) -> bool:
     return any(pat.search(folded) for pat in _ADDRESS_VALUE_PATTERNS)
 
 
-def _value_is_dangerous(value: Any, route_to_arg: bool = True) -> bool:
-    """True if a spec-provided value channel (const/default/example/enum member) must be
-    DROPPED: it looks like a real secret, an injected instruction, or — on the REQUEST
-    side only — a crypto address that would route funds/assets into a real tool arg."""
+def _leaf_is_dangerous(value: Any, *, check_address: bool) -> bool:
+    """True if a single SCALAR leaf must be dropped: a real secret, an injected
+    instruction, or — only when ``check_address`` (a MANDATED request channel, i.e.
+    const/default/enum) — a crypto address that would route funds/assets into a real arg.
+    ``check_address`` is False for hint channels (example/examples): a legit example may
+    show an address, so a leaf there is scanned for SECRET + INJECTION only."""
     if looks_like_secret_value(value):
         return True
-    if route_to_arg and looks_like_address_value(value):
+    if check_address and looks_like_address_value(value):
         return True
     return isinstance(value, str) and bool(scan_text(value))
 
 
+def _value_is_dangerous(value: Any, *, check_address: bool) -> bool:
+    """True if a spec-provided value channel carries a dangerous leaf ANYWHERE.
+
+    A scalar is checked directly. An OBJECT or ARRAY value is walked recursively so no
+    composite ``const``/``default``/``example``/``enum`` member survives unscanned: the
+    scalar detectors short-circuit on non-str, so an object const like
+    ``{"recipient": "<attacker-addr>"}`` (the JSON-Schema-MANDATED value) would otherwise
+    route the attacker recipient into a real arg with auth live (obj-const-mandated). A
+    dangerous leaf at any depth → drop the whole value → poisoned → quarantine.
+    """
+    if isinstance(value, dict):
+        return any(
+            _leaf_is_dangerous(key, check_address=check_address)
+            or _value_is_dangerous(sub, check_address=check_address)
+            for key, sub in value.items()
+        )
+    if isinstance(value, list):
+        return any(
+            _value_is_dangerous(sub, check_address=check_address) for sub in value
+        )
+    return _leaf_is_dangerous(value, check_address=check_address)
+
+
 def _cap_value(value: Any) -> Any:
-    """Length-cap a scalar value channel (H10). A wall-of-text hidden in a
-    const/default/example/enum value is another place to bury a payload aimed at the
-    agent, so cap it like a description/title. Non-string values pass through."""
+    """Length-cap the string leaves of a value channel (H10), recursing into composite
+    (object/array) values so a wall-of-text buried in an object/array const/default/
+    example/enum member is capped like a description/title. Non-string scalars pass through."""
     if isinstance(value, str) and len(value) > MAX_TEXT_LEN:
         return value[:MAX_TEXT_LEN].rstrip() + "…"
+    if isinstance(value, dict):
+        return {key: _cap_value(sub) for key, sub in value.items()}
+    if isinstance(value, list):
+        return [_cap_value(sub) for sub in value]
     return value
 
 
@@ -352,14 +388,24 @@ def sanitize_schema(
             out[key] = cleaned
             poisoned = poisoned or flagged
         elif key in _VALUE_KEYS:
-            if _value_is_dangerous(value, route_to_arg):
+            # Composite (object/array) values are walked leaf-by-leaf, not short-circuited,
+            # so an object/array const/default/example can't smuggle a mandated attacker
+            # value past the scalar detectors (obj-const-mandated).
+            check_address = route_to_arg and key in _ADDR_ROUTING_KEYS
+            if _value_is_dangerous(value, check_address=check_address):
                 poisoned = True  # drop it entirely — never carry it into an arg
                 continue
             out[key] = _cap_value(value)
         elif key in _VALUE_LIST_KEYS and isinstance(value, list):
-            # Drop any value that is a secret/address OR an injected instruction — such a
+            # Drop any member that is a secret/address OR an injected instruction — such a
             # member still reaches the agent as a *suggested/mandated value* even if flagged.
-            kept = [v for v in value if not _value_is_dangerous(v, route_to_arg)]
+            # A member may itself be a composite (examples-list-of-objects); it is walked too.
+            check_address = route_to_arg and key in _ADDR_ROUTING_KEYS
+            kept = [
+                v
+                for v in value
+                if not _value_is_dangerous(v, check_address=check_address)
+            ]
             if len(kept) != len(value):
                 poisoned = True
             out[key] = [_cap_value(v) for v in kept]
