@@ -1,5 +1,5 @@
 ---
-description: Wire x402 pay-per-call onto a provider's already-comprehended API via PayAI — point tools at the provider's OWN x402 endpoint, prove the handshake offline (X402_MODE=stub), keep the provider at 100%. Gecko never the rail, no cut. Usage: /setup-x402 <api>
+description: "Wire x402 pay-per-call onto a provider's already-comprehended API via PayAI — point tools at the provider's OWN x402 endpoint, prove the handshake offline (X402_MODE=stub), keep the provider at 100%. Gecko never the rail, no cut. Usage: /setup-x402 <api>"
 ---
 
 # /setup-x402

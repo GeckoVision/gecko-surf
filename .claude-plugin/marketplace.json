@@ -1,0 +1,16 @@
+{
+  "name": "geckovision",
+  "description": "GeckoVision's plugins for making any API agent-usable — comprehension, x402 payments, and anti-poisoning defense.",
+  "owner": {
+    "name": "GeckoVision",
+    "url": "https://geckovision.tech"
+  },
+  "plugins": [
+    {
+      "name": "gecko-surf",
+      "source": "./skills",
+      "description": "Make any API agent-usable: comprehend an OpenAPI into first-call-correct MCP tools, wire x402 payments, and defend against poisoned specs. Bundles three skills (api-agent-ready, x402-payai-setup, anti-poisoning) plus agents and commands.",
+      "version": "0.1.0"
+    }
+  ]
+}

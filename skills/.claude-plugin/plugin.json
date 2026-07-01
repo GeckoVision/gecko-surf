@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "gecko-surf",
+  "version": "0.1.0",
+  "description": "Make any API agent-usable: comprehend an OpenAPI into first-call-correct MCP tools, wire x402 payments via PayAI, and defend agents against poisoned API specs.",
+  "author": {
+    "name": "GeckoVision",
+    "email": "ernanibmurtinho@gmail.com"
+  },
+  "homepage": "https://geckovision.tech",
+  "repository": "https://github.com/GeckoVision/gecko-surf",
+  "license": "Apache-2.0",
+  "keywords": ["api", "openapi", "mcp", "agent", "x402", "comprehension", "first-call-correct"],
+  "skills": ["./api-agent-ready", "./x402-payai-setup", "./anti-poisoning"]
+}
