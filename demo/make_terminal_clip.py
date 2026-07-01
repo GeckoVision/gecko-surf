@@ -33,7 +33,13 @@ def font(pats, size):
     return ImageFont.load_default()
 
 
-MONO = font(["/usr/share/fonts/**/DejaVuSansMono.ttf", "/usr/share/fonts/**/LiberationMono-Regular.ttf"], 23)
+MONO = font(
+    [
+        "/usr/share/fonts/**/DejaVuSansMono.ttf",
+        "/usr/share/fonts/**/LiberationMono-Regular.ttf",
+    ],
+    23,
+)
 _m = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 PAD, LH, TOP = 30, 38, 64
 
@@ -42,15 +48,27 @@ LINES = [
     None,
     [("Gecko — make any API agent-usable (gecko-surf)", CYAN)],
     [("=" * 46, MUTED)],
-    [("comprehended ", FG), ("19", GREEN), (" operations -> ", FG), ("10", GREEN), (" usable as tools", FG)],
+    [
+        ("comprehended ", FG),
+        ("19", GREEN),
+        (" operations -> ", FG),
+        ("10", GREEN),
+        (" usable as tools", FG),
+    ],
     [("(9 auth-gated hidden from the agent)", MUTED)],
     [("Control plane: stores only the API surface — never your data.", MUTED)],
     None,
     [("MCP URL:  ", FG), ("http://127.0.0.1:8000/mcp", CYAN)],
     None,
     [("Add it to your agent (one step):", FG)],
-    [("  Claude Code:  ", FG), ("claude mcp add --transport http swagger-petstore …", GREEN)],
-    [("  Cursor:       ", FG), ("cursor://…/mcp/install?name=swagger-petstore…", MUTED)],
+    [
+        ("  Claude Code:  ", FG),
+        ("claude mcp add --transport http swagger-petstore …", GREEN),
+    ],
+    [
+        ("  Cursor:       ", FG),
+        ("cursor://…/mcp/install?name=swagger-petstore…", MUTED),
+    ],
     [("  VS Code:      ", FG), ("vscode:mcp/install?…", MUTED)],
 ]
 
@@ -84,5 +102,7 @@ frames.append(render(len(LINES)))
 durs.append(6000)
 
 out = sys.argv[1] if len(sys.argv) > 1 else "demo/terminal.gif"
-frames[0].save(out, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True)
+frames[0].save(
+    out, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True
+)
 print("wrote", out, "frames", len(frames), "total_ms", sum(durs))

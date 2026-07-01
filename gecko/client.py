@@ -77,15 +77,11 @@ class AgentApiClient:
         # reach comes from provenance, NEVER from the served spec's servers[]:
         #   * explicit base_url  -> pinned to that host
         #   * a spec URL         -> pinned to the ingest host (servers[] ignored)
-        #   * a local spec file  -> pinned to its servers[0] host (dev-chosen artifact)
-        #   * an in-memory dict  -> unverified (no host) -> no auth ever leaves
-        # Any from-docs / low-confidence / poisoned spec is quarantined regardless.
+        #   * a local spec file / in-memory dict -> unverified (no host) -> no auth leaves
+        # A file on disk is NOT dev-vouched provenance (registry download / vendored-spec
+        # PR / "save this spec"); its servers[0] is attacker-controlled, so it fails closed
+        # exactly like a dict. Any from-docs / low-confidence / poisoned spec is quarantined.
         spec_url = spec if (isinstance(spec, str) and spec_is_url) else None
-        local_spec_host = (
-            _host_of(servers[0].get("url"))
-            if (isinstance(spec, str) and not spec_is_url)
-            else None
-        )
         poisoned = any(t.get("x-poison-flag") for t in self.tools)
         quarantined = spec_is_quarantined(self.spec) or poisoned
         if poisoned:
@@ -96,7 +92,6 @@ class AgentApiClient:
         self.anchor = anchor_for(
             base_url=base_url,
             spec_url=spec_url,
-            local_spec_host=local_spec_host,
             quarantined=quarantined,
         )
         # Back-compat surface: the set of hosts auth may reach (== the anchor's hosts).

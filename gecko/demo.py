@@ -16,6 +16,11 @@ from .sample import example_from_schema
 DEFAULT_SPEC = str(
     Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "txodds_docs.yaml"
 )
+# The out-of-band trust anchor for the live TxODDS demo. Passed explicitly so (a) the
+# customer's JWT+token pin to THIS host — a poisoned spec file's servers[0] can never
+# redirect auth to an attacker — and (b) the live call targets prod deliberately, not
+# by silently defaulting to the spec's servers[0].
+TXODDS_BASE_URL = "https://txline.txodds.com"
 
 GOALS = [
     "get the latest live odds for a football fixture",
@@ -77,7 +82,11 @@ def live_demo() -> None:
     if not token:
         print("No live session — run scripts/subscribe.py --broadcast first.")
         return
-    client = AgentApiClient(DEFAULT_SPEC, session=Session(jwt=jwt, api_token=token))
+    client = AgentApiClient(
+        DEFAULT_SPEC,
+        base_url=TXODDS_BASE_URL,
+        session=Session(jwt=jwt, api_token=token),
+    )
     print("Gecko — LIVE mode (real TxODDS World Cup data)\n" + "=" * 56)
 
     def tool_for(path: str) -> str:

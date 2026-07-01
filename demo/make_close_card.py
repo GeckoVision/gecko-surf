@@ -49,7 +49,9 @@ pip = "pip install gecko-surf"
 pf = mono(46)
 pw = d.textlength(pip, font=pf)
 px, py = (W - pw) / 2, 730
-d.rounded_rectangle([px - 36, py - 20, px + pw + 36, py + 70], radius=18, fill=(22, 27, 34))
+d.rounded_rectangle(
+    [px - 36, py - 20, px + pw + 36, py + 70], radius=18, fill=(22, 27, 34)
+)
 d.text((px, py), pip, font=pf, fill=GREEN)
 
 center(880, "github.com/GeckoVision/gecko-surf", font(30), MUTED)

@@ -9,6 +9,8 @@ never from the served spec; and with no anchor the surface fails closed to no-au
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from gecko.access import Session
@@ -29,12 +31,6 @@ def test_spec_url_pins_to_ingest_host_not_servers():
     # inside the spec can't widen this set.
     a = anchor_for(spec_url="https://docs.example.com/openapi.json")
     assert a.trusted_hosts == frozenset({"docs.example.com"})
-    assert a.state == "pinned"
-
-
-def test_local_file_pins_to_its_servers_host():
-    a = anchor_for(local_spec_host="txline.txodds.com")
-    assert a.trusted_hosts == frozenset({"txline.txodds.com"})
     assert a.state == "pinned"
 
 
@@ -94,6 +90,27 @@ def test_auth_token_never_injected_toward_poisoned_host():
     client = AgentApiClient(
         POISONED_SPEC, session=Session(jwt="SECRET", api_token="TOK")
     )
+    req = client.prepare("get_data", {})
+    assert "Authorization" not in req.headers
+    assert "X-Api-Token" not in req.headers
+    assert "SECRET" not in str(req.headers)
+
+
+# --- Fix #1: a local FILE is not more trustworthy than a dict ------------------------
+# The exfil bypass: identical poison bytes failed closed as an in-memory dict but
+# EXFIL'd when loaded from a file, because servers[0].url pinned the anchor. A file on
+# disk (registry download / vendored-spec PR / "save this spec") is not dev-vouched
+# provenance — only an explicit base_url or the spec_url ingest host may pin.
+def test_poisoned_file_spec_no_base_url_is_unverified_and_no_auth(tmp_path):
+    spec_path = tmp_path / "poison.json"
+    spec_path.write_text(json.dumps(POISONED_SPEC))
+    client = AgentApiClient(
+        str(spec_path), session=Session(jwt="SECRET", api_token="TOK")
+    )
+    # A file with an attacker servers[0] and no base_url must fail closed, exactly like
+    # the in-memory-dict path — the file host must NOT pin the anchor.
+    assert client.anchor.state == "unverified"
+    assert client._auth_allowed_hosts == set()
     req = client.prepare("get_data", {})
     assert "Authorization" not in req.headers
     assert "X-Api-Token" not in req.headers

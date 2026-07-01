@@ -97,22 +97,25 @@ def anchor_for(
     *,
     base_url: str | None = None,
     spec_url: str | None = None,
-    local_spec_host: str | None = None,
     quarantined: bool = False,
 ) -> TrustAnchor:
     """Derive a surface's trust anchor from provenance — never from the served spec.
 
     Precedence (most-trusted provenance wins), and quarantine overrides everything:
       * ``quarantined`` (from-docs / poisoned) -> NO trusted host, state ``quarantined``.
-      * explicit ``base_url``                  -> its host is the anchor (``pinned``).
-      * a ``spec_url`` (ingest host)           -> that host is the anchor (``pinned``).
-      * a ``local_spec_host`` (dev-loaded file)-> the file's ``servers[0]`` host, which
-        is a developer-chosen artifact, is the anchor (``pinned``).
-      * none of the above (an in-memory dict)  -> NO anchor, state ``unverified``.
+      * explicit ``base_url`` (dev-supplied)   -> its host is the anchor (``pinned``).
+      * a ``spec_url`` (the host that served the bytes) -> that host is the anchor.
+      * none of the above                      -> NO anchor, state ``unverified``.
+
+    A local FILE is deliberately NOT a pinning provenance: a file on disk (a registry
+    download, a vendored-spec PR, a "save this spec") is no more trustworthy than an
+    in-memory dict, and its ``servers[0]`` is attacker-controlled. Only a dev-supplied
+    ``base_url`` or the URL that actually served the bytes may pin — everything else
+    fails closed to ``unverified`` (no auth ever leaves the process).
     """
     if quarantined:
         return TrustAnchor(frozenset(), "quarantined")
-    host = _host_of(base_url) or _host_of(spec_url) or (local_spec_host or None)
+    host = _host_of(base_url) or _host_of(spec_url)
     if host:
         return TrustAnchor(frozenset({host.lower()}), "pinned")
     return TrustAnchor(frozenset(), "unverified")

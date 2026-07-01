@@ -31,24 +31,42 @@ def font(pats, size):
 
 
 MONO = font(
-    ["/usr/share/fonts/**/DejaVuSansMono.ttf", "/usr/share/fonts/**/LiberationMono-Regular.ttf"],
+    [
+        "/usr/share/fonts/**/DejaVuSansMono.ttf",
+        "/usr/share/fonts/**/LiberationMono-Regular.ttf",
+    ],
     22,
 )
 _m = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 PAD, LH, TOP = 30, 37, 62
 
 LINES = [
-    [("$ ", GREEN), ("curl -fsSL https://get.geckovision.tech/install.sh | bash", WHITE)],
+    [
+        ("$ ", GREEN),
+        ("curl -fsSL https://get.geckovision.tech/install.sh | bash", WHITE),
+    ],
     [("  ✓ ", GREEN), ("gecko-surf installed", FG)],
     None,
     [("# point it at an OpenAPI:", MUTED)],
     [("$ ", GREEN), ("gecko https://petstore3.swagger.io/api/v3/openapi.json", WHITE)],
-    [("  comprehended ", FG), ("19", GREEN), (" ops -> ", FG), ("10", GREEN), (" first-call-correct tools", FG)],
+    [
+        ("  comprehended ", FG),
+        ("19", GREEN),
+        (" ops -> ", FG),
+        ("10", GREEN),
+        (" first-call-correct tools", FG),
+    ],
     [("  MCP ready", CYAN), ("  ·  one-click add to Claude / Cursor", MUTED)],
     None,
     [("# no OpenAPI? comprehend the docs:", MUTED)],
     [("$ ", GREEN), ("gecko from-docs https://docs.some-api.com", WHITE)],
-    [("  recovered ", FG), ("3", GREEN), (" ops -> comprehended ", FG), ("3", GREEN), (" agent tools", FG)],
+    [
+        ("  recovered ", FG),
+        ("3", GREEN),
+        (" ops -> comprehended ", FG),
+        ("3", GREEN),
+        (" agent tools", FG),
+    ],
     [("  + honest review notes for the fields to confirm", MUTED)],
 ]
 
@@ -81,5 +99,7 @@ frames.append(render(len(LINES)))
 durs.append(5000)
 
 out = sys.argv[1] if len(sys.argv) > 1 else "launch.gif"
-frames[0].save(out, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True)
+frames[0].save(
+    out, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True
+)
 print("wrote", out, "frames", len(frames), "total_ms", sum(durs))
