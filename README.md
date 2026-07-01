@@ -42,7 +42,7 @@ makes an API actually *usable* by an agent.
 V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
 comprehend → catalog → access (a two-token on-chain subscribe) → first-call-correct →
 real data. A **$0 recorded mode** runs the entire path offline with no subscription.
-**131 tests pass.**
+**160 tests pass.**
 
 What is **not** proven: **consumer willingness-to-pay** — the actual decider for the
 business. That is discovery-interview work, not a demo claim. So: never read this repo
@@ -115,10 +115,11 @@ first call correct.
 Cursor" strings:
 
 ```bash
-# from a clone (the `serve` extra adds mcp + uvicorn):
-uv run --extra serve gecko https://api.example.com/openapi.json
-# without cloning (PyPI publish pending):
-uvx --from "gecko-surf[serve] @ git+https://github.com/GeckoVision/gecko-surf" gecko <openapi-url>
+# no install — run it straight from PyPI:
+uvx --from "gecko-surf[serve]" gecko <openapi-url>
+# or install the CLI (any system, no Python prereq):
+curl -fsSL https://get.geckovision.tech/install.sh | bash
+gecko <openapi-url>
 ```
 
 It prints the comprehension summary, the MCP URL, and a one-click `claude mcp add` /
@@ -145,7 +146,7 @@ see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
 ```bash
 git clone https://github.com/GeckoVision/gecko-surf
 cd gecko-surf && uv sync
-uv run pytest                       # 131 passing
+uv run pytest                       # 160 passing
 uv run python -m gecko.demo      # E2E: goal → discover → correct call → data (recorded, $0)
 ```
 
