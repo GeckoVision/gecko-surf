@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,21 @@ logger = logging.getLogger("gecko.client")
 
 class IntegrityError(Exception):
     """Raised when the shipped tool set no longer matches the pinned spec (tamper)."""
+
+
+@dataclass(frozen=True)
+class ScoredHit:
+    """A search result enriched with retrieval provenance — the introspection sibling
+    of the frozen ``search`` dict shape. ``score``/``is_fallback`` power retrieval
+    evaluation and the out-of-scope confidence floor; the agent-facing ``search`` never
+    exposes them (its contract stays ``{name, summary, path, method}``)."""
+
+    name: str
+    summary: str
+    path: str
+    method: str
+    score: int
+    is_fallback: bool
 
 
 class AgentApiClient:
@@ -125,22 +141,33 @@ class AgentApiClient:
         self.surface_rev = surface_rev(self.spec)
         self.surface_id = surface_id or _host_of(self.base_url) or "surface"
 
-    def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for e in self.catalog.search(query, limit + 20):
-            if e.tool_name not in self._usable_tool_names:
+    def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
+        """Like ``search`` but carries ``score``/``is_fallback`` (retrieval eval + the
+        out-of-scope confidence floor). Applies the SAME auth filter and over-fetch, so
+        ``search`` is a pure projection of this — the two can never disagree on ranking."""
+        out: list[ScoredHit] = []
+        for s in self.catalog.search_scored(query, limit + 20):
+            if s.entry.tool_name not in self._usable_tool_names:
                 continue
             out.append(
-                {
-                    "name": e.tool_name,
-                    "summary": e.operation.summary,
-                    "path": e.operation.path,
-                    "method": e.operation.method,
-                }
+                ScoredHit(
+                    name=s.entry.tool_name,
+                    summary=s.entry.operation.summary,
+                    path=s.entry.operation.path,
+                    method=s.entry.operation.method,
+                    score=s.score,
+                    is_fallback=s.is_fallback,
+                )
             )
             if len(out) >= limit:
                 break
         return out
+
+    def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        return [
+            {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
+            for h in self.search_scored(query, limit)
+        ]
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [t for t in self.tools if t["name"] in self._usable_tool_names]

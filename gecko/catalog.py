@@ -46,18 +46,54 @@ class CatalogEntry:
         return len(query_tokens & hay) + len(query_tokens & summary)
 
 
+@dataclass(frozen=True)
+class ScoredEntry:
+    """A catalog hit plus its retrieval provenance.
+
+    ``is_fallback`` (with ``score == 0``) marks a candidate returned by the 0/97
+    never-empty fallback rather than a genuine lexical overlap — the signal a caller
+    uses to apply a confidence floor (e.g. the out-of-scope guard) so a manufactured
+    candidate is never mistaken for a real match.
+    """
+
+    entry: CatalogEntry
+    score: int
+    is_fallback: bool
+
+
 class Catalog:
     def __init__(self, operations: list[Operation]):
         self.entries = [CatalogEntry(o) for o in operations]
 
-    def search(self, query: str, limit: int = 5) -> list[CatalogEntry]:
+    def search_scored(self, query: str, limit: int = 5) -> list[ScoredEntry]:
+        """Rank operations for ``query``; never empty for a query that carries intent.
+
+        Genuine lexical hits (``score > 0``) rank first, exactly as before. When a
+        MEANINGFUL query overlaps no operation's surface text — the shipped "0/97"
+        discovery bug, where the op went invisible — it falls back to a non-semantic,
+        query-independent prior (reads first, then path) rather than returning []. An
+        empty/no-token query carries no intent and still yields [] (distinct case).
+        """
         q = _tokens(query)
+        if not q:
+            return []
         scored = [(e.score(q), e) for e in self.entries]
-        ranked = sorted(
+        matches = sorted(
             (se for se in scored if se[0] > 0),
             key=lambda se: (-se[0], se[1].operation.path),
         )
-        return [e for _, e in ranked[:limit]]
+        if matches:
+            return [ScoredEntry(e, s, False) for s, e in matches[:limit]]
+        # 0/97 fallback: deterministic, non-semantic, query-independent. Flagged
+        # score-0 / is_fallback so it stays below any confidence floor.
+        fallback = sorted(
+            self.entries,
+            key=lambda e: (0 if e.operation.method == "GET" else 1, e.operation.path),
+        )
+        return [ScoredEntry(e, 0, True) for e in fallback[:limit]]
+
+    def search(self, query: str, limit: int = 5) -> list[CatalogEntry]:
+        return [s.entry for s in self.search_scored(query, limit)]
 
     def by_tag(self) -> dict[str, list[CatalogEntry]]:
         grouped: dict[str, list[CatalogEntry]] = defaultdict(list)
