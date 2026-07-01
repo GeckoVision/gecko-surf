@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head><title>Tip API Docs</title></head>
+<body>
+<main>
+<h1>Tip API</h1>
+<p>A small JSON-RPC + REST API for submitting transaction bundles and reading tip
+data. This static page mimics a human-shaped doc site with no OpenAPI spec — the
+exact "painful API" surface <code>from-docs</code> recovers offline.</p>
+
+<h2>sendBundle</h2>
+<p>Submit a bundle of transactions to the block engine.</p>
+<table>
+  <thead>
+    <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>params</td><td>array</td><td>REQUIRED: the list of base64-encoded transactions to submit.</td></tr>
+    <tr><td>encoding</td><td>string</td><td>OPTIONAL: Default: base58. Supported values: base64, base58.</td></tr>
+  </tbody>
+</table>
+<pre>curl https://api.tipapi.dev/api/v1/bundles -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"sendBundle","params":[["tx_one","tx_two"],{"encoding":"base64"}]}'</pre>
+<pre>{"jsonrpc":"2.0","result":"bundle-id-abc123","id":1}</pre>
+
+<h2>getTipAccounts</h2>
+<p>Retrieve the current tip accounts you can pay tips to.</p>
+<pre>curl https://api.tipapi.dev/api/v1/bundles -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getTipAccounts","params":[]}'</pre>
+<pre>{"jsonrpc":"2.0","result":["TipAcct1111","TipAcct2222"],"id":1}</pre>
+
+<h2>getTipFloor</h2>
+<p>Read recent tip amounts (the current tip floor) as a plain REST GET.</p>
+<pre>curl https://bundles.tipapi.dev/api/v1/bundles/tip_floor</pre>
+<pre>[{"time":"2026-06-30T00:00:00Z","landed_tips_50th_percentile":0.001}]</pre>
+
+<h2>Authentication</h2>
+<p>Authentication is optional. Higher rate limits are available if you set a UUID.</p>
+<pre># Optional: send the x-tip-auth header (a UUID) for higher rate limits.
+curl https://api.tipapi.dev/api/v1/bundles -H 'x-tip-auth: 123e4567-e89b-12d3-a456-426614174000'</pre>
+</main>
+</body>
+</html>

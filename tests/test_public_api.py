@@ -47,8 +47,15 @@ def test_all_declares_the_public_surface() -> None:
 
 
 def test_console_entry_point_is_importable_and_callable() -> None:
-    # Backs `[project.scripts] gecko = "gecko.serve:_run"`.
-    from gecko.serve import _run, main
+    # Backs `[project.scripts] gecko = "gecko.cli:_run"` (the subcommand dispatcher).
+    from gecko.cli import _run, main
 
     assert callable(_run)
     assert callable(main)
+
+    # `python -m gecko.serve` must keep working too (backward-compat).
+    from gecko.serve import _run as serve_run
+    from gecko.serve import main as serve_main
+
+    assert callable(serve_run)
+    assert callable(serve_main)

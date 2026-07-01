@@ -6,10 +6,11 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = ["pyyaml>=6.0"]
 
-# `uvx gecko ...` (dist: gecko-surf) / `python -m gecko.serve`. Thin CLI; the
-# entry only parses args + formats output (real logic lives in the package).
+# `uvx gecko ...` (dist: gecko-surf). Thin subcommand dispatcher (serve/test/
+# from-docs); a bare `gecko <spec>` still serves. `python -m gecko.serve` also works
+# unchanged. The entry only parses args + formats output (logic lives in the package).
 [project.scripts]
-gecko = "gecko.serve:_run"
+gecko = "gecko.cli:_run"
 gecko-testgen = "gecko.testgen:_run"
 # Read-only local usage aggregate for a corpus JSONL (no network). Opt-out
 # telemetry's inspection face; phone-home stays opt-in/disabled in gecko.telemetry.
