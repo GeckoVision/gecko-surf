@@ -1,0 +1,88 @@
+name: release
+
+# Build the single self-contained `gecko` binary (Solana-CLI pattern: download one
+# file, run it, no Python/uv/pip needed) for every supported OS/arch and attach it
+# to the GitHub Release when a `v*` tag is pushed.
+#
+# Asset-name contract (install.sh depends on these EXACT names — do not rename):
+#   gecko-linux-x86_64   gecko-linux-arm64   gecko-darwin-x86_64   gecko-darwin-arm64
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Required so the matrix jobs can create/append the GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04       # linux x86_64 — older glibc (2.35) for portability
+            asset: gecko-linux-x86_64
+          - runner: ubuntu-22.04-arm   # linux arm64 — older glibc (2.35); GitHub-hosted Arm
+            asset: gecko-linux-arm64
+          - runner: macos-13           # darwin x86_64 (Intel)
+            asset: gecko-darwin-x86_64
+          - runner: macos-14           # darwin arm64 (Apple Silicon)
+            asset: gecko-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Install the tagged source with the `serve` extra (mcp + uvicorn) plus the
+      # freezer. PyInstaller is built in this ephemeral CI env only — it is NOT a
+      # project dependency.
+      - name: Install gecko-surf[serve] + pyinstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[serve]" pyinstaller
+
+      # Flags mirror the locally-proven build exactly. The serve path imports
+      # mcp/uvicorn/starlette lazily, so they must be force-collected; pyyaml is a
+      # top-level import in gecko.ingest.
+      - name: Build standalone binary
+        run: |
+          pyinstaller --onefile --name gecko \
+            --collect-all mcp \
+            --collect-all uvicorn \
+            --collect-all starlette \
+            --collect-submodules anyio \
+            --hidden-import yaml \
+            --hidden-import gecko \
+            --noconfirm \
+            packaging/gecko_entry.py
+
+      - name: Stage asset + SHA256SUMS
+        shell: bash
+        run: |
+          mkdir -p out
+          cp dist/gecko "out/${{ matrix.asset }}"
+          # Cross-platform checksum (sha256sum is Linux-only, shasum is macOS-only);
+          # Python is guaranteed present and emits the standard `<hash>  <name>` line.
+          python -c "import hashlib,sys,os; p=sys.argv[1]; print(hashlib.sha256(open(p,'rb').read()).hexdigest()+'  '+os.path.basename(p))" \
+            "out/${{ matrix.asset }}" > "out/${{ matrix.asset }}.sha256"
+
+      # Smoke the frozen binary on the same machine that built it (no Python needed
+      # at runtime — this is the whole promise).
+      - name: Smoke test (--help must exit 0)
+        shell: bash
+        run: |
+          chmod +x "out/${{ matrix.asset }}"
+          "out/${{ matrix.asset }}" --help
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/${{ matrix.asset }}
+            out/${{ matrix.asset }}.sha256
