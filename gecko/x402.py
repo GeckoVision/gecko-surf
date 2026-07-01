@@ -28,8 +28,11 @@ class PaymentPolicy:
 
     allowed_pay_to: frozenset[str]
     allowed_assets: frozenset[str]
-    max_amount: int  # ceiling, base units
+    max_amount: int  # ceiling (``<=``) — or the EXACT required price when exact_amount
     scheme: str = "exact"  # the settlement scheme we provisioned
+    exact_amount: bool = (
+        False  # subscriptions want an exact price (``==``), not a ceiling
+    )
 
 
 @dataclass(frozen=True)
@@ -87,14 +90,19 @@ def validate_challenge(body: Mapping[str, Any], policy: PaymentPolicy) -> Challe
     NEVER signs.
 
     Checks in order — the FIRST failing field decides the (redacted) message:
-    ``pay_to ∈ allowed_pay_to``, ``asset ∈ allowed_assets``, ``max_amount ≤ ceiling``,
-    ``scheme == policy.scheme``."""
+    ``pay_to ∈ allowed_pay_to``, ``asset ∈ allowed_assets``, amount (``<=`` ceiling, or
+    ``==`` the exact price when ``policy.exact_amount``), ``scheme == policy.scheme``."""
     challenge = parse_challenge(body)
     if challenge.pay_to not in policy.allowed_pay_to:
         raise ChallengeError("challenge pay_to is not a provisioned recipient")
     if challenge.asset not in policy.allowed_assets:
         raise ChallengeError("challenge asset is not a provisioned asset")
-    if challenge.max_amount > policy.max_amount:
+    if policy.exact_amount:
+        if challenge.max_amount != policy.max_amount:
+            raise ChallengeError(
+                "challenge amount does not match the provisioned price"
+            )
+    elif challenge.max_amount > policy.max_amount:
         raise ChallengeError("challenge max_amount exceeds the provisioned ceiling")
     if challenge.scheme != policy.scheme:
         raise ChallengeError("challenge scheme does not match the provisioned scheme")

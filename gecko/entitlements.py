@@ -23,7 +23,10 @@ from typing import Literal
 
 from .surfaces import safe_surface_id
 
-Kind = Literal["public", "byok"]
+# ``cloud`` is the Flow-A x402 subscription: a TTL'd grant carrying an opaque payment_ref
+# (Gecko's own flat per-surface fee — see gecko/x402_pay.py). Like ``cred_ref``, the
+# payment_ref is an OPAQUE dedupe reference, never custody (invariant #1).
+Kind = Literal["public", "byok", "cloud"]
 
 
 class EntitlementError(Exception):
@@ -45,6 +48,11 @@ class Entitlement:
     cred_ref: str | None = (
         None  # opaque reference to a BYOK credential — NEVER the secret
     )
+    # Subscription (kind="cloud") fields. Control-plane only: expires_at is the TTL and
+    # payment_ref is an OPAQUE settlement dedupe key — NEVER the USDC, a wallet key, or the
+    # X-PAYMENT payload (invariant #1).
+    expires_at: int | None = None  # unix seconds; the paid period boundary
+    payment_ref: str | None = None  # opaque settlement id, like cred_ref
 
 
 class Entitlements:
@@ -60,6 +68,8 @@ class Entitlements:
         surface_id: str,
         kind: Kind = "public",
         cred_ref: str | None = None,
+        expires_at: int | None = None,
+        payment_ref: str | None = None,
     ) -> Entitlement:
         cid = _norm_customer_id(customer_id)
         sid = safe_surface_id(surface_id)
@@ -69,7 +79,21 @@ class Entitlements:
             )
         if kind == "public" and cred_ref is not None:
             raise EntitlementError("public entitlement must not carry a cred_ref")
-        ent = Entitlement(cid, sid, kind, cred_ref)
+        if kind == "cloud":
+            if cred_ref is not None:
+                raise EntitlementError("cloud entitlement must not carry a cred_ref")
+            if expires_at is None:
+                raise EntitlementError("cloud entitlement requires an expires_at (TTL)")
+            if not (payment_ref and payment_ref.strip()):
+                raise EntitlementError(
+                    "cloud entitlement requires an opaque payment_ref (a reference)"
+                )
+        elif expires_at is not None or payment_ref is not None:
+            raise EntitlementError(
+                f"{kind} entitlement must not carry subscription fields "
+                "(expires_at/payment_ref are cloud-only)"
+            )
+        ent = Entitlement(cid, sid, kind, cred_ref, expires_at, payment_ref)
         self._by[(cid, sid)] = ent
         return ent
 
@@ -77,6 +101,16 @@ class Entitlements:
         return self._by.get(
             (_norm_customer_id(customer_id), safe_surface_id(surface_id))
         )
+
+    def find_by_payment_ref(self, payment_ref: str) -> Entitlement | None:
+        """Look up an existing grant by its opaque settlement ref — the dedupe anchor that
+        makes a replayed settlement idempotent (no double-grant)."""
+        if not payment_ref:
+            return None
+        for ent in self._by.values():
+            if ent.payment_ref == payment_ref:
+                return ent
+        return None
 
     def surfaces_for(self, customer_id: str) -> list[str]:
         """The customer's own connected surfaces (intra-set discovery). Never global."""
