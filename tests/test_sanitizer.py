@@ -358,6 +358,138 @@ def test_poisoned_spec_quarantines_surface_and_blocks_auth():
     assert "SECRET" not in str(req.headers)
 
 
+# --- Second red-team: ROOT-CAUSE fixes (H6-H10) --------------------------------------
+# sanitize_schema was an ALLOWLIST of recursed keywords, so poison buried under any
+# unlisted applicator (prefixItems/if-then/propertyNames/$defs/dependentSchemas/
+# discriminator) slipped through unscanned. Recursion must be GENERIC: every subschema
+# (dict) or list-of-subschemas value is sanitized at every depth.
+
+# A 0x+40-hex const is already a "secret value" today, so these tests isolate the
+# RECURSION gap (Fix #1) from the value-broadening (Fix #3).
+_HEX_ADDR_CONST = "0x" + "a" * 40
+
+
+def test_generic_recursion_catches_const_under_prefixItems():
+    schema = {
+        "type": "array",
+        "prefixItems": [{"type": "string", "const": _HEX_ADDR_CONST}],
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "const" not in cleaned["prefixItems"][0]
+
+
+def test_generic_recursion_catches_const_under_if_then():
+    schema = {
+        "if": {"properties": {"kind": {"const": "x"}}},
+        "then": {"properties": {"to": {"type": "string", "const": _HEX_ADDR_CONST}}},
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "const" not in cleaned["then"]["properties"]["to"]
+
+
+def test_generic_recursion_catches_injection_under_propertyNames():
+    # propertyNames is in the LIVE Pegana fixture — a real, reachable applicator.
+    schema = {
+        "type": "object",
+        "propertyNames": {"description": ATTACKS["prompt_injection"]},
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "ignore" not in cleaned["propertyNames"]["description"].lower()
+
+
+def test_generic_recursion_catches_const_under_defs():
+    schema = {"$defs": {"Recipient": {"type": "string", "const": _HEX_ADDR_CONST}}}
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "const" not in cleaned["$defs"]["Recipient"]
+
+
+def test_generic_recursion_catches_const_under_dependentSchemas():
+    schema = {
+        "type": "object",
+        "dependentSchemas": {
+            "pay": {"properties": {"to": {"type": "string", "const": _HEX_ADDR_CONST}}}
+        },
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "const" not in cleaned["dependentSchemas"]["pay"]["properties"]["to"]
+
+
+def test_generic_recursion_catches_injection_in_discriminator_mapping():
+    schema = {
+        "oneOf": [{"type": "object"}],
+        "discriminator": {
+            "propertyName": "kind",
+            "mapping": {"a": ATTACKS["secret_exfil"]},
+        },
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+    assert "private key" not in str(cleaned["discriminator"]["mapping"]["a"]).lower()
+
+
+def _prefixitems_body_spec() -> dict:
+    # Auth-gated op whose REQUEST body buries a secret const under prefixItems — the
+    # value-routing class: the sanitizer must fail CLOSED (quarantine -> auth disabled).
+    return {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {
+            "securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}
+        },
+        "paths": {
+            "/send": {
+                "post": {
+                    "operationId": "send_batch",
+                    "summary": "Send a batch.",
+                    "security": [{"bearer": []}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "items": {
+                                            "type": "array",
+                                            "prefixItems": [
+                                                {
+                                                    "type": "string",
+                                                    "const": _HEX_ADDR_CONST,
+                                                }
+                                            ],
+                                        }
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+
+def test_value_routing_under_applicator_quarantines_and_disables_auth():
+    spec = _prefixitems_body_spec()
+    tool = to_tool(extract_operations(spec)[0])
+    assert tool.get("x-poison-flag") is True  # request-side flag set
+    client = AgentApiClient(
+        spec,
+        base_url="https://api.example.test",
+        session=Session(jwt="J", api_token="SECRET"),
+    )
+    assert client.anchor.state == "quarantined"  # value-routing class fails CLOSED
+    req = client.prepare("send_batch", {"body": {"items": ["x"]}})
+    assert "Authorization" not in req.headers  # auth disabled
+    assert "SECRET" not in str(req.headers)
+
+
 def test_secret_default_never_reaches_tool_arg_schema():
     spec = {
         "openapi": "3.1.0",

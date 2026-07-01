@@ -158,6 +158,34 @@ def sanitize_text(text: Any) -> tuple[Any, bool]:
     return text, False
 
 
+# --- schema-keyword classes ----------------------------------------------------------
+# Free text the LLM reads.
+_TEXT_KEYS = frozenset({"description", "title", "$comment"})
+# Scalar value channels the arg-filler emits (const is the MANDATED arg value).
+_VALUE_KEYS = frozenset({"default", "example", "const"})
+# List value channels (enum + the 3.1 / 2020-12 array form of examples).
+_VALUE_LIST_KEYS = frozenset({"enum", "examples"})
+# Maps of {agent-facing-name: subschema} whose KEYS also reach the agent as field names.
+_PROP_MAP_KEYS = frozenset({"properties", "patternProperties"})
+
+# Recursion depth cap. Fixture input/success schemas top out at depth 5, so 8 leaves
+# headroom; anything deeper is attacker-shaped nesting (see the depth handling below).
+_MAX_DEPTH = 8
+
+
+def _value_is_dangerous(value: Any) -> bool:
+    """True if a spec-provided value channel (const/default/example/enum member) must be
+    DROPPED: it looks like a real secret, or is itself an injected instruction."""
+    if looks_like_secret_value(value):
+        return True
+    return isinstance(value, str) and bool(scan_text(value))
+
+
+def _cap_value(value: Any) -> Any:
+    """Length-cap a scalar value channel. (Extended in a later fix.)"""
+    return value
+
+
 def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
     """Recursively sanitize a JSON-Schema fragment used as a tool input.
 
@@ -176,35 +204,28 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
     Returns ``(schema, poisoned)``; ``poisoned`` propagates so ``to_tool`` quarantines
     the whole surface (recorded-only, no auth) until a human clears it.
     """
-    if _depth > 8 or not isinstance(schema, dict):
+    if _depth > _MAX_DEPTH or not isinstance(schema, dict):
         return schema, False
     poisoned = False
     out: dict[str, Any] = {}
     for key, value in schema.items():
-        if key in ("description", "title", "$comment"):
+        if key in _TEXT_KEYS:
             cleaned, flagged = sanitize_text(value)
             out[key] = cleaned
             poisoned = poisoned or flagged
-        elif key in ("default", "example", "const"):
-            if looks_like_secret_value(value) or (
-                isinstance(value, str) and scan_text(value)
-            ):
+        elif key in _VALUE_KEYS:
+            if _value_is_dangerous(value):
                 poisoned = True  # drop it entirely — never carry it into an arg
                 continue
-            out[key] = value
-        elif key in ("enum", "examples") and isinstance(value, list):
-            # Drop any value that is a secret OR an injected instruction — such a member
-            # still reaches the agent as a *suggested/mandated value* even if flagged.
-            kept = [
-                v
-                for v in value
-                if not looks_like_secret_value(v)
-                and not (isinstance(v, str) and scan_text(v))
-            ]
+            out[key] = _cap_value(value)
+        elif key in _VALUE_LIST_KEYS and isinstance(value, list):
+            # Drop any value that is a secret/address OR an injected instruction — such a
+            # member still reaches the agent as a *suggested/mandated value* even if flagged.
+            kept = [v for v in value if not _value_is_dangerous(v)]
             if len(kept) != len(value):
                 poisoned = True
-            out[key] = kept
-        elif key in ("properties", "patternProperties") and isinstance(value, dict):
+            out[key] = [_cap_value(v) for v in kept]
+        elif key in _PROP_MAP_KEYS and isinstance(value, dict):
             new_props: dict[str, Any] = {}
             for pname, pschema in value.items():
                 # The property KEY is attacker-controlled too: drop a whole property whose
@@ -217,16 +238,27 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
                 new_props[pname] = cleaned
                 poisoned = poisoned or flagged
             out[key] = new_props
-        elif key in ("items", "additionalProperties"):
+        elif isinstance(value, dict):
+            # GENERIC recursion (H6/H7): any dict-valued keyword is a subschema (items,
+            # if/then/else, not, contains, propertyNames, unevaluated*, additionalProperties)
+            # or a MAP of subschemas ($defs, definitions, dependentSchemas, discriminator).
+            # Recursing it uniformly means no future applicator can smuggle poison past an
+            # allowlist. A non-schema dict (e.g. discriminator.mapping) is still walked, so
+            # its string leaves hit the leaf catch-all below.
             cleaned, flagged = sanitize_schema(value, _depth + 1)
             out[key] = cleaned
             poisoned = poisoned or flagged
-        elif key in ("anyOf", "oneOf", "allOf") and isinstance(value, list):
+        elif isinstance(value, list):
+            # GENERIC list recursion: any list-of-subschemas (prefixItems, anyOf/oneOf/allOf,
+            # and future keywords). Non-dict members (e.g. a `required` name list) pass through.
             new_list = []
             for sub in value:
-                cleaned, flagged = sanitize_schema(sub, _depth + 1)
-                new_list.append(cleaned)
-                poisoned = poisoned or flagged
+                if isinstance(sub, dict):
+                    cleaned, flagged = sanitize_schema(sub, _depth + 1)
+                    new_list.append(cleaned)
+                    poisoned = poisoned or flagged
+                else:
+                    new_list.append(sub)
             out[key] = new_list
         elif isinstance(value, str):
             # Catch-all for every remaining string leaf (unknown key, x-* extension,
