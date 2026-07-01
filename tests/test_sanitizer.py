@@ -369,6 +369,22 @@ def test_to_tool_zero_false_positive_on_full_fixture_schemas():
             assert "x-poison-flag" not in to_tool(op), f"false positive in {fx.name}"
 
 
+def test_full_fixture_surfaces_have_zero_spurious_quarantine():
+    # The MASTER zero-FP guard for the root-cause fixes: the generic recursion + the
+    # address/secret broadening + the homoglyph fold + the fail-closed depth cap must NOT
+    # false-quarantine either committed surface. Covers BOTH the per-op tool flag (request
+    # side) AND the whole-client anchor (which also folds in the response-schema scan).
+    # The chosen rule that keeps this green: address SHAPES are dropped only on the
+    # REQUEST side (route_to_arg) — the fixtures' base58 pubkeys live in RESPONSE examples
+    # and in request example OBJECTS (never a scalar request const), so none trip.
+    for fx in (PEGANA, TXODDS):
+        spec = load_spec(str(fx))
+        for op in extract_operations(spec):
+            assert "x-poison-flag" not in to_tool(op), f"request-side FP in {fx.name}"
+        client = AgentApiClient(spec, session=public_session())
+        assert client.anchor.state != "quarantined", f"client FP in {fx.name}"
+
+
 # --- integration: a poisoned op quarantines its whole surface ------------------------
 POISON_DESC_SPEC = {
     "openapi": "3.1.0",

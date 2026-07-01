@@ -20,6 +20,25 @@ Calibrated against the committed TxODDS + Pegana surfaces: legitimate prose that
 (BOT_INTERNAL_SECRET)", "SPL mint address") must NOT trip a rule — a rule requires an
 instruction shape (imperative verb aimed at a secret, a fund-routing directive, or a
 prompt-injection phrase).
+
+GUARANTEE BOUNDARY (this is what "correct" means here — enforced, not aspirational):
+
+  * HARD guarantee — the ARG-ROUTING / AUTH-LIVE class fails CLOSED. No attacker-
+    controlled VALUE may route into an agent-facing tool arg while auth stays live. Every
+    subschema is scanned at every depth by GENERIC recursion (no applicator allowlist);
+    exceeding the depth cap fails closed (poisoned=True); a secret / crypto-address /
+    injection value in any request-side channel (const/default/example/enum) is DROPPED
+    and sets ``poisoned`` — which ``to_tool`` turns into ``x-poison-flag``, which the
+    client turns into QUARANTINE (auth injection disabled, recorded-only) until a human
+    clears it. So an attacker VALUE cannot reach an arg with the customer's secret live.
+
+  * BEST-EFFORT — pure-text prompt injection in human-readable fields
+    (description/summary/title). The homoglyph fold + zero-width strip + curated rules
+    raise the cost, but this is defense-in-depth, NOT a guarantee. KNOWN residuals we do
+    NOT claim to catch here: an instruction SPLIT across sibling fields, and a base64/
+    otherwise-encoded payload. For those the real protections are elsewhere — the auth-
+    host pin (``caller.py``), the recorded-mode response scrub, and quarantine-on-detect.
+    Do not read this module as "zero text-injection".
 """
 
 from __future__ import annotations
