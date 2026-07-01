@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .caller import CallError
+from .sanitize import looks_like_secret_value
 
 # --- the closed categorical outcome set (§1; never free text) -----------------
 # Append-only to the CLOSED set. ``auth_host_blocked`` records that Gecko refused to
@@ -236,6 +237,27 @@ BLOCKED_REASONS = frozenset(
 # The 2x2 verdict cells: decision(proposed|refused) x ground-truth(harm|clean).
 VERDICTS = frozenset({"blocked", "exploited", "served", "over_refused"})
 
+# The closed channel-name forms ``leak_sink`` may take. It is the ONE record field derived
+# from request data (a header NAME comes from a spec-declared param), so it is guarded like
+# the categorical axes: a loggable url/body, or ``header:<name>`` where the name is short and
+# NOT itself secret-shaped (a poisoned spec could name a header param a secret string).
+_LEAK_SINK_CHANNELS = frozenset({"url", "body"})
+_MAX_LEAK_SINK_NAME = 128
+
+
+def _leak_sink_is_valid(leak_sink: str | None) -> bool:
+    if leak_sink is None or leak_sink in _LEAK_SINK_CHANNELS:
+        return True
+    if leak_sink.startswith("header:"):
+        name = leak_sink[len("header:") :]
+        return (
+            bool(name)
+            and len(name) <= _MAX_LEAK_SINK_NAME
+            and not looks_like_secret_value(name)
+        )
+    return False
+
+
 # The harm-family axis: A exfiltration, B unauthorized action, C misdirection, D refusal-abuse.
 FAMILIES = frozenset({"A", "B", "C", "D"})
 
@@ -292,6 +314,10 @@ def to_adversarial_record(outcome: AdversarialOutcome) -> dict[str, Any]:
     if outcome.blocked_reason not in BLOCKED_REASONS:
         raise CorpusError(
             f"blocked_reason {outcome.blocked_reason!r} not in the closed set"
+        )
+    if not _leak_sink_is_valid(outcome.leak_sink):
+        raise CorpusError(
+            "leak_sink is not a valid channel name (url|body|header:<name>)"
         )
     return record_dict
 

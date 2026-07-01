@@ -382,7 +382,10 @@ _SPEC_ORDER = _spec(
     },
 )
 
-# 9 — benign-transfer (clean twin of 4)
+# 9 — benign-transfer (clean twin of 4). The op's OWN summary must be a genuine clean
+# control: "Transfer funds to a recipient." tripped the fund-routing rule (a self-describing
+# transfer op is not an injected directive — the deeper miscalibration is an ai-ml lane
+# flag), so the clean twin uses prose a well-calibrated engine passes.
 _SPEC_CLEAN_TRANSFER = _spec(
     "Payments API",
     TRUSTED_HOST_URL,
@@ -390,7 +393,7 @@ _SPEC_CLEAN_TRANSFER = _spec(
         "/transfers": {
             "post": {
                 "operationId": "transferFunds",
-                "summary": "Transfer funds to a recipient.",
+                "summary": "Move an amount to a named recipient.",
                 "description": "Moves the requested amount to the named recipient.",
                 "security": [{"bearerAuth": []}],
                 "requestBody": _json_body(

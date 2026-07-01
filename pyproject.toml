@@ -12,6 +12,9 @@ dependencies = ["pyyaml>=6.0"]
 [project.scripts]
 gecko = "gecko.cli:_run"
 gecko-testgen = "gecko.testgen:_run"
+# Off-chain battle-test: run the 12 packaged scenarios, gate on the scorecard (exit 0
+# iff money_trusted). Deterministic $0 CI lane; `python -m gecko.redteam` works too.
+gecko-redteam = "gecko.redteam.__main__:_run"
 # Read-only local usage aggregate for a corpus JSONL (no network). Opt-out
 # telemetry's inspection face; phone-home stays opt-in/disabled in gecko.telemetry.
 gecko-telemetry = "gecko.telemetry:_run"
@@ -51,9 +54,9 @@ pythonpath = ["."]
 [tool.mypy]
 python_version = "3.11"
 
-# The serve transport (mcp/starlette/uvicorn) and the sosbot example
-# (anthropic/telegram) are OPTIONAL extras. Keep mypy clean whether or not they are
-# installed — the engine itself stays dep-light.
+# The serve transport (mcp/starlette/uvicorn), the sosbot example (anthropic/telegram),
+# and the non-CI red-team LLM lane (gecko.redteam.llm) are OPTIONAL. Keep mypy clean
+# whether or not they are present — the engine itself stays dep-light.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "gecko.redteam.llm"]
 ignore_missing_imports = true

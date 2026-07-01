@@ -94,6 +94,20 @@ def test_to_adversarial_record_rejects_bad_family_verdict_reason():
     assert "A" in FAMILIES and "exploited" in VERDICTS
 
 
+def test_to_adversarial_record_validates_leak_sink_shape():
+    # leak_sink is the ONE field built from request data (a header NAME), so it is closed-
+    # set-guarded too: only url/body/header:<safe-name> may persist, fail closed otherwise.
+    for ok in (None, "url", "body", "header:X-Api-Token"):
+        to_adversarial_record(_make_adv(leaked=bool(ok), leak_sink=ok))
+    with pytest.raises(CorpusError):
+        to_adversarial_record(_make_adv(leaked=True, leak_sink="cookie:session"))
+    with pytest.raises(CorpusError):
+        # a secret-shaped header NAME (a poisoned spec could declare one) must not reach disk
+        to_adversarial_record(
+            _make_adv(leaked=True, leak_sink="header:sk-ABCDEFGHIJKLMNOPQRSTUVWX")
+        )
+
+
 def test_record_adversarial_writes_no_canary_or_value(tmp_path):
     # The killer test: even the "leaked=True" record names a channel, never a value.
     path = tmp_path / "adversarial.jsonl"
