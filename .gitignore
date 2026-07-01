@@ -29,7 +29,8 @@ docs/decisions/
 docs/discovery/
 docs/strategy/
 docs/superpowers/
-CLAUDE.md
+# root project instructions only — the provider skill kit ships its own skills/CLAUDE.md
+/CLAUDE.md
 
 # Claude Code local config, agents, and skills (internal)
 .claude/
