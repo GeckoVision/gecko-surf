@@ -25,6 +25,7 @@ prompt-injection phrase).
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 # Cap on any single spec-provided text field reaching the agent. Long, wall-of-text
@@ -99,11 +100,28 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def _fold(text: str) -> str:
+    """Canonicalize text before regex matching so invisible/compatibility variants can't
+    slip a trigger past the raw-byte rules.
+
+    Strips Unicode format chars (category ``Cf`` — zero-width space/joiner, bidi marks):
+    a single ``U+200B`` inside a trigger word (e.g. "Ignore prev<U+200B>ious instructions")
+    otherwise voids every text defense at once. Then NFKC-folds compatibility forms
+    (fullwidth latin, ligatures) to their canonical ASCII.
+
+    NOTE: NFKC does NOT fold cross-script homoglyphs (e.g. a Cyrillic "і" for a Latin
+    "i"). Mixed-script/confusables detection is a separate follow-on, out of scope here.
+    """
+    stripped = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return unicodedata.normalize("NFKC", stripped)
+
+
 def scan_text(text: str) -> list[str]:
     """Return the names of danger rules ``text`` trips (empty list == clean)."""
     if not text:
         return []
-    return [name for name, pat in _PATTERNS.items() if pat.search(text)]
+    folded = _fold(text)
+    return [name for name, pat in _PATTERNS.items() if pat.search(folded)]
 
 
 def key_is_dangerous(key: Any) -> bool:
@@ -118,7 +136,10 @@ def looks_like_secret_value(value: Any) -> bool:
     secret or attacker-controlled address that must never flow into a tool arg."""
     if not isinstance(value, str):
         return False
-    return any(pat.search(value) for pat in _SECRET_VALUE_PATTERNS)
+    # Same fold as scan_text: a secret split by a zero-width char (e.g. "sk-<U+200B>AAAA…") must
+    # still be recognized and dropped before it can seed a tool arg.
+    folded = _fold(value)
+    return any(pat.search(folded) for pat in _SECRET_VALUE_PATTERNS)
 
 
 def sanitize_text(text: Any) -> tuple[Any, bool]:
