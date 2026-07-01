@@ -108,6 +108,30 @@ def test_to_adversarial_record_validates_leak_sink_shape():
         )
 
 
+def test_onchain_vocab_extension_is_closed_and_persists():
+    # Battle-test v1.5: the on-chain enforce reasons + memo/log leak channels are additive,
+    # closed-set vocabulary (data, not Solana code) so the on-chain harness can persist an
+    # ``AdversarialOutcome`` graded on the account-diff through the SAME allowlist writer.
+    for reason in (
+        "receiver_not_allowlisted",
+        "program_not_allowlisted",
+        "oracle_state_unpinned",
+        "hook_reverted",
+        "idl_sanitized",
+    ):
+        assert reason in BLOCKED_REASONS
+        # a blocked on-chain outcome carrying the reason serializes cleanly
+        to_adversarial_record(_make_adv(verdict="blocked", blocked_reason=reason))
+    # the memo/log channels are valid leak sinks (the on-chain analog of url/body)
+    for sink in ("memo", "log"):
+        to_adversarial_record(_make_adv(leaked=True, leak_sink=sink))
+    # still fails closed on an invented reason / channel
+    with pytest.raises(CorpusError):
+        to_adversarial_record(_make_adv(blocked_reason="chain_go_brrr"))
+    with pytest.raises(CorpusError):
+        to_adversarial_record(_make_adv(leaked=True, leak_sink="instruction_data"))
+
+
 def test_record_adversarial_writes_no_canary_or_value(tmp_path):
     # The killer test: even the "leaked=True" record names a channel, never a value.
     path = tmp_path / "adversarial.jsonl"

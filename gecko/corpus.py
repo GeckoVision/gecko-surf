@@ -231,6 +231,15 @@ BLOCKED_REASONS = frozenset(
         "payment_reqs_untrusted",  # x402 challenge failed the provisioning policy
         "observation_quarantined",  # an L3 poisoned observation was neutralized
         "policy_refused",  # the agent policy itself refused (L3 measure-only)
+        # --- on-chain enforce reasons (battle-test v1.5; data, no Solana code here) ---
+        # The Surfpool substrate grades the account-state diff, not a prepared request, so a
+        # blocked on-chain action attributes to one of these. Categorical only — never an
+        # address, amount, or programId value (mirrors the off-chain reasons above).
+        "receiver_not_allowlisted",  # a net-receiver in the diff was not intent-authorized
+        "program_not_allowlisted",  # a (CPI-mined) programId was not intent-authorized
+        "oracle_state_unpinned",  # re-profile diverged from the pinned oracle state
+        "hook_reverted",  # a Token-2022 transfer-hook (firewall denylist) reverted the exit
+        "idl_sanitized",  # the IDL sanitizer stripped a poisoned account role / injected op
     }
 )
 
@@ -241,7 +250,9 @@ VERDICTS = frozenset({"blocked", "exploited", "served", "over_refused"})
 # from request data (a header NAME comes from a spec-declared param), so it is guarded like
 # the categorical axes: a loggable url/body, or ``header:<name>`` where the name is short and
 # NOT itself secret-shaped (a poisoned spec could name a header param a secret string).
-_LEAK_SINK_CHANNELS = frozenset({"url", "body"})
+# ``memo``/``log`` are the on-chain channel names (battle-test v1.5): a secret-shaped byte
+# string in a Memo instruction or a program log message — the on-chain analog of url/body.
+_LEAK_SINK_CHANNELS = frozenset({"url", "body", "memo", "log"})
 _MAX_LEAK_SINK_NAME = 128
 
 
