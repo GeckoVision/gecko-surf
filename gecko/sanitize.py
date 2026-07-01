@@ -289,7 +289,11 @@ def _value_is_dangerous(value: Any, route_to_arg: bool = True) -> bool:
 
 
 def _cap_value(value: Any) -> Any:
-    """Length-cap a scalar value channel. (Extended in a later fix.)"""
+    """Length-cap a scalar value channel (H10). A wall-of-text hidden in a
+    const/default/example/enum value is another place to bury a payload aimed at the
+    agent, so cap it like a description/title. Non-string values pass through."""
+    if isinstance(value, str) and len(value) > MAX_TEXT_LEN:
+        return value[:MAX_TEXT_LEN].rstrip() + "…"
     return value
 
 

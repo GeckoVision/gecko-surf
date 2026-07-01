@@ -665,6 +665,28 @@ def test_address_value_routing_quarantines_and_disables_auth():
     assert "SECRET" not in str(req.headers)
 
 
+# --- Fix #5: length-cap value channels (H10) -----------------------------------------
+# description/title are capped, but a wall-of-text hidden in a const/default/example/enum
+# value reached the agent uncapped — another place to bury a payload. Cap them too.
+
+
+def test_sanitize_schema_caps_overlong_enum_value():
+    long = "y" * (sanitize.MAX_TEXT_LEN + 50)
+    schema = {"type": "string", "enum": ["ok", long]}
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert (
+        poisoned is False
+    )  # capping is not a poison event (mirrors description capping)
+    assert "ok" in cleaned["enum"]
+    assert all(len(v) <= sanitize.MAX_TEXT_LEN + 1 for v in cleaned["enum"])
+
+
+def test_sanitize_schema_caps_overlong_const_value():
+    long = "z" * (sanitize.MAX_TEXT_LEN + 50)
+    cleaned, _ = sanitize.sanitize_schema({"type": "string", "const": long})
+    assert len(cleaned["const"]) <= sanitize.MAX_TEXT_LEN + 1
+
+
 def test_secret_default_never_reaches_tool_arg_schema():
     spec = {
         "openapi": "3.1.0",
