@@ -53,6 +53,20 @@ path on one genuinely painful API**, and a clean, API-agnostic engine behind it.
 
 ---
 
+## Watch it run — the 70-second launch demo
+
+<p align="center">
+  <img src="docs/assets/launch.gif" alt="Gecko launch demo — comprehend TxODDS into 8/8 first-call-correct tools + live odds; block a poisoned spec 8/8→0/8; gecko test writes 32/32 checks" width="820">
+</p>
+
+Three acts, **every number from a real run**:
+
+- **Plug in** a paywalled API (TxODDS) → 18 ops comprehended, **8/8 first-call-correct**, live World Cup odds.
+- **Stay safe** → a poisoned spec that drains a naive agent **8/8** is blocked **0/8**, benign calls still served — caught in simulation, before any signature exists.
+- **Stay correct** → `gecko test` writes **32/32** first-call-correctness checks and emits them to CI.
+
+---
+
 ## Architecture
 
 Gecko is a **control plane**, not a data plane. It holds the API's *surface*, the
