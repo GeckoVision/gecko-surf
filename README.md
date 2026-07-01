@@ -1,5 +1,7 @@
 # gecko-surf — make any API agent-usable without integration code
 
+<!-- mcp-name: tech.geckovision/surf -->
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
 [![uv](https://img.shields.io/badge/uv-managed-DE5FE9.svg)](https://docs.astral.sh/uv/)
 [![Claude Code](https://img.shields.io/badge/surface-MCP-D97757.svg)](https://modelcontextprotocol.io/)

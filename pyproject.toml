@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.1.0"
+version = "0.1.1"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 requires-python = ">=3.11"
 license = "Apache-2.0"

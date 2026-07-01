@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "tech.geckovision/surf",
+  "description": "Make any API agent-usable: point Gecko at an OpenAPI spec and it returns first-call-correct, auth-hidden agent tools an agent calls right the first time.",
+  "repository": {
+    "url": "https://github.com/GeckoVision/gecko-surf",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "gecko-surf",
+      "version": "0.1.1",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "remotes": [
+    { "type": "streamable-http", "url": "https://mcp.geckovision.tech/mcp" }
+  ]
+}
