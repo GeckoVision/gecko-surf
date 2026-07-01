@@ -1,0 +1,401 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Jito Block Engine — bundles + transactions (drafted from docs/source)",
+    "version": "0.1.0",
+    "description": "Gecko's comprehension surface for the Jito Block Engine (https://docs.jito.wtf), the JSON-RPC service Solana searchers/dApps use to submit MEV bundles and low-latency transactions. Built by Jito Labs.\n\nNO OpenAPI ships for Jito: this spec is the docs->draft-OpenAPI on-ramp. Method names, endpoint paths, and parameters were read from the rendered docs page https://docs.jito.wtf/lowlatencytxnsend/ (a JS-driven Sphinx/RTD site, so a headless browser was needed to see the request/response tables) and cross-checked against the official SDK source in jito-labs/jito-py-rpc (jito_py_rpc/jito_jsonrpc_sdk.py), jito-labs/jito-go-rpc, jito-labs/jito-js-rpc, jito-labs/jito-rust-rpc, and jito-labs/mev-protos (json_rpc/http.md).\n\nJSON-RPC<->OpenAPI MISMATCH (handled, not hidden): the Block Engine is JSON-RPC over HTTP POST, not REST, and it is NOT one-endpoint-per-method — several methods share a wire path (e.g. sendBundle and getTipAccounts both POST /api/v1/bundles; the method lives in the envelope). OpenAPI requires a unique (path, method) per operation, so each JSON-RPC method is surfaced here as its OWN question-shaped operation: operationId = the exact JSON-RPC method, path = a virtual /{method} route, requestBody = that method's params BY NAME. The true wire path and envelope method are carried per-operation in x-jsonrpc-endpoint / x-jsonrpc-method, and the positional order Jito expects in `params` is carried in x-jsonrpc-params.\n\nHONESTY: Jito's params are POSITIONAL arrays (e.g. sendBundle params = [[transactions], {encoding}]). We model them by name for first-call-correct discovery and record the positional order in x-jsonrpc-params. A LIVE caller assembles the JSON-RPC envelope {jsonrpc:\"2.0\", id, method: <x-jsonrpc-method>, params: <named fields in x-jsonrpc-params order>} and POSTs to x-jsonrpc-endpoint. This recorded/comprehension demo surfaces each method directly so an agent can find and shape the call correctly first try.\n\nAUTH: default sends now need NO auth key (docs: 'You no longer need an approved auth key for default sends'; use Null/None). An OPTIONAL UUID unlocks higher rate limits, sent as the `x-jito-auth` header or a `?uuid=` query param — modeled as the optional `jitoUuidAuth` scheme (every op accepts no-auth OR the UUID). getTipFloor lives on a DIFFERENT host (bundles.jito.wtf) and is plain REST, not JSON-RPC — noted on that operation.",
+    "x-source": [
+      "https://docs.jito.wtf/lowlatencytxnsend/",
+      "https://github.com/jito-labs/jito-py-rpc/blob/master/jito_py_rpc/jito_jsonrpc_sdk.py",
+      "https://github.com/jito-labs/jito-go-rpc/blob/master/bundles.go",
+      "https://github.com/jito-labs/jito-js-rpc/blob/master/src/index.ts",
+      "https://github.com/jito-labs/mev-protos/blob/master/json_rpc/http.md"
+    ]
+  },
+  "x-jsonrpc": {
+    "version": "2.0",
+    "note": "Virtual /{method} paths exist only so OpenAPI can give each JSON-RPC method its own operation. Live transport collapses them to a POST at x-jsonrpc-endpoint with the method in the envelope. `params` is a POSITIONAL array; assemble it from the named requestBody fields in the order given by x-jsonrpc-params.",
+    "envelope": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "<operation x-jsonrpc-method>",
+      "params": "<requestBody fields, in x-jsonrpc-params order>"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://mainnet.block-engine.jito.wtf",
+      "description": "Mainnet Block Engine (global). Regional hosts exist (amsterdam./frankfurt./ny./tokyo. etc. .mainnet.block-engine.jito.wtf) with identical paths."
+    },
+    {
+      "url": "https://testnet.block-engine.jito.wtf",
+      "description": "Testnet Block Engine."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "jitoUuidAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-jito-auth",
+        "description": "OPTIONAL UUID for higher rate limits. Default sends need no auth. May instead be passed as a `?uuid=<uuid>` query param. Injected by the access layer, never surfaced to the agent."
+      }
+    },
+    "schemas": {
+      "TxEncoding": {
+        "type": "string",
+        "enum": ["base64", "base58"],
+        "default": "base58",
+        "description": "Encoding of the transaction data. base64 recommended; base58 is slow and DEPRECATED."
+      },
+      "RpcSendResult": {
+        "type": "object",
+        "description": "JSON-RPC 2.0 envelope with a single string result (a signature or bundle id).",
+        "properties": {
+          "jsonrpc": { "type": "string", "example": "2.0" },
+          "result": {
+            "type": "string",
+            "example": "2id3YC2jK9G5Wo2phDx4gJVAew8DcY5NAojnVuao8rkxwPYPe8cSwE5GzhEgJA2y8fVjDEo6iR6ykBvDxrTQrtpb"
+          },
+          "id": { "type": "integer", "example": 1 }
+        }
+      },
+      "TipAccountsResult": {
+        "type": "object",
+        "description": "JSON-RPC 2.0 envelope; result is the list of tip accounts (base-58 pubkeys).",
+        "properties": {
+          "jsonrpc": { "type": "string", "example": "2.0" },
+          "result": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": [
+              "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+              "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+              "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+              "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+              "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+              "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+              "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+              "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT"
+            ]
+          },
+          "id": { "type": "integer", "example": 1 }
+        }
+      },
+      "BundleStatusesResult": {
+        "type": "object",
+        "description": "JSON-RPC 2.0 envelope; result carries the confirmed on-chain status of each queried bundle. null result if a bundle is not found.",
+        "properties": {
+          "jsonrpc": { "type": "string", "example": "2.0" },
+          "result": {
+            "type": "object",
+            "properties": {
+              "context": {
+                "type": "object",
+                "properties": { "slot": { "type": "integer", "example": 242806119 } }
+              },
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bundle_id": {
+                      "type": "string",
+                      "example": "892b79ed49138bfb3aa5441f0df6e06ef34f9ee8f3976c15b323605bae0cf51d"
+                    },
+                    "transactions": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Base-58 encoded signatures applied by the bundle."
+                    },
+                    "slot": { "type": "integer", "example": 242804011 },
+                    "confirmation_status": {
+                      "type": "string",
+                      "enum": ["processed", "confirmed", "finalized"],
+                      "example": "finalized"
+                    },
+                    "err": { "type": "object", "description": "Any retryable/non-retryable error; retry if retryable." }
+                  }
+                }
+              }
+            }
+          },
+          "id": { "type": "integer", "example": 1 }
+        }
+      },
+      "InflightBundleStatusesResult": {
+        "type": "object",
+        "description": "JSON-RPC 2.0 envelope; result carries the in-flight status (last 5 minutes) of each queried bundle.",
+        "properties": {
+          "jsonrpc": { "type": "string", "example": "2.0" },
+          "result": {
+            "type": "object",
+            "properties": {
+              "context": {
+                "type": "object",
+                "properties": { "slot": { "type": "integer", "example": 280999028 } }
+              },
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "bundle_id": {
+                      "type": "string",
+                      "example": "b31e5fae4923f345218403ac1ab242b46a72d4f2a38d131f474255ae88f1ec9a"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["Invalid", "Pending", "Failed", "Landed"],
+                      "example": "Landed",
+                      "description": "Invalid: not in system (5-min lookback). Pending: not failed/landed/invalid. Failed: all regions marked failed, not forwarded. Landed: on-chain."
+                    },
+                    "landed_slot": {
+                      "type": ["integer", "null"],
+                      "example": null,
+                      "description": "Slot the bundle landed in, else null if not Landed."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "id": { "type": "integer", "example": 1 }
+        }
+      },
+      "TipFloor": {
+        "type": "array",
+        "description": "Recent Jito tip statistics (SOL). Plain REST array, NOT a JSON-RPC envelope.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "time": { "type": "string", "format": "date-time", "example": "2024-09-01T12:58:00Z" },
+            "landed_tips_25th_percentile": { "type": "number", "example": 6.001e-06 },
+            "landed_tips_50th_percentile": { "type": "number", "example": 1e-05 },
+            "landed_tips_75th_percentile": { "type": "number", "example": 3.6196e-05 },
+            "landed_tips_95th_percentile": { "type": "number", "example": 0.0014479 },
+            "landed_tips_99th_percentile": { "type": "number", "example": 0.010007999 },
+            "ema_landed_tips_50th_percentile": { "type": "number", "example": 9.836e-06 }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/sendBundle": {
+      "post": {
+        "operationId": "sendBundle",
+        "summary": "Submit a bundle of up to 5 signed transactions to land atomically (all-or-nothing).",
+        "description": "JSON-RPC `sendBundle`. Relays a client-built bundle to the leader unmodified; returns a bundle_id immediately (receipt only — not a landing guarantee; poll getBundleStatuses). A tip to one of the getTipAccounts accounts is required to be considered; min tip 1000 lamports. Wire: POST /api/v1/bundles, envelope params = [[transactions], {encoding}].",
+        "tags": ["bundles"],
+        "x-jsonrpc-method": "sendBundle",
+        "x-jsonrpc-endpoint": "/api/v1/bundles",
+        "x-jsonrpc-params": ["transactions", "encoding"],
+        "security": [{}, { "jitoUuidAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["transactions"],
+                "properties": {
+                  "transactions": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 5,
+                    "description": "Fully-signed transactions (max 5), base64 (recommended) or base58 (DEPRECATED) encoded strings. Executed sequentially and atomically."
+                  },
+                  "encoding": { "$ref": "#/components/schemas/TxEncoding" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bundle received; result is the bundle_id (SHA-256 of the bundle's tx signatures).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcSendResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getTipAccounts": {
+      "post": {
+        "operationId": "getTipAccounts",
+        "summary": "Get the 8 tip accounts a bundle must pay to be considered in the auction.",
+        "description": "JSON-RPC `getTipAccounts`. Returns the designated tip accounts (constant set of 8). Pick one at random to reduce contention, then transfer SOL to it as your bundle tip. Wire: POST /api/v1/bundles, envelope params = [] (no params). DRIFT NOTE: the docs `curl` example posts to /api/v1/getTipAccounts, but the official SDKs (jito-py-rpc/jito-go-rpc) post to /api/v1/bundles; JSON-RPC dispatches on the envelope `method`, so both resolve — we carry the SDK (executable) path.",
+        "tags": ["bundles"],
+        "x-jsonrpc-method": "getTipAccounts",
+        "x-jsonrpc-endpoint": "/api/v1/bundles",
+        "x-jsonrpc-params": [],
+        "security": [{}, { "jitoUuidAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "The list of tip accounts (base-58 pubkeys).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TipAccountsResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getBundleStatuses": {
+      "post": {
+        "operationId": "getBundleStatuses",
+        "summary": "Get the confirmed on-chain status of submitted bundles by bundle_id.",
+        "description": "JSON-RPC `getBundleStatuses` (like getSignatureStatuses). Returns null for an unknown/unlanded bundle, else context.slot plus each bundle's transactions, slot, confirmation_status and err. Searches recent history only (up to ~300 rooted slots). Wire: POST /api/v1/getBundleStatuses, envelope params = [[bundleIds]].",
+        "tags": ["bundles"],
+        "x-jsonrpc-method": "getBundleStatuses",
+        "x-jsonrpc-endpoint": "/api/v1/getBundleStatuses",
+        "x-jsonrpc-params": ["bundleIds"],
+        "security": [{}, { "jitoUuidAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bundleIds"],
+                "properties": {
+                  "bundleIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 5,
+                    "description": "Bundle IDs to confirm (max 5)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed status per bundle (null result if not found).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BundleStatusesResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getInflightBundleStatuses": {
+      "post": {
+        "operationId": "getInflightBundleStatuses",
+        "summary": "Get the in-flight status (last 5 minutes) of submitted bundles by bundle_id.",
+        "description": "JSON-RPC `getInflightBundleStatuses`. For each bundle_id (max 5) returns status one of Invalid/Pending/Failed/Landed plus landed_slot. Faster liveness check than getBundleStatuses over a 5-minute window. Wire: POST /api/v1/getInflightBundleStatuses, envelope params = [[bundleIds]].",
+        "tags": ["bundles"],
+        "x-jsonrpc-method": "getInflightBundleStatuses",
+        "x-jsonrpc-endpoint": "/api/v1/getInflightBundleStatuses",
+        "x-jsonrpc-params": ["bundleIds"],
+        "security": [{}, { "jitoUuidAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bundleIds"],
+                "properties": {
+                  "bundleIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 5,
+                    "description": "Bundle IDs to confirm (max 5)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "In-flight status per bundle.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InflightBundleStatusesResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sendTransaction": {
+      "post": {
+        "operationId": "sendTransaction",
+        "summary": "Send a single signed transaction through Jito with MEV protection (fast landing).",
+        "description": "JSON-RPC `sendTransaction`. A direct proxy to Solana's sendTransaction that forwards to the validator with MEV protection; always sets skip_preflight=true. Set query bundleOnly=true for revert protection (sent as a single-tx bundle). Min tip 1000 lamports; a 70/30 priority-fee/Jito-tip split is recommended. Wire: POST /api/v1/transactions, envelope params = [transaction, {encoding}].",
+        "tags": ["transactions"],
+        "x-jsonrpc-method": "sendTransaction",
+        "x-jsonrpc-endpoint": "/api/v1/transactions",
+        "x-jsonrpc-params": ["transaction", "encoding"],
+        "security": [{}, { "jitoUuidAuth": [] }],
+        "parameters": [
+          {
+            "name": "bundleOnly",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": false },
+            "description": "If true, enable revert protection by sending the transaction exclusively as a single-transaction bundle."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["transaction"],
+                "properties": {
+                  "transaction": {
+                    "type": "string",
+                    "description": "The fully-signed transaction (first signature embedded), base64 (recommended) or base58 (slow, DEPRECATED) encoded."
+                  },
+                  "encoding": { "$ref": "#/components/schemas/TxEncoding" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "result is the transaction signature (as Solana sendTransaction). bundle_id is returned in the x-bundle-id response header if sent as a bundle.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcSendResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getTipFloor": {
+      "get": {
+        "operationId": "getTipFloor",
+        "summary": "Get recent Jito tip amounts (percentiles) to size a competitive tip.",
+        "description": "Plain REST GET (NOT JSON-RPC, and on a DIFFERENT host). Returns recent landed-tip percentiles in SOL so you can price a bundle/transaction tip. True URL: GET https://bundles.jito.wtf/api/v1/bundles/tip_floor. A live WebSocket stream also exists at wss://bundles.jito.wtf/api/v1/bundles/tip_stream (not modeled here).",
+        "tags": ["tips"],
+        "x-transport": "rest",
+        "x-endpoint-url": "https://bundles.jito.wtf/api/v1/bundles/tip_floor",
+        "responses": {
+          "200": {
+            "description": "Recent tip-floor statistics.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TipFloor" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
