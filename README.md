@@ -13,6 +13,10 @@
 >
 > *Docs and endpoints are built for humans. Gecko translates them for agents.*
 
+<p align="center">
+  <img src="docs/assets/launch.gif" alt="One command: install gecko-surf, then comprehend any API into first-call-correct MCP tools" width="820">
+</p>
+
 Today a builder reads the docs, hand-writes a client, and **still can't tell if the
 agent is calling the API correctly.** Gecko removes that step: it ingests an API's
 *surface* (OpenAPI/docs), turns it into question-shaped, first-call-correct agent
