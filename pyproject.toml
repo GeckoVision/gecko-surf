@@ -50,6 +50,12 @@ dense = [
     "certifi>=2024.0",
     "anthropic>=0.40",
 ]
+# The agent-in-the-loop FCC eval (scripts/fcc_eval.py + gecko.fcc_eval). Haiku does the
+# tool pick+emit; the anthropic SDK is injected behind the LLM seam — the harness module
+# imports nothing provider-specific, only the runner constructs the client. OPTIONAL.
+fcc = [
+    "anthropic>=0.40",
+]
 
 [build-system]
 requires = ["hatchling"]
