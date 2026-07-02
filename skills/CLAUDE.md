@@ -27,9 +27,9 @@ the engine is a separate `gecko-surf` install the plugin drives via `uvx`/`pip`.
 
 ```
 skills/
-  api-agent-ready/     SKILL.md + the five-step spine:
-                       comprehend · artifacts · serve-mcp · discoverable ·
-                       aggregate-not-replace
+  api-agent-ready/     SKILL.md + the spine:
+                       best-practices (Step 0, design) · comprehend · artifacts ·
+                       serve-mcp · discoverable · aggregate-not-replace
   x402-payai-setup/    SKILL.md + wire-x402-payai · verify-paid-call
 agents/                api-onboarding-engineer · x402-payments-engineer
 commands/              /make-agent-ready <url> · /setup-x402 <api>
@@ -45,7 +45,9 @@ CLAUDE.md · LICENSE (MIT) · README.md · VERSION · CHANGELOG.md
   MCP + one-click add, SSRF guard, `gecko test`, `gecko from-docs`. Building: agent-
   native artifact **auto-emission** (`llms.txt` / `x-gecko` / `gecko.json` are a
   hand-authored pattern today), breadcrumb discoverability, drift re-ingest, the
-  correctness corpus, and live x402/PayAI settlement.
+  correctness corpus, and live x402/PayAI settlement. **Step 0 — `best-practices.md`
+  is provider-side design *guidance*** (advice the provider applies to their own API);
+  it is neither Live nor Building — never present the checklist as a Gecko capability.
 - **Don't invent PayAI specifics.** Facilitator URLs, SDK call names, exact endpoint
   shapes get a `<!-- VERIFY -->` marker, not an invented value. Confirm against
   PayAI's live docs before publishing.

@@ -1,6 +1,6 @@
 ---
 name: api-agent-ready
-description: Make ANY API agent-ready without integration code — comprehend its OpenAPI/docs with gecko, emit the agent-native artifacts (llms.txt breadcrumb, x-gecko spec annotations, gecko.json), serve its FULL surface over MCP with a one-click add, and make it discoverable — while leaving the provider's own MCP intact (AGGREGATE, not replace). For API providers who want their whole API usable by agents first-call-correct, not just the handful of endpoints they hand-wrapped. Solana/x402-flavored for the first market, but the capability is any-API. Use when onboarding a provider's API to the agent ecosystem. NOT a payment rail and NOT a marketplace.
+description: Make ANY API agent-ready without integration code — design/harden the surface with the agent-readiness best-practices checklist (one canonical read, field-complete, clear enums/required fields, machine-authable auth), comprehend its OpenAPI/docs with gecko, emit the agent-native artifacts (llms.txt breadcrumb, x-gecko spec annotations, gecko.json), serve its FULL surface over MCP with a one-click add, and make it discoverable — while leaving the provider's own MCP intact (AGGREGATE, not replace). For API providers who want their whole API usable by agents first-call-correct, not just the handful of endpoints they hand-wrapped. Solana/x402-flavored for the first market, but the capability is any-API. Use when building, hardening, or onboarding a provider's API to the agent ecosystem. NOT a payment rail and NOT a marketplace.
 user-invocable: true
 ---
 
@@ -19,30 +19,43 @@ a few endpoints into an MCP, so agents see a **fraction** of the API. The long t
 stays invisible unless someone writes glue.
 
 This skill closes that gap with `gecko`, the open-source comprehension engine. You
-run a **five-step spine** that turns an OpenAPI (or a doc page) into a first-call-
-correct MCP for the *full* surface, emits the breadcrumbs agents use to *find* it,
-and serves it with a one-click add — **alongside** whatever MCP the provider built.
+run a **spine** that turns an OpenAPI (or a doc page) into a first-call-correct MCP
+for the *full* surface, emits the breadcrumbs agents use to *find* it, and serves it
+with a one-click add — **alongside** whatever MCP the provider built.
+
+If the provider is still **building or hardening** the API, start one step earlier:
+**Step 0 — Design for agents** ([best-practices.md](best-practices.md)) is a checklist
+for shaping endpoints agents consume well (one canonical read, field-complete, clear
+enums/required fields, a machine-authable auth path) *before* Gecko comprehends them.
+A surface designed to that checklist lands first-call-correct because it's
+unambiguous — not because a layer papered over the ambiguity.
 
 **"Make every API easily pluggable."**
 
-## The five-step spine
+## The spine
 
-Pick the step you're on; load only the file you need (progressive, token-efficient):
+Pick the step you're on; load only the file you need (progressive, token-efficient).
+Step 0 is provider-side design work; steps 1–3 are where Gecko acts; 4–5 are the
+discipline that keeps it in lane.
 
 | # | Step | Read | Status |
 |---|---|---|---|
+| 0 | **Design for agents** — the API best-practices checklist (do this while building) | [best-practices.md](best-practices.md) | provider-side guidance |
 | 1 | **Comprehend** the OpenAPI/docs → first-call-correct tools | [comprehend.md](comprehend.md) | **Live** |
 | 2 | **Emit artifacts** — `llms.txt`, `x-gecko`, `gecko.json` breadcrumbs | [artifacts.md](artifacts.md) | **Building** (hand-authored pattern) |
 | 3 | **Serve MCP** — Streamable-HTTP + one-click `claude mcp add` | [serve-mcp.md](serve-mcp.md) | **Live** |
 | 4 | **Make discoverable** — breadcrumb, not a public catalog | [discoverable.md](discoverable.md) | **Building** |
 | 5 | **Aggregate, not replace** — never touch the provider's own MCP | [aggregate-not-replace.md](aggregate-not-replace.md) | invariant |
 
-Get all five and the provider's *entire* API is usable by an agent, first try — not
-just the endpoints they had time to hand-wrap.
+Get all of them and the provider's *entire* API is usable by an agent, first try —
+not just the endpoints they had time to hand-wrap. New to the kit and want the whole
+path end to end? [best-practices.md](best-practices.md) closes with a **"How a
+provider uses this kit"** walk-through (install → `/make-agent-ready` → checklist →
+discoverable → x402).
 
 This skill also ships:
 - **Command** — [`/make-agent-ready`](../../commands/make-agent-ready.md): run the
-  five-step spine on an OpenAPI or docs URL and emit the served MCP + add strings.
+  onboarding spine on an OpenAPI or docs URL and emit the served MCP + add strings.
 - **Agent** — [`api-onboarding-engineer`](../../agents/api-onboarding-engineer.md):
   a specialist that takes a provider API and returns it agent-ready.
 - **Rule** — [`aggregate-not-rail`](../../rules/aggregate-not-rail.md): never replace

@@ -9,6 +9,12 @@ one-click add + the discovery breadcrumbs. Aggregate, not replace.
 
 **Argument:** an OpenAPI 3.x URL, a docs page URL, or a pasted spec.
 
+**Step 0 (if the provider is still building/hardening the API):** before comprehending,
+walk the agent-readiness best-practices checklist so the surface itself is unambiguous
+— one canonical read, field-complete, clear enums/required fields, a machine-authable
+auth path. This is provider-side design work, upstream of the steps below. (See
+`skills/api-agent-ready/best-practices.md`.)
+
 ## Steps
 
 1. **Comprehend.** If it's an OpenAPI URL, run `gecko <url>`. If it's a docs page,
