@@ -306,6 +306,9 @@ dense = [
     { name = "certifi" },
     { name = "pymongo" },
 ]
+events = [
+    { name = "pymongo" },
+]
 serve = [
     { name = "mcp", extra = ["cli"] },
     { name = "uvicorn" },
@@ -332,11 +335,12 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
     { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
     { name = "pymongo", marker = "extra == 'dense'", specifier = ">=4.10" },
+    { name = "pymongo", marker = "extra == 'events'", specifier = ">=4.9" },
     { name = "python-telegram-bot", marker = "extra == 'sosbot'", specifier = ">=21" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.49.0" },
 ]
-provides-extras = ["serve", "sosbot", "dense"]
+provides-extras = ["serve", "events", "sosbot", "dense"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -18,11 +18,15 @@ imported lazily by those modules so `import gecko` stays dep-light.
 
 from __future__ import annotations
 
+# Defined BEFORE the submodule imports below: telemetry.py does `from . import
+# __version__` at import time, and it is now pulled into the client import chain
+# (client -> events -> telemetry), so the name must already exist to avoid a
+# partially-initialized-module circular import.
+__version__ = "0.1.0"
+
 from .access import NoAuthSession, Session, public_session
 from .client import AgentApiClient
 from .mcp_server import McpSurface
-
-__version__ = "0.1.0"
 
 __all__ = [
     "AgentApiClient",

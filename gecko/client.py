@@ -25,6 +25,7 @@ from .access import AuthSession, stub_session
 from .caller import CallError, PreparedRequest, build_request, execute
 from .catalog import Catalog
 from .fusion import RRF_K, rrf_fuse
+from .events import emit_surf_event
 from .ingest import Operation, extract_operations, load_spec
 from .sample import example_from_schema
 from .sanitize import sanitize_schema
@@ -299,13 +300,15 @@ class AgentApiClient:
         inject_auth = (
             self.session.auth_headers() if self._may_inject_auth_for(op) else None
         )
-        return build_request(
+        req = build_request(
             tool,
             args,
             self.base_url,
             inject_auth,
             allowed_auth_hosts=self._auth_allowed_hosts,
         )
+        emit_surf_event("surf.prepare", surface_id=self.surface_id, tool_name=tool_name)
+        return req
 
     def _effective_mode(self, tool_name: str, mode: str) -> str:
         """Degrade live -> recorded when the surface can't be safely called live: a
@@ -378,6 +381,18 @@ class AgentApiClient:
         body or filled URL. Uses the SAME narrow ``corpus.outcome_from`` boundary the
         HTTP server uses (it structurally cannot receive a payload). Opt-in via
         ``corpus_path``; a capture failure must never break the agent's call."""
+        # Usage instrumentation (independent of opt-in corpus capture): one
+        # control-plane-safe outcome event — the ok-bool + error CLASS, never a body.
+        error_class = corpus.error_class_for(status, exc)
+        emit_surf_event(
+            "surf.first_call_correct",
+            surface_id=self.surface_id,
+            tool_name=tool_name,
+            mode=mode,
+            ok=status is not None and 200 <= status < 400,
+            error_class=error_class,
+            latency_ms=latency_ms,
+        )
         if self._corpus_path is None:
             return
         tool = self._tool_by_name.get(tool_name)
@@ -391,7 +406,7 @@ class AgentApiClient:
                 tool_invoke=invoke,
                 args=args,
                 status=status,
-                error_class=corpus.error_class_for(status, exc),
+                error_class=error_class,
                 latency_ms=latency_ms,
                 mode=mode,
                 auth_injected=bool(op is not None and self._may_inject_auth_for(op)),

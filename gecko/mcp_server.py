@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from .client import AgentApiClient
+from .events import emit_surf_event
 
 _SEARCH_TOOL = {
     "name": "search_capabilities",
@@ -43,8 +44,20 @@ class McpSurface:
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "search_capabilities":
-            return self.client.search(arguments.get("query", ""))
-        return self.client.call(name, arguments, mode=self.mode)
+            hits = self.client.search(arguments.get("query", ""))
+            # Observe, never mutate: usage metadata only (result breadth k), never the query.
+            emit_surf_event(
+                "surf.search", surface_id=self.client.surface_id, k=len(hits)
+            )
+            return hits
+        result = self.client.call(name, arguments, mode=self.mode)
+        emit_surf_event(
+            "surf.call",
+            surface_id=self.client.surface_id,
+            tool_name=name,
+            mode=self.mode,
+        )
+        return result
 
 
 def serve_stdio(
