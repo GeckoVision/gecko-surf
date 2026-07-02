@@ -57,16 +57,29 @@ class UsageAggregate:
     """Anonymized usage counts. Every field is a count/rate derived from existing
     ``CallOutcome`` fields — never a raw value, surface name, path, or token."""
 
-    surfaces_comprehended: int  # distinct surface_id count
-    surface_revs: int  # distinct surface_rev count
-    total_calls: int
-    first_call_correct_rate: float
-    error_class_distribution: dict[str, int]  # counts per CLOSED error_class
+    surfaces_comprehended: int  # distinct surface_id count (coverage; all real rows)
+    surface_revs: int  # distinct surface_rev count (coverage; all real rows)
+    total_calls: int  # OBSERVED calls only (the FCC-rate denominator)
+    first_call_correct_rate: float  # OBSERVED-only — the published moat metric
+    error_class_distribution: dict[str, int]  # OBSERVED-only counts per CLOSED class
     drift_events: int  # surface_rev transitions observed per surface_id, summed
 
 
 def aggregate(corpus_path: str | Path) -> UsageAggregate:
     """Read a corpus JSONL and compute anonymized usage metrics.
+
+    The published real-usage metrics (``total_calls`` / ``first_call_correct_rate`` /
+    ``error_class_distribution``) are computed over ``source == "observed"`` rows ONLY.
+    This is the moat-metric fix: a faked recorded ``200`` (``source == "synthetic"``)
+    or a survivorship-biased agent report (``source == "reported"``) must never move
+    the first-call-correct rate. Synthetic rows are additionally segregated to a
+    separate file by ``corpus.record``, so a main-corpus read never even sees them;
+    this filter is the belt-and-suspenders for reported rows and any legacy/mixed file.
+    An UNLABELED row (no ``source`` — e.g. a legacy record) fails CLOSED: it is treated
+    as non-observed and excluded from the rate rather than silently inflating it.
+
+    Coverage counts (``surfaces_comprehended`` / ``surface_revs`` / ``drift_events``)
+    span all real rows read.
 
     Best-effort and append-only-friendly: a malformed line is skipped, a missing
     file yields zeros. Reads ONLY metadata fields; never opens a value.
@@ -94,7 +107,6 @@ def aggregate(corpus_path: str | Path) -> UsageAggregate:
                 continue  # best-effort: tolerate a partial/corrupt append
             if not isinstance(record, dict):
                 continue
-            total += 1
             surface_id = record.get("surface_id")
             surface_rev = record.get("surface_rev")
             if isinstance(surface_id, str):
@@ -106,6 +118,12 @@ def aggregate(corpus_path: str | Path) -> UsageAggregate:
                 if previous is not None and previous != surface_rev:
                     drift_events += 1
                 last_rev[surface_id] = surface_rev
+            # OBSERVED-ONLY from here: the FCC rate / total / error dist must never mix
+            # in a faked recorded 200 (synthetic) or a reported row. Fails closed on an
+            # unlabeled (sourceless) row.
+            if record.get("source") != "observed":
+                continue
+            total += 1
             if record.get("first_call_correct") is True:
                 first_call_correct += 1
             error_class = record.get("error_class")

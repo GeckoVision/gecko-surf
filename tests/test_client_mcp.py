@@ -54,3 +54,26 @@ def test_mcp_surface_search_and_call():
     surface = McpSurface(_client())
     found = surface.call_tool("search_capabilities", {"query": "match score updates"})
     assert any("scores" in f["path"] for f in found)
+
+
+def test_recorded_call_is_synthetic_source_and_segregates_corpus(tmp_path):
+    # A recorded-mode call fabricates a 200 — it must be labeled `synthetic`, NOT
+    # counted as observed. The emitted FCC event carries source="synthetic" and the
+    # corpus record routes to the segregated synthetic.jsonl (never the main corpus),
+    # so neither the adoption rate nor the moat metric sees the faked success.
+    from gecko import corpus
+    from gecko.events import set_surf_sink_override
+
+    events: list[dict] = []
+    set_surf_sink_override(lambda doc: events.append(dict(doc)))
+    try:
+        corpus_path = tmp_path / "corpus.jsonl"
+        client = AgentApiClient(str(FIXTURE), corpus_path=corpus_path)
+        client.call(_odds_tool_name(client), {"fixtureId": 4242}, mode="recorded")
+    finally:
+        set_surf_sink_override(None)
+
+    fcc = [e for e in events if e["event"] == "surf.first_call_correct"]
+    assert fcc and fcc[-1]["source"] == "synthetic"  # faked 200 is not observed
+    assert not corpus_path.exists()  # nothing synthetic in the main corpus
+    assert corpus.synthetic_sibling(corpus_path).exists()  # it landed here instead

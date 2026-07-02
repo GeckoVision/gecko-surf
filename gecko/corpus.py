@@ -23,7 +23,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from .caller import CallError
 from .sanitize import looks_like_secret_value
@@ -49,6 +49,24 @@ ERROR_CLASSES = frozenset(
         "other",
     }
 )
+
+# --- the two orthogonal, one-way provenance axes (feedback-capture decision) --------
+# Both are closed Literals defined HERE (single source of truth) and imported by every
+# consumer (telemetry/events/client); never redeclared.
+#
+# ``source`` answers "HOW was the outcome obtained?" — i.e. did ``status`` come from the
+# wire? It is DERIVED from the capture mode at the ``outcome_from`` boundary (see
+# ``source_for_mode``), never free-set by a caller, and it governs ROUTING: only
+# ``observed`` rows may feed the published first-call-correct / adoption rate.
+OutcomeSource = Literal["observed", "reported", "synthetic"]
+OUTCOME_SOURCES: frozenset[str] = frozenset(get_args(OutcomeSource))
+
+# ``tenancy`` answers "may this record LEAVE the machine into the cross-customer corpus?"
+# It is a one-way governance promise; the egress/consent layer is deliberately NOT built
+# here — only the field + a fail-closed ``local`` default, so the axis exists before any
+# record could ever egress (retrofitting it after the fact is the failure mode).
+Tenancy = Literal["local", "contributed"]
+TENANCIES: frozenset[str] = frozenset(get_args(Tenancy))
 
 # JSON type names (never values) for arg_shape. bool is checked before int.
 _JSON_TYPES: list[tuple[type, str]] = [
@@ -87,6 +105,11 @@ class CallOutcome:
     latency_ms: int | None
     mode: str
     auth_injected: bool  # whether auth was injected — a bool, never the token
+    # --- provenance axes (derived/defaulted; never a value) ---------------------------
+    source: str  # OutcomeSource — HOW obtained; DERIVED from mode, gates the FCC metric
+    tenancy: str = (
+        "local"  # Tenancy — may this record egress? default local (fail closed)
+    )
 
 
 ALLOWED_KEYS = frozenset(CallOutcome.__dataclass_fields__)
@@ -129,7 +152,31 @@ def error_class_for(status: int | None, exc: BaseException | None) -> str:
         return "malformed_request"
     if isinstance(exc, TimeoutError):
         return "timeout"
+    if exc is None:
+        # (status=None, exc=None): a well-formed request that never hit the wire — the
+        # synthetic/pre-flight-OK case. NOT a failure; before this it fell through to
+        # "other" and mislabeled every synthetic success as a generic error.
+        return "none"
     return "other"
+
+
+# --- source is DERIVED from mode; a caller can never free-set it wrong -----------------
+_MODE_TO_SOURCE: dict[str, str] = {
+    "live": "observed",  # a real upstream status came off the wire
+    "reported": "reported",  # an agent claimed the status (future report path)
+    "recorded": "synthetic",  # recorded mode fabricates a 200 — never observed
+}
+
+
+def source_for_mode(mode: str) -> str:
+    """Derive the provenance ``source`` from the capture ``mode``.
+
+    The key question (feedback-capture decision, "Two axes"): *did ``status`` come from
+    the wire?* ``live`` → ``observed``; ``reported`` → ``reported``; everything else —
+    recorded mode's faked ``200`` and the validator's synthetic run — → ``synthetic``.
+    Fails CLOSED to ``synthetic`` (the non-published bucket), so an unrecognized mode can
+    never inflate the observed first-call-correct rate."""
+    return _MODE_TO_SOURCE.get(mode, "synthetic")
 
 
 def outcome_from(
@@ -146,6 +193,7 @@ def outcome_from(
     surface_id: str,
     surface_rev: str,
     attempt: int = 1,
+    tenancy: str = "local",
 ) -> CallOutcome:
     """Build a control-plane-safe ``CallOutcome``.
 
@@ -153,9 +201,21 @@ def outcome_from(
     response body and filled URL physically cannot enter this function. ``args`` is
     read for NAMES and TYPES only (``params_present`` / ``arg_shape``); values are
     never copied out.
+
+    ``source`` is NOT a parameter: it is DERIVED from ``mode`` (see ``source_for_mode``)
+    so a caller cannot mislabel a faked recorded ``200`` as ``observed``. ``tenancy``
+    defaults to ``local`` and is validated against the closed set (the egress layer is
+    not built here — only the guarded field).
     """
     if error_class not in ERROR_CLASSES:
         raise CorpusError(f"error_class {error_class!r} not in the closed set")
+    if tenancy not in TENANCIES:
+        raise CorpusError(f"tenancy {tenancy!r} not in the closed set")
+    source = source_for_mode(mode)
+    # Belt-and-suspenders: the derivation is total, so this only trips if _MODE_TO_SOURCE
+    # ever drifts off the closed set — a build break, not a silent smuggle.
+    if source not in OUTCOME_SOURCES:
+        raise CorpusError(f"source {source!r} not in the closed set")
     ok = status is not None and 200 <= status < 400
     return CallOutcome(
         ts=ts,
@@ -175,6 +235,8 @@ def outcome_from(
         latency_ms=latency_ms,
         mode=mode,
         auth_injected=auth_injected,
+        source=source,
+        tenancy=tenancy,
     )
 
 
@@ -192,13 +254,32 @@ def to_record(outcome: CallOutcome) -> dict[str, Any]:
     return record_dict
 
 
+def synthetic_sibling(path: str | Path) -> Path:
+    """The segregated file for ``synthetic`` outcomes, co-located with the corpus
+    (``<dir>/synthetic.jsonl``).
+
+    Segregation is by PATH, not by an in-band tag, and that is deliberate: a reader of
+    the main corpus (``telemetry.aggregate``, the §4 build-time aggregator, an ad-hoc
+    ``grep``) that doesn't know about synthetic then NEVER sees a synthetic row — it
+    FAILS CLOSED. An in-band "exclude synthetic at query time" would fail open (every
+    reader must remember to filter; forgetting = corruption)."""
+    return Path(path).with_name("synthetic.jsonl")
+
+
 def record(outcome: CallOutcome, path: str | Path) -> None:
     """Append one allowlisted JSONL record. Best-effort: a corpus write must never
     break the agent's call, so failures are swallowed with a redacted note (the
-    record contents are never echoed, to avoid re-leaking input)."""
+    record contents are never echoed, to avoid re-leaking input).
+
+    Routing is by ``source``: a ``synthetic`` outcome is diverted to the segregated
+    ``synthetic.jsonl`` sibling so the main corpus only ever holds real (observed /
+    reported) rows. Enforced HERE — the single write boundary — so no call site can
+    forget to segregate."""
     try:
         record_dict = to_record(outcome)
-        target = Path(path)
+        target = (
+            synthetic_sibling(path) if outcome.source == "synthetic" else Path(path)
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record_dict) + "\n")
