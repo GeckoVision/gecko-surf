@@ -15,19 +15,24 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import corpus
 from .access import AuthSession, stub_session
 from .caller import CallError, PreparedRequest, build_request, execute
 from .catalog import Catalog
+from .fusion import RRF_K, rrf_fuse
 from .ingest import Operation, extract_operations, load_spec
 from .sample import example_from_schema
 from .sanitize import sanitize_schema
 from .surfaces import _host_of, anchor_for, spec_is_quarantined, surface_rev, tools_rev
 from .tools import auth_location_is_safe, build_tools, to_tool
+
+if TYPE_CHECKING:
+    from .dense import DenseIndex
 
 logger = logging.getLogger("gecko.client")
 
@@ -51,6 +56,25 @@ class ScoredHit:
     is_fallback: bool
 
 
+@dataclass(frozen=True)
+class FusedHit:
+    """A hybrid (lexical+dense) search result with fusion provenance — the scored sibling of
+    the frozen ``search_hybrid`` dict shape. ``score`` is the RRF score (drives order/recall).
+    ``is_fallback`` is the OOS confidence floor and is LEXICAL-ANCHORED: True unless the
+    lexical arm genuinely corroborated the hit (``score > 0``). The dense arm improves the
+    RANKING but never sets confidence on its own — measured on ``voyage-4-lite``, its cosine
+    scores are too compressed to separate an out-of-scope intent from a real paraphrase, so
+    tying confidence to lexical corroboration guarantees OOS pass-rate >= the lexical baseline
+    by construction, while dense still lifts paraphrase recall via rank."""
+
+    name: str
+    summary: str
+    path: str
+    method: str
+    score: float
+    is_fallback: bool
+
+
 class AgentApiClient:
     def __init__(
         self,
@@ -60,6 +84,7 @@ class AgentApiClient:
         *,
         corpus_path: str | Path | None = None,
         surface_id: str | None = None,
+        blurbs: Mapping[str, str] | None = None,
     ):
         """Make an API agent-usable from its OpenAPI spec.
 
@@ -82,7 +107,10 @@ class AgentApiClient:
         self.base_url = base_url or servers[0].get("url", "")
 
         self.operations = extract_operations(self.spec)
-        self.catalog = Catalog(self.operations)
+        # S0 enrich (optional): pre-generated, already-sanitized blurbs (keyed by tool_name)
+        # folded into the lexical overlap haystack. Pure data — no LLM/SDK reaches the
+        # ranker (invariant #2). Absent -> the unchanged plain lexical baseline.
+        self.catalog = Catalog(self.operations, blurbs)
         self.tools = build_tools(self.operations)
         self._tool_by_name = {t["name"]: t for t in self.tools}
         self._op_by_name = {to_tool(o)["name"]: o for o in self.operations}
@@ -167,6 +195,74 @@ class AgentApiClient:
         return [
             {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
             for h in self.search_scored(query, limit)
+        ]
+
+    def search_hybrid_scored(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        dense_index: DenseIndex,
+        k: int = RRF_K,
+    ) -> list[FusedHit]:
+        """Fuse the lexical arm (``catalog.search_scored``) with the injected dense arm via
+        RRF, joined on ``tool_name``. Over-fetches both arms, fuses, applies the auth filter
+        AFTER fusion, then truncates to ``limit`` (so reranking/hiding can't starve the top-k).
+        ``search_hybrid`` is a pure projection of this — the two can never disagree on order.
+
+        ``is_fallback`` is LEXICAL-ANCHORED (genuine iff the lexical arm scored the op > 0),
+        the out-of-scope confidence floor: an OOS intent has no lexical overlap so nothing is
+        promoted -> OOS pass-rate >= the lexical baseline by construction. The dense arm still
+        lifts paraphrase recall because RANK (not the flag) drives recall.
+        """
+        depth = limit + 20
+        lex = self.catalog.search_scored(query, depth)
+        lex_names = [s.entry.tool_name for s in lex]
+        lex_genuine = {s.entry.tool_name for s in lex if not s.is_fallback}
+
+        dense_names = [n for n, _ in dense_index.search(query, depth)]
+
+        fused = rrf_fuse([lex_names, dense_names], k)
+        # Deterministic order: RRF score desc, then tool_name for stable ties.
+        ranked = sorted(fused.items(), key=lambda ns: (-ns[1], ns[0]))
+
+        out: list[FusedHit] = []
+        for name, score in ranked:
+            if name not in self._usable_tool_names:  # auth filter AFTER fusion
+                continue
+            op = self._op_by_name.get(name)
+            if op is None:  # a stale dense doc for an op no longer on the surface
+                continue
+            out.append(
+                FusedHit(
+                    name=name,
+                    summary=op.summary,
+                    path=op.path,
+                    method=op.method,
+                    score=score,
+                    is_fallback=name not in lex_genuine,
+                )
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    def search_hybrid(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        dense_index: DenseIndex,
+        k: int = RRF_K,
+    ) -> list[dict[str, Any]]:
+        """Hybrid lexical+dense search. Returns the SAME frozen dict shape as ``search``
+        (``{name, summary, path, method}``) — the agent-facing contract is unchanged; the
+        dense arm only adds semantic reach behind it."""
+        return [
+            {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
+            for h in self.search_hybrid_scored(
+                query, limit, dense_index=dense_index, k=k
+            )
         ]
 
     def list_tools(self) -> list[dict[str, Any]]:

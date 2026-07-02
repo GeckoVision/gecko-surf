@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .ingest import Operation
@@ -24,6 +25,10 @@ def _tokens(text: str) -> set[str]:
 @dataclass
 class CatalogEntry:
     operation: Operation
+    # S0 enrich: an OPTIONAL, pre-generated situating blurb folded into the overlap surface
+    # (intent vocabulary a user searches with). Pure DATA — no LLM/SDK reaches this module
+    # (invariant #2). Empty by default, so the plain lexical baseline is unchanged.
+    blurb: str = ""
 
     @property
     def tool_name(self) -> str:
@@ -34,7 +39,14 @@ class CatalogEntry:
     def _haystack(self) -> str:
         o = self.operation
         return " ".join(
-            [o.summary, o.description, o.path, " ".join(o.tags), o.operation_id]
+            [
+                o.summary,
+                o.description,
+                o.path,
+                " ".join(o.tags),
+                o.operation_id,
+                self.blurb,
+            ]
         )
 
     def score(self, query_tokens: set[str]) -> int:
@@ -62,8 +74,15 @@ class ScoredEntry:
 
 
 class Catalog:
-    def __init__(self, operations: list[Operation]):
-        self.entries = [CatalogEntry(o) for o in operations]
+    def __init__(
+        self, operations: list[Operation], blurbs: Mapping[str, str] | None = None
+    ):
+        """``blurbs`` (optional) maps ``tool_name`` -> a pre-generated, already-sanitized
+        S0 blurb folded into the overlap haystack. Absent -> the unchanged plain baseline."""
+        b = blurbs or {}
+        self.entries = [
+            CatalogEntry(o, blurb=b.get(tool_name(o), "")) for o in operations
+        ]
 
     def search_scored(self, query: str, limit: int = 5) -> list[ScoredEntry]:
         """Rank operations for ``query``; never empty for a query that carries intent.

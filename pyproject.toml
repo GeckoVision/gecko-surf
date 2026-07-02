@@ -34,6 +34,16 @@ sosbot = [
     "openai>=1.40",
     "python-telegram-bot>=21",
 ]
+# The dense retrieval arm (V2): MongoDB Atlas $vectorSearch (native Voyage autoEmbed)
+# + Haiku enrichment. OPTIONAL — the core engine stays dep-light (pyyaml only). The
+# provider SDKs live BEHIND injected seams (Enricher/DenseIndex); catalog.py never
+# imports them (invariant #2). Pinned blurbs make enrichment a committed-data step,
+# so an offline run needs neither key.
+dense = [
+    "pymongo>=4.10",
+    "certifi>=2024.0",
+    "anthropic>=0.40",
+]
 
 [build-system]
 requires = ["hatchling"]
