@@ -1,0 +1,14 @@
+{"goal": "get the latest live odds for a football fixture", "expect_ops": ["getApiOddsSnapshotFixtureid"], "args": {"fixtureId": 18179550}, "archetype": "keyword_echo"}
+{"goal": "list the upcoming world cup fixtures snapshot", "expect_ops": ["getApiFixturesSnapshot"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "start an anonymous guest session to obtain a jwt", "expect_ops": ["postAuthGuestStart"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "activate subscription and retrieve api token", "expect_ops": ["postApiTokenActivate"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "upcoming matches lineup", "expect_ops": ["getApiFixturesSnapshot"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "continuous price ticker push", "expect_ops": ["getApiOddsStream"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "goal notifications firehose", "expect_ops": ["getApiScoresStream"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "push me betting prices continuously as they change without polling", "expect_ops": ["getApiOddsStream"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "notify me instantly whenever teams put points on board", "expect_ops": ["getApiScoresStream"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "get odds for a fixture right now", "expect_ops": ["getApiOddsSnapshotFixtureid", "getApiOddsUpdatesFixtureid"], "args": {"fixtureId": 18179550}, "archetype": "near_dup_disambiguation"}
+{"goal": "score updates for a single fixture", "expect_ops": ["getApiScoresUpdatesFixtureid", "getApiScoresSnapshotFixtureid", "getApiScoresHistoricalFixtureid"], "args": {"fixtureId": 18179550}, "archetype": "near_dup_disambiguation"}
+{"goal": "get a merkle proof to validate a record", "expect_ops": ["getApiOddsValidation", "getApiFixturesValidation", "getApiScoresStat-validation", "getApiFixturesBatch-validation"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "recommend nearby vegan restaurants open tonight", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
+{"goal": "reset forgotten password", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}

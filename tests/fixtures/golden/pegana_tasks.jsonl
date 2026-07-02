@@ -1,0 +1,12 @@
+{"goal": "list all active assets", "expect_ops": ["list_assets"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "get peg state by mint address", "expect_ops": ["state_by_mint"], "args": {"mint": "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"}, "archetype": "keyword_echo"}
+{"goal": "aggregate counters and delivery health", "expect_ops": ["summary"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "liveness probe is the service alive", "expect_ops": ["live"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "tracked coins roster", "expect_ops": ["list_assets"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "premium trend timeline", "expect_ops": ["history"], "args": {"symbol": "jitoSOL"}, "archetype": "paraphrase_no_overlap"}
+{"goal": "which formula revision is live for computing peg", "expect_ops": ["current"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "is each coin's model drifting outside its expected accuracy range", "expect_ops": ["calibration_health"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "get the current peg state for this asset", "expect_ops": ["state", "state_by_mint"], "args": {"symbol": "jitoSOL"}, "archetype": "near_dup_disambiguation"}
+{"goal": "get full asset details", "expect_ops": ["asset_detail", "detail_by_mint"], "args": {"symbol": "jitoSOL"}, "archetype": "near_dup_disambiguation"}
+{"goal": "cancel my subscription", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
+{"goal": "water my houseplants weekly", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}

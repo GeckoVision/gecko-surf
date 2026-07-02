@@ -40,6 +40,29 @@ def test_empty_query_returns_nothing():
     assert _catalog().search("") == []
 
 
+# FIX (0/97 discovery bug) — a MEANINGFUL query that shares no surface token with any
+# operation used to score 0 across the board and be dropped by the `score > 0` filter,
+# so search returned []: the op went invisible to the agent (the shipped "0/97" bug).
+# search must NEVER return empty for a query that carries intent — it falls back to a
+# non-semantic prior instead. (An empty/no-token query is a different case: no intent,
+# still [] — guarded by test_empty_query_returns_nothing above.)
+def test_search_never_empty_for_meaningful_zero_overlap_query():
+    # "upcoming matches lineup" shares no token with any TxODDS operation's haystack.
+    hits = _catalog().search("upcoming matches lineup")
+    assert hits, "meaningful zero-overlap query must fall back, never return []"
+
+
+def test_search_scored_marks_fallback_below_floor():
+    # The fallback candidates are score-0 / is_fallback=True so an out-of-scope caller
+    # can tell a real match (score>0) from a manufactured one (the confidence floor).
+    scored = _catalog().search_scored("upcoming matches lineup")
+    assert scored, "fallback must be non-empty"
+    assert all(s.is_fallback and s.score == 0 for s in scored)
+    # A genuine lexical hit is NOT flagged as fallback.
+    real = _catalog().search_scored("live odds for a fixture")
+    assert real and not real[0].is_fallback and real[0].score > 0
+
+
 # FIX 1 — single source of truth for the tool name. When an op has no operationId,
 # ingest synthesizes "post_/api/v1/charge"; to_tool sanitizes it but the catalog used
 # to return the RAW id, so client.search (which filters on sanitized names) dropped
