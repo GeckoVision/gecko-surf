@@ -82,6 +82,7 @@ def test_allowed_fields_is_the_exact_closed_set():
         "tier",
         "k",
         "hit_rank",
+        "source",
     }
 
 
@@ -155,6 +156,20 @@ def test_error_class_must_be_a_closed_set_member(sink: _FakeSink):
     )
     assert sink.docs[-1]["error_class"] == "not_found_404"
     assert all(c in corpus.ERROR_CLASSES for c in {"not_found_404"})
+
+
+def test_source_must_be_a_closed_set_member(sink: _FakeSink):
+    # source gates the observed-only FCC routing AND (like error_class) could smuggle a
+    # value if free-text; gate it to corpus.OUTCOME_SOURCES (fail closed).
+    with pytest.raises(TelemetryError):
+        emit_surf_event(
+            "surf.first_call_correct", surface_id="pegana", source=SENSITIVE_MINT
+        )
+    emit_surf_event(
+        "surf.first_call_correct", surface_id="pegana", source="observed", ok=True
+    )
+    assert sink.docs[-1]["source"] == "observed"
+    assert "observed" in corpus.OUTCOME_SOURCES
 
 
 def test_label_field_rejects_a_secret_shaped_or_long_value(sink: _FakeSink):

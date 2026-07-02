@@ -119,6 +119,11 @@ def test_search_capabilities_round_trips():
 class _SentinelClient:
     """A light fake whose response carries a secret; the server must not log it."""
 
+    # The MCP surface emits a control-plane-safe ``surf.call`` event keyed by the
+    # client's opaque surface id (#39 usage instrumentation); a real AgentApiClient
+    # always carries one, so the fake must too.
+    surface_id = "sentinel"
+
     def list_tools(self) -> list[dict[str, Any]]:
         return [
             {
@@ -182,7 +187,7 @@ def test_no_corpus_written_when_capture_disabled(tmp_path, monkeypatch):
 
 
 def test_corpus_capture_records_outcome_when_enabled(tmp_path):
-    from gecko.corpus import ALLOWED_KEYS
+    from gecko.corpus import ALLOWED_KEYS, synthetic_sibling
 
     corpus = tmp_path / "corpus.jsonl"
     app = build_http_app(
@@ -195,17 +200,22 @@ def test_corpus_capture_records_outcome_when_enabled(tmp_path):
     raw = _call(app, "state", {"symbol": "USDC"})
     assert json.loads(raw)["status"] == 200
 
-    lines = corpus.read_text().strip().splitlines()
+    # Serving in recorded mode fabricates the 200 -> synthetic -> segregated file. The
+    # main corpus stays empty so a reader never counts a served-recorded call as real.
+    synthetic = synthetic_sibling(corpus)
+    assert not corpus.exists()
+    lines = synthetic.read_text().strip().splitlines()
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert set(rec) == ALLOWED_KEYS  # allowlist, full record
     assert rec["operation_id"] == "state"
     assert rec["status"] == 200 and rec["ok"] is True
-    assert rec["first_call_correct"] is True
+    assert rec["first_call_correct"] is True  # record-level; excluded at aggregate
+    assert rec["source"] == "synthetic"
     assert (
         "{" in rec["path_template"]
     )  # templated, not the filled /v1/assets/USDC/state
-    assert "USDC" not in corpus.read_text()  # no param VALUE leaks
+    assert "USDC" not in synthetic.read_text()  # no param VALUE leaks
 
 
 def test_search_capabilities_is_not_recorded(tmp_path):
@@ -233,9 +243,14 @@ def test_capture_records_metadata_never_the_payload(tmp_path):
         allowed_origins=[BASE],
         corpus_path=str(corpus),
     )
+    from gecko.corpus import synthetic_sibling
+
     raw = _call(app, "get_thing", {})
     assert SENTINEL in raw  # agent receives the payload...
-    body = corpus.read_text()
+    # Default serving mode is recorded -> synthetic -> segregated file; either way the
+    # control-plane proof is the same: the corpus carries ONLY allowlisted metadata.
+    body = synthetic_sibling(corpus).read_text()
     assert SENTINEL not in body  # ...but the corpus never does
     rec = json.loads(body.strip())
     assert rec["operation_id"] == "get_thing" and rec["ok"] is True
+    assert rec["source"] == "synthetic"

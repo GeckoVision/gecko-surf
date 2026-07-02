@@ -100,11 +100,21 @@ def fetch_usage(days: int = 7) -> dict[str, Any] | None:
                 ]
             )
         ]
+        # OBSERVED-ONLY: the published first-call-correct rate counts only calls whose
+        # status came off the wire (source == "observed"). A faked recorded 200
+        # (synthetic) or a survivorship-biased agent report (reported) is excluded, so
+        # the adoption metric matches telemetry.aggregate's observed-only rate.
         fcc = {
             bool(d["_id"]): int(d["n"])
             for d in coll.aggregate(
                 [
-                    {"$match": {**match, "event": "surf.first_call_correct"}},
+                    {
+                        "$match": {
+                            **match,
+                            "event": "surf.first_call_correct",
+                            "source": "observed",
+                        }
+                    },
                     {"$group": {"_id": "$ok", "n": {"$sum": 1}}},
                 ]
             )

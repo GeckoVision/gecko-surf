@@ -383,7 +383,11 @@ class AgentApiClient:
         ``corpus_path``; a capture failure must never break the agent's call."""
         # Usage instrumentation (independent of opt-in corpus capture): one
         # control-plane-safe outcome event — the ok-bool + error CLASS, never a body.
+        # ``source`` carries the SAME provenance the corpus record derives (recorded ->
+        # synthetic, live -> observed), so the adoption FCC rate can filter observed-only
+        # and a faked recorded 200 never inflates it.
         error_class = corpus.error_class_for(status, exc)
+        source = corpus.source_for_mode(mode)
         emit_surf_event(
             "surf.first_call_correct",
             surface_id=self.surface_id,
@@ -392,6 +396,7 @@ class AgentApiClient:
             ok=status is not None and 200 <= status < 400,
             error_class=error_class,
             latency_ms=latency_ms,
+            source=source,
         )
         if self._corpus_path is None:
             return

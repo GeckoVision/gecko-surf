@@ -80,6 +80,7 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "tier",  # plan/access tier label (short, non-secret)
         "k",  # retrieval breadth (results requested/returned)
         "hit_rank",  # rank of a chosen hit — the V2 feedback signal
+        "source",  # a CLOSED corpus.OUTCOME_SOURCES member (observed|reported|synthetic)
     }
 )
 
@@ -115,6 +116,7 @@ class SurfEventRecord:
     tier: str | None = None
     k: int | None = None
     hit_rank: int | None = None
+    source: str | None = None  # provenance; gates whether the event feeds the FCC rate
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)
@@ -149,6 +151,11 @@ def assert_fields_allowlisted(fields: Mapping[str, Any]) -> None:
     error_class = fields.get("error_class")
     if error_class is not None and error_class not in corpus.ERROR_CLASSES:
         raise TelemetryError(f"error_class {error_class!r} not in the closed set")
+    source = fields.get("source")
+    if source is not None and source not in corpus.OUTCOME_SOURCES:
+        # Like error_class: a free-text source could smuggle a value AND would break the
+        # observed-only FCC routing downstream. Gate to the closed set (fail closed).
+        raise TelemetryError(f"source {source!r} not in the closed set")
     for key in _LABEL_FIELDS:
         value = fields.get(key)
         if isinstance(value, str) and not _is_safe_label(value):

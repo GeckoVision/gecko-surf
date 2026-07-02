@@ -59,6 +59,7 @@ def _outcome(
     operation_id: str = "op",
     tool_invoke: dict | None = None,
     args: dict | None = None,
+    mode: str = "live",  # default OBSERVED: aggregate's real-usage metrics count these
 ) -> corpus.CallOutcome:
     return corpus.outcome_from(
         operation_id=operation_id,
@@ -67,7 +68,7 @@ def _outcome(
         status=status,
         error_class=error_class,
         latency_ms=1,
-        mode="recorded",
+        mode=mode,
         auth_injected=False,
         ts=1,
         surface_id=surface_id,
@@ -140,6 +141,34 @@ def test_aggregate_counts_from_corpus(tmp_path):
         "server_5xx": 1,
     }
     assert agg.drift_events == 1  # alpha r1->r2; beta no change
+
+
+def test_aggregate_excludes_synthetic_and_reported_from_the_rate(tmp_path):
+    # The moat-metric fix, end to end. A file mixing all three sources (bypassing the
+    # by-file segregation on purpose, to prove the belt-and-suspenders filter):
+    p = tmp_path / "corpus.jsonl"
+    _write(
+        p,
+        [
+            _outcome("alpha", "r1", 200, "none", mode="live"),  # observed, fcc True
+            _outcome(
+                "alpha", "r1", 500, "server_5xx", mode="live"
+            ),  # observed, fcc False
+            _outcome(
+                "alpha", "r1", 200, "none", mode="recorded"
+            ),  # SYNTHETIC faked 200
+            _outcome("alpha", "r1", 200, "none", mode="reported"),  # REPORTED (biased)
+        ],
+    )
+    agg = aggregate(p)
+    # BEFORE the fix this rate would be 3/4 = 0.75 (the faked recorded 200 + the reported
+    # 200 both counted as first_call_correct). AFTER: observed-only = 2 rows, 1 correct.
+    assert agg.total_calls == 2  # only the two observed calls
+    assert agg.first_call_correct_rate == 0.5  # NOT dragged to 0.75 by the fake success
+    assert agg.error_class_distribution == {
+        "none": 1,
+        "server_5xx": 1,
+    }  # no fake "none"
 
 
 def test_aggregate_missing_or_empty_corpus_is_zeros(tmp_path):

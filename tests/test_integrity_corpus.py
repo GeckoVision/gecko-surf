@@ -15,7 +15,12 @@ import pytest
 
 from gecko.caller import CallError, build_request
 from gecko.client import AgentApiClient, IntegrityError
-from gecko.corpus import ALLOWED_KEYS, ERROR_CLASSES, error_class_for
+from gecko.corpus import (
+    ALLOWED_KEYS,
+    ERROR_CLASSES,
+    error_class_for,
+    synthetic_sibling,
+)
 from gecko.surfaces import tools_rev
 from gecko.validator import validate_all
 
@@ -75,13 +80,17 @@ def test_client_call_captures_metadata_only(tmp_path):
     path = tmp_path / "corpus.jsonl"
     c = _client(corpus_path=path)
     c.call("get_odds", {"fixtureId": SENSITIVE_FIXTURE}, mode="recorded")
-    raw = path.read_text()
+    # Recorded mode fabricates a 200 -> synthetic -> segregated file, never the main corpus.
+    synthetic = synthetic_sibling(path)
+    assert not path.exists()
+    raw = synthetic.read_text()
     rec = json.loads(raw.strip())
     assert set(rec) == ALLOWED_KEYS  # full allowlisted record, nothing extra
     assert str(SENSITIVE_FIXTURE) not in raw  # the arg VALUE never persisted
     assert rec["path_template"] == "/odds/{fixtureId}"  # template, not filled URL
     assert rec["error_class"] == "none"
     assert rec["mode"] == "recorded"
+    assert rec["source"] == "synthetic"  # the faked 200 is labeled, not counted as real
 
 
 def test_client_call_captures_preflight_callerror(tmp_path):
@@ -89,9 +98,11 @@ def test_client_call_captures_preflight_callerror(tmp_path):
     c = _client(corpus_path=path)
     with pytest.raises(CallError):
         c.call("get_odds", {}, mode="recorded")  # missing required path param
-    rec = json.loads(path.read_text().strip())
+    # A recorded-mode pre-flight failure is still synthetic (no wire status).
+    rec = json.loads(synthetic_sibling(path).read_text().strip())
     assert rec["status"] is None
     assert rec["error_class"] == "missing_required_param"
+    assert rec["source"] == "synthetic"
 
 
 def test_no_capture_without_corpus_path(tmp_path):
@@ -105,11 +116,15 @@ def test_validate_all_captures_outcomes(tmp_path):
     path = tmp_path / "corpus.jsonl"
     c = _client()
     validate_all(c, corpus_path=path)
-    lines = [json.loads(x) for x in path.read_text().splitlines()]
+    # The validator never calls upstream -> synthetic -> segregated by file, so a reader
+    # of the main corpus never mistakes a synthetic bootstrap row for real usage.
+    assert not path.exists()
+    lines = [json.loads(x) for x in synthetic_sibling(path).read_text().splitlines()]
     assert lines
     for rec in lines:
         assert set(rec) == ALLOWED_KEYS
         assert rec["status"] is None  # pre-flight: no upstream call
+        assert rec["source"] == "synthetic"
 
 
 # --- the auth_host_blocked outcome class ---------------------------------------------
