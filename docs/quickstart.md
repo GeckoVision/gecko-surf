@@ -12,6 +12,21 @@ spending a cent or a token.
 
 <!-- 🎬 GIF: the paste→add→agent-calls-it loop — `gecko <url>` prints the add string, you paste it into Claude Code, the agent lists the tools and makes a correct first call. -->
 
+## In Claude Code — one command (the Marketplace)
+
+If you're in Claude Code, the fastest path is the plugin — it bundles the skills +
+commands and pulls the `gecko` engine for you:
+
+```
+/plugin marketplace add GeckoVision/gecko-surf
+/plugin install gecko-surf@geckovision
+/make-agent-ready https://api.example.com/openapi.json
+```
+
+`/make-agent-ready` comprehends the API, serves it over MCP, and prints the one-click add
+string. You also get `/setup-x402` and the anti-poisoning guard. Prefer a terminal (or
+building your own app)? Use the CLI below instead — you don't need both.
+
 ## 1. Serve any API to your agent over MCP
 
 The `gecko` CLI SSRF-validates the spec URL, comprehends it, prints a comprehension

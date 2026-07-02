@@ -18,9 +18,10 @@ Two skills:
 - **`x402-payai-setup`** — wire pay-per-call via PayAI; provider keeps 100%; Gecko
   never the rail, no cut.
 
-It ships **no executable logic of its own** beyond a copy-only `install.sh`. The
-content is markdown the agent reads. The engine is a separate, explicit
-`pip install "gecko-surf[serve]"` the user runs.
+It ships **no executable logic of its own** — it's a Claude Code plugin (skills +
+commands + agents), installed from the **Marketplace**
+(`/plugin install gecko-surf@geckovision`). The content is markdown the agent reads;
+the engine is a separate `gecko-surf` install the plugin drives via `uvx`/`pip`.
 
 ## Layout
 
@@ -33,7 +34,7 @@ skills/
 agents/                api-onboarding-engineer · x402-payments-engineer
 commands/              /make-agent-ready <url> · /setup-x402 <api>
 rules/                 aggregate-not-rail (aggregate/compose boundary)
-install.sh             copy-only installer (no binaries, no network)
+.claude-plugin/        plugin.json — the Marketplace plugin manifest
 CLAUDE.md · LICENSE (MIT) · README.md · VERSION · CHANGELOG.md
 ```
 
