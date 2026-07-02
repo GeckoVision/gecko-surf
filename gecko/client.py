@@ -29,6 +29,7 @@ from .events import emit_surf_event
 from .ingest import Operation, extract_operations, load_spec
 from .sample import example_from_schema
 from .sanitize import sanitize_schema
+from .scale import should_surface_all
 from .surfaces import _host_of, anchor_for, spec_is_quarantined, surface_rev, tools_rev
 from .tools import auth_location_is_safe, build_tools, to_tool
 
@@ -164,6 +165,14 @@ class AgentApiClient:
             for t in self.tools
             if self._session_has_auth or not t.get("requires_auth")
         }
+        # Below-scale rule (P0): when the usable surface is small enough to show in full, the
+        # agent-facing ``search`` surfaces EVERY usable tool (no top-k truncation) — so Gecko
+        # is strictly >= the raw OpenAPI dump and can't drop a zero-overlap paraphrase op the
+        # lexical catalog structurally can't rank. Above the threshold, top-k stays on. See
+        # ``gecko.scale`` for the single-source-of-truth threshold.
+        self._surface_all = should_surface_all(
+            [t for t in self.tools if t["name"] in self._usable_tool_names]
+        )
 
         # Corpus capture context (opt-in). Metadata only; never the response body.
         self._corpus_path = corpus_path
@@ -171,9 +180,11 @@ class AgentApiClient:
         self.surface_id = surface_id or _host_of(self.base_url) or "surface"
 
     def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
-        """Like ``search`` but carries ``score``/``is_fallback`` (retrieval eval + the
-        out-of-scope confidence floor). Applies the SAME auth filter and over-fetch, so
-        ``search`` is a pure projection of this — the two can never disagree on ranking."""
+        """The pure ranked retrieval substrate — carries ``score``/``is_fallback`` (retrieval
+        eval + the out-of-scope confidence floor). Applies the auth filter and top-k over-
+        fetch. This is what the retrieval benchmark measures (recall@k / MRR), so it stays a
+        strict top-k ranker even below scale; the agent-facing ``search`` layers the below-
+        scale surface-all rule on TOP of it (see ``_surface_all_scored``)."""
         out: list[ScoredHit] = []
         for s in self.catalog.search_scored(query, limit + 20):
             if s.entry.tool_name not in self._usable_tool_names:
@@ -192,10 +203,49 @@ class AgentApiClient:
                 break
         return out
 
+    def _surface_all_scored(self, query: str) -> list[ScoredHit]:
+        """Below-scale: surface EVERY usable tool (no top-k truncation) so Gecko is never
+        worse than the raw OpenAPI dump. Genuine lexical hits keep their relevance order and
+        score; every remaining usable op is APPENDED as a score-0 fallback (GET-first then
+        path — the catalog's query-independent prior), so a zero-overlap paraphrase op the
+        lexical catalog structurally drops is still visible and pickable. ``is_fallback``
+        stays truthful (appended ops are not genuine lexical matches), so any confidence-floor
+        reader is unchanged and relevance never sinks below a manufactured candidate."""
+        hits: list[ScoredHit] = []
+        seen: set[str] = set()
+        # Genuine lexical hits first, over the full usable pool (depth = #entries so nothing
+        # is censored). Skip fallbacks here — we append the not-yet-seen ops ourselves below.
+        for s in self.catalog.search_scored(query, len(self.catalog.entries)):
+            name = s.entry.tool_name
+            if name not in self._usable_tool_names or s.is_fallback:
+                continue
+            seen.add(name)
+            op = s.entry.operation
+            hits.append(ScoredHit(name, op.summary, op.path, op.method, s.score, False))
+        remaining = [
+            (name, op)
+            for name, op in self._op_by_name.items()
+            if name in self._usable_tool_names and name not in seen
+        ]
+        remaining.sort(key=lambda no: (0 if no[1].method == "GET" else 1, no[1].path))
+        for name, op in remaining:
+            hits.append(ScoredHit(name, op.summary, op.path, op.method, 0, True))
+        return hits
+
     def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Agent-facing capability search (frozen dict shape ``{name, summary, path, method}``).
+
+        Below scale (``_surface_all``) this returns every usable tool — the full surface,
+        relevance-ordered — so a small/clean API is never worse than its raw OpenAPI dump.
+        Above scale it is a pure projection of the top-k ``search_scored`` ranker."""
+        hits = (
+            self._surface_all_scored(query)
+            if self._surface_all
+            else self.search_scored(query, limit)
+        )
         return [
             {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
-            for h in self.search_scored(query, limit)
+            for h in hits
         ]
 
     def search_hybrid_scored(
