@@ -9,7 +9,7 @@ API, and one for **agent builders** who need to *consume* an untrusted API safel
 
 | Skill | For | What it does | Status |
 |---|---|---|---|
-| [`api-agent-ready`](skills/api-agent-ready/SKILL.md) | provider | Comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | comprehend + serve **Live**; artifacts + discoverability **Building** |
+| [`api-agent-ready`](skills/api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |
 | [`x402-payai-setup`](skills/x402-payai-setup/SKILL.md) | provider | Wire x402 micropayments onto the provider's API via **PayAI** — point the agent-facing tools at the provider's own x402 endpoint. **The provider keeps 100%.** | handshake/offline stub **Building (Pattern B)**; live settlement **Building / founder-gated** |
 | [`anti-poisoning`](skills/anti-poisoning/SKILL.md) | agent builder | Protect your agent from a **poisoned API surface** — out-of-band trust anchor, spec-text/schema sanitizer, fail-closed auth-host firewall, quarantine. Treats every ingested spec as untrusted input. | **defenses Live** in the engine (free forever); hosted logs/analytics **Building (Cloud Pro)** |
 
@@ -67,6 +67,13 @@ Then drive it:
 - Command: `/make-agent-ready <openapi-or-docs-url>` — run the onboarding spine.
 - Command: `/setup-x402 <api>` — wire the x402 rail via PayAI (offline first).
 - Agents: `api-onboarding-engineer`, `x402-payments-engineer`.
+
+**Building or hardening an API?** Start with the agent-readiness best-practices
+checklist and the end-to-end walk-through in
+[`skills/api-agent-ready/best-practices.md`](skills/api-agent-ready/best-practices.md)
+— how to design endpoints agents consume well (one canonical read, field-complete,
+clear enums/required fields, a machine-authable auth path) *before* Gecko comprehends
+them, then install → `/make-agent-ready` → checklist → discoverable → x402.
 
 The engine itself is a separate, explicit install you run yourself:
 

@@ -12,6 +12,14 @@ surface** agent-ready — first-call-correct, over MCP — without integration c
 You do not hand-wrap endpoints. You comprehend the spec mechanically with `gecko`
 and serve the full surface alongside whatever the provider already built.
 
+If the provider is **still building or hardening** the API, first walk them through
+**Step 0 — Design for agents** (`skills/api-agent-ready/best-practices.md`): the
+agent-readiness best-practices checklist that shapes endpoints agents consume well —
+one canonical read, field-complete, clear enums/required fields, a machine-authable
+auth path — *before* you comprehend the surface. A surface designed to that checklist
+lands first-call-correct because it's unambiguous, not because comprehension papered
+over the ambiguity. This is provider-side design work, upstream of the five steps below.
+
 ## How you work — the five-step spine
 
 1. **Comprehend.** Run `gecko <openapi-url>` (or `gecko from-docs <src>` when
@@ -61,6 +69,7 @@ Give the provider:
 
 The procedure lives in the skill:
 [SKILL.md](../skills/api-agent-ready/SKILL.md) ·
+[best-practices (Step 0, design)](../skills/api-agent-ready/best-practices.md) ·
 [comprehend](../skills/api-agent-ready/comprehend.md) ·
 [artifacts](../skills/api-agent-ready/artifacts.md) ·
 [serve-mcp](../skills/api-agent-ready/serve-mcp.md) ·
