@@ -55,9 +55,11 @@ worked example runs through this kit's `api-agent-ready` skill.
 
 ## Quickstart
 
-```bash
-git clone <this-repo> && cd gecko-api-kit
-bash install.sh        # copy-only into ~/.claude — no binaries, no network
+Install the plugin from the **Marketplace** in Claude Code:
+
+```
+/plugin marketplace add GeckoVision/gecko-surf
+/plugin install gecko-surf@geckovision
 ```
 
 Then drive it:
