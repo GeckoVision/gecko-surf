@@ -127,7 +127,7 @@ flowchart TD
 ## Make any API agent-usable
 
 Point it at an OpenAPI and your agent can call it — no client code, auth handled,
-first call correct. **Two ways in — pick one:**
+first call correct. **Two ways in — by where your agent lives:**
 
 **A · In Claude Code — install the plugin** (skills + commands; it drives the engine for you):
 
@@ -140,20 +140,20 @@ first call correct. **Two ways in — pick one:**
 `/make-agent-ready` comprehends the API, serves it over MCP, and prints the one-click add
 string — and you also get `/setup-x402` and the anti-poisoning guard.
 
-**B · In your terminal — the CLI** (for scripts or your own app):
+**B · Anywhere else — install the CLI** (Cursor, VS Code, any agent framework, or a plain terminal):
 
 ```bash
-# no install — run it straight from PyPI:
-uvx --from "gecko-surf[serve]" gecko <openapi-url>
-# or install the CLI (any system, no Python prereq):
+# one-liner — any system, no Python prereq:
 curl -fsSL https://get.geckovision.tech/install.sh | bash
 gecko <openapi-url>
+# (no-install alternative: uvx --from "gecko-surf[serve]" gecko <openapi-url>)
 ```
 
-Either way you get the comprehension summary, the MCP URL, and a one-click `claude mcp add`
-/ Cursor / VS Code string — then the API is served over Streamable-HTTP. The plugin pulls
-the `gecko` engine via `uvx`, so **you don't need both** — Claude Code → the Marketplace,
-terminal → the CLI.
+`gecko <url>` prints the comprehension summary, the MCP URL, and a **one-click add** for
+each host — a **Cursor** or **VS Code** deeplink to click, or the raw **MCP URL** to point
+any framework at. Building your own app? Skip the server and embed the SDK (below).
+
+**Claude Code → the Marketplace; everything else → the CLI.** You don't need both.
 
 **Or embed the SDK** in your own app:
 

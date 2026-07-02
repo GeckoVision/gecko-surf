@@ -24,8 +24,9 @@ commands and pulls the `gecko` engine for you:
 ```
 
 `/make-agent-ready` comprehends the API, serves it over MCP, and prints the one-click add
-string. You also get `/setup-x402` and the anti-poisoning guard. Prefer a terminal (or
-building your own app)? Use the CLI below instead — you don't need both.
+string. You also get `/setup-x402` and the anti-poisoning guard. **Not in Claude Code?**
+(Cursor, VS Code, another agent framework, or a plain terminal) — install the CLI below
+instead. You don't need both.
 
 ## 1. Serve any API to your agent over MCP
 
