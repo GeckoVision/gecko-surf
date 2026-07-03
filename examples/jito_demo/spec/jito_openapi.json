@@ -1,0 +1,588 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Jito Block Engine",
+    "version": "1.0.0",
+    "description": "Jito's low-latency transaction-send / bundle API (JSON-RPC over HTTPS). Hand-refined from the `gecko from-docs` draft of https://docs.jito.wtf/lowlatencytxnsend/ — Jito publishes no OpenAPI, no llms.txt; the whole API lives in one human doc page. Paths follow Jito's own curl examples (per-method routes; the JSON-RPC method is ALSO pinned in the body). Regional endpoints exist (amsterdam/dublin/frankfurt/london/ny .mainnet.block-engine.jito.wtf) — swap servers[0] for lower latency. Rate limit without auth: 1 req/s per IP per region; a UUID (x-jito-auth) lifts it. Tips: a tip transfer to a tip account must be in the SAME transaction (or last bundle tx); minimum 1000 lamports."
+  },
+  "servers": [
+    {
+      "url": "https://mainnet.block-engine.jito.wtf"
+    }
+  ],
+  "tags": [
+    {
+      "name": "transactions",
+      "description": "Single-transaction low-latency send"
+    },
+    {
+      "name": "bundles",
+      "description": "Atomic, sequential multi-tx bundles (max 5)"
+    },
+    {
+      "name": "tips",
+      "description": "Tip accounts and tip guidance"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "uuidAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-jito-auth",
+        "description": "Optional approved-UUID for elevated rate limits. Without it the default limit is 1 req/s per IP per region."
+      }
+    },
+    "schemas": {
+      "JsonRpcId": {
+        "type": "integer",
+        "default": 1,
+        "description": "JSON-RPC request id."
+      },
+      "JsonRpcVersion": {
+        "type": "string",
+        "const": "2.0",
+        "default": "2.0",
+        "description": "Always \"2.0\"."
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/transactions": {
+      "post": {
+        "operationId": "sendTransaction",
+        "tags": [
+          "transactions"
+        ],
+        "summary": "Send one signed transaction with low latency (acts like a single-tx bundle)",
+        "description": "Submits a fully-signed Solana transaction for low-latency execution. Behaves as a bundle of one: for revert protection use sendBundle. The transaction must already include a tip transfer to a Jito tip account (min 1000 lamports) — get accounts from getTipAccounts. Returns the transaction signature immediately (does NOT mean it landed; confirm on-chain).",
+        "security": [
+          {},
+          {
+            "uuidAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "$ref": "#/components/schemas/JsonRpcVersion"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/JsonRpcId"
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "sendTransaction",
+                    "default": "sendTransaction"
+                  },
+                  "params": {
+                    "type": "array",
+                    "description": "Positional: [signedTransaction, options?]. params[0] = the fully-signed transaction as a base64 (recommended) or base58 (deprecated, slow) string. params[1] (optional) = {\"encoding\": \"base64\"} — REQUIRED when params[0] is base64, since base58 is the default.",
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "description": "Fully-signed transaction, base64 (recommended) or base58 encoded."
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "encoding": {
+                            "type": "string",
+                            "enum": [
+                              "base58",
+                              "base64"
+                            ],
+                            "default": "base58",
+                            "description": "Encoding of params[0]. base64 recommended; base58 is deprecated."
+                          }
+                        }
+                      }
+                    ],
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The transaction signature (submission receipt, not a landing guarantee).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string",
+                      "example": "2.0"
+                    },
+                    "result": {
+                      "type": "string",
+                      "description": "Transaction signature (base58, 88 chars). Example truncated: a full signature reads as secret-shaped to defensive scanners.",
+                      "example": "2id3YC2jK9G5Wo2phDx4gJVAew8DcY5NAojnVuao8rkx…"
+                    },
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles": {
+      "post": {
+        "operationId": "sendBundle",
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Send an atomic bundle of up to 5 signed transactions",
+        "description": "Submits a bundle: up to 5 fully-signed transactions that execute sequentially and atomically (all-or-nothing, all in the same slot). One transaction (conventionally the last) must tip a Jito tip account — minimum 1000 lamports; get accounts from getTipAccounts. Returns a bundle id (SHA-256 of the signatures) — poll getBundleStatuses / getInflightBundleStatuses with it.",
+        "security": [
+          {},
+          {
+            "uuidAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "$ref": "#/components/schemas/JsonRpcVersion"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/JsonRpcId"
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "sendBundle",
+                    "default": "sendBundle"
+                  },
+                  "params": {
+                    "type": "array",
+                    "description": "Positional: [transactions, options?]. params[0] = array of fully-signed transactions (MAX 5), base64 (recommended) or base58 strings. params[1] (optional) = {\"encoding\": \"base64\"} — REQUIRED when the transactions are base64.",
+                    "prefixItems": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "description": "Fully-signed transaction, base64 (recommended) or base58."
+                        },
+                        "maxItems": 5,
+                        "minItems": 1
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "encoding": {
+                            "type": "string",
+                            "enum": [
+                              "base58",
+                              "base64"
+                            ],
+                            "default": "base58"
+                          }
+                        }
+                      }
+                    ],
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The bundle id (SHA-256 of the transaction signatures).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string",
+                      "example": "2.0"
+                    },
+                    "result": {
+                      "type": "string",
+                      "description": "Bundle id — use with getBundleStatuses / getInflightBundleStatuses.",
+                      "example": "2id3YC2jK9G5Wo2phDx4gJVAew8DcY5NAojnVuao8rkxwPYPe8cSwE5GzhEg"
+                    },
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getBundleStatuses": {
+      "post": {
+        "operationId": "getBundleStatuses",
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Confirm a bundle landed on-chain — slot + confirmation status (max 5 ids)",
+        "description": "Returns confirmation status + slot + transaction signatures for bundle ids that LANDED on-chain (like getSignatureStatuses). A processed-but-not-landed or in-flight bundle returns null here — use getInflightBundleStatuses for pre-landing states (Invalid/Pending/Failed/Landed).",
+        "security": [
+          {},
+          {
+            "uuidAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "$ref": "#/components/schemas/JsonRpcVersion"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/JsonRpcId"
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getBundleStatuses",
+                    "default": "getBundleStatuses"
+                  },
+                  "params": {
+                    "type": "array",
+                    "description": "Positional: [bundleIds]. params[0] = array of up to 5 bundle ids (from sendBundle).",
+                    "prefixItems": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 5,
+                        "minItems": 1,
+                        "description": "Bundle ids, max 5."
+                      }
+                    ],
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status per landed bundle id (null for not-landed ids).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string",
+                      "example": "2.0"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "type": "object",
+                          "properties": {
+                            "slot": {
+                              "type": "integer",
+                              "example": 242806119
+                            }
+                          }
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "bundle_id": {
+                                "type": "string"
+                              },
+                              "transactions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "slot": {
+                                "type": "integer",
+                                "description": "Slot the bundle landed in."
+                              },
+                              "confirmation_status": {
+                                "type": "string",
+                                "enum": [
+                                  "processed",
+                                  "confirmed",
+                                  "finalized"
+                                ]
+                              },
+                              "err": {
+                                "type": "object",
+                                "description": "Error object; Ok = landed without error."
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getTipAccounts": {
+      "post": {
+        "operationId": "getTipAccounts",
+        "tags": [
+          "tips"
+        ],
+        "summary": "List the tip accounts a bundle/transaction must tip",
+        "description": "Returns the current Jito tip accounts. Pick one (randomly, to reduce contention) and include a transfer of at least 1000 lamports to it inside your transaction (or the last transaction of your bundle). No parameters.",
+        "security": [
+          {},
+          {
+            "uuidAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "$ref": "#/components/schemas/JsonRpcVersion"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/JsonRpcId"
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getTipAccounts",
+                    "default": "getTipAccounts"
+                  },
+                  "params": {
+                    "type": "array",
+                    "maxItems": 0,
+                    "default": [],
+                    "description": "Always empty — this method takes no parameters."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The tip account public keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string",
+                      "example": "2.0"
+                    },
+                    "result": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "description": "Tip account pubkey (base58)."
+                      },
+                      "example": [
+                        "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+                        "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe"
+                      ]
+                    },
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/getInflightBundleStatuses": {
+      "post": {
+        "operationId": "getInflightBundleStatuses",
+        "tags": [
+          "bundles"
+        ],
+        "summary": "Track a submitted bundle before it lands — Invalid / Pending / Failed (max 5 ids)",
+        "description": "Returns the pre-landing state for up to 5 recently-submitted bundle ids: Invalid (not in the system / expired), Pending (not failed, not landed yet), Failed (all forwarded regions failed it), or Landed (on-chain — then use getBundleStatuses for slot + signatures). This is the polling loop after sendBundle.",
+        "security": [
+          {},
+          {
+            "uuidAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "$ref": "#/components/schemas/JsonRpcVersion"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/JsonRpcId"
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getInflightBundleStatuses",
+                    "default": "getInflightBundleStatuses"
+                  },
+                  "params": {
+                    "type": "array",
+                    "description": "Positional: [bundleIds]. params[0] = array of up to 5 bundle ids submitted in the last 5 minutes.",
+                    "prefixItems": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 5,
+                        "minItems": 1,
+                        "description": "Bundle ids, max 5."
+                      }
+                    ],
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "In-flight status per bundle id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string",
+                      "example": "2.0"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "type": "object",
+                          "properties": {
+                            "slot": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "bundle_id": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "Invalid",
+                                  "Pending",
+                                  "Failed",
+                                  "Landed"
+                                ],
+                                "description": "Invalid = not seen/expired · Pending = in flight · Failed = all regions failed it · Landed = on-chain."
+                              },
+                              "landed_slot": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "description": "Slot if Landed, else null."
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
