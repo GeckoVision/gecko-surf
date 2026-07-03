@@ -28,7 +28,7 @@ def main() -> None:
     plan = agent.settle(fixture_id=42, seq=1, stat_key=1, predicate=predicate)
     print("Settled a prediction market trustlessly (predicate: stat > 2):")
     print(
-        f"  → SettlePlan ready for gecko-settlement::settle → CPI txoracle::validate_stat"
+        "  → SettlePlan ready for gecko-settlement::settle → CPI txoracle::validate_stat"
     )
     print(
         f"    ts={plan.ts} · fixture_proof + main_tree_proof + stat_a(Merkle) all mapped from TxLINE\n"

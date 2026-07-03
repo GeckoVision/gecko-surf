@@ -18,7 +18,7 @@ the bounty deadline, so this is the right mode). ``live`` swaps only the transpo
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
