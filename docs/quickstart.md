@@ -132,12 +132,21 @@ uv run python -m examples._starter.app \
 When you're ready for real data, flip one argument — `mode="live"` (and pass an authed
 `Session`). Same path, same tools.
 
-## 4. No OpenAPI? We'll generate one — *coming (V2)*
+## 4. No OpenAPI? Point Gecko at the docs — `gecko from-docs`
 
-> **Status: designed, not yet built.** Today Gecko needs an OpenAPI 3.x spec as input.
-> The **docs→OpenAPI on-ramp** — point Gecko at an API's human docs and have it
-> synthesize a spec — is on the V2 roadmap, alongside a **vectorized semantic index**
-> (today's catalog is lexical — `gecko/catalog.py`) and an **auto-update** job that
-> re-comprehends an API when it ships a new version (see [Stay correct](stay-correct.md)).
-> Until those land, bring an `openapi.json`. Most APIs publish one; if yours is internal,
-> generate it from your framework (FastAPI, NestJS, etc.).
+An API with no published spec? Point Gecko at its human doc page and it recovers a
+**draft OpenAPI**, then comprehends it like any other spec:
+
+```bash
+uv run gecko from-docs https://api.example.com/docs        # doc-site URL (or local HTML)
+uv run gecko from-docs <url> -o draft_openapi.json         # keep the draft spec
+```
+
+The draft is exactly that — a *draft*: review it (especially auth and required params)
+before trusting it live, and prefer a published `openapi.json` when one exists. If the
+API is your own internal one, generating the spec from your framework (FastAPI, NestJS,
+etc.) beats recovering it from prose.
+
+> **Still V2 (designed, not built):** a **vectorized semantic index** (today's catalog
+> is lexical — `gecko/catalog.py`) and an **auto-update** job that re-comprehends an API
+> when it ships a new version (see [Stay correct](stay-correct.md)).
