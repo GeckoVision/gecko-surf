@@ -20,11 +20,23 @@ REGION="${AWS_DEFAULT_REGION:-us-east-2}"
 STACK_NAME="surfcall-mcp-ecs"
 ENVIRONMENT="production"
 ECR_REPOSITORY="surfcall"
-CERTIFICATE_ARN="arn:aws:acm:us-east-2:668955700762:certificate/b6d736cc-b8b8-49a4-a747-8c842993af99"
-# Reuse the existing gecko-api VPC — surfcall adds NO new VPC/NAT/EIP (egress via its NAT).
-VPC_ID="vpc-06b5f80decefefc72"
-PUBLIC_SUBNETS="subnet-08c2b8a7eb89ef631,subnet-0ed400656f9ede85b"
-PRIVATE_SUBNETS="subnet-09d4fb5e920502e73,subnet-0635e449ebcf1049f"
+
+# Account-specific identifiers (cert ARN, VPC, subnets) come from the
+# environment or .env — never committed. They're identifiers, not credentials,
+# but a public repo shouldn't map the account. Add to .env:
+#   GECKO_CERT_ARN=arn:aws:acm:...          (ACM cert for mcp.geckovision.tech)
+#   GECKO_VPC_ID=vpc-...                    (reuse the existing VPC — no new NAT/EIP)
+#   GECKO_PUBLIC_SUBNETS=subnet-...,subnet-...
+#   GECKO_PRIVATE_SUBNETS=subnet-...,subnet-...
+ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$ENV_SCRIPT_DIR/../.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$ENV_SCRIPT_DIR/../.env"; set +a
+fi
+CERTIFICATE_ARN="${GECKO_CERT_ARN:-}"
+VPC_ID="${GECKO_VPC_ID:-}"
+PUBLIC_SUBNETS="${GECKO_PUBLIC_SUBNETS:-}"
+PRIVATE_SUBNETS="${GECKO_PRIVATE_SUBNETS:-}"
 SKIP_BUILD=false
 
 while [[ $# -gt 0 ]]; do
@@ -37,6 +49,17 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
+
+MISSING=()
+[[ -z "$CERTIFICATE_ARN" ]] && MISSING+=("GECKO_CERT_ARN")
+[[ -z "$VPC_ID" ]]          && MISSING+=("GECKO_VPC_ID")
+[[ -z "$PUBLIC_SUBNETS" ]]  && MISSING+=("GECKO_PUBLIC_SUBNETS")
+[[ -z "$PRIVATE_SUBNETS" ]] && MISSING+=("GECKO_PRIVATE_SUBNETS")
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo "ERROR: set these in .env (or the environment) before deploying:" >&2
+  for M in "${MISSING[@]}"; do echo "  - $M" >&2; done
+  exit 1
+fi
 
 echo "==> Region:      $REGION"
 echo "==> Stack:       $STACK_NAME"

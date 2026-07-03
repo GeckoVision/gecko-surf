@@ -23,8 +23,9 @@ Parameters:
 
   CertificateArn:
     Type: String
-    Default: arn:aws:acm:us-east-2:668955700762:certificate/b6d736cc-b8b8-49a4-a747-8c842993af99
-    Description: ACM cert ARN for mcp.geckovision.tech HTTPS (deploy.sh also passes it).
+    Default: ''
+    Description: ACM cert ARN for mcp.geckovision.tech HTTPS (deploy.sh passes it
+      from GECKO_CERT_ARN; empty deploys HTTP-only via the HasCertificate condition).
 
   ExecutionRoleArn:
     Type: String
