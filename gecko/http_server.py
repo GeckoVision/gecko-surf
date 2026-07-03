@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from . import corpus
 from .access import public_session
 from .caller import CallError
+from .agentnative import build_artifacts
 from .client import AgentApiClient
 from .mcp_server import McpSurface
 
@@ -82,6 +83,7 @@ def build_http_app(
     corpus_path: str | Path | None = None,
     surface_id: str | None = None,
     surface_rev: str = "0",
+    public_url: str | None = None,
 ) -> Starlette:
     """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
 
@@ -102,7 +104,7 @@ def build_http_app(
         from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
-        from starlette.responses import PlainTextResponse
+        from starlette.responses import PlainTextResponse, Response
         from starlette.routing import Route
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit(_INSTALL_HINT) from exc
@@ -204,9 +206,36 @@ def build_http_app(
         # target healthy without allowlisting the private IP. Matcher = 200.
         return PlainTextResponse("ok")
 
+    # Agent-native discovery surface for THIS API — llms.txt / gecko.json /
+    # .well-known/gecko.json / tools.md, generated from the comprehended surface
+    # (control-plane only). Plain routes, like /healthz: public metadata, no /mcp
+    # rebinding guard needed. Built once at app-build time (static per surface).
+    _ARTIFACT_MEDIA = {
+        "llms.txt": "text/plain; charset=utf-8",
+        "gecko.json": "application/json",
+        ".well-known/gecko.json": "application/json",
+        "tools.md": "text/markdown; charset=utf-8",
+    }
+    artifact_routes: list[Any] = []
+    client_for_emit = getattr(surface, "client", None)
+    if isinstance(client_for_emit, AgentApiClient):
+        mcp_url = f"{public_url.rstrip('/')}{MCP_PATH}" if public_url else None
+        artifacts = build_artifacts(
+            client_for_emit, mcp_url=mcp_url, site_url=public_url
+        )
+        for rel, text in artifacts.items():
+
+            def _artifact_endpoint(
+                _request: Any, _text: str = text, _rel: str = rel
+            ) -> Any:
+                return Response(_text, media_type=_ARTIFACT_MEDIA[_rel])
+
+            artifact_routes.append(Route("/" + rel, endpoint=_artifact_endpoint))
+
     return Starlette(
         routes=[
             Route("/healthz", endpoint=_healthz),
+            *artifact_routes,
             Route(MCP_PATH, endpoint=asgi_app),
         ],
         lifespan=lambda _app: manager.run(),
@@ -243,6 +272,7 @@ def serve_http(
     server_name: str = DEFAULT_SERVER_NAME,
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
+    public_url: str | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve the surface over Streamable HTTP via uvicorn. Blocks until stopped."""
     import uvicorn
@@ -255,5 +285,6 @@ def serve_http(
         server_name=server_name,
         allowed_hosts=hosts,
         allowed_origins=origins,
+        public_url=public_url,
     )
     uvicorn.run(app, host=host, port=port)

@@ -78,7 +78,42 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=[],
         help="Extra Origin to allow (repeatable).",
     )
+    p.add_argument(
+        "--emit-dir",
+        default=None,
+        help="Write this API's agent-native discovery files (llms.txt, gecko.json, "
+        ".well-known/gecko.json, tools.md) to DIR and exit — no server. Hand them to "
+        "the provider to host so their API is discoverable to agents.",
+    )
+    p.add_argument(
+        "--site-url",
+        default=None,
+        help="Base URL the emitted files will be hosted at (makes inter-file links "
+        "absolute; relative when omitted).",
+    )
     return p.parse_args(argv)
+
+
+def _emit(
+    client: AgentApiClient, out_dir: str, mcp_url: str | None, site_url: str | None
+) -> int:
+    """Write the agent-native artifacts to ``out_dir`` (control-plane only) and return."""
+    from pathlib import Path
+
+    from .agentnative import build_artifacts
+
+    artifacts = build_artifacts(client, mcp_url=mcp_url, site_url=site_url)
+    out = Path(out_dir)
+    for rel, text in artifacts.items():
+        dest = out / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+    print(
+        f"Wrote {len(artifacts)} agent-native artifacts to {out}/ (control-plane only):"
+    )
+    for rel in artifacts:
+        print(f"  {out / rel}")
+    return 0
 
 
 def _print_banner(name: str, mcp_url: str, summary: str) -> None:
@@ -126,6 +161,11 @@ def main(argv: list[str] | None = None) -> int:
             extra_hosts.append(parts.netloc)
             extra_origins.append(f"{parts.scheme}://{parts.netloc}")
 
+    # Provider hand-off: emit the discovery files and exit (no server).
+    if args.emit_dir:
+        emit_mcp = mcp_url if args.public_url else None
+        return _emit(client, args.emit_dir, emit_mcp, args.site_url)
+
     _print_banner(name, mcp_url, _summary(client))
 
     serve_http(
@@ -136,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         server_name=name,
         allowed_hosts=extra_hosts or None,
         allowed_origins=extra_origins or None,
+        public_url=args.public_url,
     )
     return 0
 
