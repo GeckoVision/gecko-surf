@@ -242,6 +242,86 @@ def build_http_app(
     )
 
 
+def build_multi_surface_app(
+    surfaces: list[tuple[str, Any]],
+    *,
+    mode: str = "recorded",
+    allowed_hosts: list[str] | None = None,
+    allowed_origins: list[str] | None = None,
+    public_url: str | None = None,
+) -> Starlette:
+    """Serve MANY comprehended surfaces from one host — the centralization surface.
+
+    ``surfaces`` is ``[(name, spec_or_client), ...]``. Each is mounted under ``/{name}``,
+    so an agent adds ``/{name}/mcp`` and finds ``/{name}/llms.txt`` etc. — every API on
+    one server, each with its own clean discovery surface. A root ``/healthz`` fronts the
+    ALB check and ``/`` lists what's available.
+
+    Starlette does NOT run a mounted sub-app's lifespan, but each surface's MCP session
+    manager MUST be started for the whole server lifetime — so we compose every sub-app's
+    lifespan explicitly via an ``AsyncExitStack`` (get this wrong and ``/{name}/mcp`` 500s).
+    """
+    from contextlib import AsyncExitStack, asynccontextmanager
+
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse, PlainTextResponse
+    from starlette.routing import Mount, Route
+
+    subs: list[tuple[str, Starlette]] = []
+    for name, spec in surfaces:
+        site = f"{public_url.rstrip('/')}/{name}" if public_url else None
+        subs.append(
+            (
+                name,
+                build_http_app(
+                    spec,
+                    mode=mode,
+                    server_name=name,
+                    allowed_hosts=allowed_hosts,
+                    allowed_origins=allowed_origins,
+                    public_url=site,
+                ),
+            )
+        )
+
+    index = {
+        "name": "gecko",
+        "description": "Comprehended API surfaces, served agent-native.",
+        "surfaces": [
+            {
+                "name": name,
+                "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
+                if public_url
+                else f"/{name}/mcp",
+                "llms_txt": f"/{name}/llms.txt",
+            }
+            for name, _ in subs
+        ],
+    }
+
+    async def _healthz(_request: Any) -> Any:
+        return PlainTextResponse("ok")
+
+    async def _index(_request: Any) -> Any:
+        return JSONResponse(index)
+
+    routes: list[Any] = [
+        Route("/healthz", endpoint=_healthz),
+        Route("/", endpoint=_index),
+    ]
+    for name, sub in subs:
+        routes.append(Mount(f"/{name}", app=sub))
+
+    @asynccontextmanager
+    async def _lifespan(_app: Starlette) -> Any:
+        async with AsyncExitStack() as stack:
+            for _name, sub in subs:
+                await stack.enter_async_context(sub.router.lifespan_context(sub))
+            yield
+
+    return Starlette(routes=routes, lifespan=_lifespan)
+
+
 def security_allowlist(
     host: str,
     port: int,
@@ -283,6 +363,30 @@ def serve_http(
         base_url=base_url,
         mode=mode,
         server_name=server_name,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+        public_url=public_url,
+    )
+    uvicorn.run(app, host=host, port=port)
+
+
+def serve_multi_http(
+    surfaces: list[tuple[str, Any]],
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    mode: str = "recorded",
+    *,
+    allowed_hosts: list[str] | None = None,
+    allowed_origins: list[str] | None = None,
+    public_url: str | None = None,
+) -> None:  # pragma: no cover - exercised by the founder-run live smoke
+    """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks."""
+    import uvicorn
+
+    hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
+    app = build_multi_surface_app(
+        surfaces,
+        mode=mode,
         allowed_hosts=hosts,
         allowed_origins=origins,
         public_url=public_url,

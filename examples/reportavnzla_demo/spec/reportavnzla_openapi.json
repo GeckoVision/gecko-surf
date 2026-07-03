@@ -1,0 +1,195 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ReportaVNZLA",
+    "version": "1.0.0",
+    "description": "Open, free, no-token humanitarian API for the Venezuela 2026 earthquake response: a crowdsourced registry of missing/found/deceased people (with last-known coordinates and a status you can filter on) plus relief resources (collection centers). Read endpoints are public — no API key. Hand-authored by Gecko from https://reportavnzla.com/desarrolladores; the source project is open-source (bitupx00/reportavnzla, MIT). PII note for consumers: person records may include a national id (`cedula`) — pass it through, never store or log it."
+  },
+  "servers": [{ "url": "https://reportavnzla.com" }],
+  "tags": [
+    { "name": "people", "description": "Reported missing / found / deceased persons" },
+    { "name": "resources", "description": "Relief resources — collection centers, structures" },
+    { "name": "stats", "description": "Aggregate counters for the whole registry" }
+  ],
+  "components": {
+    "schemas": {
+      "Person": {
+        "type": "object",
+        "description": "A reported person. `estado` is the community status; `lat`/`lng` are the last-known coordinates when available.",
+        "properties": {
+          "id": { "type": "string" },
+          "nombre": { "type": "string", "description": "First name." },
+          "apellido": { "type": "string", "description": "Last name." },
+          "cedula": { "type": ["string", "null"], "description": "National id (PII — do not store/log)." },
+          "edad": { "type": ["integer", "null"], "description": "Age." },
+          "genero": { "type": ["string", "null"], "enum": ["masculino", "femenino", null] },
+          "estado": { "type": "string", "enum": ["buscado", "encontrado", "fallecido"], "description": "buscado = still missing · encontrado = found · fallecido = deceased." },
+          "ultimaUbicacion": { "type": ["string", "null"], "description": "Free-text last-known location." },
+          "descripcion": { "type": ["string", "null"] },
+          "fotoUrl": { "type": ["string", "null"], "description": "Photo URL (for a future image/face search)." },
+          "lat": { "type": ["number", "null"], "description": "Last-known latitude." },
+          "lng": { "type": ["number", "null"], "description": "Last-known longitude." },
+          "reportadoPorNombre": { "type": ["string", "null"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      },
+      "Resource": {
+        "type": "object",
+        "description": "A relief resource — most commonly a `centro_acopio` (collection center) with an address, coordinates, and what it accepts (`recibe`).",
+        "properties": {
+          "id": { "type": "string" },
+          "tipo": { "type": "string", "enum": ["centro_acopio", "estructura"], "description": "centro_acopio = donation/relief collection center · estructura = a reported structure." },
+          "nombre": { "type": "string" },
+          "direccion": { "type": ["string", "null"], "description": "Street address." },
+          "lat": { "type": ["number", "null"] },
+          "lng": { "type": ["number", "null"] },
+          "recibe": { "type": ["string", "null"], "description": "What the center accepts (free text — water, food, medicine, etc.)." },
+          "descripcion": { "type": ["string", "null"] },
+          "contacto": { "type": ["string", "null"] },
+          "createdAt": { "type": "string" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/stats": {
+      "get": {
+        "operationId": "getStats",
+        "tags": ["stats"],
+        "summary": "Get the registry totals — how many people are missing, found, and deceased",
+        "description": "Returns aggregate counters across the whole registry. No parameters.",
+        "responses": {
+          "200": {
+            "description": "The totals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "total": { "type": "integer", "example": 60944 },
+                        "buscados": { "type": "integer", "example": 53717 },
+                        "encontrados": { "type": "integer", "example": 7223 },
+                        "fallecidos": { "type": "integer", "example": 4 }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/personas": {
+      "get": {
+        "operationId": "searchPersonas",
+        "tags": ["people"],
+        "summary": "Search reported people by name or national id, filterable by status",
+        "description": "Search the registry. Use `q` for a free-text name search, or `cedula` for an exact national-id match. Filter by `estado` to see only missing (buscado) or found (encontrado) people. Records include last-known `lat`/`lng` when available — useful for locating the nearest search area.",
+        "parameters": [
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Free-text name search (nombre/apellido)." },
+          { "name": "cedula", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Exact national-id match." },
+          { "name": "estado", "in": "query", "required": false, "schema": { "type": "string", "enum": ["buscado", "encontrado", "fallecido"] }, "description": "Filter by community status." },
+          { "name": "page", "in": "query", "required": false, "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "maximum": 200 }, "description": "Page size (max 200)." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching people + pagination.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Person" } },
+                    "pagination": {
+                      "type": "object",
+                      "properties": {
+                        "total": { "type": "integer" },
+                        "page": { "type": "integer" },
+                        "limit": { "type": "integer" },
+                        "totalPages": { "type": "integer" },
+                        "hasNextPage": { "type": "boolean" },
+                        "hasPrevPage": { "type": "boolean" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feed": {
+      "get": {
+        "operationId": "getRecentFeed",
+        "tags": ["people"],
+        "summary": "Get the most recently reported or updated people",
+        "description": "Returns the latest activity in the registry (newest reports/updates first) — a live feed, not a search. Use searchPersonas to look someone up.",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "maximum": 200 }, "description": "How many recent records to return (max 200)." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent people.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "serverTime": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Person" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recursos": {
+      "get": {
+        "operationId": "listRecursos",
+        "tags": ["resources"],
+        "summary": "List relief resources — collection centers and where to donate or get help",
+        "description": "Returns relief resources with address, coordinates, and what each center accepts (`recibe`). Filter with `tipo=centro_acopio` for donation/relief collection centers. Records include `lat`/`lng` — use them to find the nearest center to a location.",
+        "parameters": [
+          { "name": "tipo", "in": "query", "required": false, "schema": { "type": "string", "enum": ["centro_acopio", "estructura"] }, "description": "Filter by resource type." },
+          { "name": "page", "in": "query", "required": false, "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resources + paging.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "tipo": { "type": "string" },
+                    "page": { "type": "integer" },
+                    "pageSize": { "type": "integer" },
+                    "total": { "type": "integer" },
+                    "count": { "type": "integer" },
+                    "nextPage": { "type": ["integer", "null"] },
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Resource" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
