@@ -17,11 +17,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from gecko.access import public_session
 from gecko.client import AgentApiClient
 from gecko.mcp_server import McpSurface
+
+
+class ToolProvider(Protocol):
+    """The seam the agent loop depends on — satisfied by both ``SurfcallTools`` and
+    ``MultiSurfaceTools``."""
+
+    def tools_for_llm(self) -> list[dict[str, Any]]: ...
+    def call(self, name: str, args: dict[str, Any] | None) -> str: ...
+
 
 # The SOS Venezuela 2026 public, no-auth, read-only surface — the agent's whole world.
 PUBLIC_READS: set[str] = {
@@ -30,6 +39,15 @@ PUBLIC_READS: set[str] = {
     "getPersonStats",
     "getRecentDamage",
     "getNews",
+}
+
+# ReportaVNZLA public, no-auth, read-only surface — a second, larger relief registry
+# (~61k people + collection centers, with coordinates). Same safety boundary.
+REPORTAVNZLA_READS: set[str] = {
+    "searchPersonas",
+    "getStats",
+    "getRecentFeed",
+    "listRecursos",
 }
 
 
@@ -113,3 +131,39 @@ class SurfcallTools:
         else:
             payload = {"data": result}
         return _cap(payload, self.max_chars)
+
+
+class MultiSurfaceTools:
+    """Aggregate several allow-listed surfaces behind ONE tool interface (duck-types
+    ``SurfcallTools`` — same ``tools_for_llm`` / ``call`` / ``tool_names``).
+
+    Tool names are unique across our humanitarian surfaces (SOS vs ReportaVNZLA), so a
+    name routes unambiguously to its owning surface — no namespacing needed. Every
+    surface keeps its own allow-list, never-raises, and cap, so the safety boundary is
+    unchanged; the agent just sees the union and can search both registries.
+    """
+
+    def __init__(self, surfaces: list[SurfcallTools]) -> None:
+        self._surfaces = surfaces
+        self._owner: dict[str, SurfcallTools] = {}
+        for surface in surfaces:
+            for name in surface.tool_names:
+                self._owner.setdefault(name, surface)
+
+    @property
+    def tool_names(self) -> set[str]:
+        return set(self._owner)
+
+    def tools_for_llm(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for surface in self._surfaces:
+            out.extend(surface.tools_for_llm())
+        return out
+
+    def call(self, name: str, args: dict[str, Any] | None) -> str:
+        surface = self._owner.get(name)
+        if surface is None:
+            return json.dumps(
+                {"error": f"tool no permitida: {name}"}, ensure_ascii=False
+            )
+        return surface.call(name, args)

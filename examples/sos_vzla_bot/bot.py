@@ -34,8 +34,13 @@ HELP_ES = (
     "/buscar <nombre> — buscar una persona desaparecida o encontrada\n"
     "/cifras — desaparecidos y encontrados\n"
     "/reportes — reportes recientes del mapa\n"
-    "/noticias — últimas noticias del terremoto\n\n"
-    "Datos de «SOS Venezuela 2026». Emergencias en Venezuela: 171."
+    "/noticias — últimas noticias del terremoto\n"
+    "/cerca — centros de acopio más cercanos (comparte tu ubicación)\n\n"
+    "Datos de «SOS Venezuela 2026» y «ReportaVNZLA». Emergencias en Venezuela: 171."
+)
+CERCA_PROMPT_ES = (
+    "Para darte los centros de acopio más cercanos, comparte tu ubicación: toca el clip "
+    "📎 (o el «+») en Telegram → «Ubicación» → «Enviar mi ubicación actual»."
 )
 BUSCAR_PROMPT_ES = (
     "Escribe el nombre después del comando, por ejemplo:\n/buscar María Pérez"
@@ -99,6 +104,11 @@ def resolve_command(command: str, arg: str) -> tuple[str | None, str | None]:
         if arg.strip():
             return None, f"Busca personas reportadas con el nombre: {arg.strip()}"
         return BUSCAR_PROMPT_ES, None
+    if cmd == "cerca":
+        return (
+            CERCA_PROMPT_ES,
+            None,
+        )  # the nearest-center answer comes on location share
     if cmd in COMMAND_QUERIES:
         return None, COMMAND_QUERIES[cmd]
     return None, None
@@ -162,15 +172,49 @@ def run(config=None) -> None:  # pragma: no cover - founder-run live smoke
     except ImportError as exc:
         raise SystemExit("Instala el extra del bot: uv sync --extra sosbot") from exc
 
-    from . import agent
-    from .config import SPEC_PATH, SYSTEM_ES, BotConfig
+    from gecko.access import public_session
+    from gecko.client import AgentApiClient
+
+    from . import agent, geo
+    from .config import REPORTAVNZLA_SPEC_PATH, SPEC_PATH, SYSTEM_ES, BotConfig
     from .providers import make_llm
-    from .surfcall_tools import SurfcallTools
+    from .surfcall_tools import (
+        PUBLIC_READS,
+        REPORTAVNZLA_READS,
+        MultiSurfaceTools,
+        SurfcallTools,
+    )
 
     cfg = config or BotConfig.from_env()
     llm = make_llm(cfg.provider, cfg.llm_api_key)
-    tools = SurfcallTools(SPEC_PATH, mode=cfg.mode)
+    # Two relief registries behind one tool interface (SOS + ReportaVNZLA).
+    tools = MultiSurfaceTools(
+        [
+            SurfcallTools(SPEC_PATH, mode=cfg.mode, allowlist=PUBLIC_READS),
+            SurfcallTools(
+                REPORTAVNZLA_SPEC_PATH, mode=cfg.mode, allowlist=REPORTAVNZLA_READS
+            ),
+        ]
+    )
+    # Direct client for the nearest-center compute (full data, bypasses the LLM cap).
+    recursos_client = AgentApiClient(
+        str(REPORTAVNZLA_SPEC_PATH), session=public_session()
+    )
     limiter = RateLimiter(cfg.rate_limit_per_min)
+
+    def fetch_centros() -> list[dict[str, Any]]:
+        """Live-fetch collection centers with coordinates. Never raises -> [] on error."""
+        try:
+            res = recursos_client.call(
+                "listRecursos",
+                {"tipo": "centro_acopio", "limit": 200},
+                mode="live",
+            )
+            data = res.get("data") if isinstance(res, dict) else None
+            rows = data.get("data") if isinstance(data, dict) else data
+            return rows if isinstance(rows, list) else []
+        except Exception:  # noqa: BLE001 - degrade, never crash the bot
+            return []
 
     def responder(text: str) -> str:
         return agent.respond(
@@ -223,12 +267,33 @@ def run(config=None) -> None:  # pragma: no cover - founder-run live smoke
             ),
         )
 
+    async def on_location(update: "Update", _ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+        msg, user = update.message, update.effective_user
+        if msg is None or user is None or msg.location is None:
+            return
+        if not limiter.allow(user.id, time.monotonic()):
+            await msg.reply_text(RATE_LIMIT_ES)
+            return
+        lat, lng = msg.location.latitude, msg.location.longitude
+        # Deterministic (no LLM): fetch centers, compute Haversine, format.
+        await _respond(msg, lambda: geo.nearest_help_reply(lat, lng, fetch_centros()))
+
     app = Application.builder().token(cfg.telegram_token).build()
     app.add_handler(
         CommandHandler(
-            ["start", "ayuda", "help", "buscar", "cifras", "reportes", "noticias"],
+            [
+                "start",
+                "ayuda",
+                "help",
+                "buscar",
+                "cifras",
+                "reportes",
+                "noticias",
+                "cerca",
+            ],
             on_command,
         )
     )
+    app.add_handler(MessageHandler(filters.LOCATION, on_location))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.run_polling()

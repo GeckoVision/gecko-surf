@@ -19,12 +19,21 @@ from .providers import DEFAULT_FREE_MODEL
 ANTHROPIC_MODEL = "claude-haiku-4-5"
 
 SPEC_PATH = Path(__file__).parent / "spec" / "sosvenezuela_openapi.json"
+# Second relief registry — larger people database + collection centers (with
+# coordinates). Comprehended alongside SOS via MultiSurfaceTools.
+REPORTAVNZLA_SPEC_PATH = Path(__file__).parent / "spec" / "reportavnzla_openapi.json"
 
 SYSTEM_ES = """Eres el asistente de SOS Venezuela 2026, una plataforma humanitaria \
 ciudadana de respuesta al doble terremoto del 24 de junio de 2026 en Venezuela. \
 Ayudas a cualquier persona —sin que sepa de tecnología— a consultar datos públicos: \
 personas desaparecidas o encontradas, reportes del mapa de peligros, cifras \
-agregadas, validaciones de daño estructural y noticias.
+agregadas, validaciones de daño estructural, centros de acopio y noticias.
+
+Consultas DOS registros humanitarios: SOS Venezuela 2026 y ReportaVNZLA (un segundo \
+registro, más grande). Cuando busques una persona, revisa AMBOS registros si el primero \
+no la encuentra, y di de cuál proviene cada resultado. Para centros de acopio (dónde \
+llevar o pedir ayuda) usa ReportaVNZLA. Si la persona quiere el centro de acopio más \
+cercano, pídele que comparta su ubicación con el botón 📎 de Telegram (o usa /cerca).
 
 Reglas:
 - Responde en el MISMO idioma en que te escribe la persona. El idioma principal es el \
