@@ -354,6 +354,32 @@ Resources:
       LogGroupName: /ecs/surfcall
       RetentionInDays: 30
 
+  # Stack-owned execution role: the managed ECS execution policy PLUS read on
+  # the /gecko-mcp/* SSM params (pushed by infra/push-ssm-params.sh) so the
+  # task def's `Secrets:` ValueFrom resolves at boot. Used when no
+  # ExecutionRoleArn param is supplied (previously fell back to the account's
+  # bare ecsTaskExecutionRole, which has no SSM read).
+  ApiExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: UseDefaultExecutionRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: gecko-mcp-ssm-read
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/*
+
   ApiTaskDef:
     Type: AWS::ECS::TaskDefinition
     DependsOn: ApiLogGroup
@@ -365,7 +391,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       ExecutionRoleArn: !If
         - UseDefaultExecutionRole
-        - !Sub arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole
+        - !GetAtt ApiExecutionRole.Arn
         - !Ref ExecutionRoleArn
       TaskRoleArn: !If
         - UseDefaultTaskRole
@@ -377,12 +403,20 @@ Resources:
           Essential: true
           PortMappings:
             - {ContainerPort: 8000, Protocol: tcp}
-          # Stateless: hard-coded env only — no Secrets/SSM (surfcall reads no secrets).
           Environment:
             - {Name: PORT,        Value: '8000'}
             - {Name: ENVIRONMENT, Value: !Ref Environment}
             - {Name: PYTHONUNBUFFERED,     Value: '1'}
             - {Name: PYTHONDONTWRITEBYTECODE, Value: '1'}
+          # Usage-events sink + kill-switch, from SSM (SecureString; pushed by
+          # infra/push-ssm-params.sh). The sentinel '__unset__' keeps the sink
+          # a no-op (gecko/events.py) until a real MONGODB_URI is pushed —
+          # control-plane metadata only, never payloads.
+          Secrets:
+            - Name: MONGODB_URI
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/MONGODB_URI
+            - Name: GECKO_TELEMETRY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_TELEMETRY
           LogConfiguration:
             LogDriver: awslogs
             Options:

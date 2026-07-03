@@ -1,10 +1,12 @@
 # =============================================================================
-# surfcall — MCP Streamable-HTTP container (Python + uv + uvicorn on port 8000)
+# gecko-surf — MCP Streamable-HTTP container (Python + uv + uvicorn on port 8000)
 #
 # Single-package repo (NOT a uv workspace). Stage 1 builds the venv with the
-# `serve` extra (mcp[cli] + uvicorn -> pulls starlette). Stage 2 copies the venv
-# + the surfcall package + the one local OpenAPI spec the container serves.
-# Stateless: no DB/SSM/secrets at build or run time (control plane only).
+# `serve` extra (mcp[cli] + uvicorn -> pulls starlette) and the `events` extra
+# (pymongo — the hosted usage-events sink; a no-op unless MONGODB_URI is set).
+# Stage 2 copies the venv + the gecko package + the one local OpenAPI spec the
+# container serves. Control plane only: no payloads/secrets at build time;
+# MONGODB_URI arrives at runtime via ECS Secrets -> SSM.
 # =============================================================================
 
 FROM python:3.12-slim AS builder
@@ -16,30 +18,30 @@ WORKDIR /app
 
 # Manifests + source first, so `uv sync` can build the flat-layout package.
 COPY pyproject.toml uv.lock README.md ./
-COPY surfcall ./surfcall
+COPY gecko ./gecko
 
-# Engine + the serve extra (mcp[cli], uvicorn, starlette). --no-dev drops
-# mypy/pytest/ruff; --frozen pins to uv.lock (must resolve the serve extra).
+# Engine + serve (mcp[cli], uvicorn, starlette) + events (pymongo). --no-dev
+# drops mypy/pytest/ruff; --frozen pins to uv.lock (must resolve both extras).
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra serve
+    uv sync --frozen --no-dev --extra serve --extra events
 
 # -----------------------------------------------------------------------------
 
 FROM python:3.12-slim AS runner
 
-RUN useradd --create-home --shell /bin/bash surfcall
+RUN useradd --create-home --shell /bin/bash gecko
 
 WORKDIR /app
 
 COPY --from=builder /app/.venv ./.venv
 COPY --from=builder /app/pyproject.toml /app/uv.lock /app/README.md ./
-COPY surfcall ./surfcall
+COPY gecko ./gecko
 # The one OpenAPI spec the container comprehends + serves. Control plane only:
 # no payloads, no secrets.
 COPY examples/sos_vzla_bot/spec ./examples/sos_vzla_bot/spec
 
-RUN chown -R surfcall:surfcall /app
-USER surfcall
+RUN chown -R gecko:gecko /app
+USER gecko
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
@@ -53,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)" || exit 1
 
 # Bind 0.0.0.0:$PORT, mode=live, allowlist mcp.geckovision.tech.
-CMD ["python", "-m", "surfcall.serve_mcp"]
+CMD ["python", "-m", "gecko.serve_mcp"]
