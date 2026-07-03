@@ -141,3 +141,26 @@ class NoAuthSession:
 def public_session() -> NoAuthSession:
     """A session for APIs whose endpoints need no auth (public reads only)."""
     return NoAuthSession()
+
+
+@dataclass
+class StaticHeaderSession:
+    """Adapter for public APIs gated by a FIXED, publishable header — e.g. a Supabase
+    publishable ``apikey`` (public by design, like a Stripe ``pk_``; printed in the
+    provider's own docs).
+
+    Non-empty ``auth_headers()`` makes the gated operation visible to the agent, while
+    the value is injected only at call time and NEVER appears in the tool def
+    (invariant #4 — auth is invisible to the agent). Do NOT use this for real secrets:
+    those belong in a live session sourced from env, never a constant.
+    """
+
+    headers: dict[str, str]
+
+    def auth_headers(self) -> dict[str, str]:
+        return dict(self.headers)
+
+
+def static_session(headers: dict[str, str]) -> StaticHeaderSession:
+    """A session that injects fixed, non-secret headers (e.g. a publishable API key)."""
+    return StaticHeaderSession(dict(headers))
