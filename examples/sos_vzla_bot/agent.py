@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .surfcall_tools import SurfcallTools
+from .surfcall_tools import ToolProvider
 
 FALLBACK_ES = (
     "Disculpa, no pude completar la consulta en este momento. Intenta de nuevo "
@@ -36,7 +36,7 @@ def respond(
     user_text: str,
     *,
     llm: Any,
-    tools: SurfcallTools,
+    tools: ToolProvider,
     model: str,
     system: str,
     history: list[dict[str, Any]] | None = None,
