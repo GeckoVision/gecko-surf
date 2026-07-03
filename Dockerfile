@@ -40,7 +40,9 @@ COPY gecko ./gecko
 # gecko/serve_mcp.py). Control plane only: no payloads, no secrets.
 COPY examples/sos_vzla_bot/spec ./examples/sos_vzla_bot/spec
 COPY examples/reportavnzla_demo/spec ./examples/reportavnzla_demo/spec
-COPY examples/refugios_demo/spec ./examples/refugios_demo/spec
+# Provider-space surfaces (served by gecko.serve_providers, a second service).
+COPY examples/pegana_demo/spec ./examples/pegana_demo/spec
+COPY examples/jito_demo/spec ./examples/jito_demo/spec
 
 RUN chown -R gecko:gecko /app
 USER gecko
