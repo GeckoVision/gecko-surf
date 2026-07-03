@@ -5,8 +5,8 @@ users, are `skills/api-agent-ready/SKILL.md` and `skills/x402-payai-setup/SKILL.
 
 ## What this is
 
-A standalone, MIT-licensed **provider-onboarding** kit built on
-[`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (MIT, on PyPI), the
+A standalone, Apache-2.0-licensed **provider-onboarding** kit built on
+[`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (Apache-2.0, on PyPI), the
 API-comprehension engine. Where `solana-api-skill` teaches an agent to *call* an
 unfamiliar API, this kit teaches you to make an API *you provide* usable by agents —
 its **whole** surface, first-call-correct, over MCP, **alongside** whatever MCP the
@@ -35,7 +35,7 @@ agents/                api-onboarding-engineer · x402-payments-engineer
 commands/              /make-agent-ready <url> · /setup-x402 <api>
 rules/                 aggregate-not-rail (aggregate/compose boundary)
 .claude-plugin/        plugin.json — the Marketplace plugin manifest
-CLAUDE.md · LICENSE (MIT) · README.md · VERSION · CHANGELOG.md
+CLAUDE.md · LICENSE (Apache-2.0) · README.md · VERSION · CHANGELOG.md
 ```
 
 ## Rules for editing

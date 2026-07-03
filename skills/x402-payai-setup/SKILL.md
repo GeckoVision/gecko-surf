@@ -82,5 +82,5 @@ Decide which comprehended operations are priced and which stay free. This is the
 ## Provider
 
 Built by **[GeckoVision](https://geckovision.tech)** — the API-comprehension
-company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (MIT).
+company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (Apache-2.0).
 Rail: **PayAI** (x402 facilitator on Solana) — composed, not owned.
