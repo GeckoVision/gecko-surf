@@ -8,10 +8,15 @@
 [![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
 [![status](https://img.shields.io/badge/V1-live%20on%20one%20API-orange.svg)](#-status-honest)
 
-> **Gecko is the comprehension layer for the agentic economy.** Point an agent at
-> an API — even one behind human-shaped docs and a paywall — and it finds the right
-> call, makes it correctly the first time, and runs. No client to write, no guessing
-> whether the agent is calling it right.
+> **Coding agents already one-shot clean, documented APIs. They break on the painful
+> ones** — messy, paywalled, half-documented, always drifting. Today your options are:
+> dump the whole spec (your agent picks the wrong call and sends malformed requests)
+> or hand-write an MCP wrapper (tedious — and stale the next time the API changes).
+>
+> **Gecko reads the API and turns it into tools your agent calls right the _first_
+> time — no integration code.** Point an agent at an API — even one behind human-shaped
+> docs and a paywall — add it in one line, and it finds the right call, drives the
+> access/auth handshake, and calls the real API directly. Free and open source.
 >
 > *Docs and endpoints are built for humans. Gecko translates them for agents.*
 
