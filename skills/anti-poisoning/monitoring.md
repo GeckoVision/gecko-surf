@@ -12,7 +12,7 @@
 | | **Protection (the defense)** | **Observability (the monitoring)** |
 |---|---|---|
 | **What** | Trust anchor, sanitizer, auth-host firewall, quarantine | Hosted logs + analytics of what was blocked, over time, across surfaces |
-| **Where** | In `gecko-surf` (MIT), on every call, locally | GeckoVision Cloud Pro (a hosted control-plane service) |
+| **Where** | In `gecko-surf` (Apache-2.0), on every call, locally | GeckoVision Cloud Pro (a hosted control-plane service) |
 | **Price** | **Free forever. Never gated.** | Paid tier |
 | **Status** | **Live** — shipped, tested, falsifiable ($0 offline) | **Building** |
 

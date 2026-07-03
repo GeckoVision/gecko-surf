@@ -83,7 +83,7 @@ triangulation, regression alerts) is a paid tier — see [monitoring.md](monitor
 ## Provider
 
 Built by **[GeckoVision](https://geckovision.tech)** — the API-comprehension
-company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (MIT) ·
+company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (Apache-2.0) ·
 https://pypi.org/project/gecko-surf/. Defenses live in `gecko/sanitize.py`,
 `gecko/surfaces.py`, and `gecko/caller.py`; the exploit showcase in
 `examples/poisoning_showcase/`; the battle-test in `gecko/redteam/`.

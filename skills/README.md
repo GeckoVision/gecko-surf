@@ -15,7 +15,7 @@ API, and one for **agent builders** who need to *consume* an untrusted API safel
 
 Built by **[GeckoVision](https://geckovision.tech)**, the API-comprehension
 company, on top of the open-source engine
-[`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (MIT, on PyPI).
+[`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (Apache-2.0, on PyPI).
 
 ## The one idea
 
@@ -125,4 +125,4 @@ secrets. That data-governance promise is what lets a provider onboard unilateral
 
 ## License
 
-MIT.
+Apache-2.0.

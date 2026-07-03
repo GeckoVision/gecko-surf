@@ -117,5 +117,5 @@ provider keeps 100%.
 ## Provider
 
 Built by **[GeckoVision](https://geckovision.tech)** — the API-comprehension
-company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (MIT) ·
+company. Engine: [`gecko-surf`](https://github.com/GeckoVision/gecko-surf) (Apache-2.0) ·
 https://pypi.org/project/gecko-surf/.
