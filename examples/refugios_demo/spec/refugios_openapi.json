@@ -1,0 +1,96 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Refugios Venezuela",
+    "version": "1.0.0",
+    "description": "Open, collaborative registry of shelters and food centers after the Venezuela 2026 earthquake. Read endpoints are public; calls carry a PUBLISHABLE Supabase apikey (safe to be public, injected by Gecko at call time — hidden from the agent). Hand-authored by Gecko from https://refugiosvenezuela.com/api; open-source (dnsantosuosso/refugio-mapa-venezuela)."
+  },
+  "servers": [{ "url": "https://jewiqrfjotzbwsmiomjx.supabase.co/functions/v1" }],
+  "components": {
+    "securitySchemes": {
+      "publishableKey": { "type": "apiKey", "in": "header", "name": "apikey", "description": "Publishable Supabase key (public)." }
+    },
+    "schemas": {
+      "Refugio": {
+        "type": "object",
+        "description": "A shelter or food center on the map. Coordinates + capabilities help route someone to safety.",
+        "properties": {
+          "id": { "type": "string", "description": "UUID." },
+          "name": { "type": "string" },
+          "address": { "type": ["string", "null"] },
+          "city": { "type": ["string", "null"] },
+          "state": { "type": ["string", "null"] },
+          "latitude": { "type": ["number", "null"] },
+          "longitude": { "type": ["number", "null"] },
+          "capacity": { "type": ["integer", "null"] },
+          "type": { "type": "string", "enum": ["escuela", "iglesia", "refugio_oficial", "centro_comunitario", "hospital", "estadio", "casa_particular", "otro"] },
+          "status": { "type": "string", "enum": ["activo", "lleno", "cerrado"], "description": "activo = open · lleno = full · cerrado = closed." },
+          "has_water": { "type": ["boolean", "null"] },
+          "has_food": { "type": ["boolean", "null"] },
+          "has_medical": { "type": ["boolean", "null"] },
+          "has_electricity": { "type": ["boolean", "null"] },
+          "pets_allowed": { "type": ["boolean", "null"] },
+          "contact_phone": { "type": ["string", "null"] },
+          "verified": { "type": ["boolean", "null"] }
+        }
+      }
+    }
+  },
+  "security": [{ "publishableKey": [] }],
+  "paths": {
+    "/refugios": {
+      "get": {
+        "operationId": "listRefugios",
+        "summary": "List shelters and food centers, filterable by services, location, and status",
+        "description": "Returns shelters with coordinates and what each offers (water, food, medical, electricity, pets). Filter by services to find a safe place that meets a need, by estado/ciudad, or by map bounding box. Pass `id` to fetch one specific shelter by UUID.",
+        "parameters": [
+          { "name": "id", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Fetch a specific shelter by UUID." },
+          { "name": "search", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Free-text over name, address, city." },
+          { "name": "state", "in": "query", "required": false, "schema": { "type": "string" }, "description": "State (estado), e.g. Miranda." },
+          { "name": "city", "in": "query", "required": false, "schema": { "type": "string" }, "description": "City (ciudad), e.g. Caracas." },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["activo", "lleno", "cerrado"] }, "description": "Only shelters with this status." },
+          { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["escuela", "iglesia", "refugio_oficial", "centro_comunitario", "hospital", "estadio", "casa_particular", "otro"] } },
+          { "name": "verified", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Only verified shelters." },
+          { "name": "has_water", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Has drinking water." },
+          { "name": "has_food", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Has food." },
+          { "name": "has_medical", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Has medical attention." },
+          { "name": "has_electricity", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Has electricity." },
+          { "name": "pets_allowed", "in": "query", "required": false, "schema": { "type": "boolean" }, "description": "Accepts pets." },
+          { "name": "min_lat", "in": "query", "required": false, "schema": { "type": "number" }, "description": "Map bounding box." },
+          { "name": "max_lat", "in": "query", "required": false, "schema": { "type": "number" } },
+          { "name": "min_lng", "in": "query", "required": false, "schema": { "type": "number" } },
+          { "name": "max_lng", "in": "query", "required": false, "schema": { "type": "number" } },
+          { "name": "sort", "in": "query", "required": false, "schema": { "type": "string", "enum": ["created_at", "updated_at", "name"] } },
+          { "name": "order", "in": "query", "required": false, "schema": { "type": "string", "enum": ["asc", "desc"] } },
+          { "name": "page", "in": "query", "required": false, "schema": { "type": "integer", "default": 1 } },
+          { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching shelters + pagination.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Refugio" } },
+                    "pagination": {
+                      "type": "object",
+                      "properties": {
+                        "page": { "type": "integer" },
+                        "page_size": { "type": "integer" },
+                        "total": { "type": "integer" },
+                        "total_pages": { "type": "integer" },
+                        "has_more": { "type": "boolean" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
