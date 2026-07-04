@@ -1,0 +1,14 @@
+{
+  "name": "TxLINE off-chain API for the Hybrid on-chain/off-chain TxODDS Data system",
+  "description": "Overview This API provides access to real-time and historical sports data from the TxLINE on-chain/off-chain Data system. It makes proprietary TxODDS available for any funded blockchain users by linking the on-chain subscribe transaction by issuing time-limited API tokens. - The data is canonicalised so that all fixtures, odds, or scores are provably identifiable and ordered--confirmed by\u2026",
+  "surface": "txline.txodds.com",
+  "operations": 18,
+  "tools": 18,
+  "surface_rev": "790abd247ab6",
+  "artifacts": {
+    "llms_txt": "https://txline.txodds.com/llms.txt",
+    "tools": "https://txline.txodds.com/tools.md",
+    "well_known": "https://txline.txodds.com/.well-known/gecko.json"
+  },
+  "generated_by": "gecko \u2014 github.com/GeckoVision/gecko-surf"
+}
