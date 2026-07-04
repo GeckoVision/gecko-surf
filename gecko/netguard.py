@@ -22,9 +22,14 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import urllib.error
 import urllib.request
 from collections.abc import Callable
+from typing import Any
 from urllib.parse import urljoin, urlsplit
+
+# 3xx statuses safe_get follows manually (re-validating each hop for SSRF).
+_REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 
 # Defaults are conservative; spec docs are small and should resolve fast.
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
@@ -135,21 +140,35 @@ def safe_get(
         request = urllib.request.Request(current, method="GET")
         # Do not auto-follow redirects: handle them ourselves so each hop is checked.
         opener = urllib.request.build_opener(_NoRedirect)
-        with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated above)
-            status = getattr(resp, "status", 200)
-            if status in (301, 302, 303, 307, 308):
-                location = resp.headers.get("Location")
-                if not location:
-                    raise UnsafeUrlError("redirect without a Location header")
-                current = urljoin(current, location)
+        try:
+            with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated)
+                status = getattr(resp, "status", 200)
+                if status in _REDIRECT_CODES:
+                    current = _redirect_target(current, resp.headers)
+                    continue
+                chunk = resp.read(max_bytes + 1)
+                if len(chunk) > max_bytes:
+                    raise UnsafeUrlError(
+                        f"document exceeds size cap of {max_bytes} bytes; refusing to load"
+                    )
+                return chunk.decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            # With auto-follow disabled, urllib RAISES on a 3xx instead of returning it.
+            # Follow it ourselves (re-validated at the top of the loop); other statuses
+            # (404, 5xx) propagate to the caller as the OSError subclass they are.
+            if exc.code in _REDIRECT_CODES:
+                current = _redirect_target(current, exc.headers)
                 continue
-            chunk = resp.read(max_bytes + 1)
-            if len(chunk) > max_bytes:
-                raise UnsafeUrlError(
-                    f"document exceeds size cap of {max_bytes} bytes; refusing to load"
-                )
-            return chunk.decode("utf-8")
+            raise
     raise UnsafeUrlError(f"too many redirects (>{max_redirects})")
+
+
+def _redirect_target(current: str, headers: Any) -> str:
+    """Resolve a redirect's ``Location`` against the current URL (absolute or relative)."""
+    location = headers.get("Location") if headers is not None else None
+    if not location:
+        raise UnsafeUrlError("redirect without a Location header")
+    return urljoin(current, location)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

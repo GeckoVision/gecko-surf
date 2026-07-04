@@ -253,7 +253,24 @@ def comprehend_submission(
     safe_ref = _redact_url(source) if _is_http_url(source) else source
 
     if from_docs:
-        client, warnings = _from_docs_client(source)
+        try:
+            client, warnings = _from_docs_client(source)
+        except ComprehendError:
+            raise
+        except (ValueError, OSError, UnsafeUrlError) as exc:
+            # OSError covers urllib failures (HTTPError, timeouts). Fail gracefully with a
+            # clean message instead of letting an exception escape as a 500.
+            raise ComprehendError(
+                f"could not comprehend the docs page at: {safe_ref}"
+            ) from exc
+        if not client.operations:
+            raise ComprehendError(
+                (
+                    f"no callable API surface found at {safe_ref} — point Gecko at the "
+                    "OpenAPI spec URL, or a specific API-reference page (a docs landing "
+                    "page usually has none)"
+                )
+            )
         return _summarize(client, warnings)
 
     try:
@@ -278,5 +295,11 @@ def comprehend_submission(
             f"no OpenAPI or recoverable docs surface at: {safe_ref}"
         ) from exc
     if not recovered.operations:
-        raise ComprehendError(f"no callable surface recovered from: {safe_ref}")
+        raise ComprehendError(
+            (
+                f"no callable API surface found at {safe_ref} — point Gecko at the "
+                "OpenAPI spec URL, or a specific API-reference page (a docs landing "
+                "page usually has none)"
+            )
+        )
     return _summarize(recovered, warnings)

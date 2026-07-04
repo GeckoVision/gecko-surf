@@ -115,3 +115,18 @@ def test_url_credentials_are_redacted_in_errors() -> None:
     with pytest.raises(ComprehendError) as exc:
         comprehend_submission("http://user:SECRETPASS@127.0.0.1/openapi.json")
     assert "SECRETPASS" not in str(exc.value)
+
+
+def test_from_docs_failure_is_graceful_not_500(monkeypatch) -> None:
+    """A failing docs fetch (e.g. an unfollowed redirect) must surface as a clean
+    ComprehendError, never an unhandled exception that becomes a 500."""
+    import urllib.error
+
+    from gecko import comprehend_service as cs
+
+    def boom(src: str) -> object:
+        raise urllib.error.HTTPError(src, 307, "Temporary Redirect", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cs, "recover_from_docs", boom)
+    with pytest.raises(ComprehendError):
+        comprehend_submission(TINY_SPEC, from_docs=True)

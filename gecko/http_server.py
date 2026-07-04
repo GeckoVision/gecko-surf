@@ -384,6 +384,12 @@ def build_multi_surface_app(
         except ComprehendError as exc:
             # The message is already redacted of any URL credential (safe to return).
             return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception:  # noqa: BLE001 - never leak a stack / 500 from this door
+            logger.exception("unexpected error comprehending a submission")
+            return JSONResponse(
+                {"error": "could not comprehend that URL — please try again"},
+                status_code=502,
+            )
         return JSONResponse(asdict(result))
 
     routes: list[Any] = [

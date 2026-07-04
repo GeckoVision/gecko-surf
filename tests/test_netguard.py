@@ -102,3 +102,76 @@ def test_allows_normal_public_host():
 
 def test_allows_public_ip_literal():
     assert validate_public_url("https://93.184.216.34/openapi.json") is None
+
+
+# --- safe_get redirect handling (regression: 307 was raising HTTPError -> 500) ---
+import urllib.error  # noqa: E402
+
+from gecko import netguard  # noqa: E402
+
+
+class _Resp:
+    def __init__(self, body: str) -> None:
+        self._b = body.encode()
+        self.status = 200
+        self.headers: dict[str, str] = {}
+
+    def read(self, n: int = -1) -> bytes:
+        return self._b if n < 0 else self._b[:n]
+
+    def __enter__(self) -> "_Resp":
+        return self
+
+    def __exit__(self, *a: object) -> bool:
+        return False
+
+
+class _FakeOpener:
+    def __init__(self, script: list[object]) -> None:
+        self._script = list(script)
+        self.calls: list[str] = []
+
+    def open(self, request: object, timeout: object = None) -> object:
+        self.calls.append(request.full_url)  # type: ignore[attr-defined]
+        item = self._script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def test_safe_get_follows_307_and_revalidates_each_hop(monkeypatch) -> None:
+    r = _resolver(
+        {"a.example.com": ["93.184.216.34"], "b.example.com": ["93.184.216.34"]}
+    )
+    err = urllib.error.HTTPError(
+        "https://a.example.com/docs",
+        307,
+        "Temporary Redirect",
+        {"Location": "https://b.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _FakeOpener([err, _Resp("hello docs")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    out = netguard.safe_get("https://a.example.com/docs", resolver=r)
+    assert out == "hello docs"
+    assert fake.calls == [
+        "https://a.example.com/docs",
+        "https://b.example.com/final",
+    ]
+
+
+def test_safe_get_blocks_redirect_onto_private_host(monkeypatch) -> None:
+    r = _resolver(
+        {"pub.example.com": ["93.184.216.34"], "evil.example.com": ["10.0.0.1"]}
+    )
+    err = urllib.error.HTTPError(
+        "https://pub.example.com/",
+        302,
+        "Found",
+        {"Location": "https://evil.example.com/steal"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _FakeOpener([err, _Resp("should-not-reach")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    with pytest.raises(netguard.UnsafeUrlError):
+        netguard.safe_get("https://pub.example.com/", resolver=r)
