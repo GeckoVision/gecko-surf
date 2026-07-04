@@ -1273,7 +1273,7 @@ paths:
         required: true
         schema:
           type: integer
-          format: int32
+          format: int64
       - name: seq
         in: query
         description: The sequence number of the specific scores event within the fixture's
@@ -1284,8 +1284,9 @@ paths:
           format: int32
       - name: statKey
         in: query
-        description: The key identifying the specific statistic to validate (e.g.,
-          1 for 'Participant1_Score').
+        description: 'Integer key (0-indexed) identifying the statistic to validate.
+          Pass an INTEGER, not a stat name: e.g. 1 = Participant1_Score,
+          2 = Participant2_Score.'
         required: true
         schema:
           type: integer

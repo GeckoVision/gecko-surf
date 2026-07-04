@@ -416,6 +416,14 @@ class AgentApiClient:
             "method": req.method,
             "data": example_from_schema(clean),
             "mode": "recorded",
+            # Make demo-mode unmistakable to the agent: values are synthesized from the
+            # response schema, NOT live upstream data. Without this an agent can't tell a
+            # zeroed placeholder apart from "fixture not found" (external report #3).
+            "mode_note": (
+                "Values are synthesized from the API's response schema for a $0 offline "
+                "demo — they are placeholders, not live data. Point Gecko at your own "
+                "subscription for real responses."
+            ),
         }
 
     def _capture(
