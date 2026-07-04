@@ -24,9 +24,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .access import static_session
+from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
 from .http_server import serve_multi_http
+from .mcp_server import McpSurface
 
 # In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,16 @@ _SURFACES: list[tuple[str, Path]] = [
 # Auth-gated surface: served only when its publishable key is present in the env.
 _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_openapi.json"
 
+# Gecko-brand DEMO surfaces — paid / mainnet-money APIs (TxLINE, Jito) that we can't
+# serve live publicly. Served in RECORDED mode: every response is synthesized from the
+# schema ($0, offline), no real credential is used or exposed. The point is to show
+# first-call-correct comprehension of the exact APIs Gecko pitches; live data needs the
+# caller's own subscription. TxLINE uses a stub session so its fully auth-gated ops are
+# still visible as tools (recorded mode never sends the stub header anywhere); Jito's
+# JSON-RPC methods are public.
+_TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
+_JITO_SPEC = _ROOT / "examples" / "jito_demo" / "spec" / "jito_openapi.json"
+
 PUBLIC_HOST = "mcp.geckovision.tech"
 PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
@@ -57,6 +68,25 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     surfaces: list[tuple[str, Any]] = [
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]
+    # Recorded brand demo surfaces (pre-built so their mode overrides the host default).
+    surfaces.append(
+        (
+            "txline",
+            McpSurface(
+                AgentApiClient(str(_TXLINE_SPEC), session=stub_session()),
+                mode="recorded",
+            ),
+        )
+    )
+    surfaces.append(
+        (
+            "jito",
+            McpSurface(
+                AgentApiClient(str(_JITO_SPEC), session=public_session()),
+                mode="recorded",
+            ),
+        )
+    )
     # Refugios (shelters) — comprehended with the publishable apikey injected as a
     # static header. Passed as a CLIENT (not a bare spec) so the multi-surface builder
     # uses its session; the key is invisible to the agent.

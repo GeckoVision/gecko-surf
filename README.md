@@ -46,19 +46,22 @@ makes an API actually *usable* by an agent.
 
 ## Try it in 10 seconds — one line, zero install
 
-Give your agent a **live, free, no-auth** API and watch it make first-call-correct
+Give your agent a **Gecko-comprehended surface** and watch it make first-call-correct
 calls — no `pip`, no spec, no key:
 
 ```bash
-claude mcp add --transport http gecko-reportavnzla https://mcp.geckovision.tech/reportavnzla/mcp
+claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline/mcp
 ```
 
-That connects your agent to a **Gecko-comprehended surface** — 4 question-shaped,
-first-call-correct tools over a real humanitarian API, served agent-native. In
+That connects your agent to the **TxODDS TxLINE** World Cup API — 18 question-shaped,
+first-call-correct tools over an API with a two-token on-chain paywall, served
+agent-native. It's a **recorded demo** (responses synthesized from schema, `$0`,
+offline — so you can explore the surface without a subscription); point it at your own
+TxLINE session for live data. Also live: **Jito** at `/jito/mcp`. In
 **Cursor / VS Code / any framework**, point it at the same URL:
 
 ```jsonc
-{ "mcpServers": { "gecko-reportavnzla": { "type": "http", "url": "https://mcp.geckovision.tech/reportavnzla/mcp" } } }
+{ "mcpServers": { "gecko-txline": { "type": "http", "url": "https://mcp.geckovision.tech/txline/mcp" } } }
 ```
 
 This is the fastest way to *see what Gecko does* before you bring your own API. When
@@ -165,7 +168,7 @@ first call correct. **Two ways in — by where your agent lives:**
 /make-agent-ready https://api.example.com/openapi.json
 ```
 
-Installing wires the live `gecko-reportavnzla` surface (working tools, zero setup) **and**
+Installing wires the live `gecko-txline` demo surface (working tools, zero setup) **and**
 gives you the skills/commands: `/make-agent-ready` comprehends your API, serves it over
 MCP, and prints the one-click add string — plus `/setup-x402` and the anti-poisoning guard.
 

@@ -13,9 +13,12 @@ zero install** — and the live path is what finally emits usage telemetry (toda
 
 - **Hosted MCP is live** at `https://mcp.geckovision.tech` — a root index (`/`)
   listing surfaces, each mounted at `/{name}/mcp` with agent-native breadcrumbs
-  (`/{name}/llms.txt`, `gecko.json`, `tools.md`). Two live surfaces today:
-  `reportavnzla` (4 tools, **free, no auth**) and `sosvenezuela`. Code:
-  `gecko/http_server.py` → `build_multi_surface_app`.
+  (`/{name}/llms.txt`, `gecko.json`, `tools.md`). Gecko-brand demo surfaces:
+  `txline` (TxODDS TxLINE, 18 tools, **recorded** — $0/offline, no subscription) and
+  `jito` (5 tools, recorded). The humanitarian surfaces (`reportavnzla`, `sosvenezuela`)
+  keep running under the AyudaVenezuela product but are **not** listed on Gecko's front
+  door. Code: `gecko/http_server.py` → `build_multi_surface_app`,
+  `gecko/serve_mcp.py` for the surface set.
 - **A marketplace plugin** (`gecko-surf`, under review): `.claude-plugin/marketplace.json`
   + `skills/.claude-plugin/plugin.json`. **Gap:** it ships three *skills*
   (api-agent-ready, x402-payai-setup, anti-poisoning) + two commands — and **zero
@@ -27,14 +30,16 @@ zero install** — and the live path is what finally emits usage telemetry (toda
 ### Tier 0 — the hero: one line, zero install (the anti-bounce)
 
 ```
-claude mcp add --transport http gecko-reportavnzla https://mcp.geckovision.tech/reportavnzla/mcp
+claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline/mcp
 ```
 
-Ten seconds → the agent has **4 first-call-correct tools** against a real, free,
-no-auth API. No `pip`, no spec, no key. This is the single command that must be
-**the first thing above the fold** on the landing page and the README — replacing
-`pip install`. `reportavnzla` is the ideal demo surface precisely because it's free
-and unauthenticated: nothing between the visitor and a correct call.
+Ten seconds → the agent has **18 first-call-correct tools** against TxODDS TxLINE — an
+API with a two-token on-chain paywall that a coding agent does *not* one-shot. No `pip`,
+no spec, no key. This is the single command that must be **the first thing above the
+fold** on the landing page and the README — replacing `pip install`. `txline` is served
+**recorded** ($0/offline, responses synthesized from schema), so the visitor explores
+the real comprehended surface with nothing between them and a correct call; live data
+needs their own subscription.
 
 Also emit the other client one-liners from the same block (same URL):
 - **Cursor / Windsurf / VS Code**: the `mcpServers` JSON snippet (`{"type":"http","url":"…"}`).
@@ -50,7 +55,7 @@ the live tools in one action. Today it gives skills only. **Fix:** bundle an
 // skills/.mcp.json  (plugin root — Claude Code auto-loads it on install)
 {
   "mcpServers": {
-    "gecko-reportavnzla": { "type": "http", "url": "https://mcp.geckovision.tech/reportavnzla/mcp" }
+    "gecko-txline": { "type": "http", "url": "https://mcp.geckovision.tech/txline/mcp" }
   }
 }
 ```
@@ -79,8 +84,8 @@ as the contributor/library path.
 
 Today each `claude mcp add` wires **one** surface. Two directions:
 
-- **Now (ship it):** per-surface adds. Fine at 2 surfaces; the hero command points
-  at the free `reportavnzla`.
+- **Now (ship it):** per-surface adds. Fine at this scale; the hero command points
+  at the recorded `txline` demo surface.
 - **V2 (flagged, not now):** a **root `/mcp` aggregator** exposing a cross-surface
   `search_capabilities` tool, so **one** add gives the agent the *whole catalog* and
   it discovers the right API by intent. This is the natural home for the enriched
