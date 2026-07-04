@@ -1,8 +1,8 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "gecko-surf",
-  "version": "0.1.0",
-  "description": "Make any API agent-usable: comprehend an OpenAPI into first-call-correct MCP tools, wire x402 payments via PayAI, and defend agents against poisoned API specs.",
+  "version": "0.2.0",
+  "description": "Make any API agent-usable: comprehend an OpenAPI into first-call-correct MCP tools, wire x402 payments via PayAI, and defend agents against poisoned API specs. Installs a live, free demo surface (reportavnzla) over MCP so you can try it with zero setup.",
   "author": {
     "name": "GeckoVision",
     "email": "ernanibmurtinho@gmail.com"
