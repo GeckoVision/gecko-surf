@@ -10,6 +10,12 @@ Supabase ``apikey`` (public by design) — served only when ``REFUGIOS_APIKEY`` 
 via a static-header session that injects the key at call time (hidden from the agent).
 No key ⇒ that surface is simply not served; the repo carries no key.
 
+Every host also exposes the 'submit your API' front doors (wired in by
+``build_multi_surface_app``): ``POST /comprehend`` (human page backend, also directly
+agent-POST-able) and the ``comprehend_api`` MCP tool at ``/gecko/mcp``. A provider
+submits one URL and gets it comprehended into first-call-correct tools, returned to the
+submitter only — never hosted or added to ``/`` (no public catalog).
+
 ``mcp.geckovision.tech`` is allowlisted for the DNS-rebinding defense: the ALB preserves
 that ``Host`` (port-less on 443) on real ``/mcp`` traffic, so the bare hostname must be
 present verbatim.
