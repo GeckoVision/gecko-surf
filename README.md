@@ -44,6 +44,32 @@ makes an API actually *usable* by an agent.
 
 ---
 
+## Try it in 10 seconds — one line, zero install
+
+Give your agent a **Gecko-comprehended surface** and watch it make first-call-correct
+calls — no `pip`, no spec, no key:
+
+```bash
+claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline/mcp
+```
+
+That connects your agent to the **TxODDS TxLINE** World Cup API — 18 question-shaped,
+first-call-correct tools over an API with a two-token on-chain paywall, served
+agent-native. It's a **recorded demo** (responses synthesized from schema, `$0`,
+offline — so you can explore the surface without a subscription); point it at your own
+TxLINE session for live data. Also live: **Jito** at `/jito/mcp`. In
+**Cursor / VS Code / any framework**, point it at the same URL:
+
+```jsonc
+{ "mcpServers": { "gecko-txline": { "type": "http", "url": "https://mcp.geckovision.tech/txline/mcp" } } }
+```
+
+This is the fastest way to *see what Gecko does* before you bring your own API. When
+you're ready to make **your** API agent-usable, jump to
+[Make any API agent-usable](#make-any-api-agent-usable) below.
+
+---
+
 ## ⚠️ Status (honest)
 
 V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
@@ -134,7 +160,7 @@ flowchart TD
 Point it at an OpenAPI and your agent can call it — no client code, auth handled,
 first call correct. **Two ways in — by where your agent lives:**
 
-**A · In Claude Code — install the plugin** (skills + commands; it drives the engine for you):
+**A · In Claude Code — install the plugin** (skills + commands + a live demo surface):
 
 ```
 /plugin marketplace add GeckoVision/gecko-surf
@@ -142,8 +168,9 @@ first call correct. **Two ways in — by where your agent lives:**
 /make-agent-ready https://api.example.com/openapi.json
 ```
 
-`/make-agent-ready` comprehends the API, serves it over MCP, and prints the one-click add
-string — and you also get `/setup-x402` and the anti-poisoning guard.
+Installing wires the live `gecko-txline` demo surface (working tools, zero setup) **and**
+gives you the skills/commands: `/make-agent-ready` comprehends your API, serves it over
+MCP, and prints the one-click add string — plus `/setup-x402` and the anti-poisoning guard.
 
 **B · Anywhere else — install the CLI** (Cursor, VS Code, any agent framework, or a plain terminal):
 

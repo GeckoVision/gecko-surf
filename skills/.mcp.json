@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gecko-txline": {
+      "type": "http",
+      "url": "https://mcp.geckovision.tech/txline/mcp"
+    }
+  }
+}
