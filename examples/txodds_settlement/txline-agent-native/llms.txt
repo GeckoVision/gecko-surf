@@ -1,0 +1,37 @@
+# TxLINE off-chain API for the Hybrid on-chain/off-chain TxODDS Data system
+
+> Overview This API provides access to real-time and historical sports data from the TxLINE on-chain/off-chain Data system. It makes proprietary TxODDS available for any funded blockchain users by linking the on-chain subscribe transaction by issuing time-limited API tokens. - The data is canonicalised so that all fixtures, odds, or scores are provably identifiable and ordered--confirmed by…
+
+Served agent-native by Gecko — 18 operations, 18 usable as first-call-correct tools. Gecko is a control plane: only the API surface, never your data, payloads, or secrets.
+
+## Agent integration
+
+- [gecko.json](https://txline.txodds.com/gecko.json): machine-readable manifest
+- [/.well-known/gecko.json](https://txline.txodds.com/.well-known/gecko.json): discovery manifest
+- [tools.md](https://txline.txodds.com/tools.md): every tool, in full
+
+## Capabilities
+
+## Authentication
+- POST /auth/guest/start — Start a new guest session
+- POST /api/token/activate — Activate subscription and retrieve API token
+## Fixtures
+- GET /api/fixtures/snapshot — Get the latest snapshot of fixtures, optionally starting at or within 30 days after a given epoch day
+- GET /api/fixtures/updates/{epochDay}/{hourOfDay} — Get all fixture updates for a single fixture on a given day
+- GET /api/fixtures/validation — Get a Merkle proof for a specific fixture update
+- GET /api/fixtures/batch-validation — Get a Merkle proof for an entire hourly batch of fixtures
+## Odds
+- GET /api/odds/snapshot/{fixtureId} — Get snapshots of the latest odds for a fixture
+- GET /api/odds/updates/{fixtureId} — Get currently live odds updates for a single fixture
+- GET /api/odds/updates/{epochDay}/{hourOfDay}/{interval} — Get a json array of all odd updates from a specific historical 5-minute interval
+- GET /api/odds/stream — Get a real-time Server-Sent Events stream of odds updates
+- GET /api/odds/validation — Get a Merkle proof for a specific odds update
+## Purchase
+- POST /api/guest/purchase/quote — Request a partially signed purchase quote given the wallet public key and required TxLINE amount in whole units
+## Scores
+- GET /api/scores/snapshot/{fixtureId} — Get snapshots for each action in the latest score events for a fixture
+- GET /api/scores/updates/{epochDay}/{hourOfDay}/{interval} — Get a json array of all score updates from a specific historical 5-minute interval (no live data is returned)
+- GET /api/scores/updates/{fixtureId} — Get the sequence of score updates for a single fixture within the current 5-min interval
+- GET /api/scores/historical/{fixtureId} — Get the full sequence of score updates for a single fixture
+- GET /api/scores/stream — Get a real-time Server-Sent Events stream of scores updates
+- GET /api/scores/stat-validation — Get a three-stage Merkle proof for a single score statistic
