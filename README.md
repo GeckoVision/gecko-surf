@@ -57,12 +57,19 @@ That connects your agent to the **TxODDS TxLINE** World Cup API — 18 question-
 first-call-correct tools over an API with a two-token on-chain paywall, served
 agent-native. It's a **recorded demo** (responses synthesized from schema, `$0`,
 offline — so you can explore the surface without a subscription); point it at your own
-TxLINE session for live data. Also live: **Jito** at `/jito/mcp`. In
-**Cursor / VS Code / any framework**, point it at the same URL:
+TxLINE session for live data. Also live: **Jito** at `/jito/mcp`.
+
+**Not using Claude Code?** `claude mcp add` and `/plugin` are Claude-Code-only. Everywhere
+else — **Cursor** (`~/.cursor/mcp.json`), **VS Code**, or any MCP client — add the same
+endpoint to your `mcp.json`:
 
 ```jsonc
 { "mcpServers": { "gecko-txline": { "type": "http", "url": "https://mcp.geckovision.tech/txline/mcp" } } }
 ```
+
+The transport is **MCP Streamable HTTP** (protocol `2025-11-25`), not SSE. From the Python
+MCP SDK, connect with `mcp.client.streamable_http.streamablehttp_client(url)` (an
+`sse_client` will `400`).
 
 This is the fastest way to *see what Gecko does* before you bring your own API. When
 you're ready to make **your** API agent-usable, jump to
