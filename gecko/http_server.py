@@ -41,22 +41,33 @@ logger = logging.getLogger("gecko.http_server")
 DEFAULT_SERVER_NAME = "gecko"
 MCP_PATH = "/mcp"
 
+# The 'submit your API' front doors: a human/agent HTTP POST and an agent MCP tool.
+COMPREHEND_PATH = "/comprehend"
+META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
+# A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
+MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
+
 _INSTALL_HINT = (
     "Install the serve extra to run the HTTP server: uv sync --extra serve "
     "(or: uv pip install 'gecko-surf[serve]')"
 )
 
 
-def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> McpSurface:
-    """Accept a spec (str/dict), an AgentApiClient, or an McpSurface; yield a surface.
+def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> Any:
+    """Accept a spec (str/dict), an AgentApiClient, an McpSurface, or any duck-typed
+    surface (``list_tools`` + ``call_tool``); yield a surface.
 
     A bare spec is wrapped with a ``public_session`` so auth-gated ops stay hidden —
-    M1 is public-only, and the agent must never be offered a tool it can't satisfy.
+    M1 is public-only, and the agent must never be offered a tool it can't satisfy. The
+    duck-typed branch admits the synthetic ``MetaComprehendSurface`` (one tool, no
+    client) without forcing it through ``AgentApiClient``.
     """
     if isinstance(spec_or_client, McpSurface):
         return spec_or_client
     if isinstance(spec_or_client, AgentApiClient):
         return McpSurface(spec_or_client, mode=mode)
+    if hasattr(spec_or_client, "list_tools") and hasattr(spec_or_client, "call_tool"):
+        return spec_or_client
     client = AgentApiClient(spec_or_client, base_url=base_url, session=public_session())
     return McpSurface(client, mode=mode)
 
@@ -262,10 +273,19 @@ def build_multi_surface_app(
     lifespan explicitly via an ``AsyncExitStack`` (get this wrong and ``/{name}/mcp`` 500s).
     """
     from contextlib import AsyncExitStack, asynccontextmanager
+    from dataclasses import asdict
 
     from starlette.applications import Starlette
+    from starlette.requests import Request
     from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Mount, Route
+
+    from .comprehend_service import (
+        ComprehendError,
+        comprehend_submission,
+        ensure_submittable,
+    )
+    from .mcp_server import MetaComprehendSurface
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
@@ -284,9 +304,28 @@ def build_multi_surface_app(
             )
         )
 
+    # The 'submit your API' meta surface — one MCP tool (comprehend_api) mounted at
+    # /gecko/mcp. Its HTTP sibling is POST /comprehend below; both call the SAME core
+    # (one engine, two front doors). Comprehend-and-return only: it never hosts or
+    # publicly lists a submission (no public catalog — a hard invariant).
+    meta_site = f"{public_url.rstrip('/')}/{META_SURFACE_NAME}" if public_url else None
+    meta_sub = build_http_app(
+        MetaComprehendSurface(),
+        mode=mode,
+        server_name=META_SURFACE_NAME,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+        public_url=meta_site,
+    )
+
+    def _abs(path: str) -> str:
+        return f"{public_url.rstrip('/')}{path}" if public_url else path
+
     index = {
         "name": "gecko",
         "description": "Comprehended API surfaces, served agent-native.",
+        # Comprehended surfaces served on this host (NOT a public marketplace listing —
+        # each is a spec the operator chose to serve). Submissions are never added here.
         "surfaces": [
             {
                 "name": name,
@@ -297,6 +336,16 @@ def build_multi_surface_app(
             }
             for name, _ in subs
         ],
+        # The submit-your-API front doors — comprehend and return to the submitter only.
+        "submit": {
+            "http": _abs(COMPREHEND_PATH),
+            "mcp": _abs(f"/{META_SURFACE_NAME}/mcp"),
+            "tool": "comprehend_api",
+            "description": (
+                "POST an OpenAPI URL to comprehend it into first-call-correct tools, "
+                "returned to you only. Not hosted or publicly listed."
+            ),
+        },
     }
 
     async def _healthz(_request: Any) -> Any:
@@ -305,18 +354,54 @@ def build_multi_surface_app(
     async def _index(_request: Any) -> Any:
         return JSONResponse(index)
 
+    async def _comprehend(request: Request) -> Any:
+        # Size cap BEFORE reading the body (Content-Length hint) and again after.
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit():
+            if int(declared) > MAX_COMPREHEND_REQUEST_BYTES:
+                return JSONResponse(
+                    {"error": "request body too large"}, status_code=413
+                )
+        body = await request.body()
+        if len(body) > MAX_COMPREHEND_REQUEST_BYTES:
+            return JSONResponse({"error": "request body too large"}, status_code=413)
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": "body must be a JSON object"}, status_code=400
+            )
+        url = payload.get("url")
+        if not isinstance(url, str) or not url:
+            return JSONResponse({"error": "missing 'url'"}, status_code=400)
+        try:
+            ensure_submittable(url)  # remote door: http(s) only, no local file read
+            result = comprehend_submission(
+                url, from_docs=bool(payload.get("from_docs", False))
+            )
+        except ComprehendError as exc:
+            # The message is already redacted of any URL credential (safe to return).
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(asdict(result))
+
     routes: list[Any] = [
         Route("/healthz", endpoint=_healthz),
         Route("/", endpoint=_index),
+        Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
     ]
     for name, sub in subs:
         routes.append(Mount(f"/{name}", app=sub))
+    routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))
 
     @asynccontextmanager
     async def _lifespan(_app: Starlette) -> Any:
         async with AsyncExitStack() as stack:
             for _name, sub in subs:
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
+            # The meta surface's MCP session manager must start too (else /gecko/mcp 500s).
+            await stack.enter_async_context(meta_sub.router.lifespan_context(meta_sub))
             yield
 
     return Starlette(routes=routes, lifespan=_lifespan)
