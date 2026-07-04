@@ -1,0 +1,5 @@
+{"goal": "get all odds updates from a specific historical 5-minute interval", "expect_ops": ["getApiOddsUpdatesEpochdayHourofdayInterval"], "args": {"epochDay": 20287, "hourOfDay": 14, "interval": 6}, "archetype": "keyword_echo"}
+{"goal": "list all score updates from a past 5-minute interval window", "expect_ops": ["getApiScoresUpdatesEpochdayHourofdayInterval"], "args": {"epochDay": 20287, "hourOfDay": 9, "interval": 3}, "archetype": "paraphrase_no_overlap"}
+{"goal": "get a merkle proof for a single score statistic", "expect_ops": ["getApiScoresStat-validation"], "args": {"fixtureId": 18179550, "seq": 4, "statKey": 1}, "archetype": "keyword_echo"}
+{"goal": "get all fixture updates for a given day and hour", "expect_ops": ["getApiFixturesUpdatesEpochdayHourofday"], "args": {"epochDay": 20287, "hourOfDay": 14}, "archetype": "keyword_echo"}
+{"goal": "cryptographically prove a team's touchdown count for a scores event", "expect_ops": ["getApiScoresStat-validation"], "args": {"fixtureId": 18179551, "seq": 7, "statKey": 2}, "archetype": "paraphrase_no_overlap"}

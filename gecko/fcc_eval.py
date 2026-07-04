@@ -34,7 +34,10 @@ from __future__ import annotations
 import statistics
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from .corrections import Correction
 
 from .caller import CallError, build_request
 from .client import AgentApiClient
@@ -42,7 +45,7 @@ from .evaluate import GoldenTask
 from .ingest import Operation
 from .tools import _body_schema, tool_name
 
-Arm = Literal["raw", "gecko"]
+Arm = Literal["raw", "gecko", "gecko_corpus"]
 ValueKind = Literal["int", "mint", "symbol", "float", "bool", "none", "other"]
 
 # Base58 (Bitcoin/Solana) alphabet — no 0, O, I, l. A Solana mint is 32-44 of these.
@@ -194,6 +197,31 @@ def gecko_tools(client: AgentApiClient, goal: str, k: int) -> list[ArmTool]:
     return out
 
 
+def gecko_corpus_tools(
+    client: AgentApiClient, goal: str, k: int, corrections: list[Correction]
+) -> list[ArmTool]:
+    """GECKO+CORPUS arm: the GECKO tools, each enriched with any matching captured
+    corrections (a ``Correctness note:`` line re-injected into the description + param schema).
+
+    This is the flywheel's output presented back to the agent: comprehension PLUS what prior
+    failures taught about calling the op right. Identical to ``gecko_tools`` when no correction
+    matches, so any FCC delta is attributable to the corrections alone."""
+    from .corrections import enrich_with_corrections  # local: avoid import cycle
+
+    out: list[ArmTool] = []
+    for t in gecko_tools(client, goal, k):
+        td = {
+            "name": t.name,
+            "description": t.description,
+            "inputSchema": dict(t.input_schema),
+        }
+        enriched = enrich_with_corrections(td, corrections)
+        out.append(
+            ArmTool(t.name, enriched["description"], enriched["inputSchema"], t.invoke)
+        )
+    return out
+
+
 # --- the injected LLM seam (Anthropic messages shape) + one pick turn -------------------
 
 SYSTEM = (
@@ -315,11 +343,15 @@ def evaluate_fcc(
     k: int = 8,
     n_runs: int = 3,
     max_tokens: int = 1024,
+    corrections: list[Correction] | None = None,
 ) -> list[RunRecord]:
-    """Run both arms over every task, ``n_runs`` times (Haiku is non-deterministic).
+    """Run every arm over every task, ``n_runs`` times (Haiku is non-deterministic).
 
     RAW tools (the whole spec) are built once; GECKO tools are the per-goal search top-k.
-    One LLM pick per (task, arm, run); scored with the shared caller guard + ``args_match``."""
+    When ``corrections`` is supplied, a THIRD arm ``gecko_corpus`` runs identically — the
+    GECKO tools enriched with the captured corrections — so any FCC delta over GECKO is
+    attributable to the corpus alone (the flywheel lift). One LLM pick per (task, arm, run);
+    scored with the shared caller guard + ``args_match``."""
     raw = raw_tools(client.operations)
     raw_anthropic = [t.anthropic() for t in raw]
     raw_caller = {t.name: t.caller() for t in raw}
@@ -334,11 +366,21 @@ def evaluate_fcc(
         raw_hit = bool(expect) and any(t.name in expect for t in raw)
         gk_hit = bool(expect) and any(t.name in expect for t in gk)
 
+        arms: list[
+            tuple[str, list[dict[str, Any]], dict[str, dict[str, Any]], bool]
+        ] = [
+            ("raw", raw_anthropic, raw_caller, raw_hit),
+            ("gecko", gk_anthropic, gk_caller, gk_hit),
+        ]
+        if corrections is not None:
+            gc = gecko_corpus_tools(client, task.goal, k, corrections)
+            gc_anthropic = [t.anthropic() for t in gc]
+            gc_caller = {t.name: t.caller() for t in gc}
+            gc_hit = bool(expect) and any(t.name in expect for t in gc)
+            arms.append(("gecko_corpus", gc_anthropic, gc_caller, gc_hit))
+
         for run in range(n_runs):
-            for arm, anthropic_tools, caller_map, hit in (
-                ("raw", raw_anthropic, raw_caller, raw_hit),
-                ("gecko", gk_anthropic, gk_caller, gk_hit),
-            ):
+            for arm, anthropic_tools, caller_map, hit in arms:
                 picked, agent_args = pick(
                     llm,
                     model=model,
@@ -411,3 +453,12 @@ def run_variance(records: list[RunRecord], arm: str) -> tuple[float, float]:
 def lift(records: list[RunRecord]) -> float:
     """The number that matters: Gecko positive-FCC − raw positive-FCC (comprehension lift)."""
     return fcc_rate(records, "gecko") - fcc_rate(records, "raw")
+
+
+def lift_corpus(records: list[RunRecord]) -> float:
+    """The flywheel number: gecko_corpus positive-FCC − gecko positive-FCC (corpus lift).
+
+    Isolates what the CAPTURED corrections add on top of comprehension alone — the proof that
+    a call's failure teaches the next agent to call it right. Zero when no correction matched
+    any surfaced tool (a real finding, not a bug)."""
+    return fcc_rate(records, "gecko_corpus") - fcc_rate(records, "gecko")
