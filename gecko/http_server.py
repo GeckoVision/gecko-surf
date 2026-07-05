@@ -31,7 +31,9 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
+from .events import emit_surf_event
 from .mcp_server import McpSurface
+from .telemetry import TelemetryError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from starlette.applications import Starlette
@@ -51,6 +53,178 @@ _INSTALL_HINT = (
     "Install the serve extra to run the HTTP server: uv sync --extra serve "
     "(or: uv pip install 'gecko-surf[serve]')"
 )
+
+
+# The MCP transport returns/reads the session id in this header (mcp SDK constant).
+_MCP_SESSION_ID_HEADER = "mcp-session-id"
+# We only ever peek at the first slice of a POST body to spot an `initialize` frame; an
+# MCP JSON-RPC request is tiny, so this cap keeps a hostile large body out of memory
+# while never truncating a real handshake.
+_INIT_PARSE_CAP = 64 * 1024
+
+
+async def _tee_body(receive: Any) -> tuple[bytes, list[dict[str, Any]]]:
+    """Drain the ASGI request messages, returning a bounded prefix of the body (for
+    handshake detection) AND the exact messages read (for byte-for-byte replay).
+
+    This NEVER consumes the body from the transport's point of view: the messages are
+    replayed verbatim by ``_make_replay``, so the streamable-http transport sees the
+    unmodified request.
+    """
+    messages: list[dict[str, Any]] = []
+    prefix = bytearray()
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message.get("type") == "http.request":
+            body = message.get("body", b"")
+            if len(prefix) < _INIT_PARSE_CAP:
+                prefix.extend(body[: _INIT_PARSE_CAP - len(prefix)])
+            if not message.get("more_body", False):
+                break
+        else:  # http.disconnect or anything else — stop, nothing more to buffer
+            break
+    return bytes(prefix), messages
+
+
+def _make_replay(messages: list[dict[str, Any]], receive: Any) -> Any:
+    """A replacement ``receive`` that replays the buffered messages, then defers to the
+    real ``receive`` for anything after (e.g. a later disconnect)."""
+    index = 0
+
+    async def _replay() -> dict[str, Any]:
+        nonlocal index
+        if index < len(messages):
+            message = messages[index]
+            index += 1
+            return message
+        return await receive()  # type: ignore[no-any-return]
+
+    return _replay
+
+
+def _parse_initialize(prefix: bytes) -> tuple[bool, str | None]:
+    """Return ``(is_initialize, raw_client)`` for a buffered request-body prefix.
+
+    Detects a JSON-RPC ``"method":"initialize"`` frame (single or batched) and pulls
+    ``params.clientInfo`` name/version into a raw ``"name/version"`` string. The raw
+    string is UNTRUSTED — ``emit_surf_event`` sanitizes + caps it. Any parse failure is
+    a clean "not an initialize" (best-effort; never raises)."""
+    try:
+        obj: Any = json.loads(prefix)
+    except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+        return (False, None)
+    frames = obj if isinstance(obj, list) else [obj]
+    for frame in frames:
+        if isinstance(frame, dict) and frame.get("method") == "initialize":
+            client: str | None = None
+            params = frame.get("params")
+            info = params.get("clientInfo") if isinstance(params, dict) else None
+            if isinstance(info, dict):
+                name = info.get("name")
+                version = info.get("version")
+                if isinstance(name, str) and name:
+                    client = (
+                        f"{name}/{version}"
+                        if isinstance(version, str) and version
+                        else name
+                    )
+            return (True, client)
+    return (False, None)
+
+
+def _session_id_from_start_headers(headers: Any) -> str | None:
+    """Pull the ``mcp-session-id`` the transport assigned, from an ASGI
+    ``http.response.start`` header list (list of ``(name, value)`` byte tuples)."""
+    for key, value in headers or []:
+        if bytes(key).lower() == b"mcp-session-id":
+            try:
+                return bytes(value).decode("latin-1")
+            except Exception:  # noqa: BLE001 - a malformed header is simply no session id
+                return None
+    return None
+
+
+def _emit_connect_outcome(
+    surface_id: str, status: int, client: str | None, session_id: str | None
+) -> None:
+    """Emit the control-plane-safe funnel event for an initialize outcome. A 2xx is a
+    real connect (with the assigned session id); a 4xx is a failed handshake (the
+    stale-session 400/406 clients). Best-effort: only a control-plane violation surfaces."""
+    try:
+        if 200 <= status < 300:
+            emit_surf_event(
+                "surf.connect",
+                surface_id=surface_id,
+                client=client,
+                session_id=session_id,
+            )
+        elif 400 <= status < 500:
+            emit_surf_event("surf.connect_failed", surface_id=surface_id, client=client)
+    except TelemetryError:
+        raise
+    except Exception:  # noqa: BLE001 - telemetry must never break the handshake
+        logger.warning("surf.connect emit failed (redacted)")
+
+
+class _InitializeCaptureASGI:
+    """Thin ASGI wrapper over the per-surface ``/mcp`` app that observes the MCP
+    ``initialize`` handshake and emits ``surf.connect`` / ``surf.connect_failed``.
+
+    It is a class (not a function) so Starlette routes it as an ASGI app, not a
+    request/response endpoint. It NEVER mutates the request or response: the body is
+    tee'd and replayed byte-for-byte, and the response is passed straight through — so
+    the streamable-http transport, the DNS-rebinding ``Host`` guard (which lives inside
+    the wrapped app), and ``/healthz`` (a sibling route, never wrapped) are untouched.
+    """
+
+    def __init__(self, inner: Any, surface_id: str) -> None:
+        self._inner = inner
+        self._surface_id = surface_id
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("method") != "POST":
+            await self._inner(scope, receive, send)
+            return
+        prefix, messages = await _tee_body(receive)
+        is_init, client = _parse_initialize(prefix)
+        replay = _make_replay(messages, receive)
+        if not is_init:
+            await self._inner(scope, replay, send)
+            return
+
+        emitted = False
+        surface_id = self._surface_id
+
+        async def _send(event: dict[str, Any]) -> None:
+            nonlocal emitted
+            if not emitted and event.get("type") == "http.response.start":
+                emitted = True
+                status = int(event.get("status", 0))
+                session_id = _session_id_from_start_headers(event.get("headers"))
+                _emit_connect_outcome(surface_id, status, client, session_id)
+            await send(event)
+
+        await self._inner(scope, replay, _send)
+
+
+def _session_id_from_context(server: Any) -> str | None:
+    """Best-effort read of the MCP session id from the low-level server's per-request
+    context (the transport attaches the Starlette ``Request``, whose headers carry
+    ``mcp-session-id``). Returns ``None`` outside a request or when absent."""
+    try:
+        ctx = server.request_context
+    except LookupError:
+        return None
+    request = getattr(ctx, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get(_MCP_SESSION_ID_HEADER)
+    except Exception:  # noqa: BLE001 - a non-mapping request object is simply no session
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> Any:
@@ -182,8 +356,15 @@ def build_http_app(
     async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
         args = arguments or {}
         start = time.perf_counter()
+        # Thread the MCP session id onto the usage event so the funnel can join
+        # connect->call per session (retention). Only McpSurface accepts it; the meta
+        # surface (duck-typed) does not, so it is passed conditionally.
+        session_id = _session_id_from_context(server)
         try:
-            result = surface.call_tool(name, args)
+            if isinstance(surface, McpSurface):
+                result = surface.call_tool(name, args, session_id=session_id)
+            else:
+                result = surface.call_tool(name, args)
         except CallError as exc:
             # A pre-flight failure (missing path param / auth-gated) is itself a
             # first-call outcome worth capturing; record it, then propagate as before.
@@ -207,7 +388,11 @@ def build_http_app(
         allowed_origins=allowed_origins or [],
     )
     manager = StreamableHTTPSessionManager(app=server, security_settings=security)
-    asgi_app = StreamableHTTPASGIApp(manager)
+    # Wrap the transport app with the funnel capture: it observes the `initialize`
+    # handshake and emits surf.connect / surf.connect_failed WITHOUT touching the
+    # request/response (tee+replay body, pass-through send), so the streamable-http
+    # transport and its DNS-rebinding Host guard are unaffected.
+    asgi_app = _InitializeCaptureASGI(StreamableHTTPASGIApp(manager), cid)
 
     async def _healthz(_request: Any) -> Any:
         # Plain Starlette route — it never enters StreamableHTTPASGIApp, so the
