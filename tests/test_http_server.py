@@ -218,6 +218,62 @@ def test_corpus_capture_records_outcome_when_enabled(tmp_path):
     assert "USDC" not in synthetic.read_text()  # no param VALUE leaks
 
 
+# --- funnel telemetry: the initialize handshake emits surf.connect ---
+
+
+def _sink_capture():
+    """Inject a fake surf-event sink and return the captured docs list."""
+    from gecko import events
+
+    docs: list[dict[str, Any]] = []
+    events.set_surf_sink_override(lambda d: docs.append(dict(d)))
+    return docs
+
+
+def test_initialize_emits_connect_and_normal_session_still_works(monkeypatch):
+    # The hook must fire surf.connect on a real handshake AND leave the transport
+    # working (list_tools still round-trips through the same wrapped /mcp app).
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")  # arm the sink path
+    docs = _sink_capture()
+    try:
+        tools = _list_tool_specs(_app())
+    finally:
+        events.set_surf_sink_override(None)
+
+    names = {t.name for t in tools}
+    assert "search_capabilities" in names  # transport unbroken by the wrapper
+
+    connects = [d for d in docs if d["event"] == "surf.connect"]
+    assert len(connects) == 1
+    conn = connects[0]
+    # The mcp client's clientInfo reaches us as a sanitized label...
+    assert isinstance(conn.get("client"), str) and conn["client"]
+    # ...and the transport-assigned session id is captured for connect<->call joins.
+    assert isinstance(conn.get("session_id"), str) and conn["session_id"]
+    assert set(conn) <= events.RECORD_ALLOWED_KEYS
+
+
+def test_call_carries_the_same_session_id_as_connect(monkeypatch):
+    # Retention: a surf.call must carry the SAME session id as its surf.connect, so
+    # the funnel can join connect->call per session.
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        raw = _call(_app(), "state", {"symbol": "USDC"})
+    finally:
+        events.set_surf_sink_override(None)
+    assert json.loads(raw)["status"] == 200
+
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    call = next(d for d in docs if d["event"] == "surf.call")
+    assert call["session_id"] == connect["session_id"]
+    assert call["session_id"]  # non-empty -> retention join is real, not aggregate
+
+
 def test_search_capabilities_is_not_recorded(tmp_path):
     # The synthetic intent tool is not an upstream API call — it must not pollute
     # the per-operation correctness corpus.

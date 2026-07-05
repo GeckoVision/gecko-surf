@@ -48,12 +48,21 @@ class McpSurface:
             tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
         return tools
 
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+    def call_tool(
+        self, name: str, arguments: dict[str, Any], session_id: str | None = None
+    ) -> Any:
+        """Invoke a tool. ``session_id`` (the MCP transport session, when the caller
+        is the HTTP surface) is threaded onto the usage event ONLY as an opaque
+        correlation token — it joins connect->call for the retention funnel and is
+        sanitized by ``emit_surf_event``; it never touches the upstream call."""
         if name == "search_capabilities":
             hits = self.client.search(arguments.get("query", ""))
             # Observe, never mutate: usage metadata only (result breadth k), never the query.
             emit_surf_event(
-                "surf.search", surface_id=self.client.surface_id, k=len(hits)
+                "surf.search",
+                surface_id=self.client.surface_id,
+                k=len(hits),
+                session_id=session_id,
             )
             return hits
         result = self.client.call(name, arguments, mode=self.mode)
@@ -62,6 +71,7 @@ class McpSurface:
             surface_id=self.client.surface_id,
             tool_name=name,
             mode=self.mode,
+            session_id=session_id,
         )
         return result
 

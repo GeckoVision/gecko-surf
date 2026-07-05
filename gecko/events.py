@@ -39,7 +39,7 @@ from typing import Any, Literal, get_args
 from collections.abc import Mapping
 
 from . import corpus
-from .sanitize import looks_like_secret_value
+from .sanitize import looks_like_secret_value, sanitize_text
 from .surfaces import _host_of
 
 # Reuse the opt-out contract + the sink alias + the typed control-plane error from
@@ -59,6 +59,8 @@ SurfEvent = Literal[
     "surf.prepare",  # a correct request was prepared for a tool
     "surf.call",  # a tool was invoked through the surface
     "surf.first_call_correct",  # a call outcome resolved (ok + error_class)
+    "surf.connect",  # a client opened an MCP session (initialize succeeded)
+    "surf.connect_failed",  # an MCP initialize handshake failed (4xx / stale session)
 ]
 
 #: Runtime membership form of ``SurfEvent`` (a Literal is not iterable at runtime).
@@ -81,6 +83,8 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "k",  # retrieval breadth (results requested/returned)
         "hit_rank",  # rank of a chosen hit — the V2 feedback signal
         "source",  # a CLOSED corpus.OUTCOME_SOURCES member (observed|reported|synthetic)
+        "client",  # MCP clientInfo name/version — UNTRUSTED, sanitized + capped, never fails closed
+        "session_id",  # MCP session id — opaque correlation token joining connect->call
     }
 )
 
@@ -90,6 +94,15 @@ _MAX_LABEL = 128
 #: The closed set of modes; guarded by shape (not membership) so an unexpected but
 #: benign short mode never breaks a call, while a payload/secret is still rejected.
 _LABEL_FIELDS = ("tool_name", "mode", "tier")
+#: Hard caps for the UNTRUSTED external correlation fields. clientInfo and the
+#: session id are client-declared, so they are NEVER trusted as labels (a fail-closed
+#: raise would let a hostile client break the connect emit); instead they are
+#: sanitized + truncated to a safe token by ``_safe_client`` / ``_safe_session_id``.
+_MAX_CLIENT = 60
+_MAX_SESSION_ID = 64
+# NOTE: ``client``/``session_id`` are deliberately kept OUT of ``_LABEL_FIELDS`` — they
+# carry untrusted external input, so they are sanitized/neutralized in ``build_surf_record``
+# rather than fail-closed-validated (a raise would let a hostile client break the emit).
 
 EVENTS_DB = "gecko_events"
 EVENTS_COLLECTION = "surf_events"
@@ -117,6 +130,8 @@ class SurfEventRecord:
     k: int | None = None
     hit_rank: int | None = None
     source: str | None = None  # provenance; gates whether the event feeds the FCC rate
+    client: str | None = None  # sanitized MCP clientInfo name/version, never raw
+    session_id: str | None = None  # opaque MCP session id — connect<->call correlation
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)
@@ -183,6 +198,39 @@ def _safe_surface_id(surface_id: Any) -> str | None:
     return text
 
 
+def _safe_client(value: Any) -> str | None:
+    """Reduce an UNTRUSTED MCP ``clientInfo`` string (name/version) to a short, safe
+    label. Never fails closed — a hostile client must not be able to break the connect
+    emit. Truncates to ``_MAX_CLIENT`` and neutralizes an injected instruction or a
+    secret-shaped value to ``"redacted"`` rather than carrying it out."""
+    if value is None:
+        return None
+    text = str(value).strip()[:_MAX_CLIENT]
+    if not text:
+        return None
+    cleaned, poisoned = sanitize_text(text)
+    if poisoned or looks_like_secret_value(text):
+        return "redacted"
+    return cleaned
+
+
+def _safe_session_id(value: Any) -> str | None:
+    """Reduce an UNTRUSTED MCP session id to a stable, cred-free correlation token.
+
+    A real MCP session id is a short opaque uuid hex; a client controls the
+    ``mcp-session-id`` header on later requests, so a secret-shaped or over-long value
+    is folded to a STABLE hash (``sid-<sha>``) — stable so a connect<->call join still
+    works — rather than emitted verbatim."""
+    if value is None:
+        return None
+    text = str(value).strip()[:_MAX_SESSION_ID]
+    if not text:
+        return None
+    if looks_like_secret_value(text):
+        return "sid-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return text
+
+
 def build_surf_record(
     event: SurfEvent,
     *,
@@ -195,10 +243,18 @@ def build_surf_record(
     Validates the event vocabulary and the field allowlist BEFORE constructing the
     record, so a non-vocabulary event or a disallowed/value-bearing field raises
     ``TelemetryError`` — regardless of whether a sink is configured. That makes a
-    wiring mistake a build break in dev/CI, not a production-only leak."""
+    wiring mistake a build break in dev/CI, not a production-only leak.
+
+    The UNTRUSTED external fields (``client``/``session_id``) are allowlisted but
+    SANITIZED (never fail-closed): a client-declared string is truncated + neutralized
+    so it can never break the emit nor ride a payload/secret out."""
     if event not in SURF_EVENTS:
         raise TelemetryError(f"event {event!r} not in the closed SurfEvent vocabulary")
     assert_fields_allowlisted(fields)
+    if "client" in fields:
+        fields["client"] = _safe_client(fields["client"])
+    if "session_id" in fields:
+        fields["session_id"] = _safe_session_id(fields["session_id"])
     return SurfEventRecord(
         ts=ts if ts is not None else _now_ms(),
         event=event,
