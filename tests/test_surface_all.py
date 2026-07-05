@@ -22,6 +22,7 @@ import pytest
 from gecko.access import Session, public_session
 from gecko.client import AgentApiClient
 from gecko.evaluate import load_golden
+from gecko.fcc_eval import evaluate_fcc, fcc_rate, lift
 from gecko.scale import SURFACE_ALL_MAX_OPS, should_surface_all
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -115,6 +116,83 @@ def test_surface_all_keeps_genuine_hits_ranked_first(name, client_factory) -> No
     )
     hits = client.search(query, limit=5)
     assert hits[0]["name"] == expected_top
+
+
+# --- FCC-arm parity: the metric that regressed (GECKO 1.00 -> 0.70 on small Pegana) ----
+#
+# The recall tests above prove the agent-facing SEARCH surfaces the dropped ops. This suite
+# closes the loop the eval actually reports on: that the FCC EVAL ARM (``gecko_tools`` ->
+# scored pick) no longer LOWERS first-call-correct vs the raw all-ops dump on a small surface.
+# ``test_surface_all`` (search recall) and ``test_fcc_eval`` (scoring plumbing) each covered
+# half; nothing pinned the number the context-engineering finding moved — this does.
+
+
+class _Blk:
+    def __init__(self, type: str, name: str | None = None, input: dict | None = None):
+        self.type, self.name, self.input = type, name, input
+
+
+class _Resp:
+    def __init__(self, content: list) -> None:
+        self.content = content
+
+
+class _OracleMessages:
+    """A perfect picker: on a positive task it calls the first EXPECTED op the arm actually
+    presents (supplying the gold args); if the arm never presents it — the pre-fix top-k
+    drop — it declines, which scores the task 0. So the arm's FCC is gated purely on whether
+    surface-all put the right tool in front of the model."""
+
+    def __init__(self, goal_map: dict) -> None:
+        self._goal_map = goal_map
+
+    def create(self, **kwargs):
+        goal = kwargs["messages"][0]["content"].split("\n")[0]
+        task = self._goal_map[goal]
+        if not task.expect_ops:  # out-of-scope: the correct move is to decline
+            return _Resp([])
+        presented = {t["name"] for t in kwargs["tools"]}
+        for op in task.expect_ops:
+            if op in presented:
+                return _Resp([_Blk("tool_use", op, dict(task.args))])
+        return _Resp([])  # expected op was truncated away -> forced miss
+
+
+class _OracleLLM:
+    def __init__(self, goal_map: dict) -> None:
+        self.messages = _OracleMessages(goal_map)
+
+
+def test_fcc_eval_arm_never_lowers_fcc_on_small_surface() -> None:
+    """Regression guard for the exact reported drop (GECKO 1.00 -> 0.70 on clean Pegana):
+    with a perfect picker, the GECKO eval arm must reach FULL FCC and NOT fall below the raw
+    all-ops dump — compression that never lowers first-call-correct. Disabling surface-all
+    reintroduces the top-k truncation and this test fails (measured: gecko 0.70, lift -0.30)."""
+    client = AgentApiClient(
+        str(FIXTURES / "pegana_openapi.json"), session=public_session()
+    )
+    tasks = load_golden(GOLDEN / "pegana_tasks.jsonl")
+    llm = _OracleLLM({t.goal: t for t in tasks})
+    records = evaluate_fcc("pegana", client, tasks, llm, model="m", k=8, n_runs=2)
+    assert fcc_rate(records, "gecko") == 1.0, "surface-all must restore full FCC parity"
+    assert fcc_rate(records, "raw") == 1.0
+    assert lift(records) == 0.0, (
+        "GECKO must never score below the raw all-ops dump here"
+    )
+
+
+def test_fcc_eval_arm_regression_is_falsifiable() -> None:
+    """The above is a real guard, not a tautology: force the pre-fix top-k behavior (no
+    surface-all) and the GECKO arm drops below the raw dump — reproducing the finding."""
+    client = AgentApiClient(
+        str(FIXTURES / "pegana_openapi.json"), session=public_session()
+    )
+    client._surface_all = False  # simulate the pre-fix small-surface truncation
+    tasks = load_golden(GOLDEN / "pegana_tasks.jsonl")
+    llm = _OracleLLM({t.goal: t for t in tasks})
+    records = evaluate_fcc("pegana", client, tasks, llm, model="m", k=8, n_runs=2)
+    assert fcc_rate(records, "gecko") < fcc_rate(records, "raw")
+    assert lift(records) < 0.0
 
 
 def _synthetic_spec(n_ops: int) -> dict:
