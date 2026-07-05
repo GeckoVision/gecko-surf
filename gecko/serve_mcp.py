@@ -32,6 +32,7 @@ from typing import Any
 
 from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
+from .enforce import enforce_mode_from_env
 from .http_server import serve_multi_http
 from .mcp_server import McpSurface
 
@@ -71,16 +72,20 @@ PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
 def main() -> None:  # pragma: no cover - run-the-server entrypoint
     port = int(os.environ.get("PORT", "8000"))
+    # Hosted default = enforce (block); GECKO_ENFORCE can dial it down (needs a redeploy).
+    hosted_enforce = enforce_mode_from_env("block")
     surfaces: list[tuple[str, Any]] = [
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]
     # Recorded brand demo surfaces (pre-built so their mode overrides the host default).
+    # Built with the hosted enforce stance so the risk gate is active on them too.
     surfaces.append(
         (
             "txline",
             McpSurface(
                 AgentApiClient(str(_TXLINE_SPEC), session=stub_session()),
                 mode="recorded",
+                enforce=hosted_enforce,
             ),
         )
     )
@@ -90,6 +95,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             McpSurface(
                 AgentApiClient(str(_JITO_SPEC), session=public_session()),
                 mode="recorded",
+                enforce=hosted_enforce,
             ),
         )
     )
@@ -114,6 +120,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         mode="live",
         allowed_hosts=[PUBLIC_HOST],
         public_url=PUBLIC_URL,
+        enforce=hosted_enforce,
     )
 
 

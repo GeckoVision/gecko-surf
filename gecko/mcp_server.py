@@ -10,6 +10,7 @@ import-guarded so the surface (and its tests) work without the SDK installed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -19,7 +20,17 @@ from .comprehend_service import (
     comprehend_submission,
     ensure_submittable,
 )
+from .enforce import (
+    EnforceMode,
+    attach_warning,
+    blocked_signals,
+    enforce_mode_from_env,
+    refusal_payload,
+)
 from .events import emit_surf_event
+from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
+
+logger = logging.getLogger("gecko.mcp_server")
 
 _SEARCH_TOOL = {
     "name": "search_capabilities",
@@ -38,15 +49,48 @@ _SEARCH_TOOL = {
 
 
 class McpSurface:
-    def __init__(self, client: AgentApiClient, mode: str = "recorded"):
+    def __init__(
+        self,
+        client: AgentApiClient,
+        mode: str = "recorded",
+        *,
+        enforce: EnforceMode | None = None,
+        policy: RiskPolicy | None = None,
+    ):
+        """``enforce`` sets the call-time risk gate stance (block | warn | off); ``None``
+        resolves ``GECKO_ENFORCE`` (default: warn — a bare surface only observes). The
+        HOSTED builders inject ``block`` explicitly. ``policy`` is the auto-derived
+        allowed-tools + trusted-hosts set; ``None`` derives it lazily from the client's
+        comprehension on first assessment (the operator only tunes thresholds)."""
         self.client = client
         self.mode = mode
+        self.enforce: EnforceMode = (
+            enforce if enforce is not None else enforce_mode_from_env()
+        )
+        self._policy = policy
 
     def list_tools(self) -> list[dict[str, Any]]:
         tools = [_SEARCH_TOOL]
         for t in self.client.list_tools():
             tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
         return tools
+
+    def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
+        """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
+        (→ treat as allow) if scoring itself raised — a scoring bug must never break the
+        product. A *decided* block is still a real block; fail-open only covers the
+        "we couldn't score it" case, never a "we scored it dangerous" case."""
+        if self._policy is None:
+            try:
+                self._policy = policy_from_client(self.client)
+            except Exception:  # noqa: BLE001 - fail open: can't derive policy -> allow
+                logger.warning("risk policy derivation failed; failing open (allow)")
+                return None
+        try:
+            return assess_from_client(self.client, name, arguments, policy=self._policy)
+        except Exception:  # noqa: BLE001 - fail open on a scoring bug, never break a call
+            logger.warning("risk assessment failed; failing open (allow)")
+            return None
 
     def call_tool(
         self, name: str, arguments: dict[str, Any], session_id: str | None = None
@@ -65,6 +109,29 @@ class McpSurface:
                 session_id=session_id,
             )
             return hits
+
+        # --- The enforcement gate: score BEFORE the upstream call. --------------- #
+        assessment = self._assess(name, arguments) if self.enforce != "off" else None
+        if (
+            assessment is not None
+            and assessment.decision == "block"
+            and self.enforce == "block"
+        ):
+            # Hard block: the upstream API is NEVER called. Emit the countable event
+            # (signal NAMES only — never the value-bearing human message) and return a
+            # structured refusal the agent can read.
+            emit_surf_event(
+                "surf.blocked",
+                surface_id=self.client.surface_id,
+                tool_name=name,
+                mode=self.mode,
+                score=assessment.score,
+                decision="block",
+                reasons=blocked_signals(assessment),
+                session_id=session_id,
+            )
+            return refusal_payload(assessment)
+
         result = self.client.call(name, arguments, mode=self.mode)
         emit_surf_event(
             "surf.call",
@@ -73,6 +140,9 @@ class McpSurface:
             mode=self.mode,
             session_id=session_id,
         )
+        # A step_up (or a warn-mode would-be block) executed — flag it, don't hide it.
+        if assessment is not None and assessment.decision != "allow":
+            return attach_warning(result, assessment)
         return result
 
 

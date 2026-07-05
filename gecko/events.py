@@ -61,6 +61,7 @@ SurfEvent = Literal[
     "surf.first_call_correct",  # a call outcome resolved (ok + error_class)
     "surf.connect",  # a client opened an MCP session (initialize succeeded)
     "surf.connect_failed",  # an MCP initialize handshake failed (4xx / stale session)
+    "surf.blocked",  # the enforcement gate refused a call (poisoned/malformed/exfil)
 ]
 
 #: Runtime membership form of ``SurfEvent`` (a Literal is not iterable at runtime).
@@ -85,6 +86,9 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "source",  # a CLOSED corpus.OUTCOME_SOURCES member (observed|reported|synthetic)
         "client",  # MCP clientInfo name/version — UNTRUSTED, sanitized + capped, never fails closed
         "session_id",  # MCP session id — opaque correlation token joining connect->call
+        "decision",  # enforcement gate verdict: "allow" | "step_up" | "block" (short label)
+        "score",  # int — composite 0-100 risk score, never a payload
+        "reasons",  # list of risk SIGNAL names (code constants), never arg values/messages
     }
 )
 
@@ -93,7 +97,12 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
 _MAX_LABEL = 128
 #: The closed set of modes; guarded by shape (not membership) so an unexpected but
 #: benign short mode never breaks a call, while a payload/secret is still rejected.
-_LABEL_FIELDS = ("tool_name", "mode", "tier")
+_LABEL_FIELDS = ("tool_name", "mode", "tier", "decision")
+#: ``reasons`` carries risk SIGNAL names (``risk.py`` code constants like
+#: "poison.injection"), never a human message or an arg value. Each is shape-validated
+#: as a safe label and the list is count-capped — belt-and-suspenders, since the only
+#: call site passes ``Reason.signal`` constants (never the value-bearing ``.message``).
+_MAX_REASONS = 16
 #: Hard caps for the UNTRUSTED external correlation fields. clientInfo and the
 #: session id are client-declared, so they are NEVER trusted as labels (a fail-closed
 #: raise would let a hostile client break the connect emit); instead they are
@@ -132,6 +141,9 @@ class SurfEventRecord:
     source: str | None = None  # provenance; gates whether the event feeds the FCC rate
     client: str | None = None  # sanitized MCP clientInfo name/version, never raw
     session_id: str | None = None  # opaque MCP session id — connect<->call correlation
+    decision: str | None = None  # enforcement verdict (allow|step_up|block)
+    score: int | None = None  # composite 0-100 risk score
+    reasons: list[str] | None = None  # risk SIGNAL names, never messages/arg values
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)
@@ -177,6 +189,18 @@ def assert_fields_allowlisted(fields: Mapping[str, Any]) -> None:
             raise TelemetryError(
                 f"{key} is not a control-plane-safe label (too long or secret-shaped)"
             )
+    reasons = fields.get("reasons")
+    if reasons is not None:
+        if not isinstance(reasons, list) or len(reasons) > _MAX_REASONS:
+            raise TelemetryError(
+                f"reasons must be a list of at most {_MAX_REASONS} risk-signal labels"
+            )
+        for item in reasons:
+            if not isinstance(item, str) or not _is_safe_label(item):
+                raise TelemetryError(
+                    "a reasons entry is not a control-plane-safe label "
+                    "(too long or secret-shaped)"
+                )
 
 
 def _safe_surface_id(surface_id: Any) -> str | None:
