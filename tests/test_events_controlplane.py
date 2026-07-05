@@ -85,6 +85,9 @@ def test_allowed_fields_is_the_exact_closed_set():
         "source",
         "client",
         "session_id",
+        "decision",
+        "score",
+        "reasons",
     }
 
 
@@ -118,6 +121,7 @@ def test_event_vocabulary_is_closed():
         "surf.first_call_correct",
         "surf.connect",
         "surf.connect_failed",
+        "surf.blocked",
     }
 
 

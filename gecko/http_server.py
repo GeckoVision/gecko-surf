@@ -31,6 +31,7 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
+from .enforce import EnforceMode, enforce_mode_from_env
 from .events import emit_surf_event
 from .mcp_server import McpSurface
 from .telemetry import TelemetryError
@@ -227,7 +228,12 @@ def _session_id_from_context(server: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> Any:
+def _surface_from(
+    spec_or_client: Any,
+    base_url: str | None,
+    mode: str,
+    enforce: EnforceMode | None = None,
+) -> Any:
     """Accept a spec (str/dict), an AgentApiClient, an McpSurface, or any duck-typed
     surface (``list_tools`` + ``call_tool``); yield a surface.
 
@@ -235,15 +241,19 @@ def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> Any:
     M1 is public-only, and the agent must never be offered a tool it can't satisfy. The
     duck-typed branch admits the synthetic ``MetaComprehendSurface`` (one tool, no
     client) without forcing it through ``AgentApiClient``.
+
+    ``enforce`` sets the call-time risk gate stance on any McpSurface this builds. A
+    pre-built McpSurface is left as-is (it carries its own stance); the meta surface is
+    duck-typed and has no gate.
     """
     if isinstance(spec_or_client, McpSurface):
         return spec_or_client
     if isinstance(spec_or_client, AgentApiClient):
-        return McpSurface(spec_or_client, mode=mode)
+        return McpSurface(spec_or_client, mode=mode, enforce=enforce)
     if hasattr(spec_or_client, "list_tools") and hasattr(spec_or_client, "call_tool"):
         return spec_or_client
     client = AgentApiClient(spec_or_client, base_url=base_url, session=public_session())
-    return McpSurface(client, mode=mode)
+    return McpSurface(client, mode=mode, enforce=enforce)
 
 
 def _log_outcome(name: str, result: Any) -> None:
@@ -269,11 +279,16 @@ def build_http_app(
     surface_id: str | None = None,
     surface_rev: str = "0",
     public_url: str | None = None,
+    enforce: EnforceMode | None = None,
 ) -> Starlette:
     """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
 
     Factored out of ``serve_http`` so tests can mount it in-process (offline) with an
     ASGI transport. ``allowed_hosts``/``allowed_origins`` drive DNS-rebinding defense.
+
+    ``enforce`` sets the call-time risk gate stance for the wrapped surface (block |
+    warn | off); ``None`` defers to the ``McpSurface`` default (``GECKO_ENFORCE``, else
+    warn). The multi-surface builder injects the hosted ``block`` default.
 
     ``corpus_path`` enables Phase-0 correctness-corpus capture: when set, each proxied
     operation appends one control-plane-safe metadata record (see ``gecko.corpus``).
@@ -294,7 +309,7 @@ def build_http_app(
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit(_INSTALL_HINT) from exc
 
-    surface = _surface_from(spec_or_client, base_url, mode)
+    surface = _surface_from(spec_or_client, base_url, mode, enforce)
     tools = surface.list_tools()
 
     # Build the capture context once (zero request scope): the templated _invoke per
@@ -445,6 +460,7 @@ def build_multi_surface_app(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
+    enforce: EnforceMode | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -452,6 +468,11 @@ def build_multi_surface_app(
     so an agent adds ``/{name}/mcp`` and finds ``/{name}/llms.txt`` etc. — every API on
     one server, each with its own clean discovery surface. A root ``/healthz`` fronts the
     ALB check and ``/`` lists what's available.
+
+    This is the HOSTED path: ``enforce`` resolves ``GECKO_ENFORCE`` with a ``block``
+    default (the risk gate is ACTIVE by default here — a redeploy is required to change
+    it), and is threaded into every per-surface McpSurface so each gets an auto-derived
+    policy + the same stance.
 
     Starlette does NOT run a mounted sub-app's lifespan, but each surface's MCP session
     manager MUST be started for the whole server lifetime — so we compose every sub-app's
@@ -472,6 +493,9 @@ def build_multi_surface_app(
     )
     from .mcp_server import MetaComprehendSurface
 
+    # Hosted default = enforce (block); GECKO_ENFORCE can dial it to warn/off (redeploy).
+    hosted_enforce = enforce if enforce is not None else enforce_mode_from_env("block")
+
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
         site = f"{public_url.rstrip('/')}/{name}" if public_url else None
@@ -485,6 +509,7 @@ def build_multi_surface_app(
                     allowed_hosts=allowed_hosts,
                     allowed_origins=allowed_origins,
                     public_url=site,
+                    enforce=hosted_enforce,
                 ),
             )
         )
@@ -655,8 +680,12 @@ def serve_multi_http(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
+    enforce: EnforceMode | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
-    """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks."""
+    """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
+
+    ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
+    ``block`` default (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -666,5 +695,6 @@ def serve_multi_http(
         allowed_hosts=hosts,
         allowed_origins=origins,
         public_url=public_url,
+        enforce=enforce,
     )
     uvicorn.run(app, host=host, port=port)
