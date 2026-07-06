@@ -21,6 +21,7 @@ $0**, before you spend a token or a cent.
 
 ## Start here
 - **[Quickstart](quickstart.md)** — serve any API over MCP, or embed the SDK, in minutes.
+- **[For providers](for-providers.md)** — bring *your* API to agents in five moves, and keep every cent.
 - **[Why Gecko](why.md)** — the before/after, and who this is for.
 - **[How it works](how-it-works.md)** — the five-stage comprehension pipeline.
 - **[Stay correct](stay-correct.md)** — what happens when the upstream API changes.
