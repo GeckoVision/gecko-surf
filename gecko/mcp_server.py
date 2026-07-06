@@ -29,6 +29,14 @@ from .enforce import (
     refusal_payload,
 )
 from .events import emit_surf_event
+from .honeypot import (
+    HONEYPOT_DECISION,
+    HONEYPOT_REASON,
+    decoy_tool_defs,
+    honeypot_refusal,
+    honeypots_from_env,
+    is_decoy,
+)
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 
 logger = logging.getLogger("gecko.mcp_server")
@@ -57,23 +65,36 @@ class McpSurface:
         *,
         enforce: EnforceMode | None = None,
         policy: RiskPolicy | None = None,
+        honeypots: bool | None = None,
     ):
         """``enforce`` sets the call-time risk gate stance (block | warn | off); ``None``
         resolves ``GECKO_ENFORCE`` (default: warn — a bare surface only observes). The
         HOSTED builders inject ``block`` explicitly. ``policy`` is the auto-derived
         allowed-tools + trusted-hosts set; ``None`` derives it lazily from the client's
-        comprehension on first assessment (the operator only tunes thresholds)."""
+        comprehension on first assessment (the operator only tunes thresholds).
+
+        ``honeypots`` opts IN to the decoy tripwire (``None`` resolves ``GECKO_HONEYPOTS``,
+        default OFF). It is a DETECTION layer, not a moat — off by default so a real
+        surface never shows fake tools unless the operator asks; when off, ``list_tools``
+        is byte-identical to a surface with no honeypot layer."""
         self.client = client
         self.mode = mode
         self.enforce: EnforceMode = (
             enforce if enforce is not None else enforce_mode_from_env()
         )
         self._policy = policy
+        self.honeypots: bool = (
+            honeypots if honeypots is not None else honeypots_from_env()
+        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         tools = [_SEARCH_TOOL]
         for t in self.client.list_tools():
             tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
+        # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
+        # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
+        if self.honeypots:
+            tools.extend(decoy_tool_defs())
         return tools
 
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
@@ -110,6 +131,24 @@ class McpSurface:
                 session_id=session_id,
             )
             return hits
+
+        # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
+        # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there
+        # is no upstream to invoke (it is a decoy), so nothing is called and no payload is
+        # synthesized. Record ONLY the control-plane-safe fingerprint — the sanitized
+        # session correlation + the decoy NAME (a code constant) + the code-constant
+        # signal — never the args, never a fake output. Detection, not a moat. ----------
+        if self.honeypots and is_decoy(name):
+            emit_surf_event(
+                "surf.blocked",
+                surface_id=self.client.surface_id,
+                tool_name=name,  # the decoy name is spec-derived, a code constant
+                mode=self.mode,
+                decision=HONEYPOT_DECISION,
+                reasons=[HONEYPOT_REASON],
+                session_id=session_id,
+            )
+            return honeypot_refusal()
 
         # --- The enforcement gate: score BEFORE the upstream call, then dispatch through
         # the ONE shared gate (enforce.apply_gate) — no inline block/warn logic here. ----
