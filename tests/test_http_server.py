@@ -310,3 +310,26 @@ def test_capture_records_metadata_never_the_payload(tmp_path):
     rec = json.loads(body.strip())
     assert rec["operation_id"] == "get_thing" and rec["ok"] is True
     assert rec["source"] == "synthetic"
+
+
+# --- Change 3: uvicorn kwargs trust the ALB's X-Forwarded-For (real client IP) ---
+
+
+def test_uvicorn_kwargs_default_trusts_proxy(monkeypatch):
+    from gecko.http_server import _uvicorn_kwargs
+
+    monkeypatch.delenv("GECKO_FORWARDED_ALLOW_IPS", raising=False)
+    kw = _uvicorn_kwargs("0.0.0.0", 8000)
+    assert kw["host"] == "0.0.0.0"
+    assert kw["port"] == 8000
+    assert kw["proxy_headers"] is True
+    assert kw["forwarded_allow_ips"] == "*"
+
+
+def test_uvicorn_kwargs_env_override(monkeypatch):
+    from gecko.http_server import _uvicorn_kwargs
+
+    monkeypatch.setenv("GECKO_FORWARDED_ALLOW_IPS", "10.0.0.0/8")
+    kw = _uvicorn_kwargs("0.0.0.0", 8000)
+    assert kw["forwarded_allow_ips"] == "10.0.0.0/8"
+    assert kw["proxy_headers"] is True

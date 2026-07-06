@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,11 @@ COMPREHEND_PATH = "/comprehend"
 META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
+
+# Trusted proxy range for uvicorn's X-Forwarded-For handling. Default "*" is safe here:
+# the ONLY ingress is the ALB (no direct public route to the task), so no untrusted peer
+# can reach us to spoof the header. Override to a CIDR to tighten it (redeploy).
+FORWARDED_ALLOW_IPS_ENV = "GECKO_FORWARDED_ALLOW_IPS"
 
 _INSTALL_HINT = (
     "Install the serve extra to run the HTTP server: uv sync --extra serve "
@@ -483,7 +489,11 @@ def build_multi_surface_app(
 
     from starlette.applications import Starlette
     from starlette.requests import Request
-    from starlette.responses import JSONResponse, PlainTextResponse
+    from starlette.responses import (
+        JSONResponse,
+        PlainTextResponse,
+        RedirectResponse,
+    )
     from starlette.routing import Mount, Route
 
     from .comprehend_service import (
@@ -492,6 +502,7 @@ def build_multi_surface_app(
         ensure_submittable,
     )
     from .mcp_server import MetaComprehendSurface
+    from .wellknown import build_x402_manifest
 
     # Hosted default = enforce (block); GECKO_ENFORCE can dial it to warn/off (redeploy).
     hosted_enforce = enforce if enforce is not None else enforce_mode_from_env("block")
@@ -564,6 +575,22 @@ def build_multi_surface_app(
     async def _index(_request: Any) -> Any:
         return JSONResponse(index)
 
+    async def _mcp_root_redirect(_request: Any) -> Any:
+        # /mcp is the conventional default path a real MCP client tries; it lives only
+        # at /{name}/mcp and /gecko/mcp, so a bare POST /mcp used to 404 (silent
+        # onboarding failure). 307 preserves method+body and points at the meta front
+        # door. Whether a given MCP client auto-follows a 307 on POST is the live-smoke
+        # check (Pattern B): httpx/fetch follow by default, but the founder confirms it.
+        return RedirectResponse(url=f"/{META_SURFACE_NAME}{MCP_PATH}", status_code=307)
+
+    async def _well_known_gecko(_request: Any) -> Any:
+        # Host-level discovery — the SAME content _index returns (surfaces + submit door).
+        return JSONResponse(index)
+
+    async def _well_known_x402(_request: Any) -> Any:
+        # Honest, control-plane-safe x402 stance: Gecko composes x402, custody none.
+        return JSONResponse(build_x402_manifest(surfaces, public_url))
+
     async def _comprehend(request: Request) -> Any:
         # Size cap BEFORE reading the body (Content-Length hint) and again after.
         declared = request.headers.get("content-length")
@@ -605,6 +632,13 @@ def build_multi_surface_app(
     routes: list[Any] = [
         Route("/healthz", endpoint=_healthz),
         Route("/", endpoint=_index),
+        # Root /mcp alias -> the meta front door (was 404; conventional default path).
+        Route(MCP_PATH, endpoint=_mcp_root_redirect, methods=["GET", "POST"]),
+        # Host-level discovery the public app serves at the root (per-surface artifacts
+        # live inside each mount; these are the WHOLE-HOST manifests a root probe hits).
+        Route("/.well-known/gecko.json", endpoint=_well_known_gecko),
+        Route("/.well-known/x402.json", endpoint=_well_known_x402),
+        Route("/.well-known/x402", endpoint=_well_known_x402),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
     ]
     for name, sub in subs:
@@ -643,6 +677,24 @@ def security_allowlist(
     return sorted(hosts), sorted(origins)
 
 
+def _uvicorn_kwargs(host: str, port: int) -> dict[str, Any]:
+    """The uvicorn.run kwargs, factored out of the live-smoke serve functions so the
+    proxy-header policy is unit-testable (the serve functions themselves are pragma:
+    no cover).
+
+    ``proxy_headers=True`` + ``forwarded_allow_ips`` make uvicorn trust the ALB's
+    ``X-Forwarded-For`` so ``client.host`` (and the access log) becomes the REAL client
+    IP, not the ALB internal IP — enabling attribution / rate-limiting / honeypot
+    fingerprinting. The client IP stays in network metadata (never a body/arg log).
+    """
+    return {
+        "host": host,
+        "port": port,
+        "proxy_headers": True,
+        "forwarded_allow_ips": os.environ.get(FORWARDED_ALLOW_IPS_ENV, "*"),
+    }
+
+
 def serve_http(
     spec_or_client: Any,
     host: str = "127.0.0.1",
@@ -668,7 +720,7 @@ def serve_http(
         allowed_origins=origins,
         public_url=public_url,
     )
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, **_uvicorn_kwargs(host, port))
 
 
 def serve_multi_http(
@@ -697,4 +749,4 @@ def serve_multi_http(
         public_url=public_url,
         enforce=enforce,
     )
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, **_uvicorn_kwargs(host, port))
