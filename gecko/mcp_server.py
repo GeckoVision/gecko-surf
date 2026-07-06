@@ -21,14 +21,25 @@ from .comprehend_service import (
     ensure_submittable,
 )
 from .enforce import (
+    FAIL_CLOSED_SIGNAL,
     EnforceMode,
     apply_gate,
     attach_warning,
     blocked_signals,
     enforce_mode_from_env,
+    fail_closed_refusal,
+    is_write_method,
     refusal_payload,
 )
 from .events import emit_surf_event
+from .honeypot import (
+    HONEYPOT_DECISION,
+    HONEYPOT_REASON,
+    decoy_tool_defs,
+    honeypot_refusal,
+    honeypots_from_env,
+    is_decoy,
+)
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 
 logger = logging.getLogger("gecko.mcp_server")
@@ -85,18 +96,27 @@ class McpSurface:
         *,
         enforce: EnforceMode | None = None,
         policy: RiskPolicy | None = None,
+        honeypots: bool | None = None,
     ):
         """``enforce`` sets the call-time risk gate stance (block | warn | off); ``None``
         resolves ``GECKO_ENFORCE`` (default: warn — a bare surface only observes). The
         HOSTED builders inject ``block`` explicitly. ``policy`` is the auto-derived
         allowed-tools + trusted-hosts set; ``None`` derives it lazily from the client's
-        comprehension on first assessment (the operator only tunes thresholds)."""
+        comprehension on first assessment (the operator only tunes thresholds).
+
+        ``honeypots`` opts IN to the decoy tripwire (``None`` resolves ``GECKO_HONEYPOTS``,
+        default OFF). It is a DETECTION layer, not a moat — off by default so a real
+        surface never shows fake tools unless the operator asks; when off, ``list_tools``
+        is byte-identical to a surface with no honeypot layer."""
         self.client = client
         self.mode = mode
         self.enforce: EnforceMode = (
             enforce if enforce is not None else enforce_mode_from_env()
         )
         self._policy = policy
+        self.honeypots: bool = (
+            honeypots if honeypots is not None else honeypots_from_env()
+        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         """The MCP ``tools/list`` view.
@@ -110,14 +130,23 @@ class McpSurface:
         one LIGHTWEIGHT REF per usable tool (name + one-line summary + minimal inputSchema).
         The agent enumerates refs -> ``search_capabilities`` for the one it needs -> gets the
         full def -> calls it by name (``call_tool`` resolves any usable tool by name, so a ref
-        never makes a tool uncallable)."""
+        never makes a tool uncallable).
+
+        Honeypot decoys (opt-in, off by default) are appended LAST so a PROBING agent
+        enumerating the surface sees a tempting target; when off, this stays byte-identical
+        to a surface with no honeypot layer (at either scale)."""
         usable = self.client.list_tools()
         if self.client.surface_all:
             tools = [_SEARCH_TOOL]
             for t in usable:
                 tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
-            return tools
-        return [_SEARCH_TOOL] + [to_lightweight_ref(t) for t in usable]
+        else:
+            tools = [_SEARCH_TOOL] + [to_lightweight_ref(t) for t in usable]
+        # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
+        # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
+        if self.honeypots:
+            tools.extend(decoy_tool_defs())
+        return tools
 
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
@@ -135,6 +164,20 @@ class McpSurface:
         except Exception:  # noqa: BLE001 - fail open on a scoring bug, never break a call
             logger.warning("risk assessment failed; failing open (allow)")
             return None
+
+    def _is_write_op(self, name: str) -> bool:
+        """True iff the named op mutates upstream state — read from the client's OWN
+        comprehension, NOT the (possibly-crashed) policy. Used only on the fail-closed
+        path (G1/G4): when scoring/policy-derivation raised, a state-changing op is refused
+        rather than waved through. An op we can't resolve degrades to read (fail-open) so a
+        bare fake client with no operations keeps working — a real hosted client always
+        carries its operations, so a real write is always caught."""
+        from .tools import tool_name
+
+        for op in getattr(self.client, "operations", None) or []:
+            if tool_name(op) == name:
+                return is_write_method(getattr(op, "method", "get"))
+        return False
 
     def call_tool(
         self, name: str, arguments: dict[str, Any], session_id: str | None = None
@@ -167,9 +210,42 @@ class McpSurface:
             )
             return enriched
 
+        # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
+        # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there
+        # is no upstream to invoke (it is a decoy), so nothing is called and no payload is
+        # synthesized. Record ONLY the control-plane-safe fingerprint — the sanitized
+        # session correlation + the decoy NAME (a code constant) + the code-constant
+        # signal — never the args, never a fake output. Detection, not a moat. ----------
+        if self.honeypots and is_decoy(name):
+            emit_surf_event(
+                "surf.blocked",
+                surface_id=self.client.surface_id,
+                tool_name=name,  # the decoy name is spec-derived, a code constant
+                mode=self.mode,
+                decision=HONEYPOT_DECISION,
+                reasons=[HONEYPOT_REASON],
+                session_id=session_id,
+            )
+            return honeypot_refusal()
+
         # --- The enforcement gate: score BEFORE the upstream call, then dispatch through
         # the ONE shared gate (enforce.apply_gate) — no inline block/warn logic here. ----
         assessment = self._assess(name, arguments) if self.enforce != "off" else None
+        # Fail CLOSED on a WRITE we could not score (G1/G4): a scorer or policy-derivation
+        # crash returns ``None`` (fail-open for reads — a scoring bug must not break a
+        # harmless GET), but a state-changing op is refused rather than waved through. A
+        # crash-input can no longer turn the fail-open robustness feature into a bypass.
+        if assessment is None and self.enforce == "block" and self._is_write_op(name):
+            emit_surf_event(
+                "surf.blocked",
+                surface_id=self.client.surface_id,
+                tool_name=name,
+                mode=self.mode,
+                decision="block",
+                reasons=[FAIL_CLOSED_SIGNAL],
+                session_id=session_id,
+            )
+            return fail_closed_refusal()
         outcome = apply_gate(assessment, self.enforce)
         if outcome.blocked and assessment is not None:
             # Hard block: the upstream API is NEVER called. Emit the countable event

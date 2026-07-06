@@ -46,6 +46,36 @@ _MODES: frozenset[str] = frozenset({"block", "warn", "off"})
 HOSTED_DEFAULT: EnforceMode = "block"
 LOCAL_DEFAULT: EnforceMode = "warn"
 
+#: HTTP verbs that MUTATE upstream state — the fail-closed boundary is scoped to these.
+#: Single source for "is this state-changing?" so the gate and the corpus agree.
+WRITE_METHODS: frozenset[str] = frozenset({"post", "put", "patch", "delete"})
+
+#: The control-plane-safe SIGNAL name emitted when a STATE-CHANGING op could not be
+#: safety-scored (a scorer or policy-derivation crash) and the gate fails CLOSED rather
+#: than waving the write through. A short code constant — never an arg value (G1/G4).
+FAIL_CLOSED_SIGNAL = "gate.unscored_write"
+
+
+def is_write_method(method: str) -> bool:
+    """True iff ``method`` mutates upstream state (POST/PUT/PATCH/DELETE)."""
+    return (method or "get").lower() in WRITE_METHODS
+
+
+def fail_closed_refusal() -> dict[str, Any]:
+    """The structured refusal returned to the AGENT when a state-changing op cannot be
+    scored (scorer/policy crash) and the gate fails CLOSED. Mirrors ``refusal_payload``'s
+    shape but carries no ``RiskAssessment`` (there is none — scoring itself failed), so a
+    caller can read WHY without the gate ever having to invent a score."""
+    return {
+        "blocked": True,
+        "decision": "block",
+        "score": None,
+        "reasons": [
+            "this call could not be safety-scored and it is a state-changing "
+            "operation, so it was refused (fail-closed)"
+        ],
+    }
+
 
 def enforce_mode_from_env(default: EnforceMode = LOCAL_DEFAULT) -> EnforceMode:
     """Resolve ``GECKO_ENFORCE`` to a mode, falling back to ``default`` when unset or
@@ -141,13 +171,17 @@ def blocked_signals(assessment: RiskAssessment) -> list[str]:
 
 __all__ = [
     "EnforceMode",
+    "FAIL_CLOSED_SIGNAL",
     "GateOutcome",
     "HOSTED_DEFAULT",
     "LOCAL_DEFAULT",
+    "WRITE_METHODS",
     "apply_gate",
     "attach_warning",
     "blocked_signals",
     "enforce_mode_from_env",
+    "fail_closed_refusal",
+    "is_write_method",
     "refusal_payload",
     "resolve_hosted_enforce",
     "warning_payload",
