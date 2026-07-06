@@ -154,3 +154,49 @@ def test_build_x402_manifest_two_surface_fixture() -> None:
     blob = json.dumps(m).lower()
     assert "pay_to" not in blob
     assert "0x" not in blob
+
+
+# --- Change 1: getting_started serves onboarding for both audiences, single-source ---
+
+
+def test_root_index_has_getting_started_for_both_audiences() -> None:
+    with TestClient(_app()) as c:
+        idx = c.get("/").json()
+        gs = idx["getting_started"]
+        use = gs["use_an_api"]
+        onboard = gs["onboard_your_api"]
+        assert use["docs"] == "https://docs.geckovision.tech/quickstart"
+        assert onboard["docs"] == "https://docs.geckovision.tech/for-providers"
+        # the add-command carries the template placeholder + absolute mcp path
+        assert "claude mcp add --transport http <name>" in use["add"]
+        assert "https://mcp.example.com/<name>/mcp" in use["add"]
+        # self-serve door points at the comprehend endpoint + the meta MCP tool
+        assert "https://mcp.example.com/comprehend" in onboard["self_serve"]
+        assert "comprehend_api" in onboard["self_serve"]
+
+
+def test_wellknown_gecko_also_carries_getting_started() -> None:
+    """Single-source: getting_started flows through the SAME index dict to both doors."""
+    with TestClient(_app()) as c:
+        body = c.get("/.well-known/gecko.json").json()
+        gs = body["getting_started"]
+        assert gs["use_an_api"]["docs"] == "https://docs.geckovision.tech/quickstart"
+        assert (
+            gs["onboard_your_api"]["docs"]
+            == "https://docs.geckovision.tech/for-providers"
+        )
+
+
+# --- Change 2: served /.well-known/onboard.md breadcrumb ---
+
+
+def test_root_wellknown_onboard_md_serves_both_paths() -> None:
+    with TestClient(_app()) as c:
+        r = c.get("/.well-known/onboard.md")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/markdown")
+        body = r.text
+        assert "docs.geckovision.tech/for-providers" in body
+        assert "docs.geckovision.tech/quickstart" in body
+        assert "claude mcp add" in body
+        assert "comprehend" in body

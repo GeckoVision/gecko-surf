@@ -58,3 +58,68 @@ def build_x402_manifest(
             for name, spec in surfaces
         ],
     }
+
+
+# Canonical docs live in Mintlify — the breadcrumb POINTS at them, never duplicates
+# the five-move depth (which drifts). One source of truth for onboarding content.
+_DOCS_QUICKSTART = "https://docs.geckovision.tech/quickstart"
+_DOCS_FOR_PROVIDERS = "https://docs.geckovision.tech/for-providers"
+
+
+def build_onboard_breadcrumb(public_url: str | None) -> str:
+    """Build the served ``/.well-known/onboard.md`` breadcrumb (text/markdown).
+
+    A SHORT signpost for both audiences — a developer who wants to USE an API and a
+    provider who wants to ONBOARD one — each pointing at the canonical Mintlify docs.
+    It never copies the full onboarding depth; it links to it.
+
+    ``public_url`` makes the served paths absolute (relative when omitted). The path
+    constants are imported lazily from ``http_server`` so this stays the single source
+    of truth for the routes (and avoids a top-level import cycle).
+    """
+    # Deferred import: http_server imports this module inside a function, so a lazy
+    # import here keeps the routes single-sourced without a cycle.
+    from .http_server import COMPREHEND_PATH, MCP_PATH, META_SURFACE_NAME
+
+    base = public_url.rstrip("/") if public_url else ""
+
+    def abs_path(path: str) -> str:
+        return f"{base}{path}" if base else path
+
+    add_command = (
+        f"claude mcp add --transport http <name> {abs_path('/<name>' + MCP_PATH)}"
+    )
+    comprehend_url = abs_path(COMPREHEND_PATH)
+    meta_mcp = abs_path("/" + META_SURFACE_NAME + MCP_PATH)
+
+    return f"""# Onboard to Gecko
+
+Gecko turns any API's *surface* into first-call-correct agent tools — find the right
+call, make it correctly the first time, run. Two ways in:
+
+## Use an API
+
+Add any served surface to your agent and call it correctly on the first try:
+
+```
+{add_command}
+```
+
+Then call the `search_capabilities` tool to find the right operation, and call it.
+
+Quickstart: {_DOCS_QUICKSTART}
+
+## Onboard your API
+
+Make your own API agent-usable — first-call-correct tools; if you charge, you keep 100%.
+Comprehend it self-serve (no account, no cost):
+
+- HTTP: `POST {comprehend_url}`
+- MCP tool: `comprehend_api` at {meta_mcp}
+
+For providers: {_DOCS_FOR_PROVIDERS}
+
+---
+
+This is a breadcrumb. The canonical docs are the source of truth: {_DOCS_FOR_PROVIDERS}
+"""

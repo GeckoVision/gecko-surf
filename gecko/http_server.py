@@ -493,6 +493,7 @@ def build_multi_surface_app(
         JSONResponse,
         PlainTextResponse,
         RedirectResponse,
+        Response,
     )
     from starlette.routing import Mount, Route
 
@@ -502,7 +503,7 @@ def build_multi_surface_app(
         ensure_submittable,
     )
     from .mcp_server import MetaComprehendSurface
-    from .wellknown import build_x402_manifest
+    from .wellknown import build_onboard_breadcrumb, build_x402_manifest
 
     # Hosted default resolved in ONE place (enforce.resolve_hosted_enforce): explicit wins,
     # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
@@ -568,6 +569,36 @@ def build_multi_surface_app(
                 "returned to you only. Not hosted or publicly listed."
             ),
         },
+        # Onboarding for BOTH audiences, tied to the canonical docs. Flows to `/` AND
+        # `.well-known/gecko.json` (single index dict), so either probe finds the door.
+        "getting_started": {
+            "use_an_api": {
+                "description": (
+                    "Add any surface to your agent and call it correctly on the first "
+                    "try."
+                ),
+                # Literal <name> is a template placeholder the developer fills in.
+                "add": "claude mcp add --transport http <name> " + _abs("/<name>/mcp"),
+                "then": (
+                    "call the search_capabilities tool to find the right operation, "
+                    "then call it"
+                ),
+                "docs": "https://docs.geckovision.tech/quickstart",
+            },
+            "onboard_your_api": {
+                "description": (
+                    "Make your own API agent-usable — first-call-correct tools; if you "
+                    "charge, you keep 100%."
+                ),
+                "self_serve": (
+                    _abs(COMPREHEND_PATH)
+                    + "  (or the comprehend_api tool at "
+                    + _abs("/" + META_SURFACE_NAME + MCP_PATH)
+                    + ")"
+                ),
+                "docs": "https://docs.geckovision.tech/for-providers",
+            },
+        },
     }
 
     async def _healthz(_request: Any) -> Any:
@@ -591,6 +622,13 @@ def build_multi_surface_app(
     async def _well_known_x402(_request: Any) -> Any:
         # Honest, control-plane-safe x402 stance: Gecko composes x402, custody none.
         return JSONResponse(build_x402_manifest(surfaces, public_url))
+
+    # Built once (static per host): both onboarding paths + the canonical doc links.
+    _onboard_md = build_onboard_breadcrumb(public_url)
+
+    async def _well_known_onboard(_request: Any) -> Any:
+        # A short breadcrumb pointing both audiences at the canonical docs — not a copy.
+        return Response(_onboard_md, media_type="text/markdown; charset=utf-8")
 
     async def _comprehend(request: Request) -> Any:
         # Size cap BEFORE reading the body (Content-Length hint) and again after.
@@ -640,6 +678,7 @@ def build_multi_surface_app(
         Route("/.well-known/gecko.json", endpoint=_well_known_gecko),
         Route("/.well-known/x402.json", endpoint=_well_known_x402),
         Route("/.well-known/x402", endpoint=_well_known_x402),
+        Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
     ]
     for name, sub in subs:
