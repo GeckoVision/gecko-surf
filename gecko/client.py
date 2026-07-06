@@ -179,6 +179,16 @@ class AgentApiClient:
         self.surface_rev = surface_rev(self.spec)
         self.surface_id = surface_id or _host_of(self.base_url) or "surface"
 
+    @property
+    def surface_all(self) -> bool:
+        """True when the usable surface is small enough to show in full (below scale).
+
+        The single-source-of-truth scale gate (``gecko.scale.should_surface_all``), computed
+        once at construction over the auth-filtered usable tools. The MCP surface reads this
+        to decide list_tools projection — below scale it emits full defs (byte-identical to
+        today), above scale lightweight refs — so there is never a second threshold."""
+        return self._surface_all
+
     def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
         """The pure ranked retrieval substrate — carries ``score``/``is_fallback`` (retrieval
         eval + the out-of-scope confidence floor). Applies the auth filter and top-k over-

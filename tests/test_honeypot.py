@@ -41,6 +41,9 @@ class _RecordingClient:
     prove the upstream API was (not) invoked. Comprehends one real tool: ``get_odds``."""
 
     surface_id = "fake-surface"
+    # A real client always carries the scale gate (like surface_id). True = below scale
+    # (full defs), which is the regime these honeypot tests assert decoys append to.
+    surface_all = True
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []

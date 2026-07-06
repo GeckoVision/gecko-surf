@@ -60,6 +60,34 @@ _SEARCH_TOOL = {
 }
 
 
+# The lightweight-ref hint: an above-scale list entry keeps only enough for the agent to
+# know the tool EXISTS and how to get its real schema. This exact suffix is asserted by the
+# projection tests — keep it stable.
+_REF_HINT = "call search_capabilities for the full schema"
+
+
+def to_lightweight_ref(tool: dict[str, Any]) -> dict[str, Any]:
+    """Project a full agent-facing tool def down to a lightweight MCP reference.
+
+    Above scale, dumping every full tool def into ``tools/list`` blows the token budget and
+    evaporates Gecko's O(1)-at-scale advantage. A ref keeps only ``{name, description,
+    inputSchema}`` — a one-line summary plus a minimal VALID MCP inputSchema — and tells the
+    agent to fetch the real schema via ``search_capabilities`` before calling by name. It is
+    control-plane safe by construction: no auth fields, no ``_invoke``, no payload — only the
+    name and a summary line.
+    """
+    summary = str(tool.get("description", "")).strip().splitlines()
+    head = summary[0].strip() if summary else ""
+    description = f"{head} — {_REF_HINT}" if head else _REF_HINT
+    return {
+        "name": tool["name"],
+        "description": description,
+        # Minimal valid MCP inputSchema — a permissive object. The real parameter schema is
+        # deliberately withheld from the list and served on demand via search_capabilities.
+        "inputSchema": {"type": "object"},
+    }
+
+
 class McpSurface:
     def __init__(
         self,
@@ -91,9 +119,29 @@ class McpSurface:
         )
 
     def list_tools(self) -> list[dict[str, Any]]:
-        tools = [_SEARCH_TOOL]
-        for t in self.client.list_tools():
-            tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
+        """The MCP ``tools/list`` view.
+
+        Below scale (``client.surface_all``) this is BYTE-IDENTICAL to the pre-projection
+        behaviour: the full search tool followed by a full callable def per usable tool. All
+        current hosted surfaces are <50 ops, so they are unaffected.
+
+        Above scale, dumping every full def would blow the context budget and evaporate the
+        O(1)-at-scale token advantage, so it returns the full ``search_capabilities`` tool +
+        one LIGHTWEIGHT REF per usable tool (name + one-line summary + minimal inputSchema).
+        The agent enumerates refs -> ``search_capabilities`` for the one it needs -> gets the
+        full def -> calls it by name (``call_tool`` resolves any usable tool by name, so a ref
+        never makes a tool uncallable).
+
+        Honeypot decoys (opt-in, off by default) are appended LAST so a PROBING agent
+        enumerating the surface sees a tempting target; when off, this stays byte-identical
+        to a surface with no honeypot layer (at either scale)."""
+        usable = self.client.list_tools()
+        if self.client.surface_all:
+            tools = [_SEARCH_TOOL]
+            for t in usable:
+                tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
+        else:
+            tools = [_SEARCH_TOOL] + [to_lightweight_ref(t) for t in usable]
         # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
         # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
         if self.honeypots:
@@ -140,6 +188,19 @@ class McpSurface:
         sanitized by ``emit_surf_event``; it never touches the upstream call."""
         if name == "search_capabilities":
             hits = self.client.search(arguments.get("query", ""))
+            # Return FULL callable defs: enrich each ranked hit with its real inputSchema so
+            # the agent can recover the schema the above-scale list_tools projection withheld
+            # and call the tool correctly first try. Below scale this is additive metadata on
+            # top of the frozen {name, summary, path, method} hit; the schema carries no auth
+            # (tool defs hide auth headers, invariant #4). Unknown names pass through as-is.
+            full = {t["name"]: t for t in self.client.list_tools()}
+            enriched: list[dict[str, Any]] = []
+            for hit in hits:
+                item = dict(hit)
+                tool = full.get(hit.get("name"))
+                if tool is not None:
+                    item["inputSchema"] = tool["inputSchema"]
+                enriched.append(item)
             # Observe, never mutate: usage metadata only (result breadth k), never the query.
             emit_surf_event(
                 "surf.search",
@@ -147,7 +208,7 @@ class McpSurface:
                 k=len(hits),
                 session_id=session_id,
             )
-            return hits
+            return enriched
 
         # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
         # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there

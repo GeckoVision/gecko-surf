@@ -123,6 +123,9 @@ class _SentinelClient:
     # client's opaque surface id (#39 usage instrumentation); a real AgentApiClient
     # always carries one, so the fake must too.
     surface_id = "sentinel"
+    # A real client exposes the below/above-scale gate the MCP surface reads to decide
+    # list_tools projection; this one-tool fake is trivially below scale.
+    surface_all = True
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [
