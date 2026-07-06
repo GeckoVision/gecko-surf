@@ -138,6 +138,8 @@ To take a real API from comprehended to a live, measured surface:
 That's the whole ask. **No production credentials, no build work on your side, no money
 changing hands to start, no exclusivity.**
 
+> Need the one-page version to hand a provider (or their agent)? See **[Onboard — the brief](onboard.md)** — the same path, condensed, with the exact handover and links back here.
+
 ## The promises we hold
 
 | Promise | What it means |
