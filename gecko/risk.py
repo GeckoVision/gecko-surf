@@ -16,15 +16,22 @@ thresholds; they never hand-write rules.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from .sanitize import looks_like_secret_value
 
+logger = logging.getLogger("gecko.risk")
+
 Decision = Literal["allow", "step_up", "block"]
 
 # Instruction-shaped markers — hidden prompts in tool metadata/args (tool poisoning).
+# These are deliberately NARROW: an over-broad natural-language phrase (e.g. "you must")
+# would false-positive on a legit provider's prose and BLOCK a paying call — worse than a
+# demo miss. Keep only clearly injection-shaped markers.
 _INJECTION_MARKERS: tuple[str, ...] = (
     "ignore previous",
     "ignore all previous",
@@ -33,14 +40,25 @@ _INJECTION_MARKERS: tuple[str, ...] = (
     "forget everything",
     "new instructions",
     "new instruction",
-    "you must",
     "system:",
     "<system",
-    "override the",
-    "reveal the",
     "send the api key",
     "send your api key",
     "exfiltrate",
+)
+
+#: Signals whose mere presence BLOCKS, independently of the additive composite score.
+#: A lone exfil host, an injection marker, or a quarantined surface must never silently
+#: degrade to step_up when an operator raises ``block_at`` above the signal's weight.
+BLOCKING_SIGNALS: frozenset[str] = frozenset(
+    {"exfil.host", "poison.injection", "provenance.quarantined"}
+)
+
+#: A declared field "legitimately accepts a URL" if its schema says so (``format: uri``)
+#: or its NAME says so (contains "url"/"uri" — webhook_url, redirect_uri, image_url). Such
+#: a field holding a URL to any host is NOT exfil — it is the field doing its job.
+_URI_FORMATS: frozenset[str] = frozenset(
+    {"uri", "url", "uri-reference", "iri", "iri-reference"}
 )
 
 
@@ -153,22 +171,53 @@ def _poisoning(description: str, args: dict[str, Any]) -> list[Reason]:
     return out
 
 
-def _exfil_host(args: dict[str, Any], trusted_hosts: frozenset[str]) -> list[Reason]:
+def _field_accepts_uri(name: str, spec: dict[str, Any]) -> bool:
+    """A DECLARED field legitimately holds a URL when its schema declares a URI format or
+    its name is URL-shaped — so a webhook_url / redirect_uri to any host is NOT exfil."""
+    if str(spec.get("format", "")).lower() in _URI_FORMATS:
+        return True
+    low = name.lower()
+    return "url" in low or "uri" in low
+
+
+def _host_of(value: str) -> str | None:
+    """Parse the host from a URL, returning ``None`` on a malformed value (e.g.
+    ``proto://[::1``). A malformed arg degrades to 'no host' rather than crashing the whole
+    exfil signal — one junk arg must not blind exfil detection for its siblings."""
+    try:
+        return urlparse(value).netloc.split("@")[-1].split(":")[0].lower() or None
+    except ValueError:
+        return None
+
+
+def _exfil_host(
+    args: dict[str, Any],
+    trusted_hosts: frozenset[str],
+    schema: dict[str, Any],
+) -> list[Reason]:
     if not trusted_hosts:
         return []  # can't judge exfil without a trusted set (unpinned surface)
+    props = schema.get("properties") or {}
     out: list[Reason] = []
     for key, val in args.items():
-        if isinstance(val, str) and "://" in val:
-            host = urlparse(val).netloc.split("@")[-1].split(":")[0].lower()
-            if host and host not in trusted_hosts:
-                out.append(
-                    Reason(
-                        "exfil.host",
-                        60,
-                        f"arg '{key}' routes to host '{host}' not in this API's trusted "
-                        "set — credential/data exfiltration risk",
-                    )
+        if not (isinstance(val, str) and "://" in val):
+            continue
+        spec = props.get(key)
+        # Schema-aware: a DECLARED field that legitimately accepts a URI is doing its job
+        # (Pegana has ~93 url-ish args). Only an UNKNOWN field, or a declared field whose
+        # schema does NOT accept a URI, is a candidate for exfil.
+        if isinstance(spec, dict) and _field_accepts_uri(key, spec):
+            continue
+        host = _host_of(val)
+        if host and host not in trusted_hosts:
+            out.append(
+                Reason(
+                    "exfil.host",
+                    60,
+                    f"arg '{key}' routes to host '{host}' not in this API's trusted "
+                    "set — credential/data exfiltration risk",
                 )
+            )
     return out
 
 
@@ -233,25 +282,52 @@ def score_call(
     allowed: bool = True,
     policy: RiskPolicy | None = None,
 ) -> RiskAssessment:
-    """Score one agent tool-call. Comprehension-native signals dominate the weighting."""
+    """Score one agent tool-call. Comprehension-native signals dominate the weighting.
+
+    Two guarantees the enforcement gate leans on:
+
+    * **Per-signal crash containment.** Each signal runs isolated; a crashing signal
+      degrades ITSELF only (its reasons are dropped) and can never abort the whole
+      assessment. This closes the fail-open bypass: a junk arg that crashes one signal
+      must not let a call slip past a DIFFERENT signal that would have blocked.
+    * **Categorical blocking.** A ``BLOCKING_SIGNALS`` hit (exfil host / injection /
+      quarantined) blocks regardless of the additive composite, so raising ``block_at``
+      above a signal's weight cannot silently downgrade it to step_up.
+    """
     a = args or {}
     schema = tool_schema or {}
     hosts = trusted_hosts or (policy.trusted_hosts if policy else frozenset())
     reasons: list[Reason] = []
-    reasons += _schema_conformance(schema, a)
-    reasons += _poisoning(tool_description, a)
-    reasons += _exfil_host(a, hosts)
-    reasons += _op_risk(method)
-    reasons += _provenance(surface_state)
-    reasons += _scope(tool_name, allowed, policy)
+    reasons += _run_signal("schema", _schema_conformance, schema, a)
+    reasons += _run_signal("poison", _poisoning, tool_description, a)
+    reasons += _run_signal("exfil", _exfil_host, a, hosts, schema)
+    reasons += _run_signal("op", _op_risk, method)
+    reasons += _run_signal("provenance", _provenance, surface_state)
+    reasons += _run_signal("scope", _scope, tool_name, allowed, policy)
 
     score = min(100, sum(r.points for r in reasons))
     step_up = policy.step_up_at if policy else 30
     block = policy.block_at if policy else 60
+    categorical = any(r.signal in BLOCKING_SIGNALS for r in reasons)
     decision: Decision = (
-        "block" if score >= block else "step_up" if score >= step_up else "allow"
+        "block"
+        if categorical or score >= block
+        else "step_up"
+        if score >= step_up
+        else "allow"
     )
     return RiskAssessment(score=score, decision=decision, reasons=reasons)
+
+
+def _run_signal(name: str, fn: Callable[..., list[Reason]], *args: Any) -> list[Reason]:
+    """Run one scoring signal with crash containment. A signal that raises degrades to
+    NO reasons for that signal only — it never propagates, so it can neither abort the
+    assessment nor mask a sibling signal's block."""
+    try:
+        return fn(*args)
+    except Exception:  # noqa: BLE001 - degrade THIS signal only; never fail the assessment
+        logger.warning("risk signal %r crashed; dropping it (degraded)", name)
+        return []
 
 
 # --------------------------------------------------------------------------- #

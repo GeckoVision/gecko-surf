@@ -32,7 +32,7 @@ from typing import Any
 
 from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
-from .enforce import enforce_mode_from_env
+from .enforce import resolve_hosted_enforce
 from .http_server import serve_multi_http
 from .mcp_server import McpSurface
 
@@ -72,8 +72,9 @@ PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
 def main() -> None:  # pragma: no cover - run-the-server entrypoint
     port = int(os.environ.get("PORT", "8000"))
-    # Hosted default = enforce (block); GECKO_ENFORCE can dial it down (needs a redeploy).
-    hosted_enforce = enforce_mode_from_env("block")
+    # Hosted default resolved in the ONE shared place (resolve_hosted_enforce): block,
+    # unless GECKO_ENFORCE dials it down (needs a redeploy).
+    hosted_enforce = resolve_hosted_enforce()
     surfaces: list[tuple[str, Any]] = [
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]

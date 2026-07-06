@@ -31,7 +31,7 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
-from .enforce import EnforceMode, enforce_mode_from_env
+from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import emit_surf_event
 from .mcp_server import McpSurface
 from .telemetry import TelemetryError
@@ -493,8 +493,9 @@ def build_multi_surface_app(
     )
     from .mcp_server import MetaComprehendSurface
 
-    # Hosted default = enforce (block); GECKO_ENFORCE can dial it to warn/off (redeploy).
-    hosted_enforce = enforce if enforce is not None else enforce_mode_from_env("block")
+    # Hosted default resolved in ONE place (enforce.resolve_hosted_enforce): explicit wins,
+    # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
+    hosted_enforce = resolve_hosted_enforce(enforce)
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
@@ -654,8 +655,13 @@ def serve_http(
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
+    enforce: EnforceMode | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
-    """Serve the surface over Streamable HTTP via uvicorn. Blocks until stopped."""
+    """Serve the surface over Streamable HTTP via uvicorn. Blocks until stopped.
+
+    ``enforce`` resolves through ``resolve_hosted_enforce`` — the SAME hosted default
+    (block) the multi-surface server uses, so single- and multi-surface hosting can never
+    diverge on the gate stance (the reviewer's serve_http→warn vs multi→block bug)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -667,6 +673,7 @@ def serve_http(
         allowed_hosts=hosts,
         allowed_origins=origins,
         public_url=public_url,
+        enforce=resolve_hosted_enforce(enforce),
     )
     uvicorn.run(app, host=host, port=port)
 

@@ -102,7 +102,9 @@ _LABEL_FIELDS = ("tool_name", "mode", "tier", "decision")
 #: "poison.injection"), never a human message or an arg value. Each is shape-validated
 #: as a safe label and the list is count-capped — belt-and-suspenders, since the only
 #: call site passes ``Reason.signal`` constants (never the value-bearing ``.message``).
-_MAX_REASONS = 16
+#: Public: ``enforce.blocked_signals`` caps to this same bound (shared contract, not a
+#: private import across modules).
+MAX_REASONS = 16
 #: Hard caps for the UNTRUSTED external correlation fields. clientInfo and the
 #: session id are client-declared, so they are NEVER trusted as labels (a fail-closed
 #: raise would let a hostile client break the connect emit); instead they are
@@ -191,9 +193,9 @@ def assert_fields_allowlisted(fields: Mapping[str, Any]) -> None:
             )
     reasons = fields.get("reasons")
     if reasons is not None:
-        if not isinstance(reasons, list) or len(reasons) > _MAX_REASONS:
+        if not isinstance(reasons, list) or len(reasons) > MAX_REASONS:
             raise TelemetryError(
-                f"reasons must be a list of at most {_MAX_REASONS} risk-signal labels"
+                f"reasons must be a list of at most {MAX_REASONS} risk-signal labels"
             )
         for item in reasons:
             if not isinstance(item, str) or not _is_safe_label(item):
