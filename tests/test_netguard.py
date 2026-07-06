@@ -175,3 +175,50 @@ def test_safe_get_blocks_redirect_onto_private_host(monkeypatch) -> None:
     monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
     with pytest.raises(netguard.UnsafeUrlError):
         netguard.safe_get("https://pub.example.com/", resolver=r)
+
+
+# --- Fix 3: DNS-rebind TOCTOU — resolve ONCE, pin the socket to the validated IP ---
+class _PinFake:
+    """A fake opener that records the IP its factory was pinned to and returns a body."""
+
+    def __init__(self, pinned_ip: str | None, body: str) -> None:
+        self.pinned_ip = pinned_ip
+        self._body = body
+
+    def open(self, request: object, timeout: object = None) -> object:
+        return _Resp(self._body)
+
+
+def test_safe_get_pins_validated_ip_and_defeats_dns_rebind(monkeypatch) -> None:
+    # The rebind: a resolver that would return a PUBLIC ip on the validate call and a
+    # PRIVATE (metadata) ip on any LATER resolution. safe_get must resolve ONCE and pin
+    # the socket to the validated public ip — so urllib never independently re-resolves
+    # into the private/metadata address.
+    calls = {"n": 0}
+    pinned_seen: dict[str, str | None] = {}
+
+    def rebind(host: str) -> list[str]:
+        calls["n"] += 1
+        # first (validate) resolution -> public; a second resolution -> private/metadata.
+        return ["93.184.216.34"] if calls["n"] == 1 else ["169.254.169.254"]
+
+    def factory(pinned_ip: str | None) -> object:
+        pinned_seen["ip"] = pinned_ip
+        return _PinFake(pinned_ip, "spec-bytes")
+
+    out = netguard.safe_get(
+        "https://rebind.example.com/openapi.json",
+        resolver=rebind,
+        opener_factory=factory,
+    )
+    assert out == "spec-bytes"
+    assert calls["n"] == 1  # resolved ONCE — no independent re-resolution window
+    assert pinned_seen["ip"] == "93.184.216.34"  # socket pinned to the VALIDATED ip
+
+
+def test_safe_get_still_refuses_when_single_resolution_is_private() -> None:
+    # A rebind that resolves straight to a private ip on the single resolution is caught
+    # by validation before any pin/connect happens.
+    r = _resolver({"rebind.example.com": ["169.254.169.254"]})
+    with pytest.raises(netguard.UnsafeUrlError):
+        netguard.safe_get("https://rebind.example.com/", resolver=r)

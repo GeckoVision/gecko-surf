@@ -20,6 +20,7 @@ the bytes it reads — the caller parses and discards.
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import socket
 import urllib.error
@@ -85,10 +86,14 @@ def _check_ip(raw_ip: str, *, host: str) -> None:
         )
 
 
-def validate_public_url(url: str, *, resolver: Resolver | None = None) -> None:
-    """Validate that ``url`` is a safe, public http(s) target. Raises ``UnsafeUrlError``.
+def _resolve_public(url: str, resolver: Resolver | None) -> tuple[str, list[str]]:
+    """Validate scheme + host and resolve the host EXACTLY ONCE, returning
+    ``(host, [validated public IPs])``. For an IP-literal host the list is just that IP.
 
-    Returns ``None`` on success. ``resolver`` is injectable for offline tests.
+    This single resolution is what ``safe_get`` pins the socket to — closing the
+    DNS-rebind TOCTOU where the validator resolves one (public) IP and urllib then
+    independently re-resolves a different (private/metadata) one. Raises ``UnsafeUrlError``
+    on anything non-public.
     """
     resolve = resolver or _default_resolver
     parts = urlsplit(url)
@@ -111,13 +116,28 @@ def validate_public_url(url: str, *, resolver: Resolver | None = None) -> None:
 
     if is_ip_literal:
         _check_ip(host, host=host)
-        return
+        return host, [host]
 
     ips = resolve(host)
     if not ips:
         raise UnsafeUrlError(f"host {host!r} did not resolve to any address")
     for raw_ip in ips:
         _check_ip(raw_ip, host=host)
+    return host, ips
+
+
+def validate_public_url(url: str, *, resolver: Resolver | None = None) -> None:
+    """Validate that ``url`` is a safe, public http(s) target. Raises ``UnsafeUrlError``.
+
+    Returns ``None`` on success. ``resolver`` is injectable for offline tests.
+    """
+    _resolve_public(url, resolver)
+
+
+#: An opener factory: given the validated IP to pin the socket to (``None`` for a host
+#: needing no pin), return a urllib-style opener with ``.open(request, timeout=...)``.
+#: Injectable so the rebind pin is falsifiable offline without real sockets.
+OpenerFactory = Callable[[str | None], Any]
 
 
 def safe_get(
@@ -127,21 +147,25 @@ def safe_get(
     timeout: int = DEFAULT_TIMEOUT,
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     resolver: Resolver | None = None,
+    opener_factory: OpenerFactory | None = None,
 ) -> str:
     """SSRF-safe GET for a spec document. Validates every redirect hop, caps size.
 
-    Redirects are followed manually (not by urllib) so each new target is
-    re-validated — a public URL cannot 302 the fetch onto a private/metadata host.
-    Returns the decoded body. Never persists it.
+    Each hop resolves the host EXACTLY ONCE and PINS the socket to that validated IP, so
+    urllib cannot independently re-resolve onto a private/metadata address in the window
+    between validation and connection (DNS-rebind TOCTOU). Redirects are followed manually
+    (not by urllib) so each new target is validated + pinned afresh. Returns the decoded
+    body. Never persists it.
     """
+    factory = opener_factory or _pinned_opener
     current = url
     for _ in range(max_redirects + 1):
-        validate_public_url(current, resolver=resolver)
+        # Resolve ONCE; the returned IP is what we pin the connection to (rebind-proof).
+        _, ips = _resolve_public(current, resolver)
+        opener = factory(ips[0] if ips else None)
         request = urllib.request.Request(current, method="GET")
-        # Do not auto-follow redirects: handle them ourselves so each hop is checked.
-        opener = urllib.request.build_opener(_NoRedirect)
         try:
-            with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated)
+            with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
                 status = getattr(resp, "status", 200)
                 if status in _REDIRECT_CODES:
                     current = _redirect_target(current, resp.headers)
@@ -161,6 +185,64 @@ def safe_get(
                 continue
             raise
     raise UnsafeUrlError(f"too many redirects (>{max_redirects})")
+
+
+def _pinned_opener(pinned_ip: str | None) -> urllib.request.OpenerDirector:
+    """Build a urllib opener that (a) does NOT auto-follow redirects (we re-validate each
+    hop ourselves) and (b) pins every connection to ``pinned_ip`` — the validated address
+    from the single resolution — while keeping the original hostname for the ``Host``
+    header and TLS SNI/cert check. This is the socket-level defense against DNS rebind."""
+    handlers: list[urllib.request.BaseHandler] = [_NoRedirect()]
+    if pinned_ip is not None:
+        handlers.append(_PinnedHTTPHandler(pinned_ip))
+        handlers.append(_PinnedHTTPSHandler(pinned_ip))
+    return urllib.request.build_opener(*handlers)
+
+
+def _pinned_http_connection(base: type, pinned_ip: str) -> type:
+    """Subclass an http.client connection so ``connect`` dials the validated ``pinned_ip``
+    instead of re-resolving ``self.host``. ``self.host`` stays the original name, so the
+    ``Host`` header and (for HTTPS) SNI + certificate verification use it — only the socket
+    target is pinned."""
+
+    class _Pinned(base):  # type: ignore[valid-type,misc]
+        def connect(self) -> None:
+            sock = socket.create_connection(
+                (pinned_ip, self.port),
+                self.timeout,
+                self.source_address,
+            )
+            if getattr(self, "_tunnel_host", None):
+                self.sock = sock
+                self._tunnel()
+                sock = self.sock
+            context = getattr(self, "_context", None)
+            if context is not None:  # HTTPS: wrap with SNI/cert = the ORIGINAL host
+                self.sock = context.wrap_socket(sock, server_hostname=self.host)
+            else:
+                self.sock = sock
+
+    return _Pinned
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, pinned_ip: str) -> None:
+        super().__init__()
+        self._conn = _pinned_http_connection(http.client.HTTPConnection, pinned_ip)
+
+    def http_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(self._conn, req)  # type: ignore[arg-type]
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip: str) -> None:
+        super().__init__()
+        self._conn = _pinned_http_connection(http.client.HTTPSConnection, pinned_ip)
+
+    def https_open(self, req: urllib.request.Request) -> Any:
+        # HTTPSHandler carries the SSL context as ``_context`` at runtime (not in the stub).
+        context = getattr(self, "_context", None)
+        return self.do_open(self._conn, req, context=context)  # type: ignore[arg-type]
 
 
 def _redirect_target(current: str, headers: Any) -> str:

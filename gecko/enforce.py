@@ -31,6 +31,7 @@ only covers the "we couldn't score it" case, never a "we scored it as dangerous"
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from .risk import RiskAssessment
@@ -53,6 +54,45 @@ def enforce_mode_from_env(default: EnforceMode = LOCAL_DEFAULT) -> EnforceMode:
     if raw in _MODES:
         return raw  # type: ignore[return-value]
     return default
+
+
+def resolve_hosted_enforce(explicit: EnforceMode | None = None) -> EnforceMode:
+    """The SINGLE place the hosted serving default is resolved. An explicit stance wins;
+    otherwise ``GECKO_ENFORCE``, falling back to the hosted ``block`` default. Both the
+    single-surface and multi-surface hosted servers call this, so a hosted deploy can
+    never silently default to different stances (the reviewer's serve_http→warn vs
+    multi-surface→block divergence)."""
+    if explicit is not None:
+        return explicit
+    return enforce_mode_from_env(HOSTED_DEFAULT)
+
+
+@dataclass(frozen=True)
+class GateOutcome:
+    """What the gate decided to DO, transport-agnostic — so ``mcp_server.call_tool`` (and
+    any future call boundary) shares ONE dispatch. ``blocked`` means the upstream call is
+    refused; ``warn`` means it executes but a warning is attached. ``assessment`` is the
+    scored risk (``None`` when the gate was off or scoring failed open)."""
+
+    blocked: bool
+    warn: bool
+    assessment: RiskAssessment | None
+
+
+def apply_gate(assessment: RiskAssessment | None, mode: EnforceMode) -> GateOutcome:
+    """Promote a scored assessment to an enforcement action — the ONE dispatch point.
+
+    ``off`` or a failed-open (``None``) assessment is a pass-through. A decided ``block``
+    hard-blocks only in ``block`` mode; a ``step_up`` — or a ``warn``-mode would-be block —
+    executes with a warning attached. This never re-scores; ``risk.py`` already decided the
+    categorical/threshold verdict, this only maps verdict × mode → action."""
+    if mode == "off" or assessment is None:
+        return GateOutcome(blocked=False, warn=False, assessment=assessment)
+    if assessment.decision == "block" and mode == "block":
+        return GateOutcome(blocked=True, warn=False, assessment=assessment)
+    return GateOutcome(
+        blocked=False, warn=assessment.decision != "allow", assessment=assessment
+    )
 
 
 def refusal_payload(assessment: RiskAssessment) -> dict[str, Any]:
@@ -90,22 +130,25 @@ def blocked_signals(assessment: RiskAssessment) -> list[str]:
     """The control-plane-safe reason set for telemetry: the SIGNAL names only (code
     constants like "poison.injection"), never the human ``.message`` — which can embed an
     arg-derived value (a host, an enum value). Capped defensively to the event allowlist."""
-    from .events import _MAX_REASONS
+    from .events import MAX_REASONS
 
     seen: list[str] = []
     for r in assessment.reasons:
         if r.signal not in seen:
             seen.append(r.signal)
-    return seen[:_MAX_REASONS]
+    return seen[:MAX_REASONS]
 
 
 __all__ = [
     "EnforceMode",
+    "GateOutcome",
     "HOSTED_DEFAULT",
     "LOCAL_DEFAULT",
+    "apply_gate",
     "attach_warning",
     "blocked_signals",
     "enforce_mode_from_env",
     "refusal_payload",
+    "resolve_hosted_enforce",
     "warning_payload",
 ]

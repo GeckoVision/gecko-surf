@@ -92,6 +92,16 @@ def _is_http_url(source: str) -> bool:
     return urlsplit(source).scheme.lower() in ("http", "https")
 
 
+def _no_surface_error(safe_ref: str) -> ComprehendError:
+    """The single 'nothing callable here' message — a docs landing page (or an empty
+    spec) yields no operations; point the submitter at the OpenAPI/API-reference URL."""
+    return ComprehendError(
+        f"no callable API surface found at {safe_ref} — point Gecko at the "
+        "OpenAPI spec URL, or a specific API-reference page (a docs landing "
+        "page usually has none)"
+    )
+
+
 def _guard_source(source: str) -> None:
     """Reject anything that isn't a safe, public http(s) target OR a local file path.
 
@@ -264,13 +274,7 @@ def comprehend_submission(
                 f"could not comprehend the docs page at: {safe_ref}"
             ) from exc
         if not client.operations:
-            raise ComprehendError(
-                (
-                    f"no callable API surface found at {safe_ref} — point Gecko at the "
-                    "OpenAPI spec URL, or a specific API-reference page (a docs landing "
-                    "page usually has none)"
-                )
-            )
+            raise _no_surface_error(safe_ref)
         return _summarize(client, warnings)
 
     try:
@@ -295,11 +299,5 @@ def comprehend_submission(
             f"no OpenAPI or recoverable docs surface at: {safe_ref}"
         ) from exc
     if not recovered.operations:
-        raise ComprehendError(
-            (
-                f"no callable API surface found at {safe_ref} — point Gecko at the "
-                "OpenAPI spec URL, or a specific API-reference page (a docs landing "
-                "page usually has none)"
-            )
-        )
+        raise _no_surface_error(safe_ref)
     return _summarize(recovered, warnings)

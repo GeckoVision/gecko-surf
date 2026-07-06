@@ -22,6 +22,7 @@ from .comprehend_service import (
 )
 from .enforce import (
     EnforceMode,
+    apply_gate,
     attach_warning,
     blocked_signals,
     enforce_mode_from_env,
@@ -110,13 +111,11 @@ class McpSurface:
             )
             return hits
 
-        # --- The enforcement gate: score BEFORE the upstream call. --------------- #
+        # --- The enforcement gate: score BEFORE the upstream call, then dispatch through
+        # the ONE shared gate (enforce.apply_gate) — no inline block/warn logic here. ----
         assessment = self._assess(name, arguments) if self.enforce != "off" else None
-        if (
-            assessment is not None
-            and assessment.decision == "block"
-            and self.enforce == "block"
-        ):
+        outcome = apply_gate(assessment, self.enforce)
+        if outcome.blocked and assessment is not None:
             # Hard block: the upstream API is NEVER called. Emit the countable event
             # (signal NAMES only — never the value-bearing human message) and return a
             # structured refusal the agent can read.
@@ -141,7 +140,7 @@ class McpSurface:
             session_id=session_id,
         )
         # A step_up (or a warn-mode would-be block) executed — flag it, don't hide it.
-        if assessment is not None and assessment.decision != "allow":
+        if outcome.warn and assessment is not None:
             return attach_warning(result, assessment)
         return result
 
