@@ -21,11 +21,14 @@ from .comprehend_service import (
     ensure_submittable,
 )
 from .enforce import (
+    FAIL_CLOSED_SIGNAL,
     EnforceMode,
     apply_gate,
     attach_warning,
     blocked_signals,
     enforce_mode_from_env,
+    fail_closed_refusal,
+    is_write_method,
     refusal_payload,
 )
 from .events import emit_surf_event
@@ -93,6 +96,20 @@ class McpSurface:
             logger.warning("risk assessment failed; failing open (allow)")
             return None
 
+    def _is_write_op(self, name: str) -> bool:
+        """True iff the named op mutates upstream state — read from the client's OWN
+        comprehension, NOT the (possibly-crashed) policy. Used only on the fail-closed
+        path (G1/G4): when scoring/policy-derivation raised, a state-changing op is refused
+        rather than waved through. An op we can't resolve degrades to read (fail-open) so a
+        bare fake client with no operations keeps working — a real hosted client always
+        carries its operations, so a real write is always caught."""
+        from .tools import tool_name
+
+        for op in getattr(self.client, "operations", None) or []:
+            if tool_name(op) == name:
+                return is_write_method(getattr(op, "method", "get"))
+        return False
+
     def call_tool(
         self, name: str, arguments: dict[str, Any], session_id: str | None = None
     ) -> Any:
@@ -114,6 +131,21 @@ class McpSurface:
         # --- The enforcement gate: score BEFORE the upstream call, then dispatch through
         # the ONE shared gate (enforce.apply_gate) — no inline block/warn logic here. ----
         assessment = self._assess(name, arguments) if self.enforce != "off" else None
+        # Fail CLOSED on a WRITE we could not score (G1/G4): a scorer or policy-derivation
+        # crash returns ``None`` (fail-open for reads — a scoring bug must not break a
+        # harmless GET), but a state-changing op is refused rather than waved through. A
+        # crash-input can no longer turn the fail-open robustness feature into a bypass.
+        if assessment is None and self.enforce == "block" and self._is_write_op(name):
+            emit_surf_event(
+                "surf.blocked",
+                surface_id=self.client.surface_id,
+                tool_name=name,
+                mode=self.mode,
+                decision="block",
+                reasons=[FAIL_CLOSED_SIGNAL],
+                session_id=session_id,
+            )
+            return fail_closed_refusal()
         outcome = apply_gate(assessment, self.enforce)
         if outcome.blocked and assessment is not None:
             # Hard block: the upstream API is NEVER called. Emit the countable event
