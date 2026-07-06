@@ -86,7 +86,7 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "source",  # a CLOSED corpus.OUTCOME_SOURCES member (observed|reported|synthetic)
         "client",  # MCP clientInfo name/version — UNTRUSTED, sanitized + capped, never fails closed
         "session_id",  # MCP session id — opaque correlation token joining connect->call
-        "decision",  # enforcement gate verdict: "allow" | "step_up" | "block" (short label)
+        "decision",  # gate verdict: "allow"|"step_up"|"block"|"honeypot" (shape-validated label)
         "score",  # int — composite 0-100 risk score, never a payload
         "reasons",  # list of risk SIGNAL names (code constants), never arg values/messages
     }
@@ -143,7 +143,7 @@ class SurfEventRecord:
     source: str | None = None  # provenance; gates whether the event feeds the FCC rate
     client: str | None = None  # sanitized MCP clientInfo name/version, never raw
     session_id: str | None = None  # opaque MCP session id — connect<->call correlation
-    decision: str | None = None  # enforcement verdict (allow|step_up|block)
+    decision: str | None = None  # gate verdict (allow|step_up|block|honeypot)
     score: int | None = None  # composite 0-100 risk score
     reasons: list[str] | None = None  # risk SIGNAL names, never messages/arg values
 
