@@ -21,10 +21,10 @@ leaves your machine.
 
 ## 2 · Run this surface (BYOK)
 
-Grab this folder (`examples/colosseum_copilot/`), then:
+**No files to download** — the surface ships inside the package:
 ```bash
 export COLOSSEUM_COPILOT_PAT=...            # get one: https://arena.colosseum.org/copilot
-uvx --from "gecko-surf[serve]" python serve_colosseum.py
+uvx --from "gecko-surf[serve]" colosseum-mcp
 ```
 Serves **11 first-call-correct tools** at `http://127.0.0.1:8000/mcp`. Your PAT stays local.
 
