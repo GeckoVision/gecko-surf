@@ -1,0 +1,59 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Colosseum Copilot API",
+    "version": "v1",
+    "description": "Search and analyze Colosseum hackathon projects. Hand-authored from-docs stub (docs.colosseum.com/copilot/api-reference — no machine-readable spec published); born quarantined, human-reviewed."
+  },
+  "servers": [{ "url": "https://copilot.colosseum.com/api/v1" }],
+  "security": [{ "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "COLOSSEUM_COPILOT_PAT from arena.colosseum.org/copilot" }
+    }
+  },
+  "paths": {
+    "/status": {
+      "get": { "operationId": "getStatus", "summary": "Health and quota status for the authenticated user", "responses": { "200": { "description": "ok" } } }
+    },
+    "/filters": {
+      "get": { "operationId": "getFilters", "summary": "Available filter facets for project/archive search (cohorts, tracks, tags)", "responses": { "200": { "description": "ok" } } }
+    },
+    "/search/projects": {
+      "post": {
+        "operationId": "searchProjects",
+        "summary": "Search hackathon projects by natural-language query + filters",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": {
+          "query": { "type": "string", "description": "natural-language search" },
+          "limit": { "type": "integer" },
+          "filters": { "type": "object", "description": "facets from getFilters (e.g. cohort, track, tags)" }
+        }, "required": ["query"] } } } },
+        "responses": { "200": { "description": "matching projects" } }
+      }
+    },
+    "/search/archives": {
+      "post": { "operationId": "searchArchives", "summary": "Search archived documents/writeups", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": { "type": "integer" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+    },
+    "/archives/{documentId}": {
+      "get": { "operationId": "getArchive", "summary": "Fetch one archived document", "parameters": [{ "name": "documentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
+    },
+    "/projects/by-slug/{slug}": {
+      "get": { "operationId": "getProjectBySlug", "summary": "Fetch a project by its slug", "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
+    },
+    "/analyze": {
+      "post": { "operationId": "analyzeCohort", "summary": "Analyze a cohort/set of projects against a question", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "cohort": { "type": "object" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+    },
+    "/compare": {
+      "post": { "operationId": "compareProjects", "summary": "Compare projects side by side", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "slugs": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "description": "ok" } } }
+    },
+    "/clusters/{key}": {
+      "get": { "operationId": "getCluster", "summary": "Fetch a thematic cluster of projects by key", "parameters": [{ "name": "key", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
+    },
+    "/source-suggestions": {
+      "post": { "operationId": "sourceSuggestions", "summary": "Suggested sources for a query", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+    },
+    "/feedback": {
+      "post": { "operationId": "submitFeedback", "summary": "Submit feedback on a Copilot response", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "message": { "type": "string" }, "rating": { "type": "string" } } } } } }, "responses": { "200": { "description": "ok" } } }
+    }
+  }
+}
