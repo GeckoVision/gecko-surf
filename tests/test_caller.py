@@ -95,3 +95,23 @@ def test_required_fields_present_builds_fine():
     assert req.method == "POST"
     assert "account=acct_1" in req.url
     assert req.json_body == {"correlationID": "c1", "value": 100}
+
+
+def test_default_user_agent_set_to_avoid_waf_403():
+    # urllib's default "Python-urllib" UA gets 403'd by Cloudflare WAFs (e.g. Colosseum).
+    # build_request must default a self-identifying User-Agent when the caller gives none.
+    tool = _tool("/api/odds/snapshot/{fixtureId}")
+    req = build_request(tool, {"fixtureId": 1}, base_url="https://txline.txodds.com")
+    ua = req.headers.get("User-Agent", "")
+    assert ua and "python-urllib" not in ua.lower() and "gecko" in ua.lower()
+
+
+def test_caller_provided_user_agent_wins_over_default():
+    tool = _tool("/api/odds/snapshot/{fixtureId}")
+    req = build_request(
+        tool,
+        {"fixtureId": 1},
+        base_url="https://txline.txodds.com",
+        auth={"User-Agent": "custom/1.0"},
+    )
+    assert req.headers["User-Agent"] == "custom/1.0"
