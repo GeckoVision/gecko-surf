@@ -99,7 +99,10 @@ def test_prepare_public_tool_without_auth_ok():
     client = AgentApiClient(SPEC, session=public_session())
     req = client.prepare("get_public", {})
     assert req.url.endswith("/public")
-    assert req.headers == {}
+    # A public tool carries no auth — only the default User-Agent (so WAFs don't 403
+    # the stdlib caller). The point of this test is the ABSENCE of injected auth.
+    assert "Authorization" not in req.headers
+    assert set(req.headers) == {"User-Agent"}
 
 
 # FIX 3 — token-exfil guard. base_url derives from untrusted servers[].url; a poisoned

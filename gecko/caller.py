@@ -57,6 +57,13 @@ def _missing_required(tool: dict[str, Any], args: dict[str, Any]) -> list[str]:
     return missing
 
 
+#: Self-identifying User-Agent. urllib's default ("Python-urllib/x.y") is 403'd by many
+#: WAFs (Cloudflare et al.), which silently breaks live calls to painful, edge-fronted
+#: APIs. A real UA gets the stdlib caller through; a caller/session UA overrides it.
+#: Verified against Colosseum's Cloudflare WAF (403 with the default, 200 with this).
+_USER_AGENT = "gecko/0.2 (+https://geckovision.tech)"
+
+
 def build_request(
     tool: dict[str, Any],
     args: dict[str, Any],
@@ -120,6 +127,12 @@ def build_request(
                     )
         if inject:
             headers.update(auth)
+
+    # Default a self-identifying User-Agent when none was provided — avoids WAF 403s on
+    # urllib's "Python-urllib" default. A header-location param or a session-supplied
+    # User-Agent wins (case-insensitive).
+    if not any(k.lower() == "user-agent" for k in headers):
+        headers["User-Agent"] = _USER_AGENT
 
     return PreparedRequest(
         method=invoke["method"],
