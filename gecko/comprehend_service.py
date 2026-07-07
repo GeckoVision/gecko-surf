@@ -243,18 +243,20 @@ def _next_steps() -> dict[str, str]:
     }
 
 
-def comprehend_submission(
+def comprehend_client(
     source: str,
     *,
     from_docs: bool = False,
     max_bytes: int = DEFAULT_MAX_BYTES,
-) -> ComprehendResult:
-    """Comprehend one submitted API into a control-plane-safe summary + artifacts.
+) -> tuple[AgentApiClient, list[str]]:
+    """Comprehend one submitted API into a live ``AgentApiClient`` + honesty warnings.
 
-    Flow: SSRF-validate the source → if ``from_docs`` (or an OpenAPI ingest yields no
-    operations) run the ``docs_reader`` recovery path, else ingest the OpenAPI → build a
-    public (no-auth) client → summarize. Nothing about the submission is retained beyond
-    the returned object.
+    This is the shared comprehension seam: it does the SSRF guard, the fetch, and the
+    OpenAPI→docs-recovery fallback, and returns the comprehended (public, no-auth) client
+    itself — so a caller that needs the full tool defs / operations / trust anchor
+    (Preflight) reuses the exact same path ``comprehend_submission`` uses to build its
+    control-plane summary. Nothing about the submission is retained beyond the returned
+    client.
 
     Raises ``ComprehendError`` (message redacted of any URL credentials) on an unsafe
     source or a document from which no callable surface can be recovered.
@@ -275,7 +277,7 @@ def comprehend_submission(
             ) from exc
         if not client.operations:
             raise _no_surface_error(safe_ref)
-        return _summarize(client, warnings)
+        return client, warnings
 
     try:
         maybe_client = _openapi_client(source, max_bytes)
@@ -288,7 +290,7 @@ def comprehend_submission(
         raise ComprehendError(f"could not read source: {safe_ref}") from exc
 
     if maybe_client is not None and maybe_client.operations:
-        return _summarize(maybe_client, [])
+        return maybe_client, []
 
     # Not a usable OpenAPI — fall back to human-docs recovery (born quarantined).
     logger.info("no OpenAPI operations from %s; trying docs recovery", safe_ref)
@@ -300,4 +302,26 @@ def comprehend_submission(
         ) from exc
     if not recovered.operations:
         raise _no_surface_error(safe_ref)
-    return _summarize(recovered, warnings)
+    return recovered, warnings
+
+
+def comprehend_submission(
+    source: str,
+    *,
+    from_docs: bool = False,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> ComprehendResult:
+    """Comprehend one submitted API into a control-plane-safe summary + artifacts.
+
+    Flow: SSRF-validate the source → if ``from_docs`` (or an OpenAPI ingest yields no
+    operations) run the ``docs_reader`` recovery path, else ingest the OpenAPI → build a
+    public (no-auth) client → summarize. Nothing about the submission is retained beyond
+    the returned object.
+
+    Raises ``ComprehendError`` (message redacted of any URL credentials) on an unsafe
+    source or a document from which no callable surface can be recovered.
+    """
+    client, warnings = comprehend_client(
+        source, from_docs=from_docs, max_bytes=max_bytes
+    )
+    return _summarize(client, warnings)
