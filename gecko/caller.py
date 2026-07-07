@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
-from .netguard import validate_public_url
+from .netguard import USER_AGENT, validate_public_url
 
 _UNFILLED = re.compile(r"\{([^}]+)\}")
 
@@ -57,11 +57,10 @@ def _missing_required(tool: dict[str, Any], args: dict[str, Any]) -> list[str]:
     return missing
 
 
-#: Self-identifying User-Agent. urllib's default ("Python-urllib/x.y") is 403'd by many
-#: WAFs (Cloudflare et al.), which silently breaks live calls to painful, edge-fronted
-#: APIs. A real UA gets the stdlib caller through; a caller/session UA overrides it.
+#: Self-identifying User-Agent — canonical value lives in netguard (single source of
+#: truth for every stdlib fetch path). A caller/session UA overrides it.
 #: Verified against Colosseum's Cloudflare WAF (403 with the default, 200 with this).
-_USER_AGENT = "gecko/0.2 (+https://geckovision.tech)"
+_USER_AGENT = USER_AGENT
 
 
 def build_request(

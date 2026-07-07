@@ -10,6 +10,25 @@
   "components": {
     "securitySchemes": {
       "bearerAuth": { "type": "http", "scheme": "bearer", "description": "COLOSSEUM_COPILOT_PAT from arena.colosseum.org/copilot" }
+    },
+    "schemas": {
+      "Dimension": {
+        "type": "string",
+        "enum": ["tracks", "problemTags", "solutionTags", "primitives", "techStack", "targetUsers", "clusters"]
+      },
+      "Cohort": {
+        "type": "object",
+        "description": "Selects a set of projects. All fields optional ({} = all projects); combine to narrow. Keys come from getFilters. trackKeys format <hackathonSlug>/<trackSlug>; batch keys format accelerator/<batchSlug>.",
+        "properties": {
+          "hackathons": { "type": "array", "items": { "type": "string" }, "description": "hackathon keys, e.g. [\"breakout\", \"radar\"]" },
+          "trackKeys": { "type": "array", "items": { "type": "string" } },
+          "winnersOnly": { "type": "boolean" },
+          "acceleratorOnly": { "type": "boolean" },
+          "acceleratorBatchKeys": { "type": "array", "items": { "type": "string" } },
+          "prizePlacements": { "type": "array", "items": { "type": "integer" }, "description": "prize placement ranks" },
+          "clusterKeys": { "type": "array", "items": { "type": "string" }, "description": "format v<N>-c<N>" }
+        }
+      }
     }
   },
   "paths": {
@@ -25,14 +44,19 @@
         "summary": "Search hackathon projects by natural-language query + filters",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": {
           "query": { "type": "string", "description": "natural-language search" },
+          "hackathons": { "type": "array", "items": { "type": "string" } },
+          "trackKeys": { "type": "array", "items": { "type": "string" } },
           "limit": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "diversify": { "type": "boolean" },
+          "includeFacets": { "type": "boolean" },
           "filters": { "type": "object", "description": "facets from getFilters (e.g. cohort, track, tags)" }
         }, "required": ["query"] } } } },
         "responses": { "200": { "description": "matching projects" } }
       }
     },
     "/search/archives": {
-      "post": { "operationId": "searchArchives", "summary": "Search archived documents/writeups", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": { "type": "integer" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+      "post": { "operationId": "searchArchives", "summary": "Search archived documents/writeups", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "sources": { "type": "array", "items": { "type": "string" } }, "limit": { "type": "integer" }, "offset": { "type": "integer" }, "maxChunksPerDoc": { "type": "integer" }, "maxDocsPerSource": { "type": "integer" }, "intent": { "type": "string" }, "minSimilarity": { "type": "number" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
     },
     "/archives/{documentId}": {
       "get": { "operationId": "getArchive", "summary": "Fetch one archived document", "parameters": [{ "name": "documentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
@@ -41,19 +65,19 @@
       "get": { "operationId": "getProjectBySlug", "summary": "Fetch a project by its slug", "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
     },
     "/analyze": {
-      "post": { "operationId": "analyzeCohort", "summary": "Analyze a cohort/set of projects against a question", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "cohort": { "type": "object" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+      "post": { "operationId": "analyzeCohort", "summary": "Aggregate a cohort of projects along dimensions (tracks, problemTags, ...) — returns bucket counts/shares + sample slugs", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "cohort": { "$ref": "#/components/schemas/Cohort" }, "dimensions": { "type": "array", "items": { "$ref": "#/components/schemas/Dimension" } }, "topK": { "type": "integer", "minimum": 1, "maximum": 20, "description": "buckets per dimension (default 10)" }, "samplePerBucket": { "type": "integer", "minimum": 0, "maximum": 5, "description": "sample project slugs per bucket (default 2)" } }, "required": ["cohort", "dimensions"] } } } }, "responses": { "200": { "description": "totals + per-dimension buckets" } } }
     },
     "/compare": {
-      "post": { "operationId": "compareProjects", "summary": "Compare projects side by side", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "slugs": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "description": "ok" } } }
+      "post": { "operationId": "compareProjects", "summary": "Compare two cohorts of projects along dimensions", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "cohortA": { "$ref": "#/components/schemas/Cohort" }, "cohortB": { "$ref": "#/components/schemas/Cohort" }, "dimensions": { "type": "array", "items": { "$ref": "#/components/schemas/Dimension" } }, "topK": { "type": "integer", "minimum": 1, "maximum": 20 } }, "required": ["cohortA", "cohortB", "dimensions"] } } } }, "responses": { "200": { "description": "ok" } } }
     },
     "/clusters/{key}": {
       "get": { "operationId": "getCluster", "summary": "Fetch a thematic cluster of projects by key", "parameters": [{ "name": "key", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "ok" } } }
     },
     "/source-suggestions": {
-      "post": { "operationId": "sourceSuggestions", "summary": "Suggested sources for a query", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] } } } }, "responses": { "200": { "description": "ok" } } }
+      "post": { "operationId": "sourceSuggestions", "summary": "Suggest a source URL for the Copilot corpus", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string", "description": "the source URL to suggest" }, "name": { "type": "string" }, "reason": { "type": "string" } }, "required": ["url"] } } } }, "responses": { "200": { "description": "ok" } } }
     },
     "/feedback": {
-      "post": { "operationId": "submitFeedback", "summary": "Submit feedback on a Copilot response", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "message": { "type": "string" }, "rating": { "type": "string" } } } } } }, "responses": { "200": { "description": "ok" } } }
+      "post": { "operationId": "submitFeedback", "summary": "Submit feedback on a Copilot response", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "category": { "type": "string", "enum": ["error", "quality", "suggestion", "other"] }, "message": { "type": "string", "description": "max 5000 chars" }, "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"], "description": "default medium" }, "context": { "type": "object", "description": "e.g. { query, endpoint, error details } — max 10KB" } }, "required": ["category", "message"] } } } }, "responses": { "200": { "description": "ok" } } }
     }
   }
 }

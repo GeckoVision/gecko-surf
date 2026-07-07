@@ -37,6 +37,12 @@ DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 DEFAULT_TIMEOUT = 30  # seconds
 DEFAULT_MAX_REDIRECTS = 5
 
+#: Self-identifying User-Agent — the single source of truth (caller.py imports it).
+#: urllib's default ("Python-urllib/x.y") is 403'd by many WAFs (Cloudflare et al.),
+#: which broke live calls (0.2.1 caller fix) and then ``gecko from-docs`` on the SAME
+#: Cloudflare front (Mintlify docs pages) — every stdlib fetch path needs a real UA.
+USER_AGENT = "gecko/0.2 (+https://geckovision.tech)"
+
 _ALLOWED_SCHEMES = {"http", "https"}
 
 # Explicit defense-in-depth: cloud metadata endpoints. These also fall under the
@@ -163,7 +169,10 @@ def safe_get(
         # Resolve ONCE; the returned IP is what we pin the connection to (rebind-proof).
         _, ips = _resolve_public(current, resolver)
         opener = factory(ips[0] if ips else None)
-        request = urllib.request.Request(current, method="GET")
+        # Real UA: the default "Python-urllib/x.y" is 403'd by WAF-fronted docs hosts.
+        request = urllib.request.Request(
+            current, method="GET", headers={"User-Agent": USER_AGENT}
+        )
         try:
             with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
                 status = getattr(resp, "status", 200)
