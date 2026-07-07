@@ -35,6 +35,8 @@ from .client import AgentApiClient
 from .enforce import resolve_hosted_enforce
 from .http_server import serve_multi_http
 from .mcp_server import McpSurface
+from .registry.api import registry_routes as _registry_routes
+from .registry.store import RegistrySurface, SurfaceStore
 
 # In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +80,12 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     surfaces: list[tuple[str, Any]] = [
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]
+    # Registry store for the /registry/... HTTP surface — same specs this host already
+    # serves, all "free" (no entitlement gate yet). Keys wired with real Mongo in Task 6;
+    # keys=None here means every registry fetch is anonymous-free / 402-on-premium-never.
+    registry_store = SurfaceStore(
+        [RegistrySurface(name=n, spec=s, tier="free") for n, s in surfaces]
+    )
     # Recorded brand demo surfaces (pre-built so their mode overrides the host default).
     # Built with the hosted enforce stance so the risk gate is active on them too.
     surfaces.append(
@@ -122,6 +130,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         allowed_hosts=[PUBLIC_HOST],
         public_url=PUBLIC_URL,
         enforce=hosted_enforce,
+        registry_routes=_registry_routes(registry_store, None),
     )
 
 
