@@ -131,12 +131,21 @@ def _ip_throttled(ip: str) -> bool:
     Bounded in-memory map keyed by client IP -> (count, window_start). When
     the map grows past ``_IP_THROTTLE_MAX_ENTRIES`` (a slow-drip DoS on this
     process's memory), expired windows are swept before recording the new one.
+    If the map still exceeds the limit after sweep, oldest-window-first eviction
+    is applied to maintain the hard cap.
     """
     now = time.time()
     if len(_ip_counts) > _IP_THROTTLE_MAX_ENTRIES:
         for key, (_, window_start) in list(_ip_counts.items()):
             if now - window_start >= _IP_THROTTLE_WINDOW_SECONDS:
                 del _ip_counts[key]
+        # Hard-cap: if still above limit after expiry sweep, evict oldest-first.
+        if len(_ip_counts) > _IP_THROTTLE_MAX_ENTRIES:
+            to_delete = len(_ip_counts) - _IP_THROTTLE_MAX_ENTRIES
+            for ip_key, _ in sorted(_ip_counts.items(), key=lambda kv: kv[1][1])[
+                :to_delete
+            ]:
+                del _ip_counts[ip_key]
     count, window_start = _ip_counts.get(ip, (0, now))
     if now - window_start >= _IP_THROTTLE_WINDOW_SECONDS:
         count, window_start = 0, now

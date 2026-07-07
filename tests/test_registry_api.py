@@ -1,5 +1,6 @@
 """Registry routes: anon free fetch, 402 premium gate, OTP endpoints."""
 
+import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -7,6 +8,16 @@ from gecko.registry.api import registry_routes
 from gecko.registry.keys import KeyStore
 from gecko.registry.store import RegistrySurface, SurfaceStore
 from tests.test_registry_keys import Clock, FakeCollection
+
+
+@pytest.fixture(autouse=True)
+def _clean_ip_throttle():
+    from gecko.registry import api as _api
+
+    _api._ip_counts.clear()
+    yield
+    _api._ip_counts.clear()
+
 
 SPEC = {
     "openapi": "3.1.0",
@@ -118,9 +129,6 @@ def test_reserved_surface_name_registry_rejected():
 
 
 def test_per_ip_throttle_still_202_but_stops_sending():
-    import gecko.registry.api as registry_api
-
-    registry_api._ip_counts.clear()
     client, _, sent = _client()
     for i in range(15):
         r = client.post("/registry/keys", json={"email": f"a{i}@example.com"})
