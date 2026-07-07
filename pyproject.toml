@@ -14,6 +14,10 @@ dependencies = ["pyyaml>=6.0"]
 # unchanged. The entry only parses args + formats output (logic lives in the package).
 [project.scripts]
 gecko = "gecko.cli:_run"
+# Bundled ready-to-use example surface — serve the Colosseum Copilot API (BYOK via
+# COLOSSEUM_COPILOT_PAT). Ships in the package, so `uvx --from "gecko-surf[serve]"
+# colosseum-mcp` needs NO local file.
+colosseum-mcp = "gecko.examples.colosseum:main"
 gecko-testgen = "gecko.testgen:_run"
 # Off-chain battle-test: run the 12 packaged scenarios, gate on the scorecard (exit 0
 # iff money_trusted). Deterministic $0 CI lane; `python -m gecko.redteam` works too.
