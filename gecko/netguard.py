@@ -154,6 +154,7 @@ def safe_get(
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     resolver: Resolver | None = None,
     opener_factory: OpenerFactory | None = None,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """SSRF-safe GET for a spec document. Validates every redirect hop, caps size.
 
@@ -162,6 +163,9 @@ def safe_get(
     between validation and connection (DNS-rebind TOCTOU). Redirects are followed manually
     (not by urllib) so each new target is validated + pinned afresh. Returns the decoded
     body. Never persists it.
+
+    ``headers`` lets a caller pass extra request headers (e.g. an auth header for a
+    registry fetch); a caller-supplied ``User-Agent`` overrides the default below.
     """
     factory = opener_factory or _pinned_opener
     current = url
@@ -169,10 +173,11 @@ def safe_get(
         # Resolve ONCE; the returned IP is what we pin the connection to (rebind-proof).
         _, ips = _resolve_public(current, resolver)
         opener = factory(ips[0] if ips else None)
-        # Real UA: the default "Python-urllib/x.y" is 403'd by WAF-fronted docs hosts.
-        request = urllib.request.Request(
-            current, method="GET", headers={"User-Agent": USER_AGENT}
-        )
+        # Real UA by default: the stdlib default "Python-urllib/x.y" is 403'd by
+        # WAF-fronted docs hosts. A caller-supplied UA (if any) wins via update().
+        request_headers = {"User-Agent": USER_AGENT}
+        request_headers.update(headers or {})
+        request = urllib.request.Request(current, method="GET", headers=request_headers)
         try:
             with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
                 status = getattr(resp, "status", 200)
