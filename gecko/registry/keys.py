@@ -45,17 +45,27 @@ class KeyStore:
         self._now = clock
 
     def start_otp(self, email: str) -> None:
+        email = email.strip().lower()
         now = self._now()
         recent = self._otps.count_documents(
             {"email": email, "created": {"$gte": now - 3600}}
         )
         if recent >= OTP_MAX_PER_HOUR:
             raise RegistryAuthError("too many codes requested; try again later")
+        # Supersede any still-active OTP for this email so a stale doc can't
+        # win an unordered `find_one` and lock out the fresh code. Mark them
+        # used rather than delete: deleting would undercount the rate limit
+        # above (which counts by `created`, including exhausted docs).
+        self._otps.update_many(
+            {"email": email, "used": False}, {"$set": {"used": True}}
+        )
         code = f"{secrets.randbelow(1_000_000):06d}"
+        salt = secrets.token_hex(16)
         self._otps.insert_one(
             {
                 "email": email,
-                "code": code,
+                "code_hash": _hash(code, salt),
+                "salt": salt,
                 "created": now,
                 "attempts": 0,
                 "used": False,
@@ -64,6 +74,7 @@ class KeyStore:
         self._mail(email, code)
 
     def verify_otp(self, email: str, otp: str) -> str:
+        email = email.strip().lower()
         now = self._now()
         doc = self._otps.find_one({"email": email, "used": False})
         if doc is None:
@@ -72,13 +83,14 @@ class KeyStore:
         exhausted = doc["attempts"] >= OTP_MAX_ATTEMPTS
         if expired or exhausted:
             raise RegistryAuthError("code expired; request a new one")
-        if not secrets.compare_digest(doc["code"], otp):
+        if not secrets.compare_digest(_hash(otp, doc["salt"]), doc["code_hash"]):
             self._otps.update_one(
-                {"email": email, "code": doc["code"]}, {"$inc": {"attempts": 1}}
+                {"email": email, "code_hash": doc["code_hash"]},
+                {"$inc": {"attempts": 1}},
             )
             raise RegistryAuthError("wrong code")
         self._otps.update_one(
-            {"email": email, "code": doc["code"]}, {"$set": {"used": True}}
+            {"email": email, "code_hash": doc["code_hash"]}, {"$set": {"used": True}}
         )
         plain = f"gk_live_{secrets.token_urlsafe(32)}"
         salt = secrets.token_hex(16)

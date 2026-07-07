@@ -39,6 +39,13 @@ class FakeCollection:
                     d[k] = d.get(k, 0) + n
                 return
 
+    def update_many(self, q: dict[str, Any], u: dict[str, Any]) -> None:
+        for d in self.docs:
+            if all(d.get(k) == v for k, v in q.items()):
+                d.update(u.get("$set", {}))
+                for k, n in u.get("$inc", {}).items():
+                    d[k] = d.get(k, 0) + n
+
     def count_documents(self, q: dict[str, Any]) -> int:
         gte = {
             k: v["$gte"] for k, v in q.items() if isinstance(v, dict) and "$gte" in v
@@ -126,3 +133,26 @@ def test_issuance_rate_limited_per_email():
 def test_check_unknown_key_returns_none():
     ks, _, _ = _store()
     assert ks.check("gk_live_nope") is None
+
+
+def test_new_otp_supersedes_old_one():
+    ks, sent, _ = _store()
+    ks.start_otp("dev@example.com")
+    ks.start_otp("dev@example.com")
+    with pytest.raises(RegistryAuthError):
+        ks.verify_otp("dev@example.com", sent[0][1])  # first code is dead
+    key = ks.verify_otp("dev@example.com", sent[1][1])
+    assert key.startswith("gk_live_")
+
+
+def test_otp_not_stored_in_plaintext():
+    ks, sent, _ = _store()
+    ks.start_otp("dev@example.com")
+    assert sent[0][1] not in str(ks._otps.docs)
+
+
+def test_email_normalized():
+    ks, sent, _ = _store()
+    ks.start_otp("  Dev@Example.COM ")
+    key = ks.verify_otp("dev@example.com", sent[0][1])
+    assert ks.check(key)["email"] == "dev@example.com"
