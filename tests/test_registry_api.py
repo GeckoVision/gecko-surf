@@ -93,3 +93,36 @@ def test_otp_endpoints_roundtrip():
     )
     assert r.status_code == 401
     assert "gk_live_" not in r.text
+
+
+def test_keys_endpoint_rejects_oversized_body():
+    client, _, _ = _client()
+    r = client.post(
+        "/registry/keys",
+        content=b"x" * 5000,
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 413
+
+
+def test_reserved_surface_name_registry_rejected():
+    import pytest as _pytest
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.registry.api import registry_routes as rr
+    from gecko.registry.store import RegistrySurface, SurfaceStore
+
+    store = SurfaceStore([RegistrySurface(name="colosseum", spec=SPEC, tier="free")])
+    with _pytest.raises(ValueError, match="reserved"):
+        build_multi_surface_app([("registry", SPEC)], registry_routes=rr(store, None))
+
+
+def test_per_ip_throttle_still_202_but_stops_sending():
+    import gecko.registry.api as registry_api
+
+    registry_api._ip_counts.clear()
+    client, _, sent = _client()
+    for i in range(15):
+        r = client.post("/registry/keys", json={"email": f"a{i}@example.com"})
+        assert r.status_code == 202
+    assert len(sent) <= 10  # throttled sends stop, response shape unchanged

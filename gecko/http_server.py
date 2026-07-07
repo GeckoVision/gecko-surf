@@ -516,6 +516,10 @@ def build_multi_surface_app(
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
+        if registry_routes and name == "registry":
+            raise ValueError(
+                "surface name 'registry' is reserved (would shadow /registry/*)"
+            )
         site = f"{public_url.rstrip('/')}/{name}" if public_url else None
         subs.append(
             (
