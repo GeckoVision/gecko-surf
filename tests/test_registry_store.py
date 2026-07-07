@@ -48,3 +48,17 @@ def test_manifest_unknown_surface_raises():
 def test_tier_validated():
     with pytest.raises(RegistryError):
         RegistrySurface(name="x", spec=SPEC, tier="gold")
+
+
+def test_duplicate_names_rejected():
+    with pytest.raises(RegistryError, match="duplicate"):
+        SurfaceStore(
+            [
+                RegistrySurface(name="x", spec=SPEC, tier="free"),
+                RegistrySurface(name="x", spec=SPEC, tier="premium"),
+            ]
+        )
+
+
+def test_surface_is_hashable():
+    assert isinstance(hash(RegistrySurface(name="x", spec=SPEC, tier="free")), int)
