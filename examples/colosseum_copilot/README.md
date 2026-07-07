@@ -28,6 +28,23 @@ uvx --from "gecko-surf[serve]" colosseum-mcp
 ```
 Serves **11 first-call-correct tools** at `http://127.0.0.1:8000/mcp`. Your PAT stays local.
 
+> Gecko needs Python 3.11+. If your system Python is older, let uvx fetch one:
+> `uvx --python 3.11 --from "gecko-surf[serve]" colosseum-mcp`
+
+### If your agent runs in a different network context (sandboxed harnesses, containers, remote)
+
+The default bind is loopback, which assumes your MCP client and this server share a network
+namespace. Some agent harnesses don't — the symptom is `claude mcp list` reporting
+**Connected** while the session loads **zero tools**. Serve behind a real URL instead:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000        # prints https://<name>.trycloudflare.com
+colosseum-mcp --public-url https://<name>.trycloudflare.com
+claude mcp add --transport http colosseum https://<name>.trycloudflare.com/mcp
+```
+
+(`--host`, `--port`, and `--allow-host` are also available — same flags as `gecko serve`.)
+
 ## 3 · Point your agent at it
 
 **Claude Code / Cursor / Cline** (CLI):

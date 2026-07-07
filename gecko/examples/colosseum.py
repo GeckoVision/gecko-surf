@@ -9,16 +9,26 @@ the package, so there is no local file to fetch:
 
 Your PAT is injected at call time, hidden from the agent, and sent only to Colosseum's
 pinned host — Gecko refuses to leak a secret to any other host.
+
+NOTE: the default bind is loopback, which assumes the MCP client and this server share
+a network namespace. Sandboxed agent harnesses often don't (their MCP client runs in a
+different network context than their shell, so ``claude mcp list`` says Connected while
+the session loads zero tools). For those, serve behind a real URL:
+
+    cloudflared tunnel --url http://127.0.0.1:8000
+    colosseum-mcp --public-url https://<name>.trycloudflare.com
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any
+from urllib.parse import urlsplit
 
 from gecko.client import AgentApiClient
 
@@ -53,7 +63,40 @@ def build_client(pat: str) -> AgentApiClient:
     return AgentApiClient(load_spec(), base_url=BASE, session=BearerSession(pat))
 
 
-def main() -> int:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """The same four networking flags as ``gecko serve`` — the console entry must not
+    be *less* reachable than the generic CLI (loopback-only broke sandboxed harnesses
+    whose MCP client doesn't share the shell's network namespace)."""
+    p = argparse.ArgumentParser(
+        prog="colosseum-mcp",
+        description="Serve the Colosseum Copilot API to your agent over MCP (BYOK).",
+    )
+    p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
+    p.add_argument(
+        "--public-url",
+        default=None,
+        help="Public HTTPS URL the agent will connect to (e.g. a tunnel). "
+        "Advertised in the add string and trusted for Host/Origin.",
+    )
+    p.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        help="Extra Host header to allow (repeatable; for a tunnel hostname).",
+    )
+    return p.parse_args(argv)
+
+
+def _mcp_url(host: str, port: int, public_url: str | None) -> str:
+    if public_url:
+        base = public_url.rstrip("/")
+        return base if base.endswith("/mcp") else base + "/mcp"
+    return f"http://{host}:{port}/mcp"
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
     pat = os.environ.get("COLOSSEUM_COPILOT_PAT")
     if not pat:
         print(
@@ -63,15 +106,32 @@ def main() -> int:
         return 1
     from gecko.http_server import serve_http  # optional [serve] deps, imported lazily
 
+    # Trust the advertised public URL's host/origin (tunnel/DNS-rebinding guard) —
+    # same move as gecko.serve, so a tunnel works without hand-listing its hostname.
+    extra_hosts: list[str] = list(args.allow_host)
+    extra_origins: list[str] = []
+    if args.public_url:
+        parts = urlsplit(args.public_url)
+        if parts.netloc:
+            extra_hosts.append(parts.netloc)
+            extra_origins.append(f"{parts.scheme}://{parts.netloc}")
+
     client = build_client(pat)
+    mcp_url = _mcp_url(args.host, args.port, args.public_url)
     print(
         f"Colosseum Copilot — {len(client.list_tools())} first-call-correct tools ready."
     )
     print("PAT injected at call time, hidden from the agent, sent only to Colosseum.")
-    print(
-        "Add it:  claude mcp add --transport http colosseum http://127.0.0.1:8000/mcp"
+    print(f"Add it:  claude mcp add --transport http colosseum {mcp_url}")
+    serve_http(
+        client,
+        host=args.host,
+        port=args.port,
+        mode="live",
+        allowed_hosts=extra_hosts or None,
+        allowed_origins=extra_origins or None,
+        public_url=args.public_url,
     )
-    serve_http(client, host="127.0.0.1", port=8000, mode="live")
     return 0
 
 
