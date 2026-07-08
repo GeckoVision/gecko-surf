@@ -10,7 +10,7 @@ for JS-rendered docs:
 
 | Skill | For | What it does | Status |
 |---|---|---|---|
-| [`use-any-api`](use-any-api/SKILL.md) | agent builder | Call a new or unfamiliar API first-call-correct — point Gecko at OpenAPI or docs, get intent-shaped MCP tools, auth hidden. Measured 8%→61% on a painful API. | comprehend + serve **Live** |
+| [`use-any-api`](use-any-api/SKILL.md) | agent builder | Call a new or unfamiliar API first-call-correct — point Gecko at OpenAPI or docs, get intent-shaped MCP tools, auth hidden. Measured 10% → 65% on a painful API. | comprehend + serve **Live** |
 | [`read-js-docs`](read-js-docs/SKILL.md) | agent builder | Extract API surface from JS-rendered docs (Mintlify, Redoc, Swagger UI, etc.) when curl/WebFetch returns an empty shell. | **Live** (agent-browser) |
 | [`api-agent-ready`](api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |
 | [`x402-payai-setup`](x402-payai-setup/SKILL.md) | provider | Wire x402 micropayments onto the provider's API via **PayAI** — point the agent-facing tools at the provider's own x402 endpoint. **The provider keeps 100%.** | handshake/offline stub **Building (Pattern B)**; live settlement **Building / founder-gated** |
