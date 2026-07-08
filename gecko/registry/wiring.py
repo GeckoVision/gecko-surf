@@ -58,13 +58,11 @@ def build_keystore_from_env() -> KeyStore | None:
         from pymongo import MongoClient
 
         db: Any = MongoClient(uri, serverSelectionTimeoutMS=2000)["gecko_registry"]
-        # Belt-and-braces TTL index over the in-logic 600s OTP expiry (keys.py
-        # OTP_TTL_SECONDS). Best-effort only: Mongo TTL indexes expire BSON
-        # dates, but our OTP docs store `created` as a float epoch (see
-        # keys.py), so this index will NOT auto-expire existing docs until
-        # `created` migrates to a BSON date. The in-logic 600s TTL remains
-        # the enforced bound; this index is advisory/future-proofing.
-        db["otps"].create_index("created", expireAfterSeconds=3600)
+        # NOTE: no TTL index created here — Mongo TTL only expires BSON dates and
+        # OTP docs store float epochs, so it would be inert; and an eager
+        # create_index would block server start on a slow Mongo. The in-logic
+        # 600s TTL is the enforced bound; add the index via an ops script once
+        # `created` migrates to BSON dates.
         return KeyStore(
             keys_collection=db["keys"],
             otp_collection=db["otps"],
