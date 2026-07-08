@@ -11,8 +11,10 @@ client, http_server, deeplinks). This module only parses args and formats output
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+from typing import Any
 
 from .access import public_session
 from .client import AgentApiClient
@@ -48,7 +50,30 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="python -m gecko.serve",
         description="Comprehend a public OpenAPI URL and serve it to agents over MCP.",
     )
-    p.add_argument("spec", help="Public OpenAPI 3.x URL (or local path for dev).")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument(
+        "spec",
+        nargs="?",
+        default=None,
+        help="Public OpenAPI 3.x URL (or local path for dev).",
+    )
+    source.add_argument(
+        "--registry",
+        default=None,
+        help="Fetch a comprehended surface from the Gecko registry by name "
+        "(instead of a spec URL/path).",
+    )
+    p.add_argument(
+        "--registry-url",
+        default="https://mcp.geckovision.tech",
+        help="Registry base URL.",
+    )
+    p.add_argument(
+        "--auth-env",
+        default=None,
+        help="Env var holding the PROVIDER bearer token — injected locally at "
+        "call time, never sent to Gecko.",
+    )
     p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
     p.add_argument(
@@ -132,22 +157,59 @@ def _print_banner(name: str, mcp_url: str, summary: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    # Early, friendly SSRF check for URL specs (ingest re-validates while fetching).
-    if args.spec.startswith(("http://", "https://")):
-        try:
-            validate_public_url(args.spec)
-        except UnsafeUrlError as exc:
-            print(f"Refusing to ingest unsafe URL: {exc}", file=sys.stderr)
-            return 2
-
-    try:
-        client = AgentApiClient(args.spec, session=public_session())
-    except (UnsafeUrlError, ValueError) as exc:
-        print(f"Could not comprehend spec: {exc}", file=sys.stderr)
+    if bool(args.spec) == bool(args.registry):
+        print("Provide exactly one of <spec> or --registry <name>.", file=sys.stderr)
         return 2
 
-    title = str((client.spec.get("info") or {}).get("title", ""))
-    name = args.name or _slugify(title)
+    session: Any = public_session()
+    if args.auth_env:
+        token = os.environ.get(args.auth_env, "")
+        if not token:
+            print(f"{args.auth_env} is unset.", file=sys.stderr)
+            return 1
+        from .access import static_session
+
+        session = static_session({"Authorization": f"Bearer {token}"})
+
+    if args.registry:
+        if args.emit_dir:
+            print("--emit-dir is not supported with --registry.", file=sys.stderr)
+            return 2
+
+        from .registry.client import RegistryFetchError, fetch_surface
+
+        try:
+            fetched = fetch_surface(
+                args.registry_url,
+                args.registry,
+                key=os.environ.get("GECKO_API_KEY") or None,
+            )
+        except RegistryFetchError as exc:
+            print(f"Could not fetch surface: {exc}", file=sys.stderr)
+            return 2
+        if fetched.stale:
+            print("registry unreachable — serving the last cached copy (stale).")
+        client = AgentApiClient(fetched.spec, session=session)
+        name = args.name or args.registry
+    else:
+        # Early, friendly SSRF check for URL specs (ingest re-validates while
+        # fetching).
+        if args.spec.startswith(("http://", "https://")):
+            try:
+                validate_public_url(args.spec)
+            except UnsafeUrlError as exc:
+                print(f"Refusing to ingest unsafe URL: {exc}", file=sys.stderr)
+                return 2
+
+        try:
+            client = AgentApiClient(args.spec, session=session)
+        except (UnsafeUrlError, ValueError) as exc:
+            print(f"Could not comprehend spec: {exc}", file=sys.stderr)
+            return 2
+
+        title = str((client.spec.get("info") or {}).get("title", ""))
+        name = args.name or _slugify(title)
+
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
 
     extra_hosts: list[str] = list(args.allow_host)
