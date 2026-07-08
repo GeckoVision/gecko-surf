@@ -177,3 +177,54 @@ def test_search_across_surfaces():
     assert r.status_code == 200
     surfaces = [x["surface"] for x in r.json()["results"]]
     assert "colosseum" in surfaces
+
+
+def test_search_excludes_premium_unless_entitled():
+    client, keys, sent = _client()
+
+    r = client.get("/registry/search", params={"intent": "get x"})
+    assert r.status_code == 200
+    surfaces = [x["surface"] for x in r.json()["results"]]
+    assert "colosseum" in surfaces
+    assert "txline" not in surfaces  # premium, anonymous — not entitled
+
+    client.post("/registry/keys", json={"email": "dev@example.com"})
+    plain = keys.verify_otp("dev@example.com", sent[0][1])
+    # grant flat per-surface entitlement directly (founder-run at v1)
+    for d in keys._keys.docs:
+        d["surfaces"] = ["txline"]
+
+    r = client.get(
+        "/registry/search",
+        params={"intent": "get x"},
+        headers={"X-Gecko-Key": plain},
+    )
+    assert r.status_code == 200
+    surfaces = [x["surface"] for x in r.json()["results"]]
+    assert "txline" in surfaces
+
+
+def test_search_caches_client_per_surface(monkeypatch):
+    """The cache in ``registry_routes`` must actually cache: a real cache builds
+    each surface's ``AgentApiClient`` at most once no matter how many search
+    requests come in. Spy on construction via a counting fake swapped in for
+    the module-level ``AgentApiClient`` import."""
+    import gecko.registry.api as _api
+
+    calls = {"n": 0}
+
+    class _CountingClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            calls["n"] += 1
+
+        def search(self, query: str, limit: int = 3) -> list[dict[str, str]]:
+            return [{"name": "getX", "summary": "", "path": "/x", "method": "GET"}]
+
+    monkeypatch.setattr(_api, "AgentApiClient", _CountingClient)
+
+    client, _, _ = _client()
+    # Anonymous: only the one free surface ("colosseum") is searchable — txline
+    # is skipped by the entitlement gate before _make_client ever runs.
+    client.get("/registry/search", params={"intent": "get x"})
+    client.get("/registry/search", params={"intent": "get x"})
+    assert calls["n"] == 1  # not 2 — the second request must hit the cache

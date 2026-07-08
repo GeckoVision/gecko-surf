@@ -53,6 +53,22 @@ def registry_routes(
         assert surface is not None
         return AgentApiClient(surface.spec, session=public_session())
 
+    def _entitled(request: Request, name: str) -> bool:
+        """Free surfaces are always entitled; premium needs a keyed entitlement.
+
+        Shared by ``_fetch`` (which turns a False into a 402) and ``_search``
+        (which silently skips unentitled surfaces) so the paywall can't drift
+        between the two read paths.
+        """
+        surface = store.get(name)
+        if surface is None:
+            return False
+        if surface.tier == "free":
+            return True
+        plain = request.headers.get(KEY_HEADER, "")
+        rec = keys.check(plain) if (keys and plain) else None
+        return rec is not None and name in rec.get("surfaces", [])
+
     async def _list(_request: Request) -> JSONResponse:
         out = []
         for name in store.names():
@@ -67,18 +83,15 @@ def registry_routes(
         surface = store.get(name)
         if surface is None:
             return JSONResponse({"error": "unknown_surface"}, status_code=404)
-        if surface.tier != "free":
-            plain = request.headers.get(KEY_HEADER, "")
-            rec = keys.check(plain) if (keys and plain) else None
-            if rec is None or name not in rec.get("surfaces", []):
-                return JSONResponse(
-                    {
-                        "error": "entitlement_required",
-                        "remediation": "POST /registry/keys {email} then ask for "
-                        f"access to {name!r} — flat per-surface entitlement.",
-                    },
-                    status_code=402,
-                )
+        if not _entitled(request, name):
+            return JSONResponse(
+                {
+                    "error": "entitlement_required",
+                    "remediation": "POST /registry/keys {email} then ask for "
+                    f"access to {name!r} — flat per-surface entitlement.",
+                },
+                status_code=402,
+            )
         return JSONResponse(store.manifest(name))
 
     async def _keys_start(request: Request) -> JSONResponse:
@@ -122,7 +135,11 @@ def registry_routes(
             return JSONResponse({"error": "missing intent"}, status_code=400)
         results = []
         for name in store.names():
-            client = _clients.setdefault(name, _make_client(name))
+            if not _entitled(request, name):
+                continue
+            if name not in _clients:
+                _clients[name] = _make_client(name)
+            client = _clients[name]
             hits = client.search(intent, limit=3)
             if hits:
                 results.append({"surface": name, "hits": hits})
@@ -142,14 +159,15 @@ def registry_routes(
         classes = body.get("classes")
         if not isinstance(classes, list) or not classes:
             return JSONResponse({"error": "classes required"}, status_code=400)
+        class_strs = [str(c) for c in classes]
         try:
-            assert_classes_closed([str(c) for c in classes])
+            assert_classes_closed(class_strs)
         except PreflightCorpusError:
             return JSONResponse({"error": "unknown class"}, status_code=400)
         record = {
             "surface": str(body.get("surface", ""))[:64],
             "surface_rev": str(body.get("surface_rev", ""))[:64],
-            "classes": [str(c) for c in classes],
+            "classes": class_strs,
         }
         target = _Path(feedback_path)
         target.parent.mkdir(parents=True, exist_ok=True)
