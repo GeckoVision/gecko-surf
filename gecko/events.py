@@ -67,6 +67,15 @@ SurfEvent = Literal[
 #: Runtime membership form of ``SurfEvent`` (a Literal is not iterable at runtime).
 SURF_EVENTS: frozenset[str] = frozenset(get_args(SurfEvent))
 
+#: The closed robot/human classification for a connecting client — the single source of
+#: truth for the ``client_kind`` field. ``robot`` = a crawler/prober/scanner, ``client``
+#: = a real MCP client (Claude Code / Cursor / …), ``unknown`` = neither matched. The
+#: classifier lives in ``gecko.uaclass``; consumers import ``ClientKind`` from here.
+ClientKind = Literal["robot", "client", "unknown"]
+
+#: Runtime membership form of ``ClientKind`` (validated fail-closed, like ``error_class``).
+CLIENT_KINDS: frozenset[str] = frozenset(get_args(ClientKind))
+
 # --------------------------------------------------------------------------- #
 # The field allowlist — the writer's closed set of caller-supplied fields.
 # --------------------------------------------------------------------------- #
@@ -86,6 +95,8 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "source",  # a CLOSED corpus.OUTCOME_SOURCES member (observed|reported|synthetic)
         "client",  # MCP clientInfo name/version — UNTRUSTED, sanitized + capped, never fails closed
         "session_id",  # MCP session id — opaque correlation token joining connect->call
+        "user_agent",  # HTTP User-Agent — UNTRUSTED request metadata, sanitized + capped, never fails closed
+        "client_kind",  # a CLOSED CLIENT_KINDS member (robot|client|unknown), never free text
         "decision",  # gate verdict: "allow"|"step_up"|"block"|"honeypot" (shape-validated label)
         "score",  # int — composite 0-100 risk score, never a payload
         "reasons",  # list of risk SIGNAL names (code constants), never arg values/messages
@@ -111,6 +122,11 @@ MAX_REASONS = 16
 #: sanitized + truncated to a safe token by ``_safe_client`` / ``_safe_session_id``.
 _MAX_CLIENT = 60
 _MAX_SESSION_ID = 64
+#: The HTTP User-Agent is UNTRUSTED request metadata — a naive logger that stores it
+#: verbatim invites log injection + a buried secret (redteam matrix.py:492). It is
+#: sanitized + capped exactly like ``client`` (never fail-closed): strip control chars,
+#: truncate, neutralize an injected instruction / secret-shaped value to "redacted".
+_MAX_USER_AGENT = 120
 # NOTE: ``client``/``session_id`` are deliberately kept OUT of ``_LABEL_FIELDS`` — they
 # carry untrusted external input, so they are sanitized/neutralized in ``build_surf_record``
 # rather than fail-closed-validated (a raise would let a hostile client break the emit).
@@ -143,6 +159,8 @@ class SurfEventRecord:
     source: str | None = None  # provenance; gates whether the event feeds the FCC rate
     client: str | None = None  # sanitized MCP clientInfo name/version, never raw
     session_id: str | None = None  # opaque MCP session id — connect<->call correlation
+    user_agent: str | None = None  # sanitized + capped HTTP User-Agent, never raw
+    client_kind: str | None = None  # closed CLIENT_KINDS member (robot|client|unknown)
     decision: str | None = None  # gate verdict (allow|step_up|block|honeypot)
     score: int | None = None  # composite 0-100 risk score
     reasons: list[str] | None = None  # risk SIGNAL names, never messages/arg values
@@ -185,6 +203,12 @@ def assert_fields_allowlisted(fields: Mapping[str, Any]) -> None:
         # Like error_class: a free-text source could smuggle a value AND would break the
         # observed-only FCC routing downstream. Gate to the closed set (fail closed).
         raise TelemetryError(f"source {source!r} not in the closed set")
+    client_kind = fields.get("client_kind")
+    if client_kind is not None and client_kind not in CLIENT_KINDS:
+        # Like error_class/source: gate to the closed classification set so free text can
+        # never smuggle a value in through client_kind. Our classifier only ever emits a
+        # member, so this fails closed on a wiring mistake, never in production.
+        raise TelemetryError(f"client_kind {client_kind!r} not in the closed set")
     for key in _LABEL_FIELDS:
         value = fields.get(key)
         if isinstance(value, str) and not _is_safe_label(value):
@@ -240,6 +264,26 @@ def _safe_client(value: Any) -> str | None:
     return cleaned
 
 
+def _safe_user_agent(value: Any) -> str | None:
+    """Reduce an UNTRUSTED HTTP User-Agent to a short, safe label — the SAME treatment as
+    ``clientInfo`` (redteam matrix.py:492: a naive logger stores it verbatim → injection
+    + secret leak). Never fails closed (a hostile UA must not break the connect emit):
+    strips control/non-printable chars, caps to ``_MAX_USER_AGENT``, and neutralizes an
+    injected instruction or secret-shaped value to ``"redacted"``."""
+    if value is None:
+        return None
+    # Drop control / non-printable chars first (log-injection carrier), then cap.
+    text = "".join(ch for ch in str(value) if ch.isprintable()).strip()[
+        :_MAX_USER_AGENT
+    ]
+    if not text:
+        return None
+    cleaned, poisoned = sanitize_text(text)
+    if poisoned or looks_like_secret_value(text):
+        return "redacted"
+    return cleaned
+
+
 def _safe_session_id(value: Any) -> str | None:
     """Reduce an UNTRUSTED MCP session id to a stable, cred-free correlation token.
 
@@ -281,6 +325,8 @@ def build_surf_record(
         fields["client"] = _safe_client(fields["client"])
     if "session_id" in fields:
         fields["session_id"] = _safe_session_id(fields["session_id"])
+    if "user_agent" in fields:
+        fields["user_agent"] = _safe_user_agent(fields["user_agent"])
     return SurfEventRecord(
         ts=ts if ts is not None else _now_ms(),
         event=event,
@@ -416,10 +462,12 @@ def emit_surf_event(
 
 __all__ = [
     "ALLOWED_FIELDS",
+    "CLIENT_KINDS",
     "EVENTS_COLLECTION",
     "EVENTS_DB",
     "RECORD_ALLOWED_KEYS",
     "SURF_EVENTS",
+    "ClientKind",
     "SurfEvent",
     "SurfEventRecord",
     "assert_fields_allowlisted",
