@@ -1,0 +1,23 @@
+{
+  "$schema": "https://cursor.com/schemas/cursor-plugin/plugin.json",
+  "name": "gecko-surf",
+  "displayName": "Gecko Surf — API Agent-Ready",
+  "version": "0.2.3",
+  "description": "Make any API agent-usable — even one with broken docs, no OpenAPI, a WAF, or an auth wall. Comprehend a spec (or JS-rendered docs) into first-call-correct MCP tools your agent calls right the first time (8%→61% on a painful API, measured), auth injected, no integration code. Installs a live TxLINE demo surface.",
+  "author": {
+    "name": "GeckoVision",
+    "email": "ernanibmurtinho@gmail.com"
+  },
+  "homepage": "https://geckovision.tech",
+  "repository": "https://github.com/GeckoVision/gecko-surf",
+  "license": "Apache-2.0",
+  "keywords": ["api", "openapi", "mcp", "agent", "x402", "comprehension", "first-call-correct"],
+  "logo": "assets/logo.svg",
+  "skills": [
+    "./use-any-api",
+    "./read-js-docs",
+    "./anti-poisoning",
+    "./api-agent-ready",
+    "./x402-payai-setup"
+  ]
+}

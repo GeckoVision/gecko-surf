@@ -152,6 +152,18 @@ def _print_banner(name: str, mcp_url: str, summary: str) -> None:
     print(f"  Claude Code:  {adds['claude']}")
     print(f"  Cursor:       {adds['cursor']}")
     print(f"  VS Code:      {adds['vscode']}\n")
+    # Self-diagnose the #1 activation failure: the client reports "connected" but loads
+    # ZERO tools. That means its MCP transport can't reach 127.0.0.1 — a sandboxed /
+    # remote agent runs its MCP client in a different network namespace than this shell.
+    # Give the fix at the moment it bites, so a first-time user doesn't silently bounce.
+    if mcp_url.startswith("http://127.0.0.1") or mcp_url.startswith("http://localhost"):
+        print("Connected but your agent shows 0 tools? Its MCP client can't reach")
+        print(
+            "localhost (sandboxed/remote agents run in a separate network namespace)."
+        )
+        print("Serve behind a public URL instead:")
+        print("  cloudflared tunnel --url " + mcp_url.rsplit("/mcp", 1)[0])
+        print("  gecko <spec> --public-url https://<name>.trycloudflare.com\n")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -182,11 +182,21 @@ MCP, and prints the one-click add string — plus `/setup-x402` and the anti-poi
 **B · Anywhere else — install the CLI** (Cursor, VS Code, any agent framework, or a plain terminal):
 
 ```bash
-# one-liner — any system, no Python prereq:
-curl -fsSL https://get.geckovision.tech/install.sh | bash
+# no-install, nothing to trust — a versioned package, run directly:
+uvx --from "gecko-surf[serve]" gecko <openapi-url>
+
+# or the one-line installer — but VERIFY it first (an agent should never blind-execute):
+python3 <(curl -fsSL https://raw.githubusercontent.com/GeckoVision/gecko-surf/main/scripts/verify_install.py)
+#   → checks the served script's SHA-256 + static-scans it; prints SAFE/UNSAFE
+curl -fsSL https://get.geckovision.tech/install.sh | bash    # only after it says SAFE
 gecko <openapi-url>
-# (no-install alternative: uvx --from "gecko-surf[serve]" gecko <openapi-url>)
 ```
+
+> **Prove it's safe before you run it.** `verify_install.py` (stdlib-only, readable) confirms
+> the installer is **tamper-evident** (SHA-256 matches the value published in this repo),
+> **no-blind-execute** (the only pipe-to-shell is the official `uv` installer; everything
+> else pins a versioned GitHub release), and **pattern-clean** (no eval, no credential reads,
+> no exfil). Prefer the `uvx` line and there's nothing to verify at all.
 
 `gecko <url>` prints the comprehension summary, the MCP URL, and a **one-click add** for
 each host — a **Cursor** or **VS Code** deeplink to click, or the raw **MCP URL** to point

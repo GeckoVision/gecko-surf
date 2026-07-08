@@ -4,14 +4,17 @@
 *whole* surface becomes agent-usable — first-call-correct, served over MCP,
 alongside whatever MCP the provider already ships.**
 
-Three skills — two for **API providers** who want agents to actually *use* their
-API, and one for **agent builders** who need to *consume* an untrusted API safely:
+Five skills — two for **API providers** who want agents to actually *use* their
+API, two for **agent builders** who need to call or safely consume APIs, and one
+for JS-rendered docs:
 
 | Skill | For | What it does | Status |
 |---|---|---|---|
-| [`api-agent-ready`](skills/api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |
-| [`x402-payai-setup`](skills/x402-payai-setup/SKILL.md) | provider | Wire x402 micropayments onto the provider's API via **PayAI** — point the agent-facing tools at the provider's own x402 endpoint. **The provider keeps 100%.** | handshake/offline stub **Building (Pattern B)**; live settlement **Building / founder-gated** |
-| [`anti-poisoning`](skills/anti-poisoning/SKILL.md) | agent builder | Protect your agent from a **poisoned API surface** — out-of-band trust anchor, spec-text/schema sanitizer, fail-closed auth-host firewall, quarantine. Treats every ingested spec as untrusted input. | **defenses Live** in the engine (free forever); hosted logs/analytics **Building (Cloud Pro)** |
+| [`use-any-api`](use-any-api/SKILL.md) | agent builder | Call a new or unfamiliar API first-call-correct — point Gecko at OpenAPI or docs, get intent-shaped MCP tools, auth hidden. Measured 8%→61% on a painful API. | comprehend + serve **Live** |
+| [`read-js-docs`](read-js-docs/SKILL.md) | agent builder | Extract API surface from JS-rendered docs (Mintlify, Redoc, Swagger UI, etc.) when curl/WebFetch returns an empty shell. | **Live** (agent-browser) |
+| [`api-agent-ready`](api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |
+| [`x402-payai-setup`](x402-payai-setup/SKILL.md) | provider | Wire x402 micropayments onto the provider's API via **PayAI** — point the agent-facing tools at the provider's own x402 endpoint. **The provider keeps 100%.** | handshake/offline stub **Building (Pattern B)**; live settlement **Building / founder-gated** |
+| [`anti-poisoning`](anti-poisoning/SKILL.md) | agent builder | Protect your agent from a **poisoned API surface** — out-of-band trust anchor, spec-text/schema sanitizer, fail-closed auth-host firewall, quarantine. Treats every ingested spec as untrusted input. | **defenses Live** in the engine (free forever); hosted logs/analytics **Building (Cloud Pro)** |
 
 Built by **[GeckoVision](https://geckovision.tech)**, the API-comprehension
 company, on top of the open-source engine
@@ -55,6 +58,8 @@ worked example runs through this kit's `api-agent-ready` skill.
 
 ## Quickstart
 
+### Claude Code (Marketplace)
+
 Install the plugin from the **Marketplace** in Claude Code:
 
 ```
@@ -62,7 +67,43 @@ Install the plugin from the **Marketplace** in Claude Code:
 /plugin install gecko-surf@geckovision
 ```
 
-Then drive it:
+Installing wires **five skills**, two commands, two agents, one rule, and the
+**gecko-txline** demo MCP (18 recorded tools, $0) via bundled `.mcp.json`.
+
+### Cursor (Marketplace or local)
+
+**Marketplace** (after listing): install **gecko-surf** from the Cursor plugin
+marketplace — same bundle as Claude Code.
+
+**Local test** (before marketplace approval):
+
+```bash
+mkdir -p ~/.cursor/plugins/local
+cp -r skills ~/.cursor/plugins/local/gecko-surf
+# Reload Cursor window → Settings → MCP → confirm gecko-txline
+```
+
+Or add the demo MCP manually in `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "gecko-txline": {
+      "type": "http",
+      "url": "https://mcp.geckovision.tech/txline/mcp"
+    }
+  }
+}
+```
+
+**Optional — Colosseum Copilot** (requires your PAT, not bundled):
+
+```bash
+export COLOSSEUM_COPILOT_PAT=...   # https://arena.colosseum.org/copilot
+uvx --from "gecko-surf[serve]" colosseum-mcp
+```
+
+Then drive the kit:
 
 - Command: `/make-agent-ready <openapi-or-docs-url>` — run the onboarding spine.
 - Command: `/setup-x402 <api>` — wire the x402 rail via PayAI (offline first).

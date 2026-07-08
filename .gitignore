@@ -37,3 +37,4 @@ docs/superpowers/
 
 # MCP — real config carries a token; ship .mcp.json.example instead
 .mcp.json
+!skills/.mcp.json
