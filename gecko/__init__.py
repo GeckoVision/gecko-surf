@@ -22,7 +22,17 @@ from __future__ import annotations
 # __version__` at import time, and it is now pulled into the client import chain
 # (client -> events -> telemetry), so the name must already exist to avoid a
 # partially-initialized-module circular import.
-__version__ = "0.1.0"
+#
+# Single source of truth = the installed package version (pyproject `version`), so it
+# never drifts on a release. Falls back to a dev marker in an uninstalled source tree.
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+__version__: str  # explicit so consumers (telemetry) resolve the type across the import cycle
+try:
+    __version__ = _pkg_version("gecko-surf")
+except PackageNotFoundError:  # running from a checkout with no install
+    __version__ = "0.0.0+dev"
 
 from .access import NoAuthSession, Session, public_session
 from .client import AgentApiClient
