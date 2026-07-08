@@ -130,7 +130,9 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         allowed_hosts=[PUBLIC_HOST],
         public_url=PUBLIC_URL,
         enforce=hosted_enforce,
-        registry_routes=_registry_routes(registry_store, None),
+        registry_routes=_registry_routes(
+            registry_store, None, feedback_path=os.environ.get("GECKO_FEEDBACK_PATH")
+        ),
     )
 
 

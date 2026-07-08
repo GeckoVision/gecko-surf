@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path as _Path
 from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+
+from gecko.access import public_session
+from gecko.client import AgentApiClient
+from gecko.preflight_corpus import PreflightCorpusError, assert_classes_closed
 
 from .keys import KeyStore, RegistryAuthError
 from .store import SurfaceStore
@@ -36,7 +41,18 @@ class _BodyTooLarge(Exception):
     """Raised by ``_json`` when the request body exceeds the registry cap."""
 
 
-def registry_routes(store: SurfaceStore, keys: KeyStore | None) -> list[Route]:
+def registry_routes(
+    store: SurfaceStore, keys: KeyStore | None, feedback_path: str | None = None
+) -> list[Route]:
+    # One AgentApiClient per surface, built lazily on first search and cached — search
+    # runs the full ingest+catalog build, so this avoids redoing that on every request.
+    _clients: dict[str, AgentApiClient] = {}
+
+    def _make_client(name: str) -> AgentApiClient:
+        surface = store.get(name)
+        assert surface is not None
+        return AgentApiClient(surface.spec, session=public_session())
+
     async def _list(_request: Request) -> JSONResponse:
         out = []
         for name in store.names():
@@ -100,11 +116,54 @@ def registry_routes(store: SurfaceStore, keys: KeyStore | None) -> list[Route]:
             return JSONResponse({"error": str(exc)}, status_code=401)
         return JSONResponse({"key": plain})
 
+    async def _search(request: Request) -> JSONResponse:
+        intent = request.query_params.get("intent", "").strip()[:200]
+        if not intent:
+            return JSONResponse({"error": "missing intent"}, status_code=400)
+        results = []
+        for name in store.names():
+            client = _clients.setdefault(name, _make_client(name))
+            hits = client.search(intent, limit=3)
+            if hits:
+                results.append({"surface": name, "hits": hits})
+        return JSONResponse({"results": results})
+
+    async def _feedback(request: Request) -> JSONResponse:
+        # Closed-vocabulary corpus classes ONLY — same control-plane invariant as
+        # preflight_corpus: a record's `classes` must all be on the known vocabulary, and
+        # nothing else from the request body reaches disk (see the allowlisted `record`
+        # dict below — a stray field never smuggles a value out).
+        if feedback_path is None:
+            return JSONResponse({"error": "feedback_disabled"}, status_code=503)
+        try:
+            body = await _json(request)
+        except _BodyTooLarge:
+            return JSONResponse({"error": "too_large"}, status_code=413)
+        classes = body.get("classes")
+        if not isinstance(classes, list) or not classes:
+            return JSONResponse({"error": "classes required"}, status_code=400)
+        try:
+            assert_classes_closed([str(c) for c in classes])
+        except PreflightCorpusError:
+            return JSONResponse({"error": "unknown class"}, status_code=400)
+        record = {
+            "surface": str(body.get("surface", ""))[:64],
+            "surface_rev": str(body.get("surface_rev", ""))[:64],
+            "classes": [str(c) for c in classes],
+        }
+        target = _Path(feedback_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+        return JSONResponse(None, status_code=204)
+
     return [
         Route("/registry/surfaces", endpoint=_list),
         Route("/registry/surfaces/{name}", endpoint=_fetch),
         Route("/registry/keys", endpoint=_keys_start, methods=["POST"]),
         Route("/registry/keys/verify", endpoint=_keys_verify, methods=["POST"]),
+        Route("/registry/search", endpoint=_search),
+        Route("/registry/feedback", endpoint=_feedback, methods=["POST"]),
     ]
 
 

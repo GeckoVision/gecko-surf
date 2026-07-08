@@ -134,3 +134,46 @@ def test_per_ip_throttle_still_202_but_stops_sending():
         r = client.post("/registry/keys", json={"email": f"a{i}@example.com"})
         assert r.status_code == 202
     assert len(sent) <= 10  # throttled sends stop, response shape unchanged
+
+
+def test_feedback_accepts_closed_vocab_only(tmp_path):
+    import json as _json
+
+    from gecko.registry.api import registry_routes as rr
+    from gecko.registry.store import RegistrySurface, SurfaceStore
+
+    store = SurfaceStore([RegistrySurface(name="colosseum", spec=SPEC, tier="free")])
+    log = tmp_path / "feedback.jsonl"
+    app = Starlette(routes=rr(store, None, feedback_path=str(log)))
+    client = TestClient(app)
+
+    ok = client.post(
+        "/registry/feedback",
+        json={
+            "surface": "colosseum",
+            "surface_rev": "abc",
+            "classes": ["call.upstream_schema_reject"],
+        },
+    )
+    assert ok.status_code == 204
+    line = _json.loads(log.read_text("utf-8").splitlines()[0])
+    assert line["classes"] == ["call.upstream_schema_reject"]
+
+    bad = client.post(
+        "/registry/feedback",
+        json={
+            "surface": "colosseum",
+            "surface_rev": "abc",
+            "classes": ["lol.free_text"],
+        },
+    )
+    assert bad.status_code == 400
+    assert len(log.read_text("utf-8").splitlines()) == 1  # nothing appended
+
+
+def test_search_across_surfaces():
+    client, _, _ = _client()
+    r = client.get("/registry/search", params={"intent": "get x"})
+    assert r.status_code == 200
+    surfaces = [x["surface"] for x in r.json()["results"]]
+    assert "colosseum" in surfaces

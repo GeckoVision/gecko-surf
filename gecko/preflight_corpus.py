@@ -63,9 +63,14 @@ DRIFT_CLASSES = frozenset(
         "drift.op_added",  # a new operation appeared (informational, non-breaking)
     }
 )
+CALL_CLASSES = frozenset(
+    {
+        "call.upstream_schema_reject",  # upstream 4xx naming an unknown/missing field — the shipped-spec-vs-reality class
+    }
+)
 
 KNOWN_CLASSES: frozenset[str] = (
-    COVERAGE_CLASSES | HEALTH_CLASSES | SAFETY_CLASSES | DRIFT_CLASSES
+    COVERAGE_CLASSES | HEALTH_CLASSES | SAFETY_CLASSES | DRIFT_CLASSES | CALL_CLASSES
 )
 
 # The classes that FAIL a build (blocking). Everything else is a warning. Drift-breaking =
