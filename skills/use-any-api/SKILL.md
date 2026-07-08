@@ -1,6 +1,6 @@
 ---
 name: use-any-api
-description: Use when an agent needs to CALL a new or unfamiliar API and get the first call right — when a first call fails (404 / 422 / wrong params / bad auth), when the docs are messy, human-shaped, or have no OpenAPI, when curl returns a 403 to your script, when auth is a handshake the docs don't spell out, or when you're adding the Nth painful external API to a project. Point Gecko at the API (an OpenAPI URL, or its docs) and it comprehends the surface into first-call-correct MCP tools your agent calls right the FIRST time — auth injected and hidden, no integration code, no hand-written client. Measured lift: on a painful real API, first-call-correctness goes from 8% to 61% (on clean, well-documented APIs the lift is ~0 — you don't need this there). Control-plane only: never stores your responses or your keys. NOT a payment rail, NOT a marketplace.
+description: Use when an agent needs to CALL a new or unfamiliar API and get the first call right — when a first call fails (404 / 422 / wrong params / bad auth), when the docs are messy, human-shaped, or have no OpenAPI, when curl returns a 403 to your script, when auth is a handshake the docs don't spell out, or when you're adding the Nth painful external API to a project. Point Gecko at the API (an OpenAPI URL, or its docs) and it comprehends the surface into first-call-correct MCP tools your agent calls right the FIRST time — auth injected and hidden, no integration code, no hand-written client. Measured lift: on a painful real API, first-call-correctness goes from 10% to 65% (on clean, well-documented APIs the lift is ~0 — you don't need this there). Control-plane only: never stores your responses or your keys. NOT a payment rail, NOT a marketplace.
 user-invocable: true
 ---
 
@@ -44,7 +44,7 @@ the **[[read-js-docs]]** skill first to render and extract the surface, then com
 ## Why it works (the honest claim)
 A raw OpenAPI dump costs ~18,000 tokens for a small API and *lowers* tool-selection accuracy
 as it grows (43%→14%); Gecko projects the same surface to ~1,900 tokens (−89%) at
-equal-or-better first-call-correctness. Measured FCC lift: **8% → 61% on a painful API,
+equal-or-better first-call-correctness. Measured FCC lift: **10% → 65% on a painful API,
 ~0 on clean ones.** Point it where agents actually fail.
 
 ## Related
