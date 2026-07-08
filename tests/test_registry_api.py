@@ -171,6 +171,34 @@ def test_feedback_accepts_closed_vocab_only(tmp_path):
     assert len(log.read_text("utf-8").splitlines()) == 1  # nothing appended
 
 
+def test_feedback_throttled_per_ip_silent_no_write(tmp_path):
+    import json as _json
+
+    from gecko.registry.api import registry_routes as rr
+    from gecko.registry.store import RegistrySurface, SurfaceStore
+
+    store = SurfaceStore([RegistrySurface(name="colosseum", spec=SPEC, tier="free")])
+    log = tmp_path / "feedback.jsonl"
+    app = Starlette(routes=rr(store, None, feedback_path=str(log)))
+    client = TestClient(app)
+
+    for _ in range(15):
+        r = client.post(
+            "/registry/feedback",
+            json={
+                "surface": "colosseum",
+                "surface_rev": "abc",
+                "classes": ["call.upstream_schema_reject"],
+            },
+        )
+        assert r.status_code == 204  # throttled breach stays silent, same 204 shape
+
+    lines = log.read_text("utf-8").splitlines() if log.exists() else []
+    assert len(lines) <= 10
+    for line in lines:
+        assert _json.loads(line)["classes"] == ["call.upstream_schema_reject"]
+
+
 def test_search_across_surfaces():
     client, _, _ = _client()
     r = client.get("/registry/search", params={"intent": "get x"})

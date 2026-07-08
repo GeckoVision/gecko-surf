@@ -24,7 +24,7 @@ class RegistryError(Exception):
 class RegistrySurface:
     name: str
     spec: dict[str, Any] = field(repr=False, hash=False)
-    tier: Tier = "free"  # type: ignore[assignment]
+    tier: Tier = "free"
 
     def __post_init__(self) -> None:
         if self.tier not in TIERS:

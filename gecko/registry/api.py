@@ -152,6 +152,10 @@ def registry_routes(
         # dict below — a stray field never smuggles a value out).
         if feedback_path is None:
             return JSONResponse({"error": "feedback_disabled"}, status_code=503)
+        ip = request.client.host if request.client else "unknown"
+        if _ip_throttled(ip):
+            # Silent, no oracle: same 204 shape as success, nothing written to disk.
+            return JSONResponse(None, status_code=204)
         try:
             body = await _json(request)
         except _BodyTooLarge:
