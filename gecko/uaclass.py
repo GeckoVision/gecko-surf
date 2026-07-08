@@ -32,6 +32,17 @@ _ROBOT_SUBSTRINGS: tuple[str, ...] = (
     "aisec",
     "chiark",
     "span-pipeline",
+    # MCP directory / registry probers — they embed "mcp" in clientInfo so they'd
+    # otherwise slip past as real clients (seen live: pulsemcp-proctor, prsm-mcp-graph,
+    # mcp-rugpull-research). Directory-scan markers → robot.
+    "pulsemcp",
+    "prsm",
+    "proctor",
+    "rugpull",
+    "research",
+    "registry",
+    "lookup",
+    "directory",
     "python-requests",
     "go-http-client",
     "curl",
