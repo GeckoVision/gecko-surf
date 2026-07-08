@@ -32,9 +32,12 @@ from typing import Any
 
 from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
-from .enforce import resolve_hosted_enforce
+from .enforce import EnforceMode, resolve_hosted_enforce
 from .http_server import serve_multi_http
 from .mcp_server import McpSurface
+from .registry.api import registry_routes as _registry_routes
+from .registry.store import RegistrySurface, SurfaceStore
+from .registry.wiring import build_keystore_from_env
 
 # In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -70,11 +73,9 @@ PUBLIC_HOST = "mcp.geckovision.tech"
 PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
 
-def main() -> None:  # pragma: no cover - run-the-server entrypoint
-    port = int(os.environ.get("PORT", "8000"))
-    # Hosted default resolved in the ONE shared place (resolve_hosted_enforce): block,
-    # unless GECKO_ENFORCE dials it down (needs a redeploy).
-    hosted_enforce = resolve_hosted_enforce()
+def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
+    """The surfaces this host serves over MCP — factored out of ``main()`` so tests
+    can build the exact list ``_registry_store`` sees, without starting a server."""
     surfaces: list[tuple[str, Any]] = [
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]
@@ -114,6 +115,54 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
                 ),
             )
         )
+    return surfaces
+
+
+def _surface_spec(value: Any) -> dict[str, Any]:
+    """Recover the raw OpenAPI dict behind a ``_build_surfaces`` entry, whatever shape
+    it was built in: a bare parsed spec (reportavnzla/sosvenezuela), an ``McpSurface``
+    wrapping a client (txline/jito), or a bare ``AgentApiClient`` (refugios)."""
+    if isinstance(value, McpSurface):
+        return value.client.spec
+    if isinstance(value, AgentApiClient):
+        return value.spec
+    return value  # type: ignore[no-any-return]
+
+
+def _registry_store(surfaces: list[tuple[str, Any]]) -> SurfaceStore:
+    """Build the /registry/... SurfaceStore from every MCP-hosted surface, PLUS
+    colosseum — which is registry-DISTRIBUTED (its console-entry runner fetches
+    "colosseum" from here, see gecko/examples/colosseum.py) but deliberately not
+    hosted as an MCP surface on this server (it's a BYOK console entry the operator
+    runs themselves). Registry distribution != MCP hosting.
+
+    The colosseum import is lazy and reads only packaged data (no network) — it just
+    keeps that console-entry module out of this server's import graph until needed.
+    """
+    from gecko.examples.colosseum import load_spec as _load_colosseum_spec
+
+    docs = [
+        RegistrySurface(name=name, spec=_surface_spec(value), tier="free")
+        for name, value in surfaces
+    ]
+    docs.append(
+        RegistrySurface(name="colosseum", spec=_load_colosseum_spec(), tier="free")
+    )
+    return SurfaceStore(docs)
+
+
+def main() -> None:  # pragma: no cover - run-the-server entrypoint
+    port = int(os.environ.get("PORT", "8000"))
+    # Hosted default resolved in the ONE shared place (resolve_hosted_enforce): block,
+    # unless GECKO_ENFORCE dials it down (needs a redeploy).
+    hosted_enforce = resolve_hosted_enforce()
+    surfaces = _build_surfaces(hosted_enforce)
+    # Registry store for the /registry/... HTTP surface, built AFTER every surface
+    # (incl. txline/jito/refugios) has been appended — see `_registry_store`.
+    # `build_keystore_from_env()` wires a real Mongo-backed KeyStore when
+    # MONGODB_URI + GECKO_OTP_FROM are set; it fails soft to None (issuance disabled,
+    # 402-on-premium-never) rather than crashing the server.
+    registry_store = _registry_store(surfaces)
     serve_multi_http(
         surfaces,
         host="0.0.0.0",  # noqa: S104 - bind all interfaces; the ALB fronts it
@@ -122,6 +171,11 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         allowed_hosts=[PUBLIC_HOST],
         public_url=PUBLIC_URL,
         enforce=hosted_enforce,
+        registry_routes=_registry_routes(
+            registry_store,
+            build_keystore_from_env(),
+            feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
+        ),
     )
 
 

@@ -467,6 +467,7 @@ def build_multi_surface_app(
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
+    registry_routes: list[Any] | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -483,6 +484,10 @@ def build_multi_surface_app(
     Starlette does NOT run a mounted sub-app's lifespan, but each surface's MCP session
     manager MUST be started for the whole server lifetime — so we compose every sub-app's
     lifespan explicitly via an ``AsyncExitStack`` (get this wrong and ``/{name}/mcp`` 500s).
+
+    ``registry_routes`` optionally appends the Gecko registry HTTP surface (built via
+    ``gecko.registry.api.registry_routes``) — anonymous free-surface fetch + the
+    premium 402 entitlement gate + OTP key issuance, at ``/registry/...``.
     """
     from contextlib import AsyncExitStack, asynccontextmanager
     from dataclasses import asdict
@@ -511,6 +516,10 @@ def build_multi_surface_app(
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
+        if registry_routes and name == "registry":
+            raise ValueError(
+                "surface name 'registry' is reserved (would shadow /registry/*)"
+            )
         site = f"{public_url.rstrip('/')}/{name}" if public_url else None
         subs.append(
             (
@@ -684,6 +693,8 @@ def build_multi_surface_app(
     for name, sub in subs:
         routes.append(Mount(f"/{name}", app=sub))
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))
+    if registry_routes:
+        routes.extend(registry_routes)
 
     @asynccontextmanager
     async def _lifespan(_app: Starlette) -> Any:
@@ -779,11 +790,13 @@ def serve_multi_http(
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
+    registry_routes: list[Any] | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
-    ``block`` default (see ``build_multi_surface_app``)."""
+    ``block`` default (see ``build_multi_surface_app``). ``registry_routes`` is forwarded
+    unchanged (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -794,5 +807,6 @@ def serve_multi_http(
         allowed_origins=origins,
         public_url=public_url,
         enforce=enforce,
+        registry_routes=registry_routes,
     )
     uvicorn.run(app, **_uvicorn_kwargs(host, port))

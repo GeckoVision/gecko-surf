@@ -1,7 +1,10 @@
 """Serve the Colosseum Copilot API to your agent — first-call-correct, BYOK.
 
-The surface (comprehended from Colosseum's docs — no OpenAPI is published) ships *inside*
-the package, so there is no local file to fetch:
+The surface is fetched from the Gecko registry first (the freshest comprehended
+snapshot); on any registry failure (offline, older registry, network hiccup) it
+falls back silently to the surface bundled *inside* the package (comprehended from
+Colosseum's docs — no OpenAPI is published), so there is never a hard dependency
+on network access:
 
     export COLOSSEUM_COPILOT_PAT=...      # https://arena.colosseum.org/copilot
     uvx --from "gecko-surf[serve]" colosseum-mcp
@@ -116,11 +119,24 @@ def main(argv: list[str] | None = None) -> int:
             extra_hosts.append(parts.netloc)
             extra_origins.append(f"{parts.scheme}://{parts.netloc}")
 
-    client = build_client(pat)
+    spec: dict[str, Any]
+    source = "bundled"
+    try:
+        from gecko.registry.client import fetch_surface
+
+        fetched = fetch_surface(
+            os.environ.get("GECKO_REGISTRY_URL", "https://mcp.geckovision.tech"),
+            "colosseum",
+        )
+        spec, source = fetched.spec, f"registry rev {fetched.surface_rev[:8]}"
+    except Exception:  # noqa: BLE001 - offline/older registry: bundled still works
+        spec = load_spec()
+    client = AgentApiClient(spec, base_url=BASE, session=BearerSession(pat))
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
     print(
         f"Colosseum Copilot — {len(client.list_tools())} first-call-correct tools ready."
     )
+    print(f"surface source: {source}")
     print("PAT injected at call time, hidden from the agent, sent only to Colosseum.")
     print(f"Add it:  claude mcp add --transport http colosseum {mcp_url}")
     serve_http(

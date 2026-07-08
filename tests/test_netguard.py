@@ -222,3 +222,105 @@ def test_safe_get_still_refuses_when_single_resolution_is_private() -> None:
     r = _resolver({"rebind.example.com": ["169.254.169.254"]})
     with pytest.raises(netguard.UnsafeUrlError):
         netguard.safe_get("https://rebind.example.com/", resolver=r)
+
+
+# --- credential leak on cross-host redirect: caller headers must not follow ---
+
+
+class _CapturingOpener:
+    """Like _FakeOpener but records each request's header dict as it's made."""
+
+    def __init__(self, script: list[object]) -> None:
+        self._script = list(script)
+        self.header_snapshots: list[dict[str, str]] = []
+
+    def open(self, request: object, timeout: object = None) -> object:
+        self.header_snapshots.append(dict(request.headers))  # type: ignore[attr-defined]
+        item = self._script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def test_safe_get_drops_caller_headers_on_cross_host_redirect(monkeypatch) -> None:
+    r = _resolver(
+        {"a.example.com": ["93.184.216.34"], "b.example.com": ["93.184.216.34"]}
+    )
+    err = urllib.error.HTTPError(
+        "https://a.example.com/docs",
+        302,
+        "Found",
+        {"Location": "https://b.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _CapturingOpener([err, _Resp("hello")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    out = netguard.safe_get(
+        "https://a.example.com/docs",
+        resolver=r,
+        headers={"X-Gecko-Key": "secret-bearer-token"},
+    )
+    assert out == "hello"
+    same_host, cross_host = fake.header_snapshots
+    same_host_lower = {k.lower(): v for k, v in same_host.items()}
+    cross_host_lower = {k.lower(): v for k, v in cross_host.items()}
+    # first hop is same-host: caller header travels, alongside the UA.
+    assert same_host_lower.get("x-gecko-key") == "secret-bearer-token"
+    assert "user-agent" in same_host_lower
+    # second hop crosses to b.example.com: caller header must be dropped, UA kept.
+    assert "x-gecko-key" not in cross_host_lower
+    assert "user-agent" in cross_host_lower
+
+
+def test_safe_get_keeps_caller_headers_on_same_host_redirect(monkeypatch) -> None:
+    r = _resolver({"a.example.com": ["93.184.216.34"]})
+    err = urllib.error.HTTPError(
+        "https://a.example.com/docs",
+        302,
+        "Found",
+        {"Location": "https://a.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _CapturingOpener([err, _Resp("hello")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    out = netguard.safe_get(
+        "https://a.example.com/docs",
+        resolver=r,
+        headers={"X-Gecko-Key": "secret-bearer-token"},
+    )
+    assert out == "hello"
+    first_hop, second_hop = fake.header_snapshots
+    assert {k.lower(): v for k, v in first_hop.items()}.get(
+        "x-gecko-key"
+    ) == "secret-bearer-token"
+    assert {k.lower(): v for k, v in second_hop.items()}.get(
+        "x-gecko-key"
+    ) == "secret-bearer-token"
+
+
+def test_safe_get_drops_caller_headers_on_scheme_change_redirect(monkeypatch) -> None:
+    r = _resolver({"a.example.com": ["93.184.216.34"]})
+    err = urllib.error.HTTPError(
+        "https://a.example.com/docs",
+        302,
+        "Found",
+        {"Location": "http://a.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _CapturingOpener([err, _Resp("hello")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    out = netguard.safe_get(
+        "https://a.example.com/docs",
+        resolver=r,
+        headers={"X-Gecko-Key": "secret-bearer-token"},
+    )
+    assert out == "hello"
+    same_scheme, diff_scheme = fake.header_snapshots
+    same_scheme_lower = {k.lower(): v for k, v in same_scheme.items()}
+    diff_scheme_lower = {k.lower(): v for k, v in diff_scheme.items()}
+    # first hop is https: caller header travels
+    assert same_scheme_lower.get("x-gecko-key") == "secret-bearer-token"
+    assert "user-agent" in same_scheme_lower
+    # second hop downgrades to http: caller header must be dropped, UA kept
+    assert "x-gecko-key" not in diff_scheme_lower
+    assert "user-agent" in diff_scheme_lower
