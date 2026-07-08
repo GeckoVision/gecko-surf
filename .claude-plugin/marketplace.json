@@ -9,7 +9,7 @@
     {
       "name": "gecko-surf",
       "source": "./skills",
-      "description": "Make any API agent-usable: comprehend an OpenAPI into first-call-correct MCP tools, wire x402 payments, and defend against poisoned specs. Bundles three skills (api-agent-ready, x402-payai-setup, anti-poisoning) plus agents and commands.",
+      "description": "Make any API agent-usable — even with broken docs, no OpenAPI, a WAF, or an auth wall. Comprehend a spec (or JS-rendered docs) into first-call-correct MCP tools your agent calls right the first time (8%→61% on a painful API, measured), auth injected, no integration code. Bundles read-js-docs, anti-poisoning, api-agent-ready, x402-payai-setup, plus agents and commands.",
       "version": "0.1.0"
     }
   ]
