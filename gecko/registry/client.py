@@ -8,6 +8,8 @@ Gecko key travels only here — to OUR registry — never in MCP traffic.
 from __future__ import annotations
 
 import json
+import os
+import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,7 +37,38 @@ class FetchedSurface:
 
 def _default_transport(url: str, headers: dict[str, str]) -> tuple[int, str]:
     validate_public_url(url)
-    return 200, safe_get(url, headers=headers)
+    try:
+        return 200, safe_get(url, headers=headers)
+    except urllib.error.HTTPError as exc:
+        # A real HTTP status (402 entitlement, 404, ...) is an ANSWER, not an
+        # outage — return it so fetch_surface can raise the typed error instead
+        # of silently degrading to a stale cache.
+        body = exc.read().decode("utf-8", errors="replace")[:2048]
+        return exc.code, body
+
+
+def _parse_manifest(raw: str, *, stale: bool, name: str) -> FetchedSurface:
+    """Parse a wire response or cache file into a ``FetchedSurface``.
+
+    Both paths hand us untrusted (or corruptible-on-disk) text; a malformed
+    payload must raise a typed ``RegistryFetchError``, never an unhandled
+    ``KeyError``/``TypeError``/``json.JSONDecodeError``.
+    """
+    try:
+        m = json.loads(raw)
+        return FetchedSurface(
+            name=m["name"],
+            surface_rev=m["surface_rev"],
+            tier=m["tier"],
+            spec=m["spec"],
+            stale=stale,
+        )
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        if stale:
+            raise RegistryFetchError(
+                f"corrupt cache for {name!r}; delete it and re-fetch"
+            ) from exc
+        raise RegistryFetchError("registry returned a malformed manifest") from exc
 
 
 def fetch_surface(
@@ -54,14 +87,7 @@ def fetch_surface(
         status, body = send(url, headers)
     except OSError as exc:
         if cache.exists():
-            m = json.loads(cache.read_text("utf-8"))
-            return FetchedSurface(
-                name=m["name"],
-                surface_rev=m["surface_rev"],
-                tier=m["tier"],
-                spec=m["spec"],
-                stale=True,
-            )
+            return _parse_manifest(cache.read_text("utf-8"), stale=True, name=name)
         raise RegistryFetchError(
             f"registry unreachable and no cached copy of {name!r}"
         ) from exc
@@ -72,13 +98,11 @@ def fetch_surface(
         except (json.JSONDecodeError, AttributeError):
             pass
         raise RegistryFetchError(f"registry returned {status} {detail}".strip())
-    m = json.loads(body)
+    surface = _parse_manifest(body, stale=False, name=name)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(m), "utf-8")
-    return FetchedSurface(
-        name=m["name"],
-        surface_rev=m["surface_rev"],
-        tier=m["tier"],
-        spec=m["spec"],
-        stale=False,
-    )
+    # Atomic write: a crash mid-write must never leave a half-written file that
+    # the NEXT run's cache-fallback path would read as "corrupt cache".
+    tmp = cache.with_suffix(".tmp")
+    tmp.write_text(body, "utf-8")
+    os.replace(tmp, cache)
+    return surface

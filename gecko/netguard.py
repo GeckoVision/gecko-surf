@@ -169,6 +169,11 @@ def safe_get(
     """
     factory = opener_factory or _pinned_opener
     current = url
+    # Pinned once: the ORIGINAL host. Caller-supplied headers (e.g. a bearer
+    # X-Gecko-Key) must never follow a redirect off this host — a malicious or
+    # compromised upstream could 302 us to an attacker host and harvest the
+    # credential otherwise. Same-host hops (incl. scheme/port changes) keep them.
+    original_host = urlsplit(url).hostname
     for _ in range(max_redirects + 1):
         # Resolve ONCE; the returned IP is what we pin the connection to (rebind-proof).
         _, ips = _resolve_public(current, resolver)
@@ -176,7 +181,8 @@ def safe_get(
         # Real UA by default: the stdlib default "Python-urllib/x.y" is 403'd by
         # WAF-fronted docs hosts. A caller-supplied UA (if any) wins via update().
         request_headers = {"User-Agent": USER_AGENT}
-        request_headers.update(headers or {})
+        if urlsplit(current).hostname == original_host:
+            request_headers.update(headers or {})
         request = urllib.request.Request(current, method="GET", headers=request_headers)
         try:
             with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
