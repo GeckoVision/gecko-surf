@@ -1,4 +1,5 @@
 ---
+name: make-agent-ready
 description: "Make a provider's API agent-ready — comprehend its OpenAPI/docs with gecko, serve the FULL surface over MCP with a one-click add, emit the discovery breadcrumbs, and leave the provider's own MCP intact. Usage: /make-agent-ready <openapi-or-docs-url>"
 ---
 

@@ -1,0 +1,18 @@
+{
+  "name": "geckovision",
+  "owner": {
+    "name": "GeckoVision",
+    "email": "ernanibmurtinho@gmail.com"
+  },
+  "metadata": {
+    "description": "GeckoVision plugins for making APIs agent-usable."
+  },
+  "plugins": [
+    {
+      "name": "gecko-surf",
+      "source": "./skills",
+      "description": "Make any API agent-usable — comprehend OpenAPI into first-call-correct MCP tools, x402 setup, anti-poisoning. Bundles use-any-api, read-js-docs, anti-poisoning, api-agent-ready, x402-payai-setup, plus agents, commands, and a live TxLINE demo MCP.",
+      "version": "0.2.3"
+    }
+  ]
+}
