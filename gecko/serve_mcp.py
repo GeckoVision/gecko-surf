@@ -37,6 +37,7 @@ from .http_server import serve_multi_http
 from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
+from .registry.wiring import build_keystore_from_env
 
 # In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -81,8 +82,9 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         (name, json.loads(path.read_text("utf-8"))) for name, path in _SURFACES
     ]
     # Registry store for the /registry/... HTTP surface — same specs this host already
-    # serves, all "free" (no entitlement gate yet). Keys wired with real Mongo in Task 6;
-    # keys=None here means every registry fetch is anonymous-free / 402-on-premium-never.
+    # serves, all "free" (no entitlement gate yet). `build_keystore_from_env()` wires a
+    # real Mongo-backed KeyStore when MONGODB_URI + GECKO_OTP_FROM are set; it fails soft
+    # to None (issuance disabled, 402-on-premium-never) rather than crashing the server.
     registry_store = SurfaceStore(
         [RegistrySurface(name=n, spec=s, tier="free") for n, s in surfaces]
     )
@@ -131,7 +133,9 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         public_url=PUBLIC_URL,
         enforce=hosted_enforce,
         registry_routes=_registry_routes(
-            registry_store, None, feedback_path=os.environ.get("GECKO_FEEDBACK_PATH")
+            registry_store,
+            build_keystore_from_env(),
+            feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
         ),
     )
 

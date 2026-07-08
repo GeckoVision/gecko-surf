@@ -208,6 +208,19 @@ A complete forkable example: [`examples/_starter/`](examples/_starter/) — an a
 *any* API in ~20 lines, runnable at $0. For a full agent (Telegram + an LLM tool-loop),
 see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
 
+### Fetch surfaces from the registry
+
+Surfaces can be served straight from the Gecko registry — fixes propagate as
+rev bumps, no package upgrade:
+
+    gecko serve --registry colosseum --auth-env COLOSSEUM_COPILOT_PAT
+
+Free surfaces need no account. Premium surfaces take a Gecko key
+(`GECKO_API_KEY`), issued agent-natively: `POST /registry/keys {email}` →
+email OTP → `POST /registry/keys/verify` → `gk_live_...` (shown once; we
+store only a salted hash). Your PROVIDER key never travels to Gecko — the
+runner injects it locally and calls the provider directly.
+
 ---
 
 ## Develop / falsify offline ($0, no keys, no subscription)
