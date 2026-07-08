@@ -98,6 +98,32 @@ def _mcp_url(host: str, port: int, public_url: str | None) -> str:
     return f"http://{host}:{port}/mcp"
 
 
+def _verify_pat(client: Any) -> tuple[bool, str]:
+    """Probe the status endpoint so an EXPIRED/INVALID PAT fails loudly HERE — at
+    startup, before the agent connects — instead of as an opaque tool-call error after
+    a successful MCP handshake. Returns ``(ok_to_serve, message)``. Fail-open on any
+    transient/network error: a blip must never block serving, only a real 401/403 aborts.
+    The PAT itself is never printed."""
+    tool = next(
+        (t["name"] for t in client.list_tools() if "status" in t["name"].lower()),
+        None,
+    )
+    if tool is None:
+        return True, "(no status endpoint to verify the PAT against; continuing)"
+    try:
+        code = client.call(tool, {}, mode="live").get("status")
+    except Exception:  # noqa: BLE001 - a transient error must not block serving
+        return True, "(could not reach Colosseum to verify the PAT; continuing)"
+    if code in (401, 403):
+        return False, (
+            "COLOSSEUM_COPILOT_PAT is invalid or expired — get a fresh one at "
+            "https://arena.colosseum.org/copilot"
+        )
+    if isinstance(code, int) and 200 <= code < 300:
+        return True, "PAT verified — Colosseum authenticated."
+    return True, f"(PAT check returned HTTP {code}; continuing)"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     pat = os.environ.get("COLOSSEUM_COPILOT_PAT")
@@ -132,6 +158,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 - offline/older registry: bundled still works
         spec = load_spec()
     client = AgentApiClient(spec, base_url=BASE, session=BearerSession(pat))
+
+    # Fail loudly on a bad PAT before the agent ever connects (the #1 silent failure).
+    pat_ok, pat_msg = _verify_pat(client)
+    print(pat_msg, file=sys.stdout if pat_ok else sys.stderr)
+    if not pat_ok:
+        return 1
+
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
     print(
         f"Colosseum Copilot — {len(client.list_tools())} first-call-correct tools ready."
