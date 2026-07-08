@@ -2,6 +2,7 @@
 so `uvx --from "gecko-surf[serve]" colosseum-mcp` works with no local file and no network."""
 
 import json
+from typing import Any
 
 from gecko.examples.colosseum import build_client, load_spec
 
@@ -78,3 +79,54 @@ def test_console_entry_networking_flags_mirror_gecko_serve():
         "https://t.trycloudflare.com/mcp"
     )
     assert _mcp_url("127.0.0.1", 8000, None) == "http://127.0.0.1:8000/mcp"
+
+
+def _no_serve(*a: Any, **k: Any) -> None:
+    """serve_http is imported lazily inside colosseum.main() from gecko.http_server —
+    patching the attribute on that source module is what takes effect; this fake
+    just returns instead of blocking on a real uvicorn server."""
+
+
+def test_main_falls_back_to_bundled_when_registry_unreachable(monkeypatch, capsys):
+    import gecko.registry.client as registry_client
+
+    monkeypatch.setenv("COLOSSEUM_COPILOT_PAT", "test-token-xyz")
+    monkeypatch.setattr("gecko.http_server.serve_http", _no_serve)
+
+    def _raise(*a: Any, **k: Any) -> Any:
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(registry_client, "fetch_surface", _raise)
+
+    from gecko.examples.colosseum import main
+
+    rc = main([])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "surface source: bundled" in out
+
+
+def test_main_prefers_registry_when_reachable(monkeypatch, capsys):
+    import gecko.registry.client as registry_client
+    from gecko.registry.client import FetchedSurface
+
+    monkeypatch.setenv("COLOSSEUM_COPILOT_PAT", "test-token-xyz")
+    monkeypatch.setattr("gecko.http_server.serve_http", _no_serve)
+
+    bundled_spec = load_spec()
+    monkeypatch.setattr(
+        registry_client,
+        "fetch_surface",
+        lambda *a, **k: FetchedSurface(
+            name="colosseum", surface_rev="deadbeef00", tier="free", spec=bundled_spec
+        ),
+    )
+
+    from gecko.examples.colosseum import main
+
+    rc = main([])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "surface source: registry rev deadbeef" in out

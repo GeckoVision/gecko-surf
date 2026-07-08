@@ -188,8 +188,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Could not fetch surface: {exc}", file=sys.stderr)
             return 2
         if fetched.stale:
+            # Informational, not an error — the surface IS being served, just from
+            # the cache — so stdout (like the banner), not stderr.
             print("registry unreachable — serving the last cached copy (stale).")
         client = AgentApiClient(fetched.spec, session=session)
+        # No --name given: the registry key IS the surface name (deliberate).
         name = args.name or args.registry
     else:
         # Early, friendly SSRF check for URL specs (ingest re-validates while
