@@ -85,6 +85,8 @@ def test_allowed_fields_is_the_exact_closed_set():
         "source",
         "client",
         "session_id",
+        "user_agent",
+        "client_kind",
         "decision",
         "score",
         "reasons",
@@ -294,6 +296,54 @@ def test_session_id_secret_shape_is_hashed_stably(sink: _FakeSink):
     assert all(s.startswith("sid-") for s in sids)
     assert sids[0] == sids[1]  # stable -> a connect<->call join still works
     assert hostile not in json.dumps(sink.docs)
+
+
+# --------------------------------------------------------------------------- #
+# Robot/human classification: user_agent + client_kind
+# --------------------------------------------------------------------------- #
+def test_client_kind_robot_validates_and_round_trips(sink: _FakeSink):
+    emit_surf_event(
+        "surf.connect_failed",
+        surface_id="pegana",
+        user_agent="python-requests/2.31",
+        client_kind="robot",
+    )
+    doc = sink.docs[-1]
+    assert doc["client_kind"] == "robot"
+    assert doc["user_agent"] == "python-requests/2.31"
+    assert set(doc) <= RECORD_ALLOWED_KEYS
+
+
+def test_client_kind_must_be_a_closed_set_member(sink: _FakeSink):
+    # Like error_class/source: a free-text client_kind could smuggle a value; fail closed.
+    with pytest.raises(TelemetryError):
+        emit_surf_event("surf.connect", surface_id="pegana", client_kind=SENSITIVE_MINT)
+    assert sink.docs == []
+
+
+def test_user_agent_control_chars_stripped_and_capped(sink: _FakeSink):
+    # A naive logger stores the UA verbatim -> log injection; control chars are stripped
+    # and the value is length-capped before it can ever be persisted.
+    emit_surf_event(
+        "surf.connect",
+        surface_id="pegana",
+        user_agent="Mozilla/5.0\n\r\tInjected-Log-Line " + "x" * 300,
+        client_kind="unknown",
+    )
+    ua = sink.docs[-1]["user_agent"]
+    assert len(ua) <= 120
+    assert "\n" not in ua and "\r" not in ua and "\t" not in ua
+
+
+def test_user_agent_secret_shape_is_neutralized_never_carried(sink: _FakeSink):
+    emit_surf_event(
+        "surf.connect_failed",
+        surface_id="pegana",
+        user_agent="sk-" + "a" * 40,
+        client_kind="robot",
+    )
+    assert sink.docs[-1]["user_agent"] == "redacted"
+    assert "sk-aaaa" not in json.dumps(sink.docs)
 
 
 def test_writer_allowlist_rejects_a_tampered_doc():

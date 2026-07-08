@@ -277,6 +277,119 @@ def test_call_carries_the_same_session_id_as_connect(monkeypatch):
     assert call["session_id"]  # non-empty -> retention join is real, not aggregate
 
 
+# --- funnel telemetry: User-Agent + robot/human classification ---
+
+
+_INIT_BODY = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": "probe", "version": "1"},
+    },
+}
+_NONINIT_BODY = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+_GOOD_HEADERS = {
+    "accept": "application/json, text/event-stream",
+    "content-type": "application/json",
+}
+_BAD_ACCEPT_HEADERS = {"accept": "application/json", "content-type": "application/json"}
+
+
+def _raw_post(body: Any, headers: dict[str, str]) -> int:
+    """POST a raw JSON-RPC frame straight at the wrapped /mcp app (own headers, own UA)
+    and return the status — the path a crawler/prober takes, no mcp client involved."""
+
+    async def go() -> int:
+        app = _app()
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url=BASE
+            ) as client:
+                res = await client.post(f"{BASE}/mcp", json=body, headers=headers)
+                return res.status_code
+
+    return anyio.run(go)
+
+
+def test_initialize_200_emits_connect_with_ua_and_client_kind(monkeypatch):
+    from gecko import events
+
+    # A clean clientInfo name ("probe" would trip the robot rule) so the client UA wins.
+    body = {
+        **_INIT_BODY,
+        "params": {
+            **_INIT_BODY["params"],
+            "clientInfo": {"name": "example-app", "version": "1"},
+        },
+    }  # type: ignore[dict-item]
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(body, {**_GOOD_HEADERS, "user-agent": "claude-code/1.9"})
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert connect["user_agent"] == "claude-code/1.9"
+    assert connect["client_kind"] == "client"  # a real MCP client UA
+    assert set(connect) <= events.RECORD_ALLOWED_KEYS
+
+
+def test_406_initialize_emits_connect_failed_with_ua_and_client_kind(monkeypatch):
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(
+            _INIT_BODY, {**_BAD_ACCEPT_HEADERS, "user-agent": "python-requests/2.31"}
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 406
+    failed = next(d for d in docs if d["event"] == "surf.connect_failed")
+    assert failed["user_agent"] == "python-requests/2.31"
+    assert failed["client_kind"] == "robot"  # a generic HTTP library UA
+    assert not any(d["event"] == "surf.connect" for d in docs)
+
+
+def test_noninit_4xx_emits_connect_failed_with_no_client(monkeypatch):
+    # A pure crawler POSTs a non-initialize frame with no session -> 400. It must be
+    # captured once as connect_failed, client=None (no clientInfo), UA-only classified.
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(_NONINIT_BODY, {**_GOOD_HEADERS, "user-agent": "curl/8.4"})
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 400
+    failed = [d for d in docs if d["event"] == "surf.connect_failed"]
+    assert len(failed) == 1
+    assert "client" not in failed[0]  # None is dropped by to_doc -> no clientInfo
+    assert failed[0]["user_agent"] == "curl/8.4"
+    assert failed[0]["client_kind"] == "robot"
+
+
+def test_noninit_2xx_emits_nothing(monkeypatch):
+    # A full real-client session sends non-init POSTs that 2xx (notifications/initialized
+    # 202, tools/list 200). Those must emit NOTHING — exactly one connect, no failed.
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        _list_tool_specs(_app())
+    finally:
+        events.set_surf_sink_override(None)
+    assert len([d for d in docs if d["event"] == "surf.connect"]) == 1
+    assert not any(d["event"] == "surf.connect_failed" for d in docs)
+
+
 def test_search_capabilities_is_not_recorded(tmp_path):
     # The synthetic intent tool is not an upstream API call — it must not pollute
     # the per-operation correctness corpus.

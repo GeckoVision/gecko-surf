@@ -33,9 +33,10 @@ from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
 from .enforce import EnforceMode, resolve_hosted_enforce
-from .events import emit_surf_event
+from .events import _safe_user_agent, emit_surf_event
 from .mcp_server import McpSurface
 from .telemetry import TelemetryError
+from .uaclass import classify_client
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from starlette.applications import Starlette
@@ -152,22 +153,59 @@ def _session_id_from_start_headers(headers: Any) -> str | None:
     return None
 
 
+def _user_agent_from_scope(scope: Any) -> str | None:
+    """Pull the raw HTTP ``User-Agent`` from an ASGI ``scope`` header list (list of
+    ``(name, value)`` byte tuples). UNTRUSTED — the caller sanitizes + caps it before it
+    is ever stored (``_safe_user_agent``). A malformed/absent header is simply ``None``."""
+    for key, value in scope.get("headers") or []:
+        if bytes(key).lower() == b"user-agent":
+            try:
+                return bytes(value).decode("latin-1")
+            except Exception:  # noqa: BLE001 - a malformed header is simply no UA
+                return None
+    return None
+
+
 def _emit_connect_outcome(
-    surface_id: str, status: int, client: str | None, session_id: str | None
+    surface_id: str,
+    status: int,
+    *,
+    client: str | None,
+    session_id: str | None,
+    user_agent: str | None,
+    client_kind: str,
+    is_init: bool,
 ) -> None:
-    """Emit the control-plane-safe funnel event for an initialize outcome. A 2xx is a
-    real connect (with the assigned session id); a 4xx is a failed handshake (the
-    stale-session 400/406 clients). Best-effort: only a control-plane violation surfaces."""
+    """Emit the control-plane-safe funnel event for a POST outcome to ``/mcp``.
+
+    * An ``initialize`` that 2xx is a real ``surf.connect`` (with the assigned session id).
+    * An ``initialize`` that 4xx is a failed handshake (stale-session 400/406 clients).
+    * A NON-initialize POST that 4xx is a pure crawler/prober that never opened a session
+      — captured as ``surf.connect_failed`` (``client`` is ``None``, so classification is
+      UA-only) so bots are visible in the funnel. Non-init 2xx (a normal tools/call) and
+      any other status emit NOTHING — the conditionals ARE the noise guard.
+
+    Every emit carries the sanitized ``user_agent`` + robot/human ``client_kind``.
+    Best-effort: only a control-plane violation surfaces (telemetry never breaks a call).
+    """
     try:
-        if 200 <= status < 300:
+        if is_init and 200 <= status < 300:
             emit_surf_event(
                 "surf.connect",
                 surface_id=surface_id,
                 client=client,
                 session_id=session_id,
+                user_agent=user_agent,
+                client_kind=client_kind,
             )
         elif 400 <= status < 500:
-            emit_surf_event("surf.connect_failed", surface_id=surface_id, client=client)
+            emit_surf_event(
+                "surf.connect_failed",
+                surface_id=surface_id,
+                client=client,
+                user_agent=user_agent,
+                client_kind=client_kind,
+            )
     except TelemetryError:
         raise
     except Exception:  # noqa: BLE001 - telemetry must never break the handshake
@@ -196,9 +234,9 @@ class _InitializeCaptureASGI:
         prefix, messages = await _tee_body(receive)
         is_init, client = _parse_initialize(prefix)
         replay = _make_replay(messages, receive)
-        if not is_init:
-            await self._inner(scope, replay, send)
-            return
+        # UA is request metadata (fine to store once sanitized); no raw IP (PII) here.
+        user_agent = _safe_user_agent(_user_agent_from_scope(scope))
+        client_kind = classify_client(user_agent, client)
 
         emitted = False
         surface_id = self._surface_id
@@ -208,10 +246,25 @@ class _InitializeCaptureASGI:
             if not emitted and event.get("type") == "http.response.start":
                 emitted = True
                 status = int(event.get("status", 0))
-                session_id = _session_id_from_start_headers(event.get("headers"))
-                _emit_connect_outcome(surface_id, status, client, session_id)
+                # session id is only assigned on a successful init handshake.
+                session_id = (
+                    _session_id_from_start_headers(event.get("headers"))
+                    if is_init
+                    else None
+                )
+                _emit_connect_outcome(
+                    surface_id,
+                    status,
+                    client=client,
+                    session_id=session_id,
+                    user_agent=user_agent,
+                    client_kind=client_kind,
+                    is_init=is_init,
+                )
             await send(event)
 
+        # Every POST is now tee'd through _send so a non-init crawler 4xx is observable;
+        # the wrapper still NEVER mutates the request/response (pass-through send).
         await self._inner(scope, replay, _send)
 
 
