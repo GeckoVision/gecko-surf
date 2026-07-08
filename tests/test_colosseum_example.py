@@ -4,7 +4,47 @@ so `uvx --from "gecko-surf[serve]" colosseum-mcp` works with no local file and n
 import json
 from typing import Any
 
-from gecko.examples.colosseum import build_client, load_spec
+from gecko.examples.colosseum import _verify_pat, build_client, load_spec
+
+
+class _FakeClient:
+    """A stand-in for AgentApiClient to test the PAT self-check offline."""
+
+    def __init__(
+        self, status: Any = 200, tool: str | None = "getStatus", raise_exc: bool = False
+    ):
+        self._status, self._tool, self._raise = status, tool, raise_exc
+
+    def list_tools(self) -> list[dict[str, str]]:
+        return [{"name": self._tool}] if self._tool else [{"name": "listGrants"}]
+
+    def call(
+        self, tool_name: str, args: dict[str, Any], mode: str = "recorded"
+    ) -> dict[str, Any]:
+        if self._raise:
+            raise RuntimeError("network down")
+        return {"status": self._status, "data": {}, "mode": mode}
+
+
+def test_verify_pat_aborts_on_expired_token():
+    ok, msg = _verify_pat(_FakeClient(status=401))
+    assert ok is False and "invalid or expired" in msg
+
+
+def test_verify_pat_passes_on_200():
+    ok, msg = _verify_pat(_FakeClient(status=200))
+    assert ok is True and "verified" in msg.lower()
+
+
+def test_verify_pat_fails_open_on_network_error():
+    # a transient error must never block serving — only a real 401/403 aborts.
+    ok, _ = _verify_pat(_FakeClient(raise_exc=True))
+    assert ok is True
+
+
+def test_verify_pat_skips_when_no_status_endpoint():
+    ok, msg = _verify_pat(_FakeClient(tool=None))
+    assert ok is True and "no status endpoint" in msg
 
 
 def test_packaged_spec_loads_from_package_data():
@@ -92,6 +132,8 @@ def test_main_falls_back_to_bundled_when_registry_unreachable(monkeypatch, capsy
 
     monkeypatch.setenv("COLOSSEUM_COPILOT_PAT", "test-token-xyz")
     monkeypatch.setattr("gecko.http_server.serve_http", _no_serve)
+    # keep the startup PAT probe offline + deterministic (its own unit tests cover it)
+    monkeypatch.setattr("gecko.examples.colosseum._verify_pat", lambda c: (True, "ok"))
 
     def _raise(*a: Any, **k: Any) -> Any:
         raise OSError("network unreachable")
@@ -113,6 +155,7 @@ def test_main_prefers_registry_when_reachable(monkeypatch, capsys):
 
     monkeypatch.setenv("COLOSSEUM_COPILOT_PAT", "test-token-xyz")
     monkeypatch.setattr("gecko.http_server.serve_http", _no_serve)
+    monkeypatch.setattr("gecko.examples.colosseum._verify_pat", lambda c: (True, "ok"))
 
     bundled_spec = load_spec()
     monkeypatch.setattr(
