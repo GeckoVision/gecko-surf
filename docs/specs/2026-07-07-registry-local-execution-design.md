@@ -135,5 +135,7 @@ Flat per-surface — the entitlement is a set membership, not a meter.
 - Hosted BYOK passthrough tier (separate spec; short-lived-token transit policy).
 - TEE/Nitro attestation for passthrough or a Gecko-run OAuth mint.
 - Provider-side products: OAuth facade, agent-provisionable keys *for their APIs*.
+- Card-gated API self-provisioning (scoped-card rails, e.g. Rain) — the payment
+  instrument for paid APIs that take cards, not x402; composes with the OTP flow.
 - Self-serve key dashboard, billing rails, manifest signing, vector/GraphQL search
   (evidence-gated per the intent-layer spec; `/registry/search` stays lexical).
