@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.2.2"
+version = "0.2.3"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 # README becomes the PyPI long-description; it carries the `mcp-name:` marker the
 # MCP Registry matches to prove PyPI ownership. Without this, the description is empty.
