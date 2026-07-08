@@ -43,7 +43,12 @@ def _default_transport(url: str, headers: dict[str, str]) -> tuple[int, str]:
         # A real HTTP status (402 entitlement, 404, ...) is an ANSWER, not an
         # outage — return it so fetch_surface can raise the typed error instead
         # of silently degrading to a stale cache.
-        body = exc.read().decode("utf-8", errors="replace")[:2048]
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:2048]
+        except Exception:
+            # A truncated error body must not escape as an untyped exception;
+            # the status code is the signal.
+            body = ""
         return exc.code, body
 
 

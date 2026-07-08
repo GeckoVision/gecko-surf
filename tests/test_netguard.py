@@ -296,3 +296,31 @@ def test_safe_get_keeps_caller_headers_on_same_host_redirect(monkeypatch) -> Non
     assert {k.lower(): v for k, v in second_hop.items()}.get(
         "x-gecko-key"
     ) == "secret-bearer-token"
+
+
+def test_safe_get_drops_caller_headers_on_scheme_change_redirect(monkeypatch) -> None:
+    r = _resolver({"a.example.com": ["93.184.216.34"]})
+    err = urllib.error.HTTPError(
+        "https://a.example.com/docs",
+        302,
+        "Found",
+        {"Location": "http://a.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _CapturingOpener([err, _Resp("hello")])
+    monkeypatch.setattr(netguard.urllib.request, "build_opener", lambda *a, **k: fake)
+    out = netguard.safe_get(
+        "https://a.example.com/docs",
+        resolver=r,
+        headers={"X-Gecko-Key": "secret-bearer-token"},
+    )
+    assert out == "hello"
+    same_scheme, diff_scheme = fake.header_snapshots
+    same_scheme_lower = {k.lower(): v for k, v in same_scheme.items()}
+    diff_scheme_lower = {k.lower(): v for k, v in diff_scheme.items()}
+    # first hop is https: caller header travels
+    assert same_scheme_lower.get("x-gecko-key") == "secret-bearer-token"
+    assert "user-agent" in same_scheme_lower
+    # second hop downgrades to http: caller header must be dropped, UA kept
+    assert "x-gecko-key" not in diff_scheme_lower
+    assert "user-agent" in diff_scheme_lower
