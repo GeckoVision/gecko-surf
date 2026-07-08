@@ -51,6 +51,10 @@ def test_no_key_material_leaks(tmp_path, caplog):
         plain = client.post(
             "/registry/keys/verify", json={"email": "dev@example.com", "otp": otp}
         ).json()["key"]
+        # Grant entitlement to the premium surface so the fetch path exercises
+        # the successful retrieval, not a 402 error.
+        for d in keys._keys.docs:
+            d["surfaces"] = ["txline"]
         # exercise every route with the live key
         r1 = client.get("/registry/surfaces", headers={"X-Gecko-Key": plain})
         r2 = client.get("/registry/surfaces/txline", headers={"X-Gecko-Key": plain})
@@ -66,11 +70,17 @@ def test_no_key_material_leaks(tmp_path, caplog):
                 "classes": ["call.upstream_schema_reject"],
             },
         )
+        # Emit a benign log line to prove caplog is wired; this tripwire is
+        # meaningful only if capture is working (so the leak assertions below fire).
+        logging.getLogger("gecko.registry").warning("leak-suite marker")
 
     logged = "\n".join(rec.getMessage() for rec in caplog.records)
     stored = json.dumps(keys._keys.docs) + json.dumps(keys._otps.docs)
     responses = r1.text + r2.text + r3.text
     fb = log.read_text("utf-8") if log.exists() else ""
+    # Confirm caplog is wired — must see the benign marker.
+    assert "leak-suite marker" in logged
+    # The actual leak assertions are only meaningful if the above passes.
     for blob, where in (
         (logged, "logs"),
         (stored, "storage"),
@@ -85,7 +95,6 @@ def test_no_key_material_leaks(tmp_path, caplog):
 
 def test_end_to_end_fetch_serve_prepare(tmp_path):
     """Registry -> runner cache -> AgentApiClient -> prepared request, offline."""
-    from gecko.access import static_session
     from gecko.client import AgentApiClient
     from gecko.registry.client import fetch_surface
 
@@ -104,10 +113,18 @@ def test_end_to_end_fetch_serve_prepare(tmp_path):
         cache_dir=tmp_path,
         transport=transport,
     )
+
+    # Inline session class respects the non-secret contract (auth_headers is
+    # an adapter seam, not a secret store). This bearer token is test-only;
+    # for live sessions, use Session or establish_session from gecko.access.
+    class _BearerSession:
+        def auth_headers(self) -> dict[str, str]:
+            return {"Authorization": "Bearer sk-local"}
+
     client = AgentApiClient(
         fetched.spec,
         base_url="https://api.example.com",
-        session=static_session({"Authorization": "Bearer sk-local"}),
+        session=_BearerSession(),
     )
     req = client.prepare("getX", {})
     assert req.url == "https://api.example.com/x"
