@@ -139,6 +139,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"surface source: {source}")
     print("PAT injected at call time, hidden from the agent, sent only to Colosseum.")
     print(f"Add it:  claude mcp add --transport http colosseum {mcp_url}")
+    # Self-diagnose the "connected but 0 tools" failure a sandboxed/remote agent hits
+    # when its MCP client can't reach loopback (separate network namespace).
+    if mcp_url.startswith(("http://127.0.0.1", "http://localhost")):
+        print(
+            "0 tools in your agent after it connects? Its MCP client can't reach "
+            "localhost.\n  Serve behind a tunnel:  cloudflared tunnel --url "
+            f"http://{args.host}:{args.port}\n"
+            "  then re-run with:  colosseum-mcp --public-url https://<name>.trycloudflare.com"
+        )
     serve_http(
         client,
         host=args.host,
