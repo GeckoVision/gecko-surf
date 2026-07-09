@@ -82,6 +82,49 @@ def test_catalog_tool_name_matches_to_tool_for_synthesized_id():
     assert CatalogEntry(op).tool_name == to_tool(op)["name"]
 
 
+# FIX (camelCase operationId gluing) — the tokenizer `[a-z0-9]+` lowercases BEFORE
+# splitting, so `getApiOddsSnapshotFixtureid` collapses to one mega-token and a query
+# token "odds" can never match the operationId field (verified: the retrieval spec §1c).
+# When the operationId is the SOLE carrier of the intent (thin/empty summary), the op
+# scored 0 and fell to the 0/97 fallback — invisible as a genuine hit. Splitting on
+# camelCase/digit/separator boundaries must recover it as a real lexical match. This can
+# ONLY add recall (it is a strict superset of the old token set), never a false positive.
+def test_camelcase_operation_id_splits_so_intent_matches():
+    op = Operation(
+        method="GET",
+        path="/x/{fixtureid}",  # path carries NO "odds" token
+        operation_id="getApiOddsSnapshotFixtureid",  # the sole "odds" signal
+        summary="",  # thin summary — operationId is all we have
+        description="",
+        tags=[],
+        parameters=[],
+        request_body=None,
+        responses={},
+    )
+    cat = Catalog([op])
+    scored = cat.search_scored("odds")
+    assert scored, "an 'odds' intent must return the odds-snapshot op"
+    assert scored[0].entry.operation.operation_id == "getApiOddsSnapshotFixtureid"
+    # It must be a GENUINE lexical hit (score > 0), not the score-0 never-empty fallback.
+    assert scored[0].score > 0 and not scored[0].is_fallback
+
+
+def test_camelcase_split_is_a_strict_superset_no_regression():
+    # Every token the old `[a-z0-9]+` lowercase pass produced must still be present, so
+    # the fix can only ADD recall, never drop a match that used to work.
+    import re
+
+    from gecko.catalog import _tokens
+
+    for text in (
+        "getApiOddsSnapshotFixtureid",
+        "get the LATEST live odds",
+        "batch-validation of Fixtures v2",
+    ):
+        old = set(re.findall(r"[a-z0-9]+", text.lower()))
+        assert old <= _tokens(text)
+
+
 SPEC_NO_OPID = {
     "openapi": "3.1.0",
     "servers": [{"url": "https://api.example.test"}],

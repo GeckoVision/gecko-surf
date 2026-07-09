@@ -16,10 +16,26 @@ from .ingest import Operation
 from .tools import tool_name
 
 _WORD = re.compile(r"[a-z0-9]+")
+# Sub-words INSIDE an identifier, split on camelCase / letter-digit / separator
+# boundaries: `getApiOddsSnapshotFixtureid` -> get·Api·Odds·Snapshot·Fixtureid,
+# `Epochday2` -> Epochday·2. Runs on the RAW (pre-lowercase) text so the camelCase
+# boundary survives — the plain `[a-z0-9]+` pass lowercases first and loses it.
+_IDENT_PART = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 
 
 def _tokens(text: str) -> set[str]:
-    return set(_WORD.findall((text or "").lower()))
+    """Index/query tokens for lexical overlap.
+
+    A STRICT SUPERSET of the old `[a-z0-9]+` lowercase pass: it keeps every original
+    token AND adds the camelCase/digit-boundary sub-words of any identifier (the
+    operationId in particular). This can only ADD recall — a query token like "odds"
+    now matches `getApiOddsSnapshotFixtureid`, which the glued mega-token dropped — and
+    never removes a match that used to work (see the superset guard test).
+    """
+    raw = text or ""
+    tokens = set(_WORD.findall(raw.lower()))
+    tokens.update(part.lower() for part in _IDENT_PART.findall(raw))
+    return tokens
 
 
 @dataclass
