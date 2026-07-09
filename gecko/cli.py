@@ -15,15 +15,16 @@ to ``serve``. ``python -m gecko.serve`` also keeps working unchanged.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 
-from . import docs_reader, serve, testgen
+from . import credentials, docs_reader, serve, testgen
 from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("serve", "test", "from-docs")
+_SUBCOMMANDS = ("serve", "test", "from-docs", "auth")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -162,6 +163,106 @@ def _cmd_from_docs(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_auth(argv: list[str]) -> int:
+    """`gecko auth set|rm|list` — thin transport over ``credentials`` (keychain).
+
+    All keychain logic lives in ``gecko.credentials``; this only parses args,
+    reads the secret via a HIDDEN prompt (never argv/history), and formats output.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko auth",
+        description="Hold your provider key in the OS keychain (never a dotfile).",
+    )
+    sub = p.add_subparsers(dest="action")
+
+    p_set = sub.add_parser("set", help="Store a provider secret (hidden prompt).")
+    p_set.add_argument("api", help="Surface/provider name, e.g. colosseum.")
+    p_set.add_argument("--account", default=None, help="Named identity (optional).")
+    p_set.add_argument(
+        "--scheme",
+        choices=("raw", "bearer"),
+        default="raw",
+        help="How the value renders at call time (control-plane mapping).",
+    )
+
+    p_rm = sub.add_parser("rm", help="Delete a keychain credential (idempotent).")
+    p_rm.add_argument("api")
+    p_rm.add_argument("--account", default=None)
+
+    sub.add_parser("list", help="List stored credential NAMES (never a value).")
+
+    args = p.parse_args(argv)
+    if args.action == "set":
+        return _auth_set(args.api, args.account, args.scheme)
+    if args.action == "rm":
+        return _auth_rm(args.api, args.account)
+    if args.action == "list":
+        return _auth_list()
+    p.print_help()
+    return 0
+
+
+def _auth_set(api: str, account: str | None, scheme: str) -> int:
+    ref = credentials.CredentialRef(api=api, account=account)
+    backend = credentials.KeyringBackend()
+    if not backend.available():
+        # REFUSE — never write plaintext anywhere; print the fallbacks instead.
+        print(
+            "No OS keychain available (install it: pip install "
+            "'gecko-surf[credentials]').",
+            file=sys.stderr,
+        )
+        print(
+            f"Use the env fallback instead:\n  export "
+            f"{credentials.env_var_name(ref)}=...",
+            file=sys.stderr,
+        )
+        return 1
+    # getpass keeps the value out of argv (/proc/cmdline, ps), history, scrollback.
+    secret = getpass.getpass(f"Enter secret for {ref.slot()} (input hidden): ")
+    if not secret:
+        print("No secret entered; nothing stored.", file=sys.stderr)
+        return 1
+    backend.store(ref, secret)
+    print(f"Stored {ref.slot()} in the OS keychain.")
+    # --scheme is the surface's control-plane render hint; there is no config store
+    # in Phase 2, so it is not persisted here — the live session supplies it.
+    print(f"Render scheme at call time: {scheme} (supplied by the surface mapping).")
+    return 0
+
+
+def _auth_rm(api: str, account: str | None) -> int:
+    ref = credentials.CredentialRef(api=api, account=account)
+    backend = credentials.KeyringBackend()
+    if not backend.available():
+        print("No OS keychain available; nothing to remove.")
+        return 0  # idempotent
+    existed = backend.delete(ref)
+    if existed:
+        print(f"Removed {ref.slot()} from the keychain.")
+    else:
+        print(f"No keychain entry for {ref.slot()} (nothing to remove).")
+    return 0
+
+
+def _auth_list() -> int:
+    backend = credentials.KeyringBackend()
+    resolver = credentials.default_resolver()
+    printed = False
+    if backend.available():
+        for slot in backend.list_slots():
+            ref = credentials.ref_from_slot(slot)
+            who = credentials.which_backend(ref, resolver) or "keyring"
+            print(f"  {slot}  ({who})")
+            printed = True
+    for name in credentials.env_visible_names():
+        print(f"  {name}  (env)")
+        printed = True
+    if not printed:
+        print("No stored credentials. Add one:  gecko auth set <api>")
+    return 0
+
+
 def _print_help() -> None:
     print("gecko — make any API agent-usable without integration code\n")
     print("usage: gecko <command> [options]\n")
@@ -173,6 +274,7 @@ def _print_help() -> None:
     print(
         "  from-docs <src>    recover a draft OpenAPI from a doc page, then comprehend"
     )
+    print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -185,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_test(rest)
     if cmd == "from-docs":
         return _cmd_from_docs(rest)
+    if cmd == "auth":
+        return _cmd_auth(rest)
     _print_help()
     return 0
 

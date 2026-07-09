@@ -28,13 +28,15 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
-__version__: str  # explicit so consumers (telemetry) resolve the type across the import cycle
+__version__: (
+    str  # explicit so consumers (telemetry) resolve the type across the import cycle
+)
 try:
     __version__ = _pkg_version("gecko-surf")
 except PackageNotFoundError:  # running from a checkout with no install
     __version__ = "0.0.0+dev"
 
-from .access import NoAuthSession, Session, public_session
+from .access import NoAuthSession, ResolvedSession, Session, public_session
 from .client import AgentApiClient
 from .mcp_server import McpSurface
 
@@ -43,6 +45,7 @@ __all__ = [
     "McpSurface",
     "Session",
     "NoAuthSession",
+    "ResolvedSession",
     "public_session",
     "__version__",
 ]
