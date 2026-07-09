@@ -12,8 +12,14 @@ Gecko host; the value never leaves the machine (invariant #1 — control plane).
 
 Phase 2 adds the OS-keychain default (``KeyringBackend``, optional ``keyring``
 extra), the ``default_resolver()`` chain factory, and the degradation-banner
-helpers. Still out of scope (Phase 3+): command hooks / ``config.toml`` and the
-short-lived OAuth mint. The ``ResolvedSession`` adapter and the ``gecko auth``
+helpers.
+
+Phase 3 adds the external secret-manager ``CommandBackend`` (``op``/``vault``/
+``pass``/``gcloud`` — the secret arrives on the child's stdout via an argv list,
+never a shell) and the references-only ``~/.gecko/config.toml`` loader (command
+strings + optional auth-mapping overrides — never a secret value). The chain
+precedence is now ``keyring -> command -> env``. Still out of scope (Phase 4):
+the short-lived OAuth mint. The ``ResolvedSession`` adapter and the ``gecko auth``
 CLI live at their own seams (``access.py`` / ``cli.py``) and consume this module.
 """
 
@@ -21,7 +27,12 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import subprocess
+import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -254,6 +265,138 @@ class KeyringBackend:
         self._write_index(set(self.list_slots()) - {slot})
 
 
+# --- Command backend (Phase 3: external secret managers) ---------------------
+
+
+def _run_argv(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a configured fetch command as an ARGV LIST — never ``shell=True``.
+
+    ``shell=False`` (the default, made explicit here as the security invariant)
+    keeps the secret off any shell, out of history and logs: the value arrives on
+    the child's stdout only. The command *string* the user configured is a
+    reference (``op read op://...``), not the secret.
+    """
+    return subprocess.run(argv, shell=False, capture_output=True, text=True)
+
+
+# Injectable transport seam (light-fake in tests); default is the real subprocess.
+CommandRunner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
+
+
+@dataclass
+class CommandBackend:
+    """External secret-manager backend — runs the user's configured fetch command.
+
+    ``commands`` maps a ref slot to an argv list (a *reference*, e.g.
+    ``["op", "read", "op://vault/txodds/cred"]``), loaded from ``config.toml``.
+    ``get`` runs it, ``.strip()``s stdout, and holds the value in memory only — it
+    is never logged. A non-zero exit is a real error (not a miss): it raises a
+    ``CredentialError`` naming the command and exit code ONLY — never the stdout.
+    """
+
+    name: str = "command"
+    commands: dict[str, list[str]] = field(default_factory=dict)
+    runner: CommandRunner = field(default=_run_argv, repr=False)
+
+    def available(self) -> bool:
+        # Usable iff at least one fetch command is configured; the per-ref presence
+        # check happens in ``get`` (a miss falls through, as the chain expects).
+        return bool(self.commands)
+
+    def get(self, ref: CredentialRef) -> str | None:
+        argv = self.commands.get(ref.slot())
+        if not argv:
+            return None  # no command configured for this ref => miss, not error
+        result = self.runner(list(argv))
+        if result.returncode != 0:
+            # Redact-before-raise: command NAME + exit code only, never the stdout.
+            raise CredentialError(
+                f"credential command {argv[0]!r} for {ref.slot()!r} "
+                f"failed (exit {result.returncode})."
+            )
+        return result.stdout.strip()
+
+
+# --- config.toml loader (Phase 3: references ONLY, never a secret) ------------
+
+
+@dataclass(frozen=True)
+class SurfaceRef:
+    """Non-secret references for one credential slot, loaded from ``config.toml``.
+
+    Holds a fetch-command argv (a REFERENCE like ``op read op://...``) plus
+    optional auth-mapping overrides. **No secret value is ever stored here** — the
+    loader only understands these reference fields; any other key is ignored.
+    """
+
+    command: list[str] | None = None
+    header: str | None = None
+    scheme: str | None = None
+    account: str | None = None
+
+
+@dataclass(frozen=True)
+class GeckoConfig:
+    """Parsed ``~/.gecko/config.toml`` — references only (missing file => empty)."""
+
+    refs: dict[str, SurfaceRef] = field(default_factory=dict)
+
+    def commands(self) -> dict[str, list[str]]:
+        """Slot -> fetch-command argv, for building a ``CommandBackend``."""
+        return {slot: r.command for slot, r in self.refs.items() if r.command}
+
+
+def config_home() -> Path:
+    """Directory holding ``config.toml`` (``GECKO_CONFIG_HOME`` override, else
+    ``~/.gecko``). The override keeps tests hermetic and CI deterministic."""
+    override = os.environ.get("GECKO_CONFIG_HOME")
+    return Path(override) if override else Path.home() / ".gecko"
+
+
+def config_path() -> Path:
+    """Path to the references-only config file (holds no secrets)."""
+    return config_home() / "config.toml"
+
+
+def _parse_command(raw: Any) -> list[str] | None:
+    """A command reference as an argv list. A TOML array is used verbatim; a string
+    is split with ``shlex`` (lexical only — NEVER handed to a shell)."""
+    if isinstance(raw, list):
+        return [str(part) for part in raw]
+    if isinstance(raw, str) and raw.strip():
+        return shlex.split(raw)
+    return None
+
+
+def _str_or_none(raw: Any) -> str | None:
+    return raw if isinstance(raw, str) and raw else None
+
+
+def load_config(path: Path | None = None) -> GeckoConfig:
+    """Load references from ``config.toml``. Missing file => empty config (not an
+    error). Reads ONLY reference fields (command/header/scheme/account); a
+    secret-looking key is never read as a credential value.
+    """
+    target = path or config_path()
+    if not target.exists():
+        return GeckoConfig(refs={})
+    with target.open("rb") as fh:
+        data = tomllib.load(fh)
+    section = data.get("credentials", {})
+    refs: dict[str, SurfaceRef] = {}
+    if isinstance(section, dict):
+        for slot, entry in section.items():
+            if not isinstance(entry, dict):
+                continue
+            refs[str(slot)] = SurfaceRef(
+                command=_parse_command(entry.get("command")),
+                header=_str_or_none(entry.get("header")),
+                scheme=_str_or_none(entry.get("scheme")),
+                account=_str_or_none(entry.get("account")),
+            )
+    return GeckoConfig(refs=refs)
+
+
 # --- Resolver factory + audit helpers (Phase 2) ------------------------------
 
 # Legacy env names so existing users keep resolving without a re-set. These map a
@@ -265,24 +408,25 @@ _LEGACY_ENV_NAMES: dict[str, str] = {
 
 
 def default_resolver() -> ChainResolver:
-    """The dev-default chain: OS keychain first, env fallback.
+    """The dev-default chain: OS keychain, then external command hook, then env.
 
-    ``GECKO_CRED_BACKEND`` pins the chain to a single backend for deterministic
-    CI / debugging (``keyring`` | ``env`` | ``command``) so CI never accidentally
-    reads a developer keychain. ``command`` has no backend until Phase 3, so
-    pinning it yields an empty chain — a deterministic miss with a clear
-    remediation, never a crash.
+    Precedence ``keyring -> command -> env`` (the spec table): the keychain is the
+    safest and human-set, a configured command hook is an explicit team choice, and
+    env is last (leakiest / most likely stale). ``GECKO_CRED_BACKEND`` pins the
+    chain to a single backend for deterministic CI / debugging (``keyring`` |
+    ``command`` | ``env``) so CI never accidentally reads a developer keychain.
     """
     keyring_backend = KeyringBackend()
+    command_backend = CommandBackend(commands=load_config().commands())
     env_backend = EnvBackend(legacy_names=dict(_LEGACY_ENV_NAMES))
     pin = os.environ.get("GECKO_CRED_BACKEND", "").strip().lower()
     if pin == "keyring":
         return ChainResolver([keyring_backend])
+    if pin == "command":
+        return ChainResolver([command_backend])
     if pin == "env":
         return ChainResolver([env_backend])
-    if pin == "command":
-        return ChainResolver([])  # Phase 3 backend not built => deterministic miss
-    return ChainResolver([keyring_backend, env_backend])
+    return ChainResolver([keyring_backend, command_backend, env_backend])
 
 
 def env_var_name(ref: CredentialRef) -> str:

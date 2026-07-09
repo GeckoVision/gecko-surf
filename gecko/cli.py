@@ -191,6 +191,12 @@ def _cmd_auth(argv: list[str]) -> int:
 
     sub.add_parser("list", help="List stored credential NAMES (never a value).")
 
+    p_test = sub.add_parser(
+        "test", help="Resolve a credential; report the backend only (never a value)."
+    )
+    p_test.add_argument("api", help="Surface/provider name, e.g. colosseum.")
+    p_test.add_argument("--account", default=None, help="Named identity (optional).")
+
     args = p.parse_args(argv)
     if args.action == "set":
         return _auth_set(args.api, args.account, args.scheme)
@@ -198,6 +204,8 @@ def _cmd_auth(argv: list[str]) -> int:
         return _auth_rm(args.api, args.account)
     if args.action == "list":
         return _auth_list()
+    if args.action == "test":
+        return _auth_test(args.api, args.account)
     p.print_help()
     return 0
 
@@ -260,6 +268,25 @@ def _auth_list() -> int:
         printed = True
     if not printed:
         print("No stored credentials. Add one:  gecko auth set <api>")
+    return 0
+
+
+def _auth_test(api: str, account: str | None) -> int:
+    """Resolve the credential and report ONLY which backend answered — never the
+    value, its length, or a prefix. ``which_backend`` reads the value internally to
+    confirm a non-empty hit but never returns or logs it."""
+    ref = credentials.CredentialRef(api=api, account=account)
+    resolver = credentials.default_resolver()
+    try:
+        who = credentials.which_backend(ref, resolver)
+    except credentials.CredentialError as exc:
+        # A configured command that failed: the error carries name + exit code only.
+        print(f"auth: {exc}", file=sys.stderr)
+        return 1
+    if who is None:
+        print(credentials.no_credential_message(ref), file=sys.stderr)
+        return 1
+    print(f"resolved ✓ via {who}")
     return 0
 
 

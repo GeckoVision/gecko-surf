@@ -124,3 +124,77 @@ def test_auth_rm_idempotent(
 
     assert main(["auth", "rm", "txodds"]) == 0  # idempotent
     assert "nothing to remove" in capsys.readouterr().out
+
+
+# --- `gecko auth test <api>` — reports the backend only, never the value -----
+
+
+def _config_command(value: str) -> list[str]:
+    """A real, no-network argv that prints ``value`` on stdout."""
+    return [sys.executable, "-c", f"import sys; sys.stdout.write({value!r})"]
+
+
+def _write_command_config(tmp_path, slot: str, argv: list[str]) -> str:
+    import json
+
+    home = tmp_path / ".gecko"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.toml").write_text(
+        f"[credentials.{slot}]\ncommand = {json.dumps(argv)}\n", encoding="utf-8"
+    )
+    return str(home)
+
+
+def test_auth_test_reports_backend_not_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    resolved = "RESOLVED-SECRET-VALUE"
+    home = _write_command_config(tmp_path, "myapi", _config_command(resolved))
+    monkeypatch.setenv("GECKO_CONFIG_HOME", home)
+    monkeypatch.setenv("GECKO_CRED_BACKEND", "command")  # isolate to command
+
+    rc = main(["auth", "test", "myapi"])
+
+    out = capsys.readouterr()
+    assert rc == 0
+    assert "resolved" in out.out
+    assert "command" in out.out  # which backend answered
+    assert resolved not in out.out  # NEVER the value
+    assert resolved not in out.err
+
+
+def test_auth_test_command_failure_is_redacted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A configured command that writes the sentinel then exits non-zero: the CLI
+    # must surface the failure WITHOUT the stdout/sentinel.
+    argv = [
+        sys.executable,
+        "-c",
+        f"import sys; sys.stdout.write('{SENTINEL}'); sys.exit(4)",
+    ]
+    home = _write_command_config(tmp_path, "myapi", argv)
+    monkeypatch.setenv("GECKO_CONFIG_HOME", home)
+    monkeypatch.setenv("GECKO_CRED_BACKEND", "command")
+
+    rc = main(["auth", "test", "myapi"])
+
+    out = capsys.readouterr()
+    assert rc == 1
+    assert SENTINEL not in out.out
+    assert SENTINEL not in out.err
+
+
+def test_auth_test_reports_no_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GECKO_CONFIG_HOME", str(tmp_path / "empty"))
+    monkeypatch.delitem(sys.modules, "keyring", raising=False)
+    monkeypatch.delenv("GECKO_CRED_MISSINGAPI", raising=False)
+    monkeypatch.delenv("GECKO_CRED_BACKEND", raising=False)
+
+    rc = main(["auth", "test", "missingapi"])
+
+    out = capsys.readouterr()
+    assert rc == 1
+    assert "gecko auth set missingapi" in out.err
