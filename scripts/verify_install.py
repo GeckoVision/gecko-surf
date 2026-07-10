@@ -88,7 +88,9 @@ def scan(text: str) -> list[tuple[str, str]]:
     # 1. pipe-to-shell: allowed only for allowlisted official installers
     for line in _pipe_to_shell_lines(text):
         if not any(a in line for a in ALLOWLISTED_INSTALLERS):
-            findings.append(("DANGER", f"pipe-to-shell from a non-official source: {line[:80]}"))
+            findings.append(
+                ("DANGER", f"pipe-to-shell from a non-official source: {line[:80]}")
+            )
 
     # 2. code execution on fetched/opaque input
     for pat, msg in (
@@ -103,8 +105,14 @@ def scan(text: str) -> list[tuple[str, str]]:
     for pat, msg in (
         (r"(cat|cp|scp|curl -T|--upload-file).*\.ssh", "reads ~/.ssh"),
         (r"(cat|cp|scp).*\.env\b", "reads a .env file"),
-        (r"(KEY|SECRET|TOKEN|PRIVATE)[A-Z_]*\s*=.*\$\(", "captures a secret into a command"),
-        (r"(curl|wget).*(env|printenv|\$\{?[A-Z_]*KEY)", "sends environment/keys over the network"),
+        (
+            r"(KEY|SECRET|TOKEN|PRIVATE)[A-Z_]*\s*=.*\$\(",
+            "captures a secret into a command",
+        ),
+        (
+            r"(curl|wget).*(env|printenv|\$\{?[A-Z_]*KEY)",
+            "sends environment/keys over the network",
+        ),
     ):
         if re.search(pat, text):
             findings.append(("DANGER", msg))
@@ -119,7 +127,9 @@ def scan(text: str) -> list[tuple[str, str]]:
     for m in re.finditer(r"https?://([a-zA-Z0-9.\-]+)(/[^\s\"']*)?", text):
         host_path = (m.group(1) + (m.group(2) or "")).lower()
         if not any(h in host_path for h in ALLOWLISTED_HOSTS):
-            findings.append(("WARN", f"downloads from a non-allowlisted host: {m.group(1)}"))
+            findings.append(
+                ("WARN", f"downloads from a non-allowlisted host: {m.group(1)}")
+            )
 
     return findings
 
@@ -144,15 +154,24 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\n  gecko-verify — {args.source}\n")
     mark = "✓" if integrity_ok else "✗"
-    print(f"  {mark} sha256 {'matches published' if integrity_ok else 'MISMATCH'} "
-          f"({digest[:12]}…)")
+    print(
+        f"  {mark} sha256 {'matches published' if integrity_ok else 'MISMATCH'} "
+        f"({digest[:12]}…)"
+    )
     if not integrity_ok:
-        print(f"      published: {args.expect_sha256[:12]}…  — the served file was changed")
-    print(f"  {'✓' if not dangers else '✗'} no nested curl|bash / eval / exec"
-          + ("" if not dangers else f"  ({len(dangers)} issue(s))"))
+        print(
+            f"      published: {args.expect_sha256[:12]}…  — the served file was changed"
+        )
+    print(
+        f"  {'✓' if not dangers else '✗'} no nested curl|bash / eval / exec"
+        + ("" if not dangers else f"  ({len(dangers)} issue(s))")
+    )
     print(f"  {'✓' if not dangers else '✗'} no exfil endpoints, no credential reads")
-    print("  ✓ pins versioned package; official uv installer is the only allowed pipe-to-shell"
-          if not dangers else "  ✗ blind-execute or unexpected source detected")
+    print(
+        "  ✓ pins versioned package; official uv installer is the only allowed pipe-to-shell"
+        if not dangers
+        else "  ✗ blind-execute or unexpected source detected"
+    )
     for m in dangers:
         print(f"      DANGER: {m}")
     for m in warns:

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
+
+from .credentials import ChainResolver, CredentialRef, default_resolver
 
 AUTH_JWT_HEADER = "Authorization"
 AUTH_APITOKEN_HEADER = "X-Api-Token"
@@ -164,3 +166,30 @@ class StaticHeaderSession:
 def static_session(headers: dict[str, str]) -> StaticHeaderSession:
     """A session that injects fixed, non-secret headers (e.g. a publishable API key)."""
     return StaticHeaderSession(dict(headers))
+
+
+@dataclass
+class ResolvedSession:
+    """Live session that resolves its provider secret AT CALL TIME from the
+    credential chain (keychain -> env), driven by the surface's auth MAPPING
+    (control plane: which header, which scheme — never the value).
+
+    The value is fetched fresh per call and NEVER stored on the instance, so a
+    ``ResolvedSession`` is safe to hold, serialize, or ``repr``. The ``resolver``
+    is excluded from ``repr`` on purpose: it is non-secret config, but keeping it
+    out guarantees the session's ``repr`` is strictly non-secret regardless of a
+    backend's internals (asserted by the leak suite).
+
+    Recorded mode never constructs this (it uses ``stub_session()``); only live
+    mode does — the one-code-path rule holds, diverging only at the transport edge.
+    """
+
+    ref: CredentialRef
+    header_name: str  # from the surface auth mapping, e.g. "X-Api-Token"
+    scheme: str = "raw"  # "raw" | "bearer" — how to render the value
+    resolver: ChainResolver = field(default_factory=default_resolver, repr=False)
+
+    def auth_headers(self) -> dict[str, str]:
+        secret = self.resolver.resolve(self.ref)  # may raise CredentialError
+        value = f"Bearer {secret}" if self.scheme == "bearer" else secret
+        return {self.header_name: value}

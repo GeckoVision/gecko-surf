@@ -24,8 +24,12 @@ _SPEC = {
             "get": {
                 "summary": "Fetch a charge by its id",
                 "parameters": [
-                    {"name": "id", "in": "path", "required": True,
-                     "schema": {"type": "string"}}
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
                 ],
                 "responses": {"200": {"description": "ok"}},
             }

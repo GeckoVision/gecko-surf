@@ -126,13 +126,33 @@ def _verify_pat(client: Any) -> tuple[bool, str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    pat = os.environ.get("COLOSSEUM_COPILOT_PAT")
-    if not pat:
-        print(
-            "Set COLOSSEUM_COPILOT_PAT — get one at https://arena.colosseum.org/copilot",
-            file=sys.stderr,
-        )
+    from gecko.access import ResolvedSession
+    from gecko.credentials import (
+        CredentialError,
+        CredentialRef,
+        default_resolver,
+        keyring_fallback_banner,
+        no_credential_message,
+    )
+
+    # Source the PAT from the credential chain: OS keychain first (gecko auth set
+    # colosseum), env (COLOSSEUM_COPILOT_PAT) as the CI/headless fallback. The value
+    # is resolved AT CALL TIME by ResolvedSession — never stored here, never logged.
+    ref = CredentialRef(api="colosseum")
+    resolver = default_resolver()
+    try:
+        resolver.resolve(ref)  # presence check only — the value is discarded
+    except CredentialError:
+        print(no_credential_message(ref), file=sys.stderr)
+        print("Get a PAT at https://arena.colosseum.org/copilot", file=sys.stderr)
         return 1
+    banner = keyring_fallback_banner(ref, resolver)
+    if banner:
+        print(banner)
+    session = ResolvedSession(
+        ref=ref, header_name="Authorization", scheme="bearer", resolver=resolver
+    )
+
     from gecko.http_server import serve_http  # optional [serve] deps, imported lazily
 
     # Trust the advertised public URL's host/origin (tunnel/DNS-rebinding guard) —
@@ -157,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         spec, source = fetched.spec, f"registry rev {fetched.surface_rev[:8]}"
     except Exception:  # noqa: BLE001 - offline/older registry: bundled still works
         spec = load_spec()
-    client = AgentApiClient(spec, base_url=BASE, session=BearerSession(pat))
+    client = AgentApiClient(spec, base_url=BASE, session=session)
 
     # Fail loudly on a bad PAT before the agent ever connects (the #1 silent failure).
     pat_ok, pat_msg = _verify_pat(client)

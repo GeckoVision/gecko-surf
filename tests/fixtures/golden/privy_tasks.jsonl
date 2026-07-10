@@ -1,0 +1,17 @@
+{"goal": "create a new wallet", "expect_ops": ["createWallet"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "list all my wallets", "expect_ops": ["listWallets"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "check the token balance of a wallet", "expect_ops": ["getWalletBalance"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "sign a transaction with a wallet", "expect_ops": ["signWithWallet", "rawSignWithWallet"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "send a token transfer from a wallet", "expect_ops": ["transfer", "createTransferIntent"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "add a spending policy", "expect_ops": ["createPolicy"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "create a rule inside a policy", "expect_ops": ["createRule"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "get a quote to swap tokens", "expect_ops": ["swapQuote"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "swap one token for another in a wallet", "expect_ops": ["swapTokens"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "find a user by their email address", "expect_ops": ["getUserByEmail"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "export a wallet", "expect_ops": ["exportWallet"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "import an existing external wallet", "expect_ops": ["initializeWalletImport", "submitWalletImport"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "authorize a pending intent", "expect_ops": ["authorizeIntent"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "get the transaction history for a wallet", "expect_ops": ["getWalletTransactions"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "cash out crypto to my bank account", "expect_ops": ["initiateFiatOfframp"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "recommend nearby vegan restaurants open tonight", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
+{"goal": "water my houseplants weekly", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
