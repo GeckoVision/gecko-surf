@@ -23,6 +23,27 @@ PEGANA = str(Path(__file__).resolve().parent / "fixtures" / "pegana_openapi.json
 # A tiny, self-contained OpenAPI so the happy path never depends on a big fixture.
 TINY_SPEC = str(Path(__file__).resolve().parent / "fixtures" / "tiny_openapi.json")
 
+# A tiny OpenAPI where every op is bearer-gated (global security) — the fully-gated case.
+GATED_SPEC = str(
+    Path(__file__).resolve().parent / "fixtures" / "tiny_gated_openapi.json"
+)
+
+
+def test_fully_gated_api_reports_all_comprehended_tools_not_zero() -> None:
+    # Regression: a bearer-gated API previewed with a no-auth session used to report
+    # usable_tool_count=0 and an empty tools list (the SERVED/auth-filtered view). The
+    # comprehension summary must report the FULL comprehended surface — Gecko injects the
+    # credential at serve time, so a gated tool is usable, just gated. A fully-gated API
+    # (e.g. dpo2u: 76 bearer-gated ops -> 0) is the case that surfaced this.
+    result = comprehend_submission(GATED_SPEC)
+    assert result.op_count == 1
+    assert (
+        result.usable_tool_count == 1
+    )  # NOT 0 — comprehended, gated, injected at call time
+    assert {t["name"] for t in result.tools} == {"getSecret"}
+    # ...and it says so honestly rather than silently claiming the tool is free-to-call.
+    assert any("authentication" in w.lower() for w in result.warnings)
+
 
 def test_comprehends_local_openapi_into_summary_and_artifacts() -> None:
     result = comprehend_submission(PEGANA)

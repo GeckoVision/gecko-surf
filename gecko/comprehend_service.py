@@ -193,10 +193,17 @@ def _summarize(client: AgentApiClient, extra_warnings: list[str]) -> ComprehendR
     # gecko.json is already sanitized + control-plane-safe; reuse its name/description
     # rather than re-deriving (single source of truth for the emitted surface metadata).
     manifest = json.loads(artifacts["gecko.json"])
+    # Report the FULL comprehended surface, not just the auth-ungated subset. ``list_tools()``
+    # is the SERVED view — it hides tools the current (here: no-auth preview) session can't
+    # satisfy. A fully-gated API (every op behind a bearer token) would otherwise report
+    # "0 usable" even though all N ops were comprehended into first-call-correct tools. The
+    # comprehension summary is provider-facing — "what your API becomes" — and Gecko injects
+    # the credential at serve time, so an auth-gated tool IS usable, just gated.
     tools = [
         {"name": t["name"], "summary": _clean(t.get("description", ""), _SUMMARY_CAP)}
-        for t in client.list_tools()
+        for t in client.tools
     ]
+    gated = len(client.tools) - len(client.list_tools())
     quarantined = client.anchor.state == "quarantined"
     warnings = list(extra_warnings)
     if quarantined:
@@ -206,11 +213,17 @@ def _summarize(client: AgentApiClient, extra_warnings: list[str]) -> ComprehendR
             "check): auth injection is disabled and the result needs human review before "
             "you trust it.",
         )
+    elif gated:
+        warnings.append(
+            f"{gated} of {len(client.tools)} tools require authentication — Gecko injects "
+            "the credential at call time, so they are first-call-correct once a session is "
+            "configured (they are not callable un-authenticated)."
+        )
     return ComprehendResult(
         name=manifest["name"],
         description=manifest["description"],
         op_count=int(manifest["operations"]),
-        usable_tool_count=int(manifest["tools"]),
+        usable_tool_count=len(client.tools),
         tools=tools,
         artifacts=artifacts,
         quarantined=quarantined,
