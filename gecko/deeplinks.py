@@ -27,6 +27,15 @@ def claude_add_command(name: str, url: str) -> str:
     return f"claude mcp add --transport http {name} {url}"
 
 
+def claude_stdio_add_command(name: str, spawn: str) -> str:
+    """The Claude Code CLI line to add this server over **stdio** — the client spawns
+    ``spawn`` as a subprocess and talks over stdin/stdout. No port, no tunnel: the
+    zero-friction local path. ``spawn`` is the exact command that launches the server
+    in ``--stdio`` mode (e.g. ``uvx --from "gecko-surf[serve]" colosseum-mcp --stdio``
+    or ``gecko <spec> --stdio``)."""
+    return f"claude mcp add {name} -- {spawn}"
+
+
 def cursor_deeplink(name: str, url: str) -> str:
     """A Cursor one-click ``cursor://`` deeplink (base64 server config)."""
     config = base64.b64encode(json.dumps({"url": url}).encode("utf-8")).decode("ascii")

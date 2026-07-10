@@ -6,6 +6,9 @@ falls back silently to the surface bundled *inside* the package (comprehended fr
 Jupiter's published ``swagger.yaml``), so there is never a hard dependency on network
 access:
 
+    # zero-friction (recommended): your agent spawns it over stdio — no port, no tunnel
+    claude mcp add jupiter -- uvx --from "gecko-surf[serve]" jupiter-mcp --stdio
+    # or serve over HTTP (for a remote/shared client):
     uvx --from "gecko-surf[serve]" jupiter-mcp
     claude mcp add --transport http jupiter http://127.0.0.1:8000/mcp
 
@@ -38,6 +41,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from gecko.client import AgentApiClient
+from gecko.deeplinks import claude_stdio_add_command
+
+# The exact command a client spawns to run this surface over stdio (no port, no tunnel).
+STDIO_SPAWN = 'uvx --from "gecko-surf[serve]" jupiter-mcp --stdio'
 
 # Jupiter splits hosts by tier (verified against dev.jup.ag, 2026-07-10): the free
 # tier is keyless on lite-api.jup.ag; api.jup.ag is the API-key host. The bundled
@@ -100,6 +107,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="jupiter-mcp",
         description="Serve the Jupiter Swap API to your agent over MCP (keyless by default).",
+    )
+    p.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Serve over stdio (the client SPAWNS this process; no port, no tunnel) "
+        "instead of HTTP — the zero-friction local path.",
     )
     p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
@@ -192,26 +205,58 @@ def main(argv: list[str] | None = None) -> int:
 
     # Fail loudly on a bad Pro key before the agent ever connects (keyless just proceeds).
     key_ok, key_msg = _verify_key(client, has_key)
-    print(key_msg, file=sys.stdout if key_ok else sys.stderr)
+    # In stdio mode every human line goes to stderr (stdout is the JSON-RPC channel).
+    print(key_msg, file=sys.stderr if (args.stdio or not key_ok) else sys.stdout)
     if not key_ok:
         return 1
 
+    n = len(client.list_tools())
+
+    # stdio: the client spawns this process and talks over stdin/stdout — no port, no
+    # tunnel, no "0 tools." Startup note to stderr; any key still injected at call time.
+    if args.stdio:
+        from gecko.mcp_server import serve_stdio  # optional [serve] deps, lazy
+
+        print(
+            f"Jupiter Swap — {n} first-call-correct tools ready (stdio). "
+            f"surface source: {source}.",
+            file=sys.stderr,
+        )
+        serve_stdio(client, mode="live", server_name="jupiter")
+        return 0
+
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
-    print(f"Jupiter Swap — {len(client.list_tools())} first-call-correct tools ready.")
+    print(f"Jupiter Swap — {n} first-call-correct tools ready.")
     print(f"surface source: {source}")
     if has_key:
         print(
             "JUPITER_API_KEY injected at call time, hidden from the agent, sent only to Jupiter."
         )
-    print(f"Add it:  claude mcp add --transport http jupiter {mcp_url}")
+    print()
+    # Lead with stdio: no port, no tunnel, no "connected but 0 tools" localhost trap.
+    print(
+        "Recommended — zero-friction stdio (no port, no tunnel; your agent spawns it):"
+    )
+    print(f"  {claude_stdio_add_command('jupiter', STDIO_SPAWN)}\n")
+    print("Serving to a remote or shared client? Use HTTP instead:")
+    print(f"  claude mcp add --transport http jupiter {mcp_url}")
     # Self-diagnose the "connected but 0 tools" failure a sandboxed/remote agent hits
     # when its MCP client can't reach loopback (separate network namespace).
     if mcp_url.startswith(("http://127.0.0.1", "http://localhost")):
+        print("Connected but your agent shows 0 tools?")
+        print("  1. Wait ~20s for the client to poll, then re-open the tool list.")
         print(
-            "0 tools in your agent after it connects? Its MCP client can't reach "
-            "localhost.\n  Serve behind a tunnel:  cloudflared tunnel --url "
-            f"http://{args.host}:{args.port}\n"
-            "  then re-run with:  jupiter-mcp --public-url https://<name>.trycloudflare.com"
+            "  2. Clear a stale registration:  claude mcp remove jupiter  then re-add."
+        )
+        print(
+            "  3. Prefer --stdio (above) — it removes the localhost problem entirely."
+        )
+        print(
+            "  4. Truly need HTTP from a sandboxed/remote agent? Serve behind a tunnel:"
+        )
+        print(
+            f"       cloudflared tunnel --url http://{args.host}:{args.port}\n"
+            "       then re-run with:  jupiter-mcp --public-url https://<name>.trycloudflare.com"
         )
     serve_http(
         client,

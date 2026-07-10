@@ -7,6 +7,9 @@ Colosseum's docs — no OpenAPI is published), so there is never a hard dependen
 on network access:
 
     export COLOSSEUM_COPILOT_PAT=...      # https://arena.colosseum.org/copilot
+    # zero-friction (recommended): your agent spawns it over stdio — no port, no tunnel
+    claude mcp add colosseum -- uvx --from "gecko-surf[serve]" colosseum-mcp --stdio
+    # or serve over HTTP (for a remote/shared client):
     uvx --from "gecko-surf[serve]" colosseum-mcp
     claude mcp add --transport http colosseum http://127.0.0.1:8000/mcp
 
@@ -34,8 +37,12 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from gecko.client import AgentApiClient
+from gecko.deeplinks import claude_stdio_add_command
 
 BASE = "https://copilot.colosseum.com/api/v1"
+
+# The exact command a client spawns to run this surface over stdio (no port, no tunnel).
+STDIO_SPAWN = 'uvx --from "gecko-surf[serve]" colosseum-mcp --stdio'
 
 
 @dataclass
@@ -73,6 +80,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="colosseum-mcp",
         description="Serve the Colosseum Copilot API to your agent over MCP (BYOK).",
+    )
+    p.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Serve over stdio (the client SPAWNS this process; no port, no tunnel) "
+        "instead of HTTP — the zero-friction local path.",
     )
     p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
@@ -148,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     banner = keyring_fallback_banner(ref, resolver)
     if banner:
-        print(banner)
+        # stdout is the JSON-RPC channel in stdio mode — keep human notes on stderr.
+        print(banner, file=sys.stderr if args.stdio else sys.stdout)
     session = ResolvedSession(
         ref=ref, header_name="Authorization", scheme="bearer", resolver=resolver
     )
@@ -181,25 +195,54 @@ def main(argv: list[str] | None = None) -> int:
 
     # Fail loudly on a bad PAT before the agent ever connects (the #1 silent failure).
     pat_ok, pat_msg = _verify_pat(client)
-    print(pat_msg, file=sys.stdout if pat_ok else sys.stderr)
+    # In stdio mode every human line goes to stderr (stdout is the JSON-RPC channel).
+    print(pat_msg, file=sys.stderr if (args.stdio or not pat_ok) else sys.stdout)
     if not pat_ok:
         return 1
 
+    n = len(client.list_tools())
+
+    # stdio: the client spawns this process and talks over stdin/stdout — no port, no
+    # tunnel, no "0 tools." Startup note to stderr; PAT still injected at call time.
+    if args.stdio:
+        from gecko.mcp_server import serve_stdio  # optional [serve] deps, lazy
+
+        print(
+            f"Colosseum Copilot — {n} first-call-correct tools ready (stdio). "
+            f"surface source: {source}. PAT injected at call time, hidden from the agent.",
+            file=sys.stderr,
+        )
+        serve_stdio(client, mode="live", server_name="colosseum")
+        return 0
+
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
-    print(
-        f"Colosseum Copilot — {len(client.list_tools())} first-call-correct tools ready."
-    )
+    print(f"Colosseum Copilot — {n} first-call-correct tools ready.")
     print(f"surface source: {source}")
-    print("PAT injected at call time, hidden from the agent, sent only to Colosseum.")
-    print(f"Add it:  claude mcp add --transport http colosseum {mcp_url}")
+    print("PAT injected at call time, hidden from the agent, sent only to Colosseum.\n")
+    # Lead with stdio: no port, no tunnel, no "connected but 0 tools" localhost trap.
+    print(
+        "Recommended — zero-friction stdio (no port, no tunnel; your agent spawns it):"
+    )
+    print(f"  {claude_stdio_add_command('colosseum', STDIO_SPAWN)}\n")
+    print("Serving to a remote or shared client? Use HTTP instead:")
+    print(f"  claude mcp add --transport http colosseum {mcp_url}")
     # Self-diagnose the "connected but 0 tools" failure a sandboxed/remote agent hits
     # when its MCP client can't reach loopback (separate network namespace).
     if mcp_url.startswith(("http://127.0.0.1", "http://localhost")):
+        print("Connected but your agent shows 0 tools?")
+        print("  1. Wait ~20s for the client to poll, then re-open the tool list.")
         print(
-            "0 tools in your agent after it connects? Its MCP client can't reach "
-            "localhost.\n  Serve behind a tunnel:  cloudflared tunnel --url "
-            f"http://{args.host}:{args.port}\n"
-            "  then re-run with:  colosseum-mcp --public-url https://<name>.trycloudflare.com"
+            "  2. Clear a stale registration:  claude mcp remove colosseum  then re-add."
+        )
+        print(
+            "  3. Prefer --stdio (above) — it removes the localhost problem entirely."
+        )
+        print(
+            "  4. Truly need HTTP from a sandboxed/remote agent? Serve behind a tunnel:"
+        )
+        print(
+            f"       cloudflared tunnel --url http://{args.host}:{args.port}\n"
+            "       then re-run with:  colosseum-mcp --public-url https://<name>.trycloudflare.com"
         )
     serve_http(
         client,
