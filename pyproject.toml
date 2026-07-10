@@ -87,5 +87,5 @@ python_version = "3.11"
 # and the non-CI red-team LLM lane (gecko.redteam.llm) are OPTIONAL. Keep mypy clean
 # whether or not they are present — the engine itself stays dep-light.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "gecko.redteam.llm"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "certifi", "certifi.*", "gecko.redteam.llm"]
 ignore_missing_imports = true
