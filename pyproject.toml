@@ -18,6 +18,10 @@ gecko = "gecko.cli:_run"
 # COLOSSEUM_COPILOT_PAT). Ships in the package, so `uvx --from "gecko-surf[serve]"
 # colosseum-mcp` needs NO local file.
 colosseum-mcp = "gecko.examples.colosseum:main"
+# Bundled ready-to-use example surface — serve the Jupiter Swap API. Public/keyless by
+# default (free tier via lite-api.jup.ag); set JUPITER_API_KEY for the Pro host. Ships
+# in the package, so `uvx --from "gecko-surf[serve]" jupiter-mcp` needs NO local file.
+jupiter-mcp = "gecko.examples.jupiter:main"
 gecko-testgen = "gecko.testgen:_run"
 # Off-chain battle-test: run the 12 packaged scenarios, gate on the scorecard (exit 0
 # iff money_trusted). Deterministic $0 CI lane; `python -m gecko.redteam` works too.
@@ -93,5 +97,5 @@ python_version = "3.11"
 # and the non-CI red-team LLM lane (gecko.redteam.llm) are OPTIONAL. Keep mypy clean
 # whether or not they are present — the engine itself stays dep-light.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "gecko.redteam.llm"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm"]
 ignore_missing_imports = true
