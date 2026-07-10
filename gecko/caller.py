@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -21,6 +22,11 @@ from urllib.parse import quote, urlencode, urlsplit
 from .netguard import USER_AGENT, validate_public_url
 
 _UNFILLED = re.compile(r"\{([^}]+)\}")
+
+# An injectable live-execution seam: request -> (status, parsed_body). Default is the
+# real stdlib urllib path (``execute`` below). A light fake is injected in tests so the
+# whole call + self-heal path is falsifiable offline (Pattern B, $0, no network).
+LiveTransport = Callable[["PreparedRequest"], tuple[int, Any]]
 
 
 class CallError(ValueError):
@@ -141,12 +147,20 @@ def build_request(
     )
 
 
-def execute(req: PreparedRequest, timeout: int = 30) -> tuple[int, Any]:
+def execute(
+    req: PreparedRequest,
+    timeout: int = 30,
+    transport: LiveTransport | None = None,
+) -> tuple[int, Any]:
     """Live execution (stdlib). Returns (status_code, parsed_json_or_text).
 
     Used only in live mode; the demo/tests run in recorded mode and never hit
-    the network.
+    the network. An optional ``transport`` overrides the stdlib path (injected in
+    tests so the live + self-heal path is falsifiable offline); the default real
+    path is byte-identical to before.
     """
+    if transport is not None:
+        return transport(req)
     # SSRF guard before any live request: the base URL came from the spec (untrusted).
     validate_public_url(req.url)
     data = None

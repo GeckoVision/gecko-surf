@@ -16,11 +16,15 @@ whole flow is unit-testable with no network and no keys.
 from __future__ import annotations
 
 import json
+import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .credentials import ChainResolver, CredentialRef, default_resolver
+from .netguard import USER_AGENT, validate_public_url
 
 AUTH_JWT_HEADER = "Authorization"
 AUTH_APITOKEN_HEADER = "X-Api-Token"
@@ -40,6 +44,45 @@ class AuthSession(Protocol):
     """
 
     def auth_headers(self) -> dict[str, str]: ...
+
+
+class AuthError(Exception):
+    """Terminal auth failure after a bounded (once) self-heal — credentials are
+    rejected and re-auth did not recover them.
+
+    MUST be redacted: the message names only the endpoint/host and the HTTP status,
+    NEVER an access token, refresh token, or any secret (redact-before-raise). The
+    single leak suite asserts this.
+    """
+
+
+@runtime_checkable
+class RefreshableSession(Protocol):
+    """Optional, duck-typed capability ON TOP of ``AuthSession`` — a session that
+    knows its own expiry and can re-establish itself.
+
+    ``auth_headers()`` is the FROZEN seam (unchanged). ``expires_at()`` lets the
+    proactive branch refresh just before expiry; ``invalidate()`` lets the reactive
+    self-heal mark the session stale so the next ``auth_headers()`` re-establishes.
+
+    A plain ``AuthSession`` (no ``invalidate``/``expires_at``) is NOT a
+    ``RefreshableSession`` — the lifecycle hook is a no-op for it, so it behaves
+    byte-identically to today (100% back-compat, proven by the seam-identity tests).
+    """
+
+    def auth_headers(self) -> dict[str, str]: ...
+    def invalidate(self) -> None: ...
+    def expires_at(self) -> float | None: ...
+
+
+def is_refreshable(session: object) -> bool:
+    """True iff ``session`` carries the optional refresh capability (both
+    ``invalidate`` and ``expires_at`` are callable). Used by the caller's self-heal
+    hook to stay a strict no-op for plain sessions — never ``isinstance`` on a
+    non-runtime detail, just presence of the two extra methods."""
+    return callable(getattr(session, "invalidate", None)) and callable(
+        getattr(session, "expires_at", None)
+    )
 
 
 @dataclass
@@ -166,6 +209,157 @@ class StaticHeaderSession:
 def static_session(headers: dict[str, str]) -> StaticHeaderSession:
     """A session that injects fixed, non-secret headers (e.g. a publishable API key)."""
     return StaticHeaderSession(dict(headers))
+
+
+# --- OAuth2 refresh lifecycle (the first generic RefreshableSession) ----------
+
+# token_transport(token_url, form_fields) -> (status, parsed_json). Injected in tests
+# (a light fake), so the whole refresh grant is falsifiable offline with no network.
+TokenTransport = Callable[[str, dict[str, str]], tuple[int, Any]]
+
+
+def live_token_transport(url: str, form: dict[str, str]) -> tuple[int, Any]:
+    """Real OAuth token-endpoint POST (``application/x-www-form-urlencoded``).
+
+    SSRF-guarded like every live fetch (the token endpoint is config, still validated).
+    Returns ``(status, parsed_json)``; a non-JSON body comes back as raw text so the
+    caller classifies it as a rejected refresh rather than crashing.
+    """
+    validate_public_url(url)
+    data = urllib.parse.urlencode(form).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        body = resp.read().decode("utf-8")
+        try:
+            return resp.status, json.loads(body)
+        except json.JSONDecodeError:
+            return resp.status, body
+
+
+@dataclass
+class _InMemorySecret:
+    """A local-RAM credential backend for a secret already held in the process (e.g.
+    a refresh token read from ``~/.dpo2u/oauth.json``). Implements the resolver's
+    backend Protocol so the generic adapter keeps resolving through ``credentials.py``.
+
+    The value is ``repr=False`` so it never surfaces in a ``repr``; the control plane
+    never sees it (it lives only in this runner's memory)."""
+
+    secret: str = field(repr=False)
+    name: str = "in-memory"
+
+    def available(self) -> bool:
+        return True
+
+    def get(self, ref: CredentialRef) -> str | None:
+        return self.secret
+
+
+@dataclass
+class OAuth2Lifecycle:
+    """Provider-agnostic OAuth2 refresh session — the first ``RefreshableSession``.
+
+    Holds a short-lived access token + its ``exp`` in RAM (both ``repr=False``, never
+    persisted) and a *reference* to the long-lived refresh token, which is resolved
+    through ``credentials.py`` at refresh time and never stored on the instance or the
+    control plane (invariant #1). ``auth_headers()`` refreshes proactively when the
+    token is within ``leeway`` of ``exp``; ``invalidate()`` drops it so the reactive
+    self-heal re-establishes on the next call. A rejected refresh raises a redacted
+    ``AuthError`` (endpoint + status only — never a token).
+
+    ``token_endpoint`` and ``refresh_ref`` are parameters, so TxODDS/dpo2u/Jupiter are
+    data, not engine code (invariant #2). Header is ``Authorization: Bearer <token>``.
+    """
+
+    token_endpoint: str
+    refresh_ref: CredentialRef
+    resolver: ChainResolver = field(default_factory=default_resolver, repr=False)
+    header_name: str = "Authorization"
+    leeway: float = 60.0
+    extra_form: dict[str, str] = field(default_factory=dict)
+    transport: TokenTransport = field(default=live_token_transport, repr=False)
+    clock: Callable[[], float] = field(default=time.time, repr=False)
+    access_token: str | None = field(default=None, repr=False)
+    exp: float | None = field(default=None, repr=False)
+
+    def expires_at(self) -> float | None:
+        return self.exp
+
+    def invalidate(self) -> None:
+        """Mark the session stale — the next ``auth_headers()`` re-establishes."""
+        self.access_token = None
+        self.exp = None
+
+    def auth_headers(self) -> dict[str, str]:
+        if self._needs_refresh():
+            self._refresh()
+        return {self.header_name: f"Bearer {self.access_token}"}
+
+    def _needs_refresh(self) -> bool:
+        if self.access_token is None:
+            return True
+        if self.exp is None:  # a token with unknown expiry never proactively refreshes
+            return False
+        return self.clock() + self.leeway >= self.exp
+
+    def _refresh(self) -> None:
+        # Resolve the refresh token fresh (RAM only); it is never stored on ``self``.
+        refresh_token = self.resolver.resolve(self.refresh_ref)
+        form = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            **self.extra_form,
+        }
+        try:
+            status, body = self.transport(self.token_endpoint, form)
+        except Exception:  # noqa: BLE001 - normalize to a redacted terminal error
+            # ``from None`` drops the chained context so a lower-level error string can
+            # never carry the form (which holds the refresh token) into the traceback.
+            raise AuthError(
+                f"token refresh transport failed for {self.token_endpoint}"
+            ) from None
+        if status != 200 or not isinstance(body, dict) or not body.get("access_token"):
+            raise AuthError(
+                f"token refresh rejected (status {status}) at {self.token_endpoint}"
+            )
+        self.access_token = str(body["access_token"])
+        expires_in = body.get("expires_in")
+        self.exp = self.clock() + float(expires_in) if expires_in else None
+
+
+def oauth2_from_dpo2u(
+    path: str | Path | None = None,
+    transport: TokenTransport = live_token_transport,
+) -> OAuth2Lifecycle:
+    """Thin dpo2u shape over the generic ``OAuth2Lifecycle``.
+
+    Reads ``~/.dpo2u/oauth.json`` (``{access_token, refresh_token, expires_at}``) and
+    wires the dpo2u token endpoint. The refresh token is seeded into a local-RAM
+    resolver backend (never stored on the session, never on the control plane); the
+    access token + expiry seed the in-RAM state. The core stays provider-agnostic —
+    this is only the endpoint + refresh-ref glue.
+    """
+    target = Path(path) if path is not None else Path.home() / ".dpo2u" / "oauth.json"
+    data = json.loads(target.read_text())
+    ref = CredentialRef(api="dpo2u")
+    resolver = ChainResolver([_InMemorySecret(secret=str(data["refresh_token"]))])
+    exp_raw = data.get("expires_at")
+    return OAuth2Lifecycle(
+        token_endpoint="https://mcp.dpo2u.com/token",
+        refresh_ref=ref,
+        resolver=resolver,
+        transport=transport,
+        access_token=(str(data["access_token"]) if data.get("access_token") else None),
+        exp=(float(exp_raw) if exp_raw is not None else None),
+    )
 
 
 @dataclass

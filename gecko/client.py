@@ -15,14 +15,16 @@ from __future__ import annotations
 
 import logging
 import time
+import urllib.error
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from . import corpus
-from .access import AuthSession, stub_session
-from .caller import CallError, PreparedRequest, build_request, execute
+from .access import AuthError, AuthSession, is_refreshable, stub_session
+from .caller import CallError, LiveTransport, PreparedRequest, build_request, execute
 from .catalog import Catalog
 from .fusion import RRF_K, rrf_fuse
 from .events import emit_surf_event
@@ -96,6 +98,7 @@ class AgentApiClient:
         corpus_path: str | Path | None = None,
         surface_id: str | None = None,
         blurbs: Mapping[str, str] | None = None,
+        live_transport: LiveTransport | None = None,
     ):
         """Make an API agent-usable from its OpenAPI spec.
 
@@ -165,6 +168,10 @@ class AgentApiClient:
         self._auth_allowed_hosts: set[str] = set(self.anchor.trusted_hosts)
 
         self.session = session or stub_session()
+        # Injectable live-execution seam (default: real stdlib in ``caller.execute``).
+        # A light fake is injected in tests so the live + self-heal path is falsifiable
+        # offline; a real run leaves it None and hits the network exactly as before.
+        self._live_transport = live_transport
         # An empty auth-header dict means the session can't satisfy auth-gated ops,
         # so we hide them from the agent (it would only mis-call them). A session
         # WITH auth (e.g. TxODDS) surfaces everything, unchanged.
@@ -406,6 +413,45 @@ class AgentApiClient:
             return "recorded"
         return mode
 
+    # 401/403 = the auth-failure signals the reactive self-heal reacts to; every other
+    # status flows straight back to the agent (the lifecycle never engages).
+    _AUTH_FAIL_STATUSES = frozenset({401, 403})
+
+    def _run_live(self, req: PreparedRequest) -> tuple[int, Any]:
+        """Execute one live request, normalizing a raised ``HTTPError`` into a returned
+        ``(status, body)`` so the self-heal hook inspects 401/403 uniformly whether the
+        injected transport returned it or the stdlib path raised it. This normalization
+        is local to the live path — ``caller.execute`` itself is byte-identical."""
+        try:
+            return execute(req, transport=self._live_transport)
+        except urllib.error.HTTPError as exc:
+            try:
+                body: Any = exc.read().decode("utf-8")
+            except Exception:  # noqa: BLE001 - a body we can't read is not fatal here
+                body = ""
+            return exc.code, body
+
+    def _call_live(
+        self, tool_name: str, args: dict[str, Any], req: PreparedRequest
+    ) -> tuple[int, Any]:
+        """The live call with a bounded-once reactive self-heal. On 401/403 from a
+        refreshable session: invalidate, re-resolve fresh headers (the proactive refresh
+        fires inside ``auth_headers()``), retry the identical call ONCE. A second failure
+        raises a redacted ``AuthError`` — never an unbounded re-auth loop. A plain
+        (non-refreshable) session skips the hook entirely (seam identity)."""
+        status, body = self._run_live(req)
+        if status in self._AUTH_FAIL_STATUSES and is_refreshable(self.session):
+            self.session.invalidate()  # type: ignore[attr-defined]
+            req = self.prepare(tool_name, args)
+            status, body = self._run_live(req)
+            if status in self._AUTH_FAIL_STATUSES:
+                # redact-before-raise: only the host + status, never the token.
+                host = (urlsplit(req.url).hostname or "").lower()
+                raise AuthError(
+                    f"auth rejected after one re-auth (status {status}) for host {host}"
+                )
+        return status, body
+
     def call(
         self, tool_name: str, args: dict[str, Any], mode: str = "recorded"
     ) -> dict[str, Any]:
@@ -419,7 +465,7 @@ class AgentApiClient:
             self._capture(tool_name, None, exc, args, None, effective)
             raise
         if effective == "live":
-            status, body = execute(req)
+            status, body = self._call_live(tool_name, args, req)
             self._capture(
                 tool_name,
                 status,
