@@ -37,6 +37,7 @@ ARTIFACT_PATHS: tuple[str, ...] = (
     "gecko.json",
     ".well-known/gecko.json",
     "tools.md",
+    "SKILL.md",
 )
 
 _TITLE_CAP = 120
@@ -225,6 +226,107 @@ def _tools_md(client: AgentApiClient, meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_TAGS_CAP = 240
+# gecko-comprehended: derived from the spec, NOT a hand-authored chub doc. We deliberately
+# do NOT emit chub's official|maintainer|community trust tiers — Gecko's trust signal is
+# anchor.state + the poison flag (impl spec §2), so a single derivation marker is honest.
+_SKILL_SOURCE = "gecko-comprehended"
+
+
+def _yaml_scalar(text: str) -> str:
+    """Emit a `_safe` string as a YAML scalar that always parses.
+
+    JSON strings are a strict subset of YAML flow scalars, so ``json.dumps`` gives a
+    double-quoted, fully-escaped value that survives any residue `_safe` leaves (a stray
+    quote, colon, ``#``) without ever breaking the frontmatter — the load-bearing guard
+    behind emitting UNTRUSTED spec text into a machine-parsed header.
+    """
+    return json.dumps(text)
+
+
+def _skill_tags(client: AgentApiClient) -> str:
+    """Comma-joined spec tags of the USABLE surface — the skill's discovery vocabulary,
+    each tag routed through ``_safe``. Empty string when the spec carries no tags."""
+    usable = {t["name"] for t in client.list_tools()}
+    seen: list[str] = []
+    for op in client.operations:
+        if tool_name(op) not in usable:
+            continue
+        for tag in op.tags:
+            clean = _safe(tag, _NAME_CAP).lower()
+            if clean and clean not in seen:
+                seen.append(clean)
+    return _safe(",".join(seen), _TAGS_CAP)
+
+
+def _skill_md(client: AgentApiClient, meta: dict[str, Any]) -> str:
+    """First-call-correct BEHAVIORAL guidance for the comprehended surface, in the
+    Agent-Skills YAML-frontmatter shape (installable into any Agent-Skills/chub-aware
+    runtime). This is the artifact no OpenAPI dump contains: how to call the API right
+    the first time, with auth kept invisible. Single-sourced from ``client``, every field
+    through ``_safe``; USABLE ops only. LOCAL/BYOD — a file we write, never a publish."""
+    title = meta["title"]
+    n = meta["tools"]
+    desc = (
+        f"Call {title} correctly the first time — {n} first-call-correct agent "
+        f"tool{'s' if n != 1 else ''} for a Gecko-comprehended API. Describe your intent; "
+        f"auth is injected at call time and never appears here."
+    )
+    front = [
+        "---",
+        f"name: {_yaml_scalar(title)}",
+        f"description: {_yaml_scalar(_safe(desc, _DESC_CAP))}",
+        "metadata:",
+        f"  revision: {_yaml_scalar(str(meta['surface_rev']))}",
+        f"  source: {_yaml_scalar(_SKILL_SOURCE)}",
+        f"  tags: {_yaml_scalar(_skill_tags(client))}",
+        "---",
+        "",
+    ]
+    body = [
+        f"# {title} — first-call-correct skill",
+        "",
+        desc,
+        "",
+        "Gecko comprehended this API into first-call-correct tools — the painful/paywalled "
+        "long-tail an agent does not one-shot from raw docs. Auth is injected at call time "
+        "and is never in this file (control plane: no secrets, no payloads).",
+        "",
+        "## Call it right the first time",
+        "",
+        '1. Intent → tool: `search_capabilities("<what you want to do>")`.',
+        '2. Full contract: `get_capability("<tool name>")` → its inputSchema.',
+        "3. Call the tool by name with those inputs. Required params are marked `*` below.",
+        "",
+        "## Tools",
+        "",
+    ]
+    seen: set[str] = set()
+    for tool in client.list_tools():
+        name = _safe(tool["name"], _NAME_CAP)
+        if name in seen:  # two operationIds can sanitize to one name
+            continue
+        seen.add(name)
+        invoke = tool.get("_invoke", {}) or {}
+        method = _safe(invoke.get("method", ""), 10).upper()
+        path = _safe(invoke.get("path", ""), _PATH_CAP)
+        summary = _safe(tool.get("description", ""), _SUMMARY_CAP)
+        schema = tool.get("inputSchema", {}) or {}
+        required = set(schema.get("required", []) or [])
+        params = ", ".join(
+            f"{_safe(p, _NAME_CAP)}{'*' if p in required else ''}"
+            for p in (schema.get("properties", {}) or {})
+        )
+        route = f" ({method} {path})" if method and path else ""
+        line = f"- {name}{route}"
+        if summary:
+            line += f" — {summary}"
+        body.append(line)
+        if params:
+            body.append(f"  - inputs: {params}")
+    return "\n".join(front + body) + "\n"
+
+
 def build_artifacts(
     client: AgentApiClient,
     *,
@@ -246,4 +348,5 @@ def build_artifacts(
             _well_known(meta, mcp_url, site_url), indent=2
         ),
         "tools.md": _tools_md(client, meta),
+        "SKILL.md": _skill_md(client, meta),
     }

@@ -148,6 +148,15 @@ class McpSurface:
             tools.extend(decoy_tool_defs())
         return tools
 
+    def get_capability(self, name: str) -> dict[str, Any]:
+        """Fetch one tool's full callable def by name — the thin transport wrapper over
+        ``client.get_tool`` (dispatch only; all logic is in the package). This is the
+        explicit "I already know which tool, give me its full contract" step, so the agent
+        recovers the schema the above-scale ``list_tools`` ref projection withholds without
+        re-running ``search_capabilities``. Raises ``ToolNotFound`` for an unknown or
+        auth-gated-unavailable name."""
+        return self.client.get_tool(name)
+
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
         (→ treat as allow) if scoring itself raised — a scoring bug must never break the
@@ -209,6 +218,12 @@ class McpSurface:
                 session_id=session_id,
             )
             return enriched
+
+        # Progressive-disclosure fetch-one: resolve a ref to its full callable def. Thin
+        # dispatch to the package; not enumerated in list_tools (keeps that projection
+        # byte-identical), but callable by name once the agent knows which tool it wants.
+        if name == "get_capability":
+            return self.get_capability(arguments.get("name", ""))
 
         # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
         # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there

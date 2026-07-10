@@ -43,6 +43,15 @@ class IntegrityError(Exception):
     """Raised when the shipped tool set no longer matches the pinned spec (tamper)."""
 
 
+class ToolNotFound(CallError):
+    """Raised by ``get_tool`` for a name that is unknown OR auth-gated-unavailable.
+
+    A ``CallError`` subtype so the whole get→prepare→call path shares one error family.
+    The two cases collapse on purpose: an auth-gated tool the session can't satisfy is
+    hidden from the usable set, so it is indistinguishable from "unknown" to the agent —
+    we never leak that a callable-but-unauthed op exists (invariant #4)."""
+
+
 @dataclass(frozen=True)
 class ScoredHit:
     """A search result enriched with retrieval provenance — the introspection sibling
@@ -328,6 +337,20 @@ class AgentApiClient:
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [t for t in self.tools if t["name"] in self._usable_tool_names]
+
+    def get_tool(self, name: str) -> dict[str, Any]:
+        """Fetch ONE usable tool's full callable def by name — the explicit
+        fetch-one-in-full step (progressive disclosure) that completes the
+        ref→resolve→call loop the above-scale ``to_lightweight_ref`` projection opens.
+
+        Pure lookup: no network, no new comprehension, control-plane safe by construction
+        (tool defs already hide auth headers, invariant #4). Resolves against the
+        auth-filtered usable set, so an unknown OR auth-gated-unavailable name raises a
+        typed ``ToolNotFound`` — never a bare ``KeyError``, never a leaked uncallable def.
+        """
+        if name not in self._usable_tool_names:
+            raise ToolNotFound(f"no usable tool named {name!r}")
+        return self._tool_by_name[name]
 
     def _assert_tools_integrity(self) -> None:
         """Fail closed if the shipped tools drifted from the pinned-spec revision."""

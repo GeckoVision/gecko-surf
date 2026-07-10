@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.2.3"
+version = "0.2.4"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 # README becomes the PyPI long-description; it carries the `mcp-name:` marker the
 # MCP Registry matches to prove PyPI ownership. Without this, the description is empty.
@@ -30,6 +30,12 @@ gecko-telemetry = "gecko.telemetry:_run"
 serve = [
     "mcp[cli]>=1.28.1",
     "uvicorn>=0.49.0",
+]
+# OS-keychain credential backend (gecko.credentials.KeyringBackend + `gecko auth`).
+# OPTIONAL by design: absent this extra, KeyringBackend.available() is False and the
+# resolver degrades to the env fallback, so a plain install stays dep-light and runs.
+credentials = [
+    "keyring>=25",
 ]
 # Usage-event sink (gecko.events -> gecko_events.surf_events). Optional: absent =>
 # gecko.events is a no-op, so a plain OSS install never needs it and never phones
@@ -87,5 +93,5 @@ python_version = "3.11"
 # and the non-CI red-team LLM lane (gecko.redteam.llm) are OPTIONAL. Keep mypy clean
 # whether or not they are present — the engine itself stays dep-light.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "gecko.redteam.llm"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "gecko.redteam.llm"]
 ignore_missing_imports = true

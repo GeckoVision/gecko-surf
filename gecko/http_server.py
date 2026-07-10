@@ -485,6 +485,7 @@ def build_http_app(
         "gecko.json": "application/json",
         ".well-known/gecko.json": "application/json",
         "tools.md": "text/markdown; charset=utf-8",
+        "SKILL.md": "text/markdown; charset=utf-8",
     }
     artifact_routes: list[Any] = []
     client_for_emit = getattr(surface, "client", None)
