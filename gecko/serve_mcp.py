@@ -69,6 +69,13 @@ _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_opena
 _TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
 _JITO_SPEC = _ROOT / "examples" / "jito_demo" / "spec" / "jito_openapi.json"
 
+# Jupiter Swap — keyless + PUBLIC, so UNLIKE TxLINE/Jito we serve it LIVE: real swap
+# quotes from Jupiter's free lite-api host. No key, no cost, public data — a genuine
+# external-call demo (the agent gets real data, not a synthesized sample), which is why
+# it's the surface we point external agents at. The hosted risk gate is active on it too.
+_JUPITER_SPEC = _ROOT / "gecko" / "examples" / "jupiter_swap_openapi.json"
+_JUPITER_BASE = "https://lite-api.jup.ag/swap/v1"  # keyless free-tier host
+
 PUBLIC_HOST = "mcp.geckovision.tech"
 PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
@@ -97,6 +104,23 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             McpSurface(
                 AgentApiClient(str(_JITO_SPEC), session=public_session()),
                 mode="recorded",
+                enforce=hosted_enforce,
+            ),
+        )
+    )
+    # Jupiter Swap — served LIVE (keyless, public): a real external-call demo. base_url is
+    # the free-tier host; public_session (no auth) means no secret can leak, and all four
+    # ops are ungated so they're visible. The risk gate still runs.
+    surfaces.append(
+        (
+            "jupiter",
+            McpSurface(
+                AgentApiClient(
+                    str(_JUPITER_SPEC),
+                    base_url=_JUPITER_BASE,
+                    session=public_session(),
+                ),
+                mode="live",
                 enforce=hosted_enforce,
             ),
         )
