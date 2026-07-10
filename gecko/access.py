@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .credentials import ChainResolver, CredentialRef, default_resolver
+from .identity import SessionIdentity
 
 AUTH_JWT_HEADER = "Authorization"
 AUTH_APITOKEN_HEADER = "X-Api-Token"
@@ -193,3 +194,32 @@ class ResolvedSession:
         secret = self.resolver.resolve(self.ref)  # may raise CredentialError
         value = f"Bearer {secret}" if self.scheme == "bearer" else secret
         return {self.header_name: value}
+
+
+@dataclass
+class GovernedSession:
+    """Governance adapter: an ``AuthSession`` (usually a ``ResolvedSession``) bound
+    to a ``SessionIdentity`` (the operator's policy + a non-secret free-tier id).
+
+    The whole point is that the ``AuthSession`` seam is UNCHANGED for the caller:
+    ``auth_headers()`` returns the **byte-identical** dict the underlying session
+    returns. The identity/policy rides alongside as control-plane metadata — it
+    never alters the wire headers. (Shape-now-token-later: once ``SessionIdentity``
+    mints a per-session token, credential selection-by-policy happens HERE, still
+    behind the same seam; today the identity is pass-through, so headers flow
+    through untouched.)
+
+    ``repr`` is leak-free by delegation: it prints the underlying session's own
+    (non-secret) ``repr`` and the identity's non-secret id + policy shape. A
+    ``ResolvedSession`` inner keeps its secret out of ``repr`` regardless; this
+    adapter adds no new leak surface. Recorded mode never constructs this — only
+    live mode governs a real value-moving session.
+    """
+
+    inner: AuthSession
+    identity: SessionIdentity
+
+    def auth_headers(self) -> dict[str, str]:
+        # Seam held: the governed session is byte-identical on the wire. The policy
+        # is consulted out-of-band (never here) so the header dict never diverges.
+        return self.inner.auth_headers()
