@@ -12,11 +12,13 @@ agent comprehends, with any task set, and read the numbers.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping, get_args
 
 from .client import AgentApiClient
+from .ingest import Operation
 
 # --- Golden-set retrieval eval (the frozen bar every semantic-catalog stage must beat) ---
 #
@@ -214,3 +216,78 @@ def evaluate_tasks(
         "top5_rate": sum(r["in_top5"] for r in results) / n,
         "well_formed_rate": sum(r["well_formed"] for r in results) / n,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Tier-classifier gatekeeper (semantic-depth §2.6, §6.1). The FALSIFIER-FIRST artifact:
+# it can DISPROVE the tier signal offline before it ships in the live scorer — if the frozen
+# golden set cannot clear precision >= 0.95 @ recall >= 0.80, the tier signal does not ship.
+# --------------------------------------------------------------------------- #
+TIERS: tuple[str, ...] = ("read", "write", "transfer")
+
+
+@dataclass(frozen=True)
+class TierEval:
+    """The transfer-class precision/recall + the full 3x3 confusion matrix.
+
+    Precision is measured over HIGH-confidence ``transfer`` predictions only — the class that
+    can actually BLOCK a paying call (a ``transfer``/low never blocks: 12 + a 35-pt predicate
+    = 47 < block_at 60). A low-confidence false positive costs a step_up nudge, not a blocked
+    call, so it does not count against the precision floor (semantic-depth §2.6). Recall counts
+    any true transfer detected as ``transfer`` (high OR low) — a missed transfer degrades to
+    ``write``, the recall miss.
+    """
+
+    precision: float
+    recall: float
+    confusion: Mapping[tuple[str, str], int]
+    transfer_true: int
+    transfer_high_pred: int
+
+
+def load_tier_labels(path: str | Path) -> list[dict[str, str]]:
+    """Parse the frozen ``tier_labels.jsonl`` (``{spec, operation_id, tier}`` per line)."""
+    rows: list[dict[str, str]] = []
+    for lineno, raw in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines(), 1
+    ):
+        line = raw.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        tier = obj.get("tier")
+        oid = obj.get("operation_id")
+        if tier not in TIERS or not oid:
+            raise GoldenError(f"{path}:{lineno}: bad tier label {obj!r}")
+        rows.append({"spec": obj.get("spec", ""), "operation_id": oid, "tier": tier})
+    return rows
+
+
+def evaluate_tier(
+    operations: Sequence[Operation], labels: Mapping[str, str]
+) -> TierEval:
+    """Score ``classify_operation`` over the labeled ops. Pure/offline/$0."""
+    from .risk import classify_operation
+
+    confusion: dict[tuple[str, str], int] = {}
+    transfer_true = transfer_caught = transfer_high_pred = transfer_high_correct = 0
+    for op in operations:
+        true = labels.get(op.operation_id)
+        if true is None:
+            continue
+        res = classify_operation(op)
+        pred = res.tier
+        confusion[(true, pred)] = confusion.get((true, pred), 0) + 1
+        if true == "transfer":
+            transfer_true += 1
+            if pred == "transfer":
+                transfer_caught += 1
+        if pred == "transfer" and res.confidence == "high":
+            transfer_high_pred += 1
+            if true == "transfer":
+                transfer_high_correct += 1
+    precision = (
+        transfer_high_correct / transfer_high_pred if transfer_high_pred else 1.0
+    )
+    recall = transfer_caught / transfer_true if transfer_true else 1.0
+    return TierEval(precision, recall, confusion, transfer_true, transfer_high_pred)
