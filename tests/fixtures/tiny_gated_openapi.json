@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Gated API", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.com" }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    }
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/secret": {
+      "get": {
+        "operationId": "getSecret",
+        "summary": "Fetch a protected resource",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

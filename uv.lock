@@ -306,13 +306,11 @@ name = "gecko-surf"
 version = "0.2.4"
 source = { editable = "." }
 dependencies = [
+    { name = "keyring" },
     { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
-credentials = [
-    { name = "keyring" },
-]
 dense = [
     { name = "anthropic" },
     { name = "certifi" },
@@ -348,7 +346,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'fcc'", specifier = ">=0.40" },
     { name = "anthropic", marker = "extra == 'sosbot'", specifier = ">=0.40" },
     { name = "certifi", marker = "extra == 'dense'", specifier = ">=2024.0" },
-    { name = "keyring", marker = "extra == 'credentials'", specifier = ">=25" },
+    { name = "keyring", specifier = ">=25" },
     { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
     { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
     { name = "pymongo", marker = "extra == 'dense'", specifier = ">=4.10" },

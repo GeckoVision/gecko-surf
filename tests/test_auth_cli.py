@@ -68,7 +68,9 @@ def test_auth_set_reads_secret_via_getpass_never_argv_or_disk(
 def test_auth_set_refuses_without_keychain(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delitem(sys.modules, "keyring", raising=False)  # keyring absent
+    monkeypatch.setitem(
+        sys.modules, "keyring", None
+    )  # force ImportError (keyring absent)
     monkeypatch.setattr("getpass.getpass", _fail_if_called)  # must refuse first
 
     rc = main(["auth", "set", "txodds"])

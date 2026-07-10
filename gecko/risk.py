@@ -19,9 +19,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from .catalog import _token_list  # the shared identifier tokenizer (do not re-invent)
+from .policy import AgentPolicy
 from .sanitize import looks_like_secret_value
 
 logger = logging.getLogger("gecko.risk")
@@ -270,6 +273,392 @@ def _scope(tool_name: str, allowed: bool, policy: RiskPolicy | None) -> list[Rea
     return []
 
 
+# --------------------------------------------------------------------------- #
+# Semantic tier (L0->L2) — comprehension-derived, NOT the HTTP verb. A deterministic
+# weighted vote over money-verbs in the path/operationId (Feature A) + an amount∧recipient
+# arg-shape co-occurrence in the request body/params (Feature B, the sharp one) + a weak
+# security-scope corroboration (Feature C). Pure/offline (invariant #2: data(spec) only).
+# Tier feeds `score_call` as a Reason; it is NEVER a member of BLOCKING_SIGNALS — a block on
+# a transfer needs the intersection with an AgentPolicy predicate (cap / recipient).
+# --------------------------------------------------------------------------- #
+Tier = Literal["read", "write", "transfer"]
+TierConfidence = Literal["high", "low"]
+
+#: Mirror of ``enforce.WRITE_METHODS`` (kept local to avoid a risk<->enforce import cycle;
+#: enforce imports ``RiskAssessment`` from here). Single semantic source stays enforce.
+_WRITE_METHODS: frozenset[str] = frozenset({"post", "put", "patch", "delete"})
+
+#: Feature A — the DELIBERATELY-NARROW money-verb lexicon (over-broad verbs false-positive
+#: and would block a paying call, like ``_INJECTION_MARKERS``). Matched as WHOLE tokens on
+#: the camelCase/snake-split path+operationId; ``order`` is excluded (sort/purchase noise).
+MONEY_VERBS: frozenset[str] = frozenset(
+    {
+        "transfer",
+        "transfers",
+        "send",
+        "withdraw",
+        "withdrawal",
+        "withdrawals",
+        "payout",
+        "payouts",
+        "disburse",
+        "remit",
+        "wire",
+        "settle",
+        "settlement",
+        "charge",
+        "capture",
+        "refund",
+        "redeem",
+        "spend",
+        "debit",
+        "checkout",
+        "purchase",
+        "pay",
+        "swap",
+        "mint",
+        "burn",
+    }
+)
+
+#: A quote/estimate commits NO value — it is a read-shaped projection of a transfer. Same
+#: discipline as the "GET listing does not lift tier" and "order excluded" guards in the
+#: lexicon design: these whole tokens cap the tier at ``write`` (never ``transfer``), so a
+#: `transferQuote`/`swapQuote`/`purchase/quote` op cannot false-positive a spend.
+_QUOTE_MARKERS: frozenset[str] = frozenset(
+    {"quote", "quotes", "quotation", "estimate", "preview", "simulate", "simulation"}
+)
+
+#: Feature B — amount-shaped field names. ``amount``/``price`` confirm as WHOLE tokens
+#: regardless of type/required (real specs carry decimal-string amounts); the rest confirm
+#: only as a required numeric (whole-token, type number/integer, required=true).
+_AMOUNT_NAMES: frozenset[str] = frozenset(
+    {"amount", "value", "quantity", "qty", "price", "total", "sum", "cost", "fee"}
+)
+_STRONG_AMOUNT: frozenset[str] = frozenset({"amount", "price"})
+
+#: Feature B — recipient/destination-shaped field names. ``to`` counts ONLY as an exact
+#: field name (never a token, or "auto"/"total" would trip it — the tokenizer splits those).
+_RECIPIENT_NAMES: frozenset[str] = frozenset(
+    {
+        "recipient",
+        "destination",
+        "dest",
+        "payee",
+        "beneficiary",
+        "address",
+        "wallet",
+        "account",
+        "iban",
+        "counterparty",
+        "receiver",
+        "to",
+    }
+)
+
+#: Feature C — a security scope naming a payment/write capability weakly corroborates.
+_PAYMENT_SCOPE_TOKENS: frozenset[str] = frozenset(
+    {
+        "payments",
+        "payment",
+        "transfer",
+        "transfers",
+        "withdraw",
+        "withdrawals",
+        "payout",
+        "payouts",
+        "disburse",
+        "spend",
+    }
+)
+
+#: Amount-arg names the GOVERNANCE cap predicate extracts from the actual call args (kept
+#: tighter than ``_AMOUNT_NAMES``: the clearly-monetary tokens, so a benign ``value``/``qty``
+#: does not trip a spend-cap warning).
+_CAP_AMOUNT_TOKENS: frozenset[str] = frozenset(
+    {"amount", "price", "total", "cost", "fee"}
+)
+
+
+@dataclass(frozen=True)
+class TierResult:
+    """The comprehension-derived operation tier + how confident the vote was. ``high`` = a
+    confirmed transfer (Feature B, or a money-verb + one corroborating half-shape); ``low`` =
+    a lone money-verb with no confirming shape (a candidate that never hard-blocks)."""
+
+    tier: Tier
+    confidence: TierConfidence
+
+
+def _is_write_method(method: str) -> bool:
+    return (method or "get").lower() in _WRITE_METHODS
+
+
+def _request_schema(request_body: Any) -> dict[str, Any]:
+    """The JSON body schema out of an OpenAPI ``requestBody`` (application/json first)."""
+    if not isinstance(request_body, dict):
+        return {}
+    content = request_body.get("content") or {}
+    media = content.get("application/json") or next(iter(content.values()), None)
+    schema = media.get("schema") if isinstance(media, dict) else None
+    return schema if isinstance(schema, dict) else {}
+
+
+def _collect_props(
+    schema: dict[str, Any], out: list[tuple[str, Any, bool]], depth: int
+) -> None:
+    """Recursively gather ``(field_name, json_type, required)`` from a body schema, walking
+    nested objects and anyOf/oneOf/allOf/items. Depth-bounded (cycle/blowup guard)."""
+    if depth > 6 or not isinstance(schema, dict):
+        return
+    required = set(schema.get("required") or [])
+    for name, spec in (schema.get("properties") or {}).items():
+        if isinstance(spec, dict):
+            out.append((name, spec.get("type"), name in required))
+            _collect_props(spec, out, depth + 1)
+        else:
+            out.append((name, None, name in required))
+    for combiner in ("anyOf", "oneOf", "allOf"):
+        for sub in schema.get(combiner) or []:
+            _collect_props(sub, out, depth + 1)
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _collect_props(items, out, depth + 1)
+
+
+def _is_amount_shaped(name: str, jtype: Any, required: bool) -> bool:
+    tokens = set(_token_list(name))
+    if tokens & _STRONG_AMOUNT:  # amount/price: whole token, any type
+        return True
+    return bool(tokens & _AMOUNT_NAMES) and jtype in ("number", "integer") and required
+
+
+def _is_recipient_shaped(name: str) -> bool:
+    if name == "to":  # exact field name only
+        return True
+    return bool(set(_token_list(name)) & (_RECIPIENT_NAMES - {"to"}))
+
+
+def _body_shapes(request_body: Any, parameters: Any) -> tuple[bool, bool]:
+    """Feature B: does the body/params carry an amount-shaped AND/OR a recipient-shaped
+    field? Returns ``(amount_shaped, recipient_shaped)``."""
+    props: list[tuple[str, Any, bool]] = []
+    _collect_props(_request_schema(request_body), props, 0)
+    for p in parameters or []:
+        pschema = getattr(p, "schema", None)
+        ptype = pschema.get("type") if isinstance(pschema, dict) else None
+        props.append(
+            (getattr(p, "name", ""), ptype, bool(getattr(p, "required", False)))
+        )
+    amount = any(_is_amount_shaped(n, t, r) for n, t, r in props)
+    recipient = any(_is_recipient_shaped(n) for n, _t, _r in props)
+    return amount, recipient
+
+
+def _payment_scope(security: Any) -> bool:
+    """Feature C: any OAuth/security scope naming a payment/write capability."""
+    if not security:
+        return False
+    tokens: set[str] = set()
+    for entry in security:
+        if isinstance(entry, dict):
+            for scopes in entry.values():
+                for scope in scopes or []:
+                    tokens |= set(_token_list(str(scope)))
+    return bool(tokens & _PAYMENT_SCOPE_TOKENS)
+
+
+def classify_tier(
+    *,
+    method: str,
+    path: str = "",
+    operation_id: str = "",
+    request_body: Any = None,
+    parameters: Any = None,
+    security: Any = None,
+) -> TierResult:
+    """The pure tier vote. Read unless state-changing; then Feature B (amount∧recipient)
+    or a money-verb + one half-shape confirms ``transfer`` (high); a lone money-verb is a
+    ``transfer`` candidate (low); everything else state-changing is ``write``."""
+    if not _is_write_method(method):
+        return TierResult("read", "high")
+    tokens = set(_token_list(path)) | set(_token_list(operation_id))
+    if tokens & _QUOTE_MARKERS:  # a quote/estimate never moves value
+        return TierResult("write", "high")
+    money_verb = bool(tokens & MONEY_VERBS)
+    amount, recipient = _body_shapes(request_body, parameters)
+    if amount and recipient:
+        return TierResult("transfer", "high")
+    if money_verb and (amount or recipient or _payment_scope(security)):
+        return TierResult("transfer", "high")
+    if money_verb:
+        return TierResult("transfer", "low")
+    return TierResult("write", "high")
+
+
+def classify_operation(op: Any) -> TierResult:
+    """Convenience adapter: classify a normalized ``ingest.Operation``."""
+    return classify_tier(
+        method=getattr(op, "method", "get"),
+        path=getattr(op, "path", ""),
+        operation_id=getattr(op, "operation_id", ""),
+        request_body=getattr(op, "request_body", None),
+        parameters=getattr(op, "parameters", None),
+        security=getattr(op, "security", None),
+    )
+
+
+def _op_risk_tiered(tier: TierResult, method: str) -> list[Reason]:
+    """Tier-aware sibling of ``_op_risk``: a comprehension-derived ``transfer`` emits
+    ``op.transfer`` (25) / ``op.transfer_maybe`` (12); anything else falls back to the flat
+    verb weighting (write/destructive). ADDITIVE, never categorical — ``transfer`` is not in
+    BLOCKING_SIGNALS, so 25 alone stays below ``block_at`` (tier never blocks on its own)."""
+    if tier.tier == "transfer":
+        if tier.confidence == "high":
+            return [
+                Reason(
+                    "op.transfer",
+                    25,
+                    "transfer/spend operation — moves value or issues an irreversible "
+                    "external effect (comprehension-derived)",
+                )
+            ]
+        return [
+            Reason(
+                "op.transfer_maybe",
+                12,
+                "possible transfer/spend operation (low confidence — a lone money-verb)",
+            )
+        ]
+    return _op_risk(method)
+
+
+# --------------------------------------------------------------------------- #
+# Governance predicates (AgentPolicy) — the OTHER half of the block. Each fires on its own
+# condition (an over-cap amount / an off-allowlist recipient in the actual args). The weight
+# is SCALED BY TIER so the block is intersection-only: full weight (35) ONLY when the op is a
+# comprehension-derived ``transfer`` — transfer(25) + predicate(35) = 60 = block_at. Off a
+# transfer the predicate is a mild step_up weight (15), so a predicate alone, two predicates,
+# or a predicate on a benign metered write can NEVER reach block_at (15 + 15 + 15 = 45 < 60).
+# A ``transfer``/low (12) + predicate(35) = 47 also stays below block — only a CONFIRMED
+# transfer hard-blocks. Validated by the governance falsifier, NOT by joining BLOCKING_SIGNALS.
+# --------------------------------------------------------------------------- #
+GOVERNANCE_POINTS_TRANSFER = 35
+GOVERNANCE_POINTS_OTHER = 15
+
+
+def _governance_points(tier: TierResult | None) -> int:
+    """Full weight only at the transfer intersection; a mild step_up weight otherwise."""
+    if tier is not None and tier.tier == "transfer":
+        return GOVERNANCE_POINTS_TRANSFER
+    return GOVERNANCE_POINTS_OTHER
+
+
+def _parse_amount(value: Any) -> Decimal | None:
+    """Coerce a call-arg value to a Decimal, or ``None`` if it cannot be parsed. The cap
+    predicate FAILS SAFE on ``None`` (cannot assert over-cap -> step_up via tier, not block)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return Decimal(str(value))
+        except InvalidOperation:
+            return None
+    if isinstance(value, str):
+        cleaned = value.strip().lstrip("$€£").replace(",", "")
+        try:
+            return Decimal(cleaned)
+        except InvalidOperation:
+            return None
+    return None
+
+
+def _walk_args(args: Any, depth: int = 0) -> list[tuple[str, Any]]:
+    """Flatten ``(key, value)`` pairs from nested call args (dicts/lists), depth-bounded."""
+    out: list[tuple[str, Any]] = []
+    if depth > 8:
+        return out
+    if isinstance(args, dict):
+        for key, val in args.items():
+            out.append((str(key), val))
+            out.extend(_walk_args(val, depth + 1))
+    elif isinstance(args, list):
+        for item in args:
+            out.extend(_walk_args(item, depth + 1))
+    return out
+
+
+def _extract_amount(args: dict[str, Any]) -> Decimal | None:
+    """The largest parseable amount-shaped arg value (most conservative for a cap check)."""
+    amounts: list[Decimal] = []
+    for key, val in _walk_args(args):
+        if set(_token_list(key)) & _CAP_AMOUNT_TOKENS:
+            parsed = _parse_amount(val)
+            if parsed is not None:
+                amounts.append(parsed)
+    return max(amounts) if amounts else None
+
+
+def _extract_recipients(args: dict[str, Any]) -> list[str]:
+    """String values under recipient-shaped arg keys (at any nesting depth)."""
+    out: list[str] = []
+    for key, val in _walk_args(args):
+        if isinstance(val, str) and _is_recipient_shaped(key):
+            out.append(val)
+    return out
+
+
+def _cap_signal(
+    args: dict[str, Any],
+    agent_policy: AgentPolicy | None,
+    method: str,
+    tier: TierResult | None,
+) -> list[Reason]:
+    if agent_policy is None or agent_policy.spend_cap is None:
+        return []
+    if not _is_write_method(method):
+        return []  # a read moves no value
+    amount = _extract_amount(args)
+    if amount is None:  # fail SAFE: unparseable/absent amount cannot assert over-cap
+        return []
+    if amount > agent_policy.spend_cap:
+        return [
+            Reason(
+                "cap.exceeded",
+                _governance_points(tier),
+                f"amount {amount} exceeds the operator spend cap "
+                f"{agent_policy.spend_cap}",
+            )
+        ]
+    return []
+
+
+def _recipient_signal(
+    args: dict[str, Any],
+    agent_policy: AgentPolicy | None,
+    method: str,
+    tier: TierResult | None,
+) -> list[Reason]:
+    if agent_policy is None or not agent_policy.recipient_allowlist:
+        return []
+    if not _is_write_method(method):
+        return []
+    off_list = [
+        r
+        for r in _extract_recipients(args)
+        if r not in agent_policy.recipient_allowlist
+    ]
+    if off_list:
+        return [
+            Reason(
+                "recipient.not_allowlisted",
+                _governance_points(tier),
+                f"recipient '{off_list[0]}' is not in the operator allow-list",
+            )
+        ]
+    return []
+
+
 def score_call(
     *,
     tool_name: str,
@@ -281,6 +670,8 @@ def score_call(
     tool_description: str = "",
     allowed: bool = True,
     policy: RiskPolicy | None = None,
+    tier: TierResult | None = None,
+    agent_policy: AgentPolicy | None = None,
 ) -> RiskAssessment:
     """Score one agent tool-call. Comprehension-native signals dominate the weighting.
 
@@ -301,9 +692,19 @@ def score_call(
     reasons += _run_signal("schema", _schema_conformance, schema, a)
     reasons += _run_signal("poison", _poisoning, tool_description, a)
     reasons += _run_signal("exfil", _exfil_host, a, hosts, schema)
-    reasons += _run_signal("op", _op_risk, method)
+    # Tier-aware op weighting when a comprehension-derived tier is supplied; otherwise the
+    # flat verb weighting (existing callers pass no tier and are byte-identical).
+    if tier is not None:
+        reasons += _run_signal("op", _op_risk_tiered, tier, method)
+    else:
+        reasons += _run_signal("op", _op_risk, method)
     reasons += _run_signal("provenance", _provenance, surface_state)
     reasons += _run_signal("scope", _scope, tool_name, allowed, policy)
+    # Governance predicates: no-ops unless an AgentPolicy authors a cap / allow-list.
+    reasons += _run_signal("cap", _cap_signal, a, agent_policy, method, tier)
+    reasons += _run_signal(
+        "recipient", _recipient_signal, a, agent_policy, method, tier
+    )
 
     score = min(100, sum(r.points for r in reasons))
     step_up = policy.step_up_at if policy else 30
