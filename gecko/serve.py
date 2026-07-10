@@ -18,9 +18,13 @@ from typing import Any
 
 from .access import public_session
 from .client import AgentApiClient
-from .deeplinks import all_add_strings
+from .deeplinks import all_add_strings, claude_stdio_add_command
 from .http_server import MCP_PATH, serve_http
+from .mcp_server import serve_stdio
 from .netguard import UnsafeUrlError, validate_public_url
+
+
+_DEFAULT_REGISTRY_URL = "https://mcp.geckovision.tech"
 
 
 def _slugify(text: str, fallback: str = "gecko") -> str:
@@ -65,7 +69,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     p.add_argument(
         "--registry-url",
-        default="https://mcp.geckovision.tech",
+        default=_DEFAULT_REGISTRY_URL,
         help="Registry base URL.",
     )
     p.add_argument(
@@ -73,6 +77,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=None,
         help="Env var holding the PROVIDER bearer token — injected locally at "
         "call time, never sent to Gecko.",
+    )
+    p.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Serve over stdio (the client SPAWNS this process; no port, no tunnel) "
+        "instead of HTTP. The zero-friction local path — recommended for a single "
+        "developer on one machine.",
     )
     p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
@@ -141,29 +152,69 @@ def _emit(
     return 0
 
 
-def _print_banner(name: str, mcp_url: str, summary: str) -> None:
+def _stdio_spawn(args: argparse.Namespace) -> str:
+    """The exact command a client spawns to run THIS surface over stdio — the spawn
+    target for the recommended ``claude mcp add <name> -- <spawn>`` line. Mirrors how
+    the surface was selected (a spec URL/path vs a registry name)."""
+    if args.registry:
+        spawn = f"gecko --registry {args.registry}"
+        if args.registry_url and args.registry_url != _DEFAULT_REGISTRY_URL:
+            spawn += f" --registry-url {args.registry_url}"
+    else:
+        spawn = f"gecko {args.spec}"
+    if args.auth_env:
+        spawn += f" --auth-env {args.auth_env}"
+    return spawn + " --stdio"
+
+
+def _print_banner(name: str, mcp_url: str, summary: str, stdio_spawn: str) -> None:
     print("Gecko — make any API agent-usable (gecko-surf)\n" + "=" * 56)
     print(summary)
     print("Control plane: Gecko stores only the API surface — never your data,")
     print("never response payloads, never secrets.\n")
-    print(f"MCP URL (Streamable HTTP):  {mcp_url}\n")
-    print("Add it to an agent (one step):")
+
+    # Lead with stdio: the client spawns this process over stdin/stdout, so there is
+    # NO port and NO tunnel — it sidesteps the "connected but 0 tools" localhost trap
+    # entirely. This is the recommended path for a single developer on one machine.
+    print(
+        "Recommended — zero-friction stdio (no port, no tunnel; your agent spawns it):"
+    )
+    print(f"  {claude_stdio_add_command(name, stdio_spawn)}")
+    packaged_spawn = f'uvx --from "gecko-surf[serve]" {name}-mcp --stdio'
+    print(
+        f"  published as a package?  {claude_stdio_add_command(name, packaged_spawn)}\n"
+    )
+
+    # HTTP is for the real remote/shared case only — demoted below the stdio default.
+    print("Serving to a remote or shared client? Use the HTTP URL instead:")
+    print(f"  MCP URL (Streamable HTTP):  {mcp_url}")
     adds = all_add_strings(name, mcp_url)
     print(f"  Claude Code:  {adds['claude']}")
     print(f"  Cursor:       {adds['cursor']}")
     print(f"  VS Code:      {adds['vscode']}\n")
-    # Self-diagnose the #1 activation failure: the client reports "connected" but loads
-    # ZERO tools. That means its MCP transport can't reach 127.0.0.1 — a sandboxed /
-    # remote agent runs its MCP client in a different network namespace than this shell.
-    # Give the fix at the moment it bites, so a first-time user doesn't silently bounce.
+    # Self-diagnose the #1 HTTP activation failure: the client reports "connected" but
+    # loads ZERO tools. Give the cheap fixes FIRST (poll delay / stale registration),
+    # then the real cause — a sandboxed/remote agent's MCP client runs in a different
+    # network namespace than this shell and can't reach 127.0.0.1 — and only then the
+    # public-URL/tunnel workaround (a real exposure, so it's the last resort).
     if mcp_url.startswith("http://127.0.0.1") or mcp_url.startswith("http://localhost"):
-        print("Connected but your agent shows 0 tools? Its MCP client can't reach")
+        print("Connected but your agent shows 0 tools?")
+        print("  1. Wait ~20s for the client to poll, and re-open the tool list.")
         print(
-            "localhost (sandboxed/remote agents run in a separate network namespace)."
+            f"  2. Clear a stale registration:  claude mcp remove {name}  then re-add."
         )
-        print("Serve behind a public URL instead:")
-        print("  cloudflared tunnel --url " + mcp_url.rsplit("/mcp", 1)[0])
-        print("  gecko <spec> --public-url https://<name>.trycloudflare.com\n")
+        print(
+            "  3. Prefer --stdio (above) — it removes the localhost problem entirely."
+        )
+        print(
+            "  4. Sandboxed/remote agent that truly needs HTTP? Its MCP client runs in a"
+        )
+        print(
+            "     separate network namespace and can't reach localhost — serve behind"
+        )
+        print("     a public URL:")
+        print("       cloudflared tunnel --url " + mcp_url.rsplit("/mcp", 1)[0])
+        print("       gecko <spec> --public-url https://<name>.trycloudflare.com\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -201,8 +252,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if fetched.stale:
             # Informational, not an error — the surface IS being served, just from
-            # the cache — so stdout (like the banner), not stderr.
-            print("registry unreachable — serving the last cached copy (stale).")
+            # the cache. In stdio mode stdout is the JSON-RPC channel, so this human
+            # note goes to stderr; otherwise it rides with the banner on stdout.
+            print(
+                "registry unreachable — serving the last cached copy (stale).",
+                file=sys.stderr if args.stdio else sys.stdout,
+            )
         client = AgentApiClient(fetched.spec, session=session)
         # No --name given: the registry key IS the surface name (deliberate).
         name = args.name or args.registry
@@ -243,7 +298,19 @@ def main(argv: list[str] | None = None) -> int:
         emit_mcp = mcp_url if args.public_url else None
         return _emit(client, args.emit_dir, emit_mcp, args.site_url)
 
-    _print_banner(name, mcp_url, _summary(client))
+    # stdio: the client spawns this process and talks over stdin/stdout. NOTHING may
+    # go to stdout except the JSON-RPC stream — the startup note goes to stderr, and
+    # no HTTP port is bound. Same comprehended surface + call-time auth injection.
+    if args.stdio:
+        print(
+            f"Serving '{name}' over stdio ({_summary(client)}). "
+            "Control plane only — no data, no payloads, no secrets stored.",
+            file=sys.stderr,
+        )
+        serve_stdio(client, mode=args.mode, server_name=name)
+        return 0
+
+    _print_banner(name, mcp_url, _summary(client), _stdio_spawn(args))
 
     serve_http(
         client,

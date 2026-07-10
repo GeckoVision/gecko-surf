@@ -10,6 +10,7 @@ import-guarded so the surface (and its tests) work without the SDK installed.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 from typing import Any
@@ -353,28 +354,77 @@ class MetaComprehendSurface:
         return asdict(result)
 
 
+_STDIO_INSTALL_HINT = (
+    "Install the serve extra to run the stdio server: uv sync --extra serve "
+    "(or: uv pip install 'gecko-surf[serve]')"
+)
+
+
 def serve_stdio(
-    spec: str, base_url: str | None = None, mode: str = "recorded"
-) -> None:  # pragma: no cover
-    """Run a real MCP stdio server (requires the `mcp` package)."""
+    spec_or_client: Any,
+    base_url: str | None = None,
+    mode: str = "recorded",
+    *,
+    server_name: str = "gecko",
+    enforce: EnforceMode | None = None,
+) -> None:  # pragma: no cover - exercised by a founder-run / client-spawned smoke
+    """Run a real MCP server over **stdio** (requires the `mcp` `serve` extra).
+
+    The client SPAWNS this process and talks JSON-RPC over stdin/stdout — no port,
+    no network, no tunnel — so it is the zero-friction local transport. This is the
+    SAME comprehended surface + auth injection the HTTP path serves; only the wire
+    edge differs (invariant: one code path, two modes).
+
+    ``spec_or_client`` accepts a spec (str/dict), an ``AgentApiClient`` (the caller
+    resolves + injects the credential at call time), an ``McpSurface``, or any
+    duck-typed surface — reusing the HTTP path's single surface builder so the two
+    transports can never diverge on comprehension.
+
+    stdout is the protocol channel: this function MUST NOT print anything to stdout
+    (a stray banner corrupts the JSON-RPC stream). Callers keep human output on
+    stderr. Tools are registered on the LOW-LEVEL server so the question-shaped
+    ``inputSchema`` reaches the agent intact (first-call-correct) — FastMCP would
+    infer a permissive schema from the Python signature and erase ours.
+    """
     try:
-        from mcp.server.fastmcp import FastMCP
-    except ImportError as exc:  # pragma: no cover
-        raise SystemExit(
-            "Install the `mcp` package to run the stdio server: uv add mcp"
-        ) from exc
+        import anyio
+        import mcp.types as mcp_types
+        from mcp.server.lowlevel import Server
+        from mcp.server.stdio import stdio_server
+    except ImportError as exc:
+        raise SystemExit(_STDIO_INSTALL_HINT) from exc
 
-    surface = McpSurface(AgentApiClient(spec, base_url=base_url), mode=mode)
-    server = FastMCP("gecko")
-    for tool in surface.list_tools():
+    # Reuse the HTTP path's surface builder (spec/client/surface duck-typing + the
+    # public_session default for a bare spec) so stdio and HTTP share ONE code path.
+    from .http_server import _surface_from
 
-        def _make(tool_name):
-            def _handler(**kwargs):
-                return surface.call_tool(tool_name, kwargs)
+    surface = _surface_from(spec_or_client, base_url, mode, enforce)
+    tools = surface.list_tools()
+    server: Any = Server(server_name)
 
-            return _handler
+    @server.list_tools()
+    async def _list_tools() -> list[Any]:
+        return [
+            mcp_types.Tool(
+                name=t["name"],
+                description=t["description"],
+                inputSchema=t["inputSchema"],
+            )
+            for t in tools
+        ]
 
-        server.add_tool(
-            _make(tool["name"]), name=tool["name"], description=tool["description"]
-        )
-    server.run()
+    @server.call_tool()
+    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+        result = surface.call_tool(name, arguments or {})
+        # Return unstructured JSON text; the body is never cached or persisted.
+        return [
+            mcp_types.TextContent(type="text", text=json.dumps(result, default=str))
+        ]
+
+    async def _run() -> None:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream, write_stream, server.create_initialization_options()
+            )
+
+    anyio.run(_run)
