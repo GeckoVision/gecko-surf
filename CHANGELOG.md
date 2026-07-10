@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0 — 2026-07-10
+
+Governance + sessions. This release turns Gecko from "call the API correctly" into
+"call it correctly **and** govern what the agent does" — plus real handling for the
+short-lived-token auth pattern most production APIs use.
+
+### Added
+- **Governance tier + policy gate** — a deterministic classifier reads whether an
+  operation is a `read` / `write` / `transfer` from the parsed spec (money-verb
+  lexicon + amount∧recipient co-occurrence). An operator-authored `AgentPolicy`
+  (`spend_cap` + `recipient_allowlist`) blocks a call **only** at the intersection
+  with `tier == transfer` — a steered over-cap/off-allowlist transfer is refused
+  while a benign read/write only ever steps up. Tier feeds `score_call` as a
+  reason; it is never a blocking signal on its own.
+- **Session identity** — `SessionIdentity` binds a session to its `AgentPolicy` and
+  a non-secret free-tier id (shape-now-token-later); `GovernedSession` wraps any
+  session and returns byte-identical wire headers (policy rides out-of-band).
+- **Session lifecycle — token refresh + self-heal** — for OAuth-style APIs with a
+  short-lived access token + refresh token: a `RefreshableSession` refreshes
+  proactively inside `auth_headers()` before expiry, and a bounded-once reactive
+  self-heal retries a 401'd live call after re-authenticating. `OAuth2Lifecycle`
+  refreshes via a `refresh_token` grant; `oauth2_from_dpo2u()` reads a local OAuth
+  token file. All behind the frozen `AuthSession` seam — a plain session is
+  byte-identical.
+- **Bundled Jupiter Swap API example** — `uvx --from "gecko-surf[serve]"
+  jupiter-mcp`. Keyless by default (free tier), optional `JUPITER_API_KEY` (Pro)
+  injected at call time.
+- **BM25F retrieval** — Okapi BM25F with OpenAPI-remapped field weights; adopted
+  above ~50 operations where it lifts recall (gate-confirmed on a 159-op surface),
+  a no-op below.
+
+### Fixed
+- **Comprehension summary on fully-gated APIs** — an API where every operation is
+  behind a bearer token reported `0` usable tools (the served, auth-filtered view).
+  It now reports the full comprehended surface with an honest "N tools require
+  authentication — Gecko injects the credential at call time" warning.
+
 ## 0.2.0 — 2026-07-03
 
 The first release since the MCP-Registry launch. Everything below is on PyPI for
