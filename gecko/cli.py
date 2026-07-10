@@ -19,12 +19,12 @@ import getpass
 import json
 import sys
 
-from . import credentials, docs_reader, serve, testgen
+from . import credentials, doctor, docs_reader, serve, testgen
 from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("serve", "test", "from-docs", "auth")
+_SUBCOMMANDS = ("serve", "test", "from-docs", "auth", "doctor")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -290,6 +290,45 @@ def _auth_test(api: str, account: str | None) -> int:
     return 0
 
 
+def _cmd_doctor(argv: list[str]) -> int:
+    """`gecko doctor [api] [--json] [--remote]` — read-only setup diagnosis.
+
+    Thin: parse args, call ``doctor.run_doctor``, format. Prints a human table by
+    default; ``--json`` emits the ``DoctorReport`` so an agent can read + act on it.
+    Never edits config, writes files, or touches the network.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko doctor",
+        description="Diagnose the local MCP setup and print the exact add command.",
+    )
+    p.add_argument(
+        "api",
+        nargs="?",
+        default=None,
+        help="Surface/provider name to presence-probe a credential for (optional).",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Emit the DoctorReport as JSON (for an agent to consume and act on).",
+    )
+    p.add_argument(
+        "--remote",
+        action="store_true",
+        help="Diagnose for a genuinely remote/sandboxed client: recommend HTTP and "
+        "probe cloudflared (the --tunnel fallback). Default is stdio (no tunnel).",
+    )
+    args = p.parse_args(argv)
+
+    report = doctor.run_doctor(args.api, remote=args.remote)
+    if args.as_json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(doctor.render_text(report))
+    return 0
+
+
 def _print_help() -> None:
     print("gecko — make any API agent-usable without integration code\n")
     print("usage: gecko <command> [options]\n")
@@ -302,6 +341,7 @@ def _print_help() -> None:
         "  from-docs <src>    recover a draft OpenAPI from a doc page, then comprehend"
     )
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
+    print("  doctor [api]       diagnose the local MCP setup + print the add command")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -316,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_from_docs(rest)
     if cmd == "auth":
         return _cmd_auth(rest)
+    if cmd == "doctor":
+        return _cmd_doctor(rest)
     _print_help()
     return 0
 
