@@ -33,12 +33,13 @@ def test_comprehends_local_openapi_into_summary_and_artifacts() -> None:
     assert result.usable_tool_count > 0
     # tools is a list of {name, summary} — question-shaped, no auth, no payload.
     assert result.tools and all({"name", "summary"} == set(t) for t in result.tools)
-    # all four agent-native artifacts are generated (control-plane only).
+    # all five agent-native artifacts are generated (control-plane only).
     assert set(result.artifacts) == {
         "llms.txt",
         "gecko.json",
         ".well-known/gecko.json",
         "tools.md",
+        "SKILL.md",
     }
     # a clean OpenAPI is not quarantined.
     assert result.quarantined is False

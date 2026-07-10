@@ -262,8 +262,13 @@ def test_keyring_store_get_roundtrip() -> None:
     assert backend.get(ref) == "SECRET-TOKEN"
 
 
-def test_keyring_unavailable_when_import_absent() -> None:
-    # `keyring` is not installed in the test env: a real import misses -> unavailable.
+def test_keyring_unavailable_when_import_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `keyring` is now a BASE dependency (always importable), so absence is simulated by
+    # forcing `import keyring` to raise ImportError (sys.modules[...] = None). The degrade
+    # path — available() -> False when the import misses — must still hold.
+    monkeypatch.setitem(sys.modules, "keyring", None)
     assert KeyringBackend().available() is False
 
 
@@ -379,7 +384,9 @@ def test_backend_pin_command_is_deterministic_miss(
 
 def test_banner_when_keyring_down_env_present(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GECKO_CRED_BACKEND", raising=False)
-    monkeypatch.delitem(sys.modules, "keyring", raising=False)  # keyring absent
+    monkeypatch.setitem(
+        sys.modules, "keyring", None
+    )  # force ImportError (keyring absent)
     monkeypatch.setenv("GECKO_CRED_TXODDS", "x")
     resolver = default_resolver()
     msg = keyring_fallback_banner(CredentialRef(api="txodds"), resolver)

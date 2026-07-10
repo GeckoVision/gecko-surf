@@ -125,16 +125,45 @@ def apply_gate(assessment: RiskAssessment | None, mode: EnforceMode) -> GateOutc
     )
 
 
+#: A frozen ``signal -> generic fix`` map. The remediation strings are CODE CONSTANTS —
+#: they never interpolate an arg value (a host, an amount, a recipient), so they are
+#: control-plane safe to log/persist and cannot leak (context §6.2, invariant #1). A signal
+#: absent here simply carries no remediation line.
+REMEDIATION: dict[str, str] = {
+    "schema.required": "add the required field(s) named in the API's schema before retrying",
+    "schema.unknown_field": "remove field(s) not declared by the API's schema",
+    "schema.type": "correct the field type(s) to match the API's schema",
+    "schema.enum": "use one of the allowed enum values from the API's schema",
+    "poison.injection": "remove instruction-shaped content from the tool metadata/arguments",
+    "poison.secret": "remove the secret-shaped value from the arguments",
+    "exfil.host": "route the request only to this API's trusted host(s)",
+    "op.transfer": "confirm this value-moving call is intended and within the operator policy",
+    "op.transfer_maybe": "confirm whether this call moves value before proceeding",
+    "cap.exceeded": "reduce the amount to within the operator's spend cap",
+    "recipient.not_allowlisted": "use a recipient in the operator's allow-list",
+    "provenance.quarantined": "use a verified (pinned) surface rather than a quarantined one",
+    "provenance.unverified": "pin the surface to a trusted origin before a state-changing call",
+    "scope.not_allowed": "call only operations within this agent's allowed scope",
+}
+
+
 def refusal_payload(assessment: RiskAssessment) -> dict[str, Any]:
     """The structured refusal returned to the AGENT for a hard block — so it learns WHY
     (human reasons) rather than getting an opaque error. This flows back in the JSON-RPC
     reply and is never persisted (like a response body); the telemetry record instead
-    carries only the code-constant signal NAMES (see ``blocked_signals``)."""
+    carries only the code-constant signal NAMES (see ``blocked_signals``).
+
+    Additively carries ``signals`` (the code-constant blocked-signal NAMES) and
+    ``remediation`` (a ``signal -> generic fix-string`` map, NO arg values) so an agent can
+    SELF-CORRECT. Both are control-plane safe; the pre-existing keys are unchanged."""
+    signals = blocked_signals(assessment)
     return {
         "blocked": True,
         "decision": "block",
         "score": assessment.score,
         "reasons": [r.message for r in assessment.reasons],
+        "signals": signals,
+        "remediation": {s: REMEDIATION[s] for s in signals if s in REMEDIATION},
     }
 
 
@@ -175,6 +204,7 @@ __all__ = [
     "GateOutcome",
     "HOSTED_DEFAULT",
     "LOCAL_DEFAULT",
+    "REMEDIATION",
     "WRITE_METHODS",
     "apply_gate",
     "attach_warning",
