@@ -164,7 +164,11 @@ def main() -> None:
 
     _hr()
     print("Same working call. Left: the key leaks to anything the agent touches.")
-    print("Right: the key never enters the agent's world at all.\n")
+    print("Right: the key never enters the agent's world at all.")
+    print()
+    print("No system is bulletproof — there's exposed and less-exposed. This is the")
+    print("difference: best practices (keychain, call-time injection, host-pinning),")
+    print("done for you, so you develop without pasting keys into plaintext files.\n")
 
     # A guardrail so the demo can't silently rot into a false claim.
     assert hit == SECRET, "plaintext path should leak the secret"
