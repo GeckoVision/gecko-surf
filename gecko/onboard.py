@@ -172,6 +172,32 @@ class AddDeps:
     resolver: Resolver | None = None
 
 
+def list_surfaces(*, home: Path) -> list[str]:
+    """List all onboarded surface names (sorted stems under ~/.gecko/surfaces/)."""
+    root = home / ".gecko" / "surfaces"
+    if not root.exists():
+        return []
+    return sorted(p.stem for p in root.glob("*.json"))
+
+
+def remove(name: str, *, run: Runner, home: Path) -> int:
+    """Deregister and delete a cached surface.
+
+    Runs `claude mcp remove <safe_name>` (tolerating FileNotFoundError if the client
+    is absent), then unlinks the cache file (missing_ok=True).
+    Returns 0 on success.
+    """
+    slug = safe_name(name)
+    try:
+        run(["claude", "mcp", "remove", slug])
+    except FileNotFoundError:
+        pass  # client not present; still drop the cache
+    path = home / ".gecko" / "surfaces" / f"{slug}.json"
+    path.unlink(missing_ok=True)
+    print(f"  removed surface '{slug}'")
+    return 0
+
+
 def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
     """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude."""
     try:

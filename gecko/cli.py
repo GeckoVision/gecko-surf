@@ -26,7 +26,7 @@ from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth")
+_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth", "rm", "list")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -346,6 +346,33 @@ def _auth_test(api: str, account: str | None) -> int:
     return 0
 
 
+def _cmd_rm(argv: list[str]) -> int:
+    """`gecko rm <surface>` — deregister and delete a cached surface."""
+    p = argparse.ArgumentParser(
+        prog="gecko rm",
+        description="Remove a cached surface from ~/.gecko/surfaces/ and deregister from Claude.",
+    )
+    p.add_argument("name", help="Surface name (as shown in `gecko list`).")
+    args = p.parse_args(argv)
+    return onboard.remove(args.name, run=onboard._default_run, home=Path.home())
+
+
+def _cmd_list(argv: list[str]) -> int:
+    """`gecko list` — list cached onboarded surfaces."""
+    p = argparse.ArgumentParser(
+        prog="gecko list",
+        description="List all cached onboarded surfaces.",
+    )
+    p.parse_args(argv)
+    surfaces = onboard.list_surfaces(home=Path.home())
+    if not surfaces:
+        print("No surfaces onboarded yet. Add one:  gecko add <api>")
+        return 0
+    for name in surfaces:
+        print(f"  {name}")
+    return 0
+
+
 def _print_help() -> None:
     print("gecko — make any API agent-usable without integration code\n")
     print("usage: gecko <command> [options]\n")
@@ -361,6 +388,8 @@ def _print_help() -> None:
         "  from-docs <src>    recover a draft OpenAPI from a doc page, then comprehend"
     )
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
+    print("  rm <surface>       delete a cached surface")
+    print("  list               list all cached surfaces")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -377,6 +406,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_from_docs(rest)
     if cmd == "auth":
         return _cmd_auth(rest)
+    if cmd == "rm":
+        return _cmd_rm(rest)
+    if cmd == "list":
+        return _cmd_list(rest)
     _print_help()
     return 0
 
