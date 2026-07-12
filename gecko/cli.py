@@ -445,27 +445,42 @@ def _cmd_doctor(argv: list[str]) -> int:
     return 0
 
 
-_BLUE = "\x1b[38;2;20;110;245m"
 _BOLD = "\x1b[1m"
 _RESET = "\x1b[0m"
 
-_WORDMARK = r"""
-  ▄▄ ▄▄▄ ▄▄  ▄  ▄  ▄▄▄
- ▐▌ ▐▌   ▐▌ ▟▙ ▐▌ ▐▌ ▐▌   G E C K O
- ▐▌▟▌▐▛▀ ▐▌ ▜▛ ▐▌ ▐▌ ▐▌
-  ▀▀ ▀▀▀ ▀▀▀▘  ▀  ▀▀▀
-""".rstrip("\n")
+# figlet 'standard' GECKO — the universal block-letter wordmark style.
+_WORDMARK = r"""  ____ _____ ____ _  _____
+ / ___| ____/ ___| |/ / _ \
+| |  _|  _|| |   | ' / | | |
+| |_| | |__| |___| . \ |_| |
+ \____|_____\____|_|\_\___/"""
+
+# Brand gradient — Gecko blue -> green (the `| lolcat` look, but on-brand and
+# self-contained: no external tool, so it renders in the shipped binary too).
+_GRAD_START = (20, 110, 245)
+_GRAD_END = (53, 208, 138)
+
+
+def _gradient(art: str) -> str:
+    """Color each column of the wordmark along the brand blue->green ramp."""
+    lines = art.split("\n")
+    span = max(max((len(ln) for ln in lines), default=1) - 1, 1)
+    out = []
+    for line in lines:
+        buf = []
+        for i, ch in enumerate(line):
+            t = i / span
+            r = round(_GRAD_START[0] + (_GRAD_END[0] - _GRAD_START[0]) * t)
+            g = round(_GRAD_START[1] + (_GRAD_END[1] - _GRAD_START[1]) * t)
+            b = round(_GRAD_START[2] + (_GRAD_END[2] - _GRAD_START[2]) * t)
+            buf.append(f"\x1b[38;2;{r};{g};{b}m{ch}")
+        out.append("".join(buf) + _RESET)
+    return "\n".join(out)
 
 
 def _banner() -> str:
-    """Return a GECKO ASCII wordmark, colored if TTY, plain otherwise."""
-    color = sys.stdout.isatty()
-    mark = (
-        f"{_BLUE}{_WORDMARK}{_RESET}"
-        if color
-        else _WORDMARK.replace("G E C K O", "GECKO")
-    )
-    return mark
+    """GECKO wordmark — brand gradient on a TTY, plain block letters otherwise."""
+    return _gradient(_WORDMARK) if sys.stdout.isatty() else _WORDMARK
 
 
 def _print_help() -> None:

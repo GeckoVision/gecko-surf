@@ -3,9 +3,11 @@
 from gecko.cli import _banner, _print_help
 
 
-def test_banner_contains_wordmark():
-    """Banner output must contain the GECKO wordmark."""
-    assert "GECKO" in _banner().upper()
+def test_banner_renders_plain_when_not_tty():
+    """Under capture (not a TTY) the banner is the plain block wordmark — no color codes."""
+    b = _banner()
+    assert b and "\x1b[" not in b  # no ANSI escapes leak when piped/captured
+    assert b.count("\n") >= 4  # multi-line block-letter wordmark
 
 
 def test_help_groups_commands(capsys):
