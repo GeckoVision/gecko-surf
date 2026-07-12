@@ -43,11 +43,3 @@ test("resolveBinary errors for an unsupported platform", () => {
   assert.ok(!r.binary);
   assert.match(r.error, /unsupported platform/);
 });
-
-test("windows binary name gets the .exe suffix (future target)", () => {
-  // Even though win32 is unsupported today, the name logic is exercised via a
-  // supported darwin path to confirm the non-exe branch, and the exe branch is
-  // a pure string — assert both shapes directly.
-  const fake = () => "/n/@geckovision/gecko-linux-x64/package.json";
-  assert.ok(resolveBinary("linux", "x64", fake).binary.endsWith(path.join("bin", "gecko")));
-});

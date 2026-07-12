@@ -12,14 +12,12 @@ on:
     tags:
       - "v*"
 
-# Required so the matrix jobs can create/append the GitHub Release.
-permissions:
-  contents: write
-
 jobs:
   build:
     name: build ${{ matrix.asset }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write  # attach the binaries to the GitHub Release
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +94,8 @@ jobs:
     name: publish npm packages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # only reads the release assets (gh release download)
     steps:
       - uses: actions/checkout@v4
 
@@ -129,8 +129,14 @@ jobs:
           publish() {  # <package-platform> <binary-asset-name>
             node npm/scripts/make-platform-package.js \
               --platform "$1" --binary "out/$2" --version "$V" --out npm/build
-            ( cd "npm/build/gecko-$1" && npm publish --access public ) \
-              || echo "skip: @geckovision/gecko-$1@$V already published"
+            # Skip ONLY if this exact version already exists (idempotent re-runs);
+            # a real publish failure (bad token, network) must fail the job loudly,
+            # since npm versions are immutable and a silent miss can't be re-published.
+            if npm view "@geckovision/gecko-$1@$V" version >/dev/null 2>&1; then
+              echo "skip: @geckovision/gecko-$1@$V already published"
+            else
+              ( cd "npm/build/gecko-$1" && npm publish --access public )
+            fi
           }
           publish linux-x64    gecko-linux-x86_64
           publish linux-arm64  gecko-linux-arm64
@@ -153,5 +159,8 @@ jobs:
             }
             fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
           '
-          ( cd npm/gecko && npm publish --access public ) \
-            || echo "skip: @geckovision/gecko@$V already published"
+          if npm view "@geckovision/gecko@$V" version >/dev/null 2>&1; then
+            echo "skip: @geckovision/gecko@$V already published"
+          else
+            ( cd npm/gecko && npm publish --access public )
+          fi

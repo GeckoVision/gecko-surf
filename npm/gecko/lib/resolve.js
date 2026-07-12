@@ -4,7 +4,10 @@
 
 const path = require("node:path");
 
-// node's process.arch -> our binary arch label
+// node's process.arch -> our binary arch label. Currently an identity map (a no-op
+// guard that degrades an unknown arch to a non-matching key); kept so a future arch
+// rename (e.g. ia32/ppc) has one place to translate. The x86_64<->x64 rename lives in
+// release.yml, mapping the binary asset filename to the package name.
 const ARCH = { x64: "x64", arm64: "arm64" };
 
 // The (platform-arch) targets we publish a binary package for. Extend as
