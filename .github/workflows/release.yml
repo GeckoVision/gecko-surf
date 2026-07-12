@@ -95,14 +95,20 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: read  # only reads the release assets (gh release download)
+      contents: read   # read the release assets (gh release download)
+      id-token: write  # OIDC — trusted publishing to npm, no stored token
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"  # >= 22.14, required for OIDC trusted publishing
           registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs npm >= 11.5.1; guarantee it regardless of the
+      # npm bundled with the Node image.
+      - name: Ensure npm supports OIDC
+        run: npm install -g npm@latest
 
       - name: Derive version from tag
         id: ver
@@ -120,9 +126,9 @@ jobs:
 
       # Assemble + publish one @geckovision/gecko-<plat> per built binary.
       # An already-published version is a no-op, so re-running the workflow is safe.
+      # Auth is OIDC (trusted publishing) — no NODE_AUTH_TOKEN. `npm publish`
+      # auto-detects the OIDC environment and also attaches provenance.
       - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           V="${{ steps.ver.outputs.version }}"
@@ -145,8 +151,6 @@ jobs:
       # Stamp the launcher's version + optionalDependency pins to the tag, then publish
       # it LAST (so the platform packages it depends on already exist).
       - name: Publish launcher
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           export V="${{ steps.ver.outputs.version }}"

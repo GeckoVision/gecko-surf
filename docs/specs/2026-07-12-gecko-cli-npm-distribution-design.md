@@ -81,8 +81,14 @@ On the same `v*` tag, after the binaries are built + uploaded:
    stamp version + os/cpu), and `npm publish --access public` each.
 2. Assembles the launcher (stamp version + the matching `optionalDependencies`) and
    `npm publish` it **last** (so the platform deps exist when it lands).
-Requires an **`NPM_TOKEN`** repo secret (founder provides). Publishing is idempotent
-per version (a re-run of an already-published version is a no-op / skipped).
+Auth is **Trusted Publishing (OIDC)** — no stored token: the job declares
+`permissions: id-token: write`, uses npm ≥ 11.5.1, and `npm publish` auto-detects the
+OIDC environment (and attaches provenance). Publishing is idempotent per version (an
+`npm view` pre-check skips an already-published version; a real failure fails loudly).
+**Bootstrap:** trusted publishing is per-package and needs the package to exist first,
+so the *first* version is published token-free via `npm/scripts/bootstrap-publish.sh`
+(interactive `npm login`), after which each package's Trusted Publisher is configured
+and all future releases are pure OIDC.
 
 ## Testing
 
@@ -106,4 +112,7 @@ publish CI. **Out:** win / darwin-x64 (need binaries first), a Homebrew tap, aut
   (esbuild pattern), NOT a `postinstall`-download launcher — robustness over simplicity. ✅
 - Reuse the **existing `release.yml` PyInstaller binaries** — do not add a second freezer. ✅
 - Package scope = `@geckovision/*`; launcher command = `gecko`. ✅
-- `npm publish` credential is the founder's `NPM_TOKEN` (like the demo package). ✅
+- Publish auth = **Trusted Publishing (OIDC)**, not a stored `NPM_TOKEN` — npm's own
+  UI flags tokens as a security risk for CI and steers to this. One-time token-free
+  bootstrap for the first publish (per-package trusted-publisher config needs the
+  package to exist). ✅

@@ -26,12 +26,18 @@ separate artifacts). This checklist keeps them in sync.
 3. **`uv lock`** — sync the lockfile's own `gecko-surf` version.
 4. **Verify green:** `uv run ruff check` · `uv run mypy gecko` · `uv run --extra serve --extra dense --extra fcc pytest` (the serve tests need `--extra serve`; a bare `uv run pytest` shows collection errors, not failures) · `uv run python -m gecko.demo`.
 5. **PR → merge** the `chore/release-X.Y.Z` branch to `main`.
-6. **Tag + push:** `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z` → the `release.yml`
-   workflow builds the standalone binaries, attaches them to the GitHub Release, **and
-   publishes the npm packages** (`@geckovision/gecko` launcher + per-platform binary
-   packages) so `npx @geckovision/gecko add <api>` works. *(One-time prereqs: the
-   `@geckovision` npm org must exist and an `NPM_TOKEN` automation-token repo secret must
-   be set — without it the `publish-npm` job fails but the binaries still ship.)*
+6. **Tag + push:** `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z` → `release.yml`
+   builds the standalone binaries, attaches them to the GitHub Release, **and publishes
+   the npm packages** (`@geckovision/gecko` launcher + per-platform binary packages) via
+   **Trusted Publishing (OIDC)** — no stored token — so `npx @geckovision/gecko add <api>`
+   works.
+   - **One-time bootstrap (first release of these packages only):** trusted publishing is
+     configured *per package* and needs the package to exist first, so publish the initial
+     version by hand (token-free): after the tag builds the binaries, `npm login` then
+     `./npm/scripts/bootstrap-publish.sh X.Y.Z`. Then set up **Trusted Publishing** on all
+     four packages: npmjs.com → Packages → `<pkg>` → Settings → Trusted publishing →
+     GitHub Actions, org `GeckoVision`, repo `gecko-surf`, workflow file `release.yml`,
+     action `npm publish`. Every release after that publishes from CI via OIDC — no token.
 7. **Publish to PyPI** (founder-run, token-gated — not in CI):
    `uv build && uv publish dist/gecko_surf-X.Y.Z*`
 8. **Redeploy** `mcp.geckovision.tech` (founder-run — the Docker host, no deploy CI).
