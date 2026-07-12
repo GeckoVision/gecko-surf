@@ -10,14 +10,14 @@
 #
 # Steps:
 #   1. Cut the release so CI builds the binaries:
-#        git tag vX.Y.Z && git push origin vX.Y.Z      # release.yml -> GitHub Release
+#        git tag vX.Y.Z && git push origin vX.Y.Z      # release.yaml -> GitHub Release
 #   2. Log in to npm (your account + 2FA; NOT a token):
 #        npm login
 #   3. Run this:
 #        ./npm/scripts/bootstrap-publish.sh X.Y.Z      # version WITHOUT the leading v
 #   4. On npmjs.com, for EACH of the 4 packages (@geckovision/gecko and the three
 #      @geckovision/gecko-<plat>): Settings -> Trusted publishing -> add GitHub Actions,
-#      repo GeckoVision/gecko-surf, workflow file release.yml, action "npm publish".
+#      repo GeckoVision/gecko-surf, workflow file release.yaml, action "npm publish".
 #   Done — future `git tag && push` releases publish via OIDC, no token.
 set -euo pipefail
 

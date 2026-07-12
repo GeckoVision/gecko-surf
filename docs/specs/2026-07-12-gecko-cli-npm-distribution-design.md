@@ -12,7 +12,7 @@ the engine (`gecko add`/`serve`/`doctor`/…) is already built and merged.
 
 ## What already exists (reuse, don't rebuild)
 
-`.github/workflows/release.yml` already, on a `v*` tag, builds a **PyInstaller
+`.github/workflows/release.yaml` already, on a `v*` tag, builds a **PyInstaller
 `--onefile` standalone binary** (via `packaging/gecko_entry.py`) for a matrix of
 targets, smoke-tests each (`--help` exits 0), and uploads them to the GitHub Release
 with `SHA256SUMS`. Current asset names (contract — `install.sh` depends on them):
@@ -41,7 +41,7 @@ abandoned postinstall-download).
 | `@geckovision/gecko-linux-arm64` | the `gecko-linux-arm64` binary | linux / arm64 |
 | `@geckovision/gecko-darwin-arm64` | the `gecko-darwin-arm64` binary | darwin / arm64 |
 
-(win + darwin-x64 are a fast-follow once their binaries are added to `release.yml`.)
+(win + darwin-x64 are a fast-follow once their binaries are added to `release.yaml`.)
 
 ### Naming map (binary asset → node platform)
 
@@ -73,7 +73,7 @@ Every package shares ONE version = the release tag (minus the `v`). The launcher
 `optionalDependencies` pin each platform package to `"=<version>"` (exact). A release
 publishes all of them together (RELEASING.md-style lockstep, extended).
 
-## CI (extend `release.yml` or a sibling `npm-publish.yml`)
+## CI (extend `release.yaml` or a sibling `npm-publish.yml`)
 
 On the same `v*` tag, after the binaries are built + uploaded:
 1. A publish job downloads the release binaries (or takes them from the matrix
@@ -103,14 +103,14 @@ and all future releases are pure OIDC.
 
 ## Scope (v1)
 
-Ship the launcher + the 3 platform packages that `release.yml` already builds, plus the
+Ship the launcher + the 3 platform packages that `release.yaml` already builds, plus the
 publish CI. **Out:** win / darwin-x64 (need binaries first), a Homebrew tap, autoupdate.
 
 ## Decisions (resolved)
 
 - Distribution model = **bundled binary via npm optionalDependencies + launcher**
   (esbuild pattern), NOT a `postinstall`-download launcher — robustness over simplicity. ✅
-- Reuse the **existing `release.yml` PyInstaller binaries** — do not add a second freezer. ✅
+- Reuse the **existing `release.yaml` PyInstaller binaries** — do not add a second freezer. ✅
 - Package scope = `@geckovision/*`; launcher command = `gecko`. ✅
 - Publish auth = **Trusted Publishing (OIDC)**, not a stored `NPM_TOKEN` — npm's own
   UI flags tokens as a security risk for CI and steers to this. One-time token-free
