@@ -87,3 +87,71 @@ jobs:
           files: |
             out/${{ matrix.asset }}
             out/${{ matrix.asset }}.sha256
+
+  # Wrap the same binaries as npm packages so devs can `npx @geckovision/gecko`.
+  # Bundled-binary model (esbuild pattern): one launcher + per-platform packages as
+  # optionalDependencies; npm installs only the host's match. Requires the NPM_TOKEN
+  # repo secret and the @geckovision npm org.
+  publish-npm:
+    name: publish npm packages
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # The build matrix uploaded the binaries to the GitHub Release — pull them back.
+      - name: Download release binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'gecko-linux-*' --pattern 'gecko-darwin-*' --dir out
+          ls -la out
+
+      # Assemble + publish one @geckovision/gecko-<plat> per built binary.
+      # An already-published version is a no-op, so re-running the workflow is safe.
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          publish() {  # <package-platform> <binary-asset-name>
+            node npm/scripts/make-platform-package.js \
+              --platform "$1" --binary "out/$2" --version "$V" --out npm/build
+            ( cd "npm/build/gecko-$1" && npm publish --access public ) \
+              || echo "skip: @geckovision/gecko-$1@$V already published"
+          }
+          publish linux-x64    gecko-linux-x86_64
+          publish linux-arm64  gecko-linux-arm64
+          publish darwin-arm64 gecko-darwin-arm64
+
+      # Stamp the launcher's version + optionalDependency pins to the tag, then publish
+      # it LAST (so the platform packages it depends on already exist).
+      - name: Publish launcher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          export V="${{ steps.ver.outputs.version }}"
+          node -e '
+            const fs = require("fs"), p = "npm/gecko/package.json";
+            const j = JSON.parse(fs.readFileSync(p));
+            j.version = process.env.V;
+            for (const k of Object.keys(j.optionalDependencies || {})) {
+              j.optionalDependencies[k] = "=" + process.env.V;
+            }
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          '
+          ( cd npm/gecko && npm publish --access public ) \
+            || echo "skip: @geckovision/gecko@$V already published"
