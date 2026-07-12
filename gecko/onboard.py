@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import re
 import sys
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import docs_reader
-from .netguard import Resolver, UnsafeUrlError, validate_public_url
+from .netguard import Resolver, UnsafeUrlError, safe_get, validate_public_url
 
 Fetcher = Callable[[str], str]
 
@@ -22,8 +21,9 @@ class OnboardError(Exception):
 
 
 def _default_fetch(url: str) -> str:
-    with urllib.request.urlopen(url, timeout=20) as r:  # nosec - validated below
-        return r.read().decode("utf-8", "replace")
+    # SSRF-safe: validates every redirect hop, pins the socket, caps size/timeout —
+    # the same machinery docs_reader already relies on for untrusted spec URLs.
+    return safe_get(url)
 
 
 def resolve_spec(
@@ -124,8 +124,15 @@ def configure_claude(
     *,
     gecko_bin: str = "gecko",
     run: Runner | None = None,
+    auth_surface: str | None = None,
 ) -> ConfigResult:
-    """Register the surface with Claude Code over stdio (client spawns the server)."""
+    """Register the surface with Claude Code over stdio (client spawns the server).
+
+    ``auth_surface``, when given, appends ``--auth-keychain <auth_surface>`` to the
+    spawned ``gecko serve`` command — the whole point of sealing the key via
+    ``ensure_key`` is that the SERVED surface resolves it at call time, not just
+    that it sits unused in the OS keychain.
+    """
     run = run or _default_run
     command = [
         "claude",
@@ -140,6 +147,8 @@ def configure_claude(
         str(cache_path),
         "--stdio",
     ]
+    if auth_surface:
+        command += ["--auth-keychain", auth_surface]
     try:
         code = run(command)
     except FileNotFoundError:
@@ -205,10 +214,14 @@ def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
     except OnboardError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
-    surface = name or safe_name(ref)
+    # Slugify ONCE, here — cache_spec/remove re-slug via safe_name too, so a raw
+    # `--name "My API"` must not desync the Claude registration from the cache
+    # file / credential slot those look up by slug.
+    surface = safe_name(name) if name else safe_name(ref)
     n_tools = deps.comprehend(spec)
     print(f"  ✓ comprehended {n_tools} endpoint(s) → first-call-correct tools")
-    if spec_needs_auth(spec):
+    needs_auth = spec_needs_auth(spec)
+    if needs_auth:
         if ensure_key(surface, prompt=deps.prompt, store=deps.store):
             print("  ✓ key → sealed in OS keychain (never in mcp.json)")
         else:
@@ -216,7 +229,9 @@ def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
                 "  ○ no key entered — add later with `gecko auth set " + surface + "`"
             )
     path = cache_spec(surface, spec, home=deps.home)
-    cfg = configure_claude(surface, path, run=deps.run)
+    cfg = configure_claude(
+        surface, path, run=deps.run, auth_surface=surface if needs_auth else None
+    )
     mark = "✓" if cfg.applied else "→"
     print(f"  {mark} {cfg.note}")
     if not cfg.applied:

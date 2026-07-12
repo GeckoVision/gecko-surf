@@ -16,8 +16,9 @@ import re
 import sys
 from typing import Any
 
-from .access import public_session
+from .access import keychain_session, public_session
 from .client import AgentApiClient
+from .credentials import CredentialError
 from .deeplinks import all_add_strings, claude_stdio_add_command
 from .http_server import MCP_PATH, serve_http
 from .mcp_server import serve_stdio
@@ -72,11 +73,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=_DEFAULT_REGISTRY_URL,
         help="Registry base URL.",
     )
-    p.add_argument(
+    auth = p.add_mutually_exclusive_group()
+    auth.add_argument(
         "--auth-env",
         default=None,
         help="Env var holding the PROVIDER bearer token — injected locally at "
         "call time, never sent to Gecko.",
+    )
+    auth.add_argument(
+        "--auth-keychain",
+        default=None,
+        metavar="SURFACE",
+        help="Surface name whose key was sealed via `gecko add` / `gecko auth "
+        "set` — resolved from the OS keychain (or configured command/env "
+        "fallback) at call time, with header/scheme derived from the spec's own "
+        "security scheme. Never sent to Gecko.",
     )
     p.add_argument(
         "--stdio",
@@ -164,6 +175,8 @@ def _stdio_spawn(args: argparse.Namespace) -> str:
         spawn = f"gecko {args.spec}"
     if args.auth_env:
         spawn += f" --auth-env {args.auth_env}"
+    if args.auth_keychain:
+        spawn += f" --auth-keychain {args.auth_keychain}"
     return spawn + " --stdio"
 
 
@@ -258,7 +271,17 @@ def main(argv: list[str] | None = None) -> int:
                 "registry unreachable — serving the last cached copy (stale).",
                 file=sys.stderr if args.stdio else sys.stdout,
             )
-        client = AgentApiClient(fetched.spec, session=session)
+        if args.auth_keychain:
+            # The spec is already in hand (no extra fetch) — derive header/scheme
+            # from its own declared security scheme, never a hardcoded Bearer.
+            session, warning = keychain_session(fetched.spec, args.auth_keychain)
+            if warning:
+                print(warning, file=sys.stderr)
+        try:
+            client = AgentApiClient(fetched.spec, session=session)
+        except CredentialError as exc:
+            print(f"auth: {exc}", file=sys.stderr)
+            return 1
         # No --name given: the registry key IS the surface name (deliberate).
         name = args.name or args.registry
     else:
@@ -272,10 +295,25 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
 
         try:
+            if args.auth_keychain:
+                # A second, SSRF-safe load solely to read the security scheme —
+                # the ORIGINAL spec string/path still goes to AgentApiClient
+                # below unchanged, so the trust-anchor pinning (surfaces.anchor_for)
+                # is untouched.
+                from .ingest import load_spec
+
+                session, warning = keychain_session(
+                    load_spec(args.spec), args.auth_keychain
+                )
+                if warning:
+                    print(warning, file=sys.stderr)
             client = AgentApiClient(args.spec, session=session)
         except (UnsafeUrlError, ValueError) as exc:
             print(f"Could not comprehend spec: {exc}", file=sys.stderr)
             return 2
+        except CredentialError as exc:
+            print(f"auth: {exc}", file=sys.stderr)
+            return 1
 
         title = str((client.spec.get("info") or {}).get("title", ""))
         name = args.name or _slugify(title)

@@ -390,6 +390,70 @@ class ResolvedSession:
         return {self.header_name: value}
 
 
+# --- Keychain-backed session derived from a spec's own security scheme -------
+
+
+def _header_scheme_from_spec(spec: dict[str, Any]) -> tuple[str, str] | None:
+    """``(header_name, scheme)`` derived from the spec's FIRST declared
+    ``securityScheme`` — never a hardcoded ``Bearer``.
+
+    Only header-shaped schemes are supported, the same safety line
+    ``tools.auth_location_is_safe`` already draws for tool visibility: ``apiKey``
+    placed ``in: header`` renders the raw value; ``http`` with ``scheme: bearer``
+    renders ``Bearer <value>``. Everything else (apiKey in query/cookie, oauth2,
+    openIdConnect, an http scheme other than bearer) returns ``None`` so the
+    caller fails closed rather than guess a wire shape ``ResolvedSession`` can't
+    correctly express.
+    """
+    schemes = (spec.get("components") or {}).get("securitySchemes")
+    if not isinstance(schemes, dict) or not schemes:
+        return None
+    first = next(iter(schemes.values()), None)
+    if not isinstance(first, dict):
+        return None
+    kind = str(first.get("type", "")).lower()
+    if kind == "apikey" and str(first.get("in", "")).lower() == "header":
+        name = first.get("name")
+        return (str(name), "raw") if isinstance(name, str) and name else None
+    if kind == "http" and str(first.get("scheme", "")).lower() == "bearer":
+        return "Authorization", "bearer"
+    return None
+
+
+def keychain_session(
+    spec: dict[str, Any],
+    surface: str,
+    *,
+    resolver: ChainResolver | None = None,
+) -> tuple[AuthSession, str | None]:
+    """The session ``gecko serve --auth-keychain <surface>`` runs with: a live
+    ``ResolvedSession`` sourced from the credential chain (keychain -> command ->
+    env, see ``credentials.default_resolver``), with ``header_name``/``scheme``
+    derived from the SPEC's own first declared security scheme.
+
+    Returns ``(session, warning)``. When the spec's scheme is missing or
+    unsupported this NEVER crashes — it degrades to ``public_session()`` and
+    returns a printable warning for the caller to surface (recorded-mode and
+    no-auth calls keep working; a live auth-gated call fails at the transport
+    edge, same as an unset ``--auth-env`` today).
+    """
+    mapping = _header_scheme_from_spec(spec)
+    if mapping is None:
+        return public_session(), (
+            f"auth: could not derive a header/scheme for {surface!r} from the "
+            "spec's security schemes (need an apiKey-in-header or http/bearer "
+            "scheme) — serving without auth injection."
+        )
+    header_name, scheme = mapping
+    session = ResolvedSession(
+        CredentialRef(api=surface),
+        header_name,
+        scheme=scheme,
+        resolver=resolver or default_resolver(),
+    )
+    return session, None
+
+
 @dataclass
 class GovernedSession:
     """Governance adapter: an ``AuthSession`` (usually a ``ResolvedSession``) bound

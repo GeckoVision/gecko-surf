@@ -101,7 +101,19 @@ def _cmd_add(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return False
-        backend.store(ref, secret)
+        try:
+            backend.store(ref, secret)
+        except (credentials.CredentialError, OSError) as exc:
+            # A mid-write failure (locked/broken keychain) must never crash `gecko
+            # add` or leak the secret — report failure so the caller reports it as
+            # "not sealed" (never a false "✓ sealed") and let the env fallback work.
+            print(f"Could not write to the OS keychain: {exc}", file=sys.stderr)
+            print(
+                f"Use the env fallback instead:\n  export "
+                f"{credentials.env_var_name(ref)}=...",
+                file=sys.stderr,
+            )
+            return False
         return True
 
     deps = onboard.AddDeps(

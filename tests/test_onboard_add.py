@@ -1,7 +1,7 @@
 import json
 
 from gecko.netguard import UnsafeUrlError
-from gecko.onboard import AddDeps, add
+from gecko.onboard import AddDeps, add, safe_name
 
 _SPEC = {
     "openapi": "3.0.3",
@@ -143,6 +143,31 @@ def test_add_claude_config_not_applied_prints_fallback_command_still_rc_0(
     assert rc == 0
     assert "claude mcp add" in out.lower() or "run the command" in out.lower()
     assert "gecko serve" in out
+
+
+def test_add_slugifies_a_raw_name_consistently_with_remove(tmp_path):
+    """Finding 4 regression: `gecko add --name "My API"` must produce the SAME
+    slug `gecko rm "My API"` (or a raw `--name`-less `gecko add`) would look up —
+    otherwise the cache file / credential slot / Claude registration desync."""
+    calls = []
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_SPEC),
+        comprehend=lambda spec: 47,
+        prompt=lambda q: "sk-live-x",
+        store=lambda n, s: bool(calls.append(("store", n)) or True),
+        run=lambda cmd: bool(calls.append(("run", cmd))) or 0,
+        home=tmp_path,
+        resolver=PUBLIC,
+    )
+    rc = add("https://api.stripe.com/openapi.json", name="My API", deps=deps)
+    assert rc == 0
+    expected_slug = safe_name("My API")
+    assert expected_slug == "my-api"
+    assert ("store", expected_slug) in calls
+    assert (tmp_path / ".gecko" / "surfaces" / f"{expected_slug}.json").exists()
+    run_cmd = next(cmd for kind, cmd in calls if kind == "run")
+    assert expected_slug in run_cmd
+    assert "--auth-keychain" in run_cmd and expected_slug in run_cmd
 
 
 def test_add_local_path_needs_no_resolver(tmp_path, capsys):
