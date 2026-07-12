@@ -53,3 +53,45 @@ def test_main_public_url_added_to_allowlist(monkeypatch):
     serve.main([PEGANA, "--public-url", "https://demo.trycloudflare.com"])
     assert "demo.trycloudflare.com" in captured["allowed_hosts"]
     assert "https://demo.trycloudflare.com" in captured["allowed_origins"]
+
+
+def test_main_base_url_pins_the_trust_anchor(monkeypatch):
+    monkeypatch.setattr(serve, "serve_http", lambda client, **k: None)
+    # This test is about CLI wiring (base_url -> AgentApiClient -> anchor), not SSRF
+    # resolution — netguard's own tests cover validate_public_url. No real DNS here.
+    monkeypatch.setattr(serve, "validate_public_url", lambda *a, **k: None)
+    captured = {}
+    real_client = serve.AgentApiClient
+
+    def spy(*a, **k):
+        client = real_client(*a, **k)
+        captured["client"] = client
+        return client
+
+    monkeypatch.setattr(serve, "AgentApiClient", spy)
+    rc = serve.main([PEGANA, "--base-url", "https://api.example.com"])
+    assert rc == 0
+    assert captured["client"].anchor.state == "pinned"
+    assert "api.example.com" in captured["client"]._auth_allowed_hosts
+
+
+def test_main_rejects_unsafe_base_url(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(serve, "serve_http", lambda *a, **k: called.append(1))
+    rc = serve.main([PEGANA, "--base-url", "http://169.254.169.254/"])
+    assert rc == 2
+    assert not called
+    assert "unsafe" in capsys.readouterr().err.lower()
+
+
+def test_stdio_spawn_includes_base_url_near_auth_keychain():
+    args = serve._parse_args(
+        [PEGANA, "--base-url", "https://api.example.com", "--stdio"]
+    )
+    spawn = serve._stdio_spawn(args)
+    assert "--base-url https://api.example.com" in spawn
+
+
+def test_stdio_spawn_omits_base_url_when_absent():
+    args = serve._parse_args([PEGANA, "--stdio"])
+    assert "--base-url" not in serve._stdio_spawn(args)

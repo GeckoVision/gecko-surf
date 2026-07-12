@@ -24,3 +24,29 @@ def test_fallback_when_claude_missing_returns_command():
     r = configure_claude("stripe", Path("/tmp/s.json"), run=run)
     assert not r.applied and r.ok  # ok=we produced a usable command
     assert r.command[0] == "claude"
+
+
+def test_base_url_emits_flag_before_stdio():
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return 0
+
+    r = configure_claude(
+        "stripe",
+        Path("/tmp/stripe.json"),
+        run=run,
+        base_url="https://api.stripe.com",
+    )
+    assert r.ok and r.applied
+    cmd = calls[0]
+    assert "--base-url" in cmd
+    idx = cmd.index("--base-url")
+    assert cmd[idx + 1] == "https://api.stripe.com"
+    assert cmd.index("--base-url") < cmd.index("--stdio")
+
+
+def test_no_base_url_omits_flag():
+    r = configure_claude("stripe", Path("/tmp/stripe.json"), run=lambda cmd: 0)
+    assert "--base-url" not in r.command
