@@ -26,6 +26,7 @@ Thin by design — all logic lives in ``gecko.http_server``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
 from .registry.wiring import build_keystore_from_env
+
+logger = logging.getLogger("gecko.serve_mcp")
 
 # In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -142,15 +145,44 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     return surfaces
 
 
-def _surface_spec(value: Any) -> dict[str, Any]:
+def _build_paysh_surface() -> tuple[Any, Any]:
+    """Build the aggregated pay.sh catalog surface from the LIVE catalog once at startup.
+
+    Returns ``(registry, surface)``. The fetch is SSRF-safe (``fetch_catalog`` runs
+    ``validate_public_url``) and the catalog is treated as untrusted. If the live fetch
+    FAILS at boot, we log and serve an EMPTY surface rather than crashing the whole server
+    — the hourly self-refresh loop will populate it on the next successful tick. Imports
+    are lazy (mirrors the colosseum pattern) so the catalog modules stay off the hot
+    import path until this host actually serves pay.sh."""
+    from gecko.catalog_mcp import CatalogMcpSurface
+    from gecko.paysh_catalog import CatalogRegistry, fetch_catalog
+
+    try:
+        entries = fetch_catalog()
+    except Exception:  # noqa: BLE001 - a boot fetch failure must not crash the server
+        logger.warning(
+            "pay.sh catalog fetch failed at boot; serving empty catalog surface"
+        )
+        entries = []
+    registry = CatalogRegistry.build(entries)
+    return registry, CatalogMcpSurface(registry)
+
+
+def _surface_spec(value: Any) -> dict[str, Any] | None:
     """Recover the raw OpenAPI dict behind a ``_build_surfaces`` entry, whatever shape
     it was built in: a bare parsed spec (reportavnzla/sosvenezuela), an ``McpSurface``
-    wrapping a client (txline/jito), or a bare ``AgentApiClient`` (refugios)."""
+    wrapping a client (txline/jito), or a bare ``AgentApiClient`` (refugios).
+
+    Returns ``None`` for a spec-less AGGREGATE surface (the pay.sh catalog is 70 pinned
+    clients with NO single OpenAPI document) — the caller skips it rather than fabricating
+    a fake unified spec or crashing the registry routes."""
     if isinstance(value, McpSurface):
         return value.client.spec
     if isinstance(value, AgentApiClient):
         return value.spec
-    return value  # type: ignore[no-any-return]
+    if isinstance(value, dict):
+        return value
+    return None
 
 
 def _registry_store(surfaces: list[tuple[str, Any]]) -> SurfaceStore:
@@ -166,8 +198,9 @@ def _registry_store(surfaces: list[tuple[str, Any]]) -> SurfaceStore:
     from gecko.examples.colosseum import load_spec as _load_colosseum_spec
 
     docs = [
-        RegistrySurface(name=name, spec=_surface_spec(value), tier="free")
+        RegistrySurface(name=name, spec=spec, tier="free")
         for name, value in surfaces
+        if (spec := _surface_spec(value)) is not None  # aggregate surfaces have no spec
     ]
     docs.append(
         RegistrySurface(name="colosseum", spec=_load_colosseum_spec(), tier="free")
@@ -176,17 +209,38 @@ def _registry_store(surfaces: list[tuple[str, Any]]) -> SurfaceStore:
 
 
 def main() -> None:  # pragma: no cover - run-the-server entrypoint
+    from gecko import paysh_watch
+    from gecko.paysh_catalog import challenge_probe, fetch_catalog
+
     port = int(os.environ.get("PORT", "8000"))
     # Hosted default resolved in the ONE shared place (resolve_hosted_enforce): block,
     # unless GECKO_ENFORCE dials it down (needs a redeploy).
     hosted_enforce = resolve_hosted_enforce()
     surfaces = _build_surfaces(hosted_enforce)
-    # Registry store for the /registry/... HTTP surface, built AFTER every surface
-    # (incl. txline/jito/refugios) has been appended — see `_registry_store`.
+    # Registry store for the /registry/... HTTP surface, built from the SINGLE-SPEC
+    # surfaces only (before pay.sh is appended) — the aggregate pay.sh catalog has no
+    # single OpenAPI document, so it is not registry-distributed (see `_surface_spec`).
     # `build_keystore_from_env()` wires a real Mongo-backed KeyStore when
     # MONGODB_URI + GECKO_OTP_FROM are set; it fails soft to None (issuance disabled,
     # 402-on-premium-never) rather than crashing the server.
     registry_store = _registry_store(surfaces)
+
+    # pay.sh catalog — the aggregate surface, mounted at /paysh/mcp ALONGSIDE the rest.
+    # Built once from the live catalog; the served mode stays "recorded" (the surface
+    # carries it), so this MCP never triggers a live payment.
+    paysh_registry, paysh_surface = _build_paysh_surface()
+    surfaces = surfaces + [("paysh", paysh_surface)]
+
+    # Hourly self-refresh drift-watch: Tier-1 sha-diff refresh + Tier-2 challenge-only
+    # 402 re-probe, mutating the registry in place so /paysh/mcp reflects the fresh state.
+    async def _paysh_worker() -> None:
+        await paysh_watch.watch_loop(
+            paysh_registry,
+            interval=paysh_watch.refresh_seconds(),
+            fetch=fetch_catalog,
+            probe=challenge_probe,
+        )
+
     serve_multi_http(
         surfaces,
         host="0.0.0.0",  # noqa: S104 - bind all interfaces; the ALB fronts it
@@ -200,6 +254,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             build_keystore_from_env(),
             feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
         ),
+        background_tasks=[_paysh_worker],
     )
 
 

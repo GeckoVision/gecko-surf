@@ -20,10 +20,13 @@ Design notes:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
 import time
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -522,6 +525,7 @@ def build_multi_surface_app(
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
+    background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -542,6 +546,12 @@ def build_multi_surface_app(
     ``registry_routes`` optionally appends the Gecko registry HTTP surface (built via
     ``gecko.registry.api.registry_routes``) — anonymous free-surface fetch + the
     premium 402 entitlement gate + OTP key issuance, at ``/registry/...``.
+
+    ``background_tasks`` are long-lived coroutine factories started on app startup and
+    cancelled on shutdown (e.g. the pay.sh catalog self-refresh drift-watch). They run for
+    the whole server lifetime, inside the same composed lifespan as the MCP mounts. The
+    transport stays generic — it never imports any specific surface; a task just gets a
+    coroutine factory it drives and cancels.
     """
     from contextlib import AsyncExitStack, asynccontextmanager
     from dataclasses import asdict
@@ -757,7 +767,19 @@ def build_multi_surface_app(
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
             # The meta surface's MCP session manager must start too (else /gecko/mcp 500s).
             await stack.enter_async_context(meta_sub.router.lifespan_context(meta_sub))
-            yield
+            # Long-lived background workers (e.g. pay.sh self-refresh) run for the whole
+            # server lifetime and are cancelled cleanly on shutdown.
+            tasks: list[asyncio.Task[None]] = [
+                asyncio.create_task(fn()) for fn in (background_tasks or [])
+            ]
+            try:
+                yield
+            finally:
+                for task in tasks:
+                    task.cancel()
+                for task in tasks:
+                    with contextlib.suppress(Exception, asyncio.CancelledError):
+                        await task
 
     return Starlette(routes=routes, lifespan=_lifespan)
 
@@ -845,12 +867,13 @@ def serve_multi_http(
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
+    background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
-    ``block`` default (see ``build_multi_surface_app``). ``registry_routes`` is forwarded
-    unchanged (see ``build_multi_surface_app``)."""
+    ``block`` default (see ``build_multi_surface_app``). ``registry_routes`` and
+    ``background_tasks`` are forwarded unchanged (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -862,5 +885,6 @@ def serve_multi_http(
         public_url=public_url,
         enforce=enforce,
         registry_routes=registry_routes,
+        background_tasks=background_tasks,
     )
     uvicorn.run(app, **_uvicorn_kwargs(host, port))
