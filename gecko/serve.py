@@ -108,6 +108,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--name", default=None, help="Server/tool name (default: spec slug)."
     )
     p.add_argument(
+        "--base-url",
+        default=None,
+        help="Pin the trusted request host (the origin the spec was fetched from). "
+        "Enables live auth injection.",
+    )
+    p.add_argument(
         "--public-url",
         default=None,
         help="Public HTTPS URL the agent will connect to (e.g. a tunnel). "
@@ -177,6 +183,8 @@ def _stdio_spawn(args: argparse.Namespace) -> str:
         spawn += f" --auth-env {args.auth_env}"
     if args.auth_keychain:
         spawn += f" --auth-keychain {args.auth_keychain}"
+    if args.base_url:
+        spawn += f" --base-url {args.base_url}"
     return spawn + " --stdio"
 
 
@@ -237,6 +245,13 @@ def main(argv: list[str] | None = None) -> int:
         print("Provide exactly one of <spec> or --registry <name>.", file=sys.stderr)
         return 2
 
+    if args.base_url:
+        try:
+            validate_public_url(args.base_url)
+        except UnsafeUrlError as exc:
+            print(f"Refusing unsafe --base-url: {exc}", file=sys.stderr)
+            return 2
+
     session: Any = public_session()
     if args.auth_env:
         token = os.environ.get(args.auth_env, "")
@@ -278,7 +293,9 @@ def main(argv: list[str] | None = None) -> int:
             if warning:
                 print(warning, file=sys.stderr)
         try:
-            client = AgentApiClient(fetched.spec, session=session)
+            client = AgentApiClient(
+                fetched.spec, session=session, base_url=args.base_url
+            )
         except CredentialError as exc:
             print(f"auth: {exc}", file=sys.stderr)
             return 1
@@ -307,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if warning:
                     print(warning, file=sys.stderr)
-            client = AgentApiClient(args.spec, session=session)
+            client = AgentApiClient(args.spec, session=session, base_url=args.base_url)
         except (UnsafeUrlError, ValueError) as exc:
             print(f"Could not comprehend spec: {exc}", file=sys.stderr)
             return 2

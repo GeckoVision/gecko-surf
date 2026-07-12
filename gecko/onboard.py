@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import docs_reader
 from .netguard import Resolver, UnsafeUrlError, safe_get, validate_public_url
@@ -26,10 +27,26 @@ def _default_fetch(url: str) -> str:
     return safe_get(url)
 
 
+@dataclass(frozen=True)
+class ResolvedRef:
+    """A resolved spec plus its trusted provenance (if any).
+
+    ``spec_url`` is set ONLY when ``ref`` was an http(s) URL that yielded a direct JSON
+    OpenAPI document — that's out-of-band provenance ``surfaces.anchor_for`` can pin to.
+    It is ``None`` for docs-recovery (the parser guessed, so nothing is trusted yet) and
+    for local paths (a file on disk is no more trustworthy than an in-memory dict — see
+    ``anchor_for``'s docstring). Callers reconcile this into a ``base_url`` via
+    ``pin_base_url``; never pin directly off the spec's own ``servers[]``.
+    """
+
+    spec: dict[str, Any]
+    spec_url: str | None
+
+
 def resolve_spec(
     ref: str, *, fetch: Fetcher | None = None, resolver: Resolver | None = None
-) -> dict[str, Any]:
-    """Resolve an API reference to an OpenAPI dict.
+) -> ResolvedRef:
+    """Resolve an API reference to an OpenAPI dict + its trusted provenance.
 
     ``ref`` may be an http(s) OpenAPI URL, an http(s) docs page (recovered via
     from-docs), or a local path (dev). http(s) inputs are SSRF-validated first.
@@ -44,26 +61,56 @@ def resolve_spec(
         try:
             spec = json.loads(body)
             if isinstance(spec, dict) and spec.get("openapi"):
-                return spec
+                return ResolvedRef(spec=spec, spec_url=ref)
         except json.JSONDecodeError:
             pass
-        # Not a JSON spec — try docs recovery.
+        # Not a JSON spec — try docs recovery. The parser guessed; no provenance yet.
         result = docs_reader.from_docs(ref)
-        return result.draft
-    # Local path (dev convenience).
+        return ResolvedRef(spec=result.draft, spec_url=None)
+    # Local path (dev convenience) — never pinning provenance.
     try:
         with open(ref, encoding="utf-8") as fh:
-            return json.load(fh)
+            return ResolvedRef(spec=json.load(fh), spec_url=None)
     except (OSError, json.JSONDecodeError) as exc:
         raise OnboardError(f"could not read spec at {ref}: {exc}") from exc
+
+
+def pin_base_url(
+    spec_url: str | None, spec: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    """Reconcile the fetch origin (trusted provenance) against the spec's own
+    ``servers[0].url`` (untrusted — attacker-controlled, the confirmed exfil vector).
+
+    Returns ``(base_url, warning)``:
+      * ``spec_url`` is ``None`` (docs-recovery / local path) -> ``(None, None)``. Stay
+        unverified — that's CORRECT, there is nothing to pin.
+      * the spec's first server host agrees with ``spec_url``'s host -> trust the full
+        server URL (keeps any path prefix the origin alone would lose).
+      * anything else (host mismatch, or no ``servers[]`` at all) -> pin to the bare
+        fetch ORIGIN, never the spec's claim, with a warning a path prefix may be lost.
+    """
+    if spec_url is None:
+        return None, None
+    parsed = urlsplit(spec_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    servers = spec.get("servers") or []
+    first = servers[0].get("url") if servers and isinstance(servers[0], dict) else None
+    first_host = urlsplit(first).hostname if first else None
+    spec_host = parsed.hostname
+    if first_host and spec_host and first_host.lower() == spec_host.lower():
+        return first, None
+    warning = (
+        f"warning: the spec's server host ({first_host}) differs from where the spec "
+        f"was fetched ({spec_host}); pinning requests to the fetch origin — a path "
+        "prefix may be lost."
+    )
+    return origin, warning
 
 
 def safe_name(ref: str) -> str:
     """A filesystem/name-safe surface id derived from a ref (host or slug)."""
     base = ref
     if ref.startswith(("http://", "https://")):
-        from urllib.parse import urlsplit
-
         base = urlsplit(ref).netloc or ref
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", base).strip("-").lower()
     return slug or "surface"
@@ -125,6 +172,7 @@ def configure_claude(
     gecko_bin: str = "gecko",
     run: Runner | None = None,
     auth_surface: str | None = None,
+    base_url: str | None = None,
 ) -> ConfigResult:
     """Register the surface with Claude Code over stdio (client spawns the server).
 
@@ -132,6 +180,12 @@ def configure_claude(
     spawned ``gecko serve`` command — the whole point of sealing the key via
     ``ensure_key`` is that the SERVED surface resolves it at call time, not just
     that it sits unused in the OS keychain.
+
+    ``base_url``, when given (from ``pin_base_url`` — the fetch origin, NEVER the
+    spec's own ``servers[]``), appends ``--base-url <base_url>`` so the served surface
+    is PINNED (see ``surfaces.anchor_for``) and can inject auth in live mode — a
+    gecko-add-wired surface otherwise serves from a local cache path, which is not
+    pinning provenance and stays ``unverified``.
     """
     run = run or _default_run
     command = [
@@ -145,8 +199,10 @@ def configure_claude(
         gecko_bin,
         "serve",
         str(cache_path),
-        "--stdio",
     ]
+    if base_url:
+        command += ["--base-url", base_url]
+    command += ["--stdio"]
     if auth_surface:
         command += ["--auth-keychain", auth_surface]
     try:
@@ -210,10 +266,11 @@ def remove(name: str, *, run: Runner, home: Path) -> int:
 def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
     """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude."""
     try:
-        spec = resolve_spec(ref, fetch=deps.fetch, resolver=deps.resolver)
+        resolved = resolve_spec(ref, fetch=deps.fetch, resolver=deps.resolver)
     except OnboardError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
+    spec = resolved.spec
     # Slugify ONCE, here — cache_spec/remove re-slug via safe_name too, so a raw
     # `--name "My API"` must not desync the Claude registration from the cache
     # file / credential slot those look up by slug.
@@ -229,8 +286,19 @@ def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
                 "  ○ no key entered — add later with `gecko auth set " + surface + "`"
             )
     path = cache_spec(surface, spec, home=deps.home)
+    # Reconcile the trusted fetch origin (never the spec's own servers[]) into an
+    # explicit base_url so the SERVED surface pins (surfaces.anchor_for) instead of
+    # degrading to unverified — the whole point: a cached-path surface can't pin on
+    # its own, but the fetch-time provenance we already validated it against can.
+    base_url, warn = pin_base_url(resolved.spec_url, spec)
+    if warn:
+        print(f"  ⚠ {warn}", file=sys.stderr)
     cfg = configure_claude(
-        surface, path, run=deps.run, auth_surface=surface if needs_auth else None
+        surface,
+        path,
+        run=deps.run,
+        auth_surface=surface if needs_auth else None,
+        base_url=base_url,
     )
     mark = "✓" if cfg.applied else "→"
     print(f"  {mark} {cfg.note}")
