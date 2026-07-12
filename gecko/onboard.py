@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import docs_reader
-from .netguard import UnsafeUrlError, validate_public_url
+from .netguard import Resolver, UnsafeUrlError, validate_public_url
 
 Fetcher = Callable[[str], str]
 
@@ -27,7 +27,7 @@ def _default_fetch(url: str) -> str:
 
 
 def resolve_spec(
-    ref: str, *, fetch: Fetcher | None = None, resolver: Any = None
+    ref: str, *, fetch: Fetcher | None = None, resolver: Resolver | None = None
 ) -> dict[str, Any]:
     """Resolve an API reference to an OpenAPI dict.
 
@@ -166,12 +166,13 @@ class AddDeps:
     store: Callable[[str, str], None]
     run: Runner
     home: Path
+    resolver: Resolver | None = None
 
 
 def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
     """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude."""
     try:
-        spec = resolve_spec(ref, fetch=deps.fetch)
+        spec = resolve_spec(ref, fetch=deps.fetch, resolver=deps.resolver)
     except OnboardError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
