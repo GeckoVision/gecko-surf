@@ -1,8 +1,9 @@
 """``gecko`` CLI — an argparse subcommand dispatcher. Thin by design.
 
-Three verbs, each a thin wrapper over the package (all real logic lives in the
+Each verb is a thin wrapper over the package (all real logic lives in the
 engine modules):
 
+  * ``gecko add <api>``         one-command onboard: comprehend + wire into your agent
   * ``gecko serve <spec>``      comprehend an OpenAPI spec and serve it to agents (MCP)
   * ``gecko test <spec>``       generate + run first-call-correctness checks (testgen)
   * ``gecko from-docs <src>``   recover a draft OpenAPI from a doc page, then comprehend
@@ -18,13 +19,14 @@ import argparse
 import getpass
 import json
 import sys
+from pathlib import Path
 
-from . import credentials, docs_reader, serve, testgen
+from . import credentials, docs_reader, onboard, serve, testgen
 from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("serve", "test", "from-docs", "auth")
+_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -56,6 +58,40 @@ def _reject_unsafe(url: str, verb: str) -> bool:
         print(f"Refusing to {verb} unsafe URL: {exc}", file=sys.stderr)
         return True
     return False
+
+
+def _cmd_add(argv: list[str]) -> int:
+    """`gecko add <api>` — comprehend an API and wire it into Claude Code (stdio).
+
+    Thin transport: parse args, build the real ``AddDeps`` (network fetch,
+    comprehend via the unmodified engine, hidden-prompt keychain store, real
+    `claude mcp add` runner), and hand off to ``onboard.add`` for the logic.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko add",
+        description="Comprehend an API and wire it into your agent (stdio, key in keychain).",
+    )
+    p.add_argument("api", help="OpenAPI URL, docs URL, or local path.")
+    p.add_argument(
+        "--name", default=None, help="Surface name (default: derived from the ref)."
+    )
+    args = p.parse_args(argv)
+
+    def _comprehend(spec: dict) -> int:
+        return len(AgentApiClient(spec, session=public_session()).list_tools())
+
+    def _store(name: str, secret: str) -> None:
+        credentials.KeyringBackend().store(credentials.CredentialRef(api=name), secret)
+
+    deps = onboard.AddDeps(
+        fetch=onboard._default_fetch,
+        comprehend=_comprehend,
+        prompt=lambda q: getpass.getpass(q),
+        store=_store,
+        run=onboard._default_run,
+        home=Path.home(),
+    )
+    return onboard.add(args.api, name=args.name, deps=deps)
 
 
 def _cmd_test(argv: list[str]) -> int:
@@ -295,6 +331,9 @@ def _print_help() -> None:
     print("usage: gecko <command> [options]\n")
     print("commands:")
     print(
+        "  add <api>          comprehend an API and wire it into your agent (one command)"
+    )
+    print(
         "  serve <spec>       comprehend an OpenAPI spec and serve it to agents (MCP)"
     )
     print("  test  <spec>       generate + run first-call-correctness checks")
@@ -308,6 +347,8 @@ def _print_help() -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd, rest = _default_to_serve(argv)
+    if cmd == "add":
+        return _cmd_add(rest)
     if cmd == "serve":
         return serve.main(rest)
     if cmd == "test":

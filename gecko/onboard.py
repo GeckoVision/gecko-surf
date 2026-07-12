@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -153,3 +154,42 @@ def configure_claude(
         False,
         f"`claude mcp add` exited {code} — run the command above yourself.",
     )
+
+
+@dataclass
+class AddDeps:
+    """Injected dependencies for ``add`` — the seam that keeps it network-free in tests."""
+
+    fetch: Fetcher
+    comprehend: Callable[[dict[str, Any]], int]
+    prompt: Callable[[str], str]
+    store: Callable[[str, str], None]
+    run: Runner
+    home: Path
+
+
+def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
+    """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude."""
+    try:
+        spec = resolve_spec(ref, fetch=deps.fetch)
+    except OnboardError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    surface = name or safe_name(ref)
+    n_tools = deps.comprehend(spec)
+    print(f"  ✓ comprehended {n_tools} endpoint(s) → first-call-correct tools")
+    if spec_needs_auth(spec):
+        if ensure_key(surface, prompt=deps.prompt, store=deps.store):
+            print("  ✓ key → sealed in OS keychain (never in mcp.json)")
+        else:
+            print(
+                "  ○ no key entered — add later with `gecko auth set " + surface + "`"
+            )
+    path = cache_spec(surface, spec, home=deps.home)
+    cfg = configure_claude(surface, path, run=deps.run)
+    mark = "✓" if cfg.applied else "→"
+    print(f"  {mark} {cfg.note}")
+    if not cfg.applied:
+        print("     " + " ".join(cfg.command))
+    print(f"\n  → ask your agent to use the '{surface}' tools.")
+    return 0
