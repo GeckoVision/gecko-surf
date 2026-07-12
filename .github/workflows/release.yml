@@ -100,13 +100,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # v6 is what npm's trusted-publishing docs use — it writes an OIDC-compatible
-      # .npmrc. v4 wrote a legacy `always-auth` .npmrc that shadowed OIDC (npm then
-      # fell back to an empty token -> E404 on publish).
+      # NO registry-url: with it, setup-node writes an .npmrc with
+      # `_authToken=${NODE_AUTH_TOKEN}`, and since we set no token that empty value
+      # SHADOWS OIDC (npm sends the empty token -> E404). Without it, npm finds no
+      # configured token and uses OIDC. Default registry is registry.npmjs.org, so
+      # scoped @geckovision publishes there with OIDC auth.
       - uses: actions/setup-node@v6
         with:
           node-version: "24"  # >= 22.14, required for OIDC trusted publishing
-          registry-url: "https://registry.npmjs.org"
 
       # Trusted publishing needs npm >= 11.5.1; guarantee it + log what we got so a
       # future failure is diagnosable (is OIDC even available to the job?).
