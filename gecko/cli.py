@@ -1,8 +1,9 @@
 """``gecko`` CLI — an argparse subcommand dispatcher. Thin by design.
 
-Three verbs, each a thin wrapper over the package (all real logic lives in the
+Each verb is a thin wrapper over the package (all real logic lives in the
 engine modules):
 
+  * ``gecko add <api>``         one-command onboard: comprehend + wire into your agent
   * ``gecko serve <spec>``      comprehend an OpenAPI spec and serve it to agents (MCP)
   * ``gecko test <spec>``       generate + run first-call-correctness checks (testgen)
   * ``gecko from-docs <src>``   recover a draft OpenAPI from a doc page, then comprehend
@@ -16,15 +17,18 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import importlib.metadata
 import json
+import shutil
 import sys
+from pathlib import Path
 
-from . import credentials, docs_reader, serve, testgen
+from . import credentials, docs_reader, onboard, serve, testgen
 from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("serve", "test", "from-docs", "auth")
+_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth", "rm", "list", "doctor")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -56,6 +60,72 @@ def _reject_unsafe(url: str, verb: str) -> bool:
         print(f"Refusing to {verb} unsafe URL: {exc}", file=sys.stderr)
         return True
     return False
+
+
+def _cmd_add(argv: list[str]) -> int:
+    """`gecko add <api>` — comprehend an API and wire it into Claude Code (stdio).
+
+    Thin transport: parse args, build the real ``AddDeps`` (network fetch,
+    comprehend via the unmodified engine, hidden-prompt keychain store, real
+    `claude mcp add` runner), and hand off to ``onboard.add`` for the logic.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko add",
+        description="Comprehend an API and wire it into your agent (stdio, key in keychain).",
+    )
+    p.add_argument("api", help="OpenAPI URL, docs URL, or local path.")
+    p.add_argument(
+        "--name", default=None, help="Surface name (default: derived from the ref)."
+    )
+    args = p.parse_args(argv)
+
+    def _comprehend(spec: dict) -> int:
+        return len(AgentApiClient(spec, session=public_session()).list_tools())
+
+    def _store(name: str, secret: str) -> bool:
+        ref = credentials.CredentialRef(api=name)
+        backend = credentials.KeyringBackend()
+        if not backend.available():
+            # Mirror `_auth_set`'s remediation — never crash the onboard flow, and
+            # never write plaintext anywhere. The surface still works (no-auth calls
+            # or the key added later via the env fallback). Report failure so the
+            # caller never claims the key was sealed.
+            print(
+                "No OS keychain available (install it: pip install "
+                "'gecko-surf[credentials]').",
+                file=sys.stderr,
+            )
+            print(
+                f"Use the env fallback instead:\n  export "
+                f"{credentials.env_var_name(ref)}=...",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            backend.store(ref, secret)
+        except (credentials.CredentialError, OSError) as exc:
+            # A mid-write failure (locked/broken keychain) must never crash `gecko
+            # add` or leak the secret — report failure so the caller reports it as
+            # "not sealed" (never a false "✓ sealed") and let the env fallback work.
+            print(f"Could not write to the OS keychain: {exc}", file=sys.stderr)
+            print(
+                f"Use the env fallback instead:\n  export "
+                f"{credentials.env_var_name(ref)}=...",
+                file=sys.stderr,
+            )
+            return False
+        return True
+
+    deps = onboard.AddDeps(
+        fetch=onboard._default_fetch,
+        comprehend=_comprehend,
+        prompt=lambda q: getpass.getpass(q),
+        store=_store,
+        run=onboard._default_run,
+        home=Path.home(),
+        resolver=None,  # real DNS in production; tests inject a fake resolver
+    )
+    return onboard.add(args.api, name=args.name, deps=deps)
 
 
 def _cmd_test(argv: list[str]) -> int:
@@ -290,24 +360,137 @@ def _auth_test(api: str, account: str | None) -> int:
     return 0
 
 
+def _cmd_rm(argv: list[str]) -> int:
+    """`gecko rm <surface>` — deregister and delete a cached surface."""
+    p = argparse.ArgumentParser(
+        prog="gecko rm",
+        description="Remove a cached surface from ~/.gecko/surfaces/ and deregister from Claude.",
+    )
+    p.add_argument("name", help="Surface name (as shown in `gecko list`).")
+    args = p.parse_args(argv)
+    return onboard.remove(args.name, run=onboard._default_run, home=Path.home())
+
+
+def _cmd_list(argv: list[str]) -> int:
+    """`gecko list` — list cached onboarded surfaces."""
+    p = argparse.ArgumentParser(
+        prog="gecko list",
+        description="List all cached onboarded surfaces.",
+    )
+    p.parse_args(argv)
+    surfaces = onboard.list_surfaces(home=Path.home())
+    if not surfaces:
+        print("No surfaces onboarded yet. Add one:  gecko add <api>")
+        return 0
+    for name in surfaces:
+        print(f"  {name}")
+    return 0
+
+
+def _cmd_doctor(argv: list[str]) -> int:
+    """`gecko doctor` — diagnose your setup and print the next step."""
+    p = argparse.ArgumentParser(
+        prog="gecko doctor",
+        description="Check your setup and print the exact next step.",
+    )
+    p.parse_args(argv)
+
+    print("Gecko doctor — check your setup\n" + "=" * 56)
+
+    # 1. Gecko version
+    try:
+        version = importlib.metadata.version("gecko-surf")
+        print(f"  ✓ gecko          {version}")
+    except Exception:
+        print("  ✗ gecko          unknown")
+
+    # 2. Engine (AgentApiClient import)
+    try:
+        _ = AgentApiClient
+        print("  ✓ engine         ok")
+    except Exception as exc:
+        print(f"  ✗ engine         {str(exc)}")
+
+    # 3. OS keychain
+    try:
+        backend = credentials.KeyringBackend()
+        if backend.available():
+            print("  ✓ keychain       available")
+        else:
+            print("  ✗ keychain       not available (keys fall back to env vars)")
+    except Exception:
+        print("  ✗ keychain       not available")
+
+    # 4. Claude Code CLI
+    if shutil.which("claude"):
+        print("  ✓ Claude Code CLI found")
+    else:
+        print(
+            "  ✗ Claude Code CLI not found (install it or use `gecko serve … --stdio` manually)"
+        )
+
+    # 5. Onboarded surfaces
+    try:
+        surfaces = onboard.list_surfaces(home=Path.home())
+        if surfaces:
+            count = len(surfaces)
+            names = ", ".join(surfaces)
+            print(f"  ✓ surfaces       {count} onboarded ({names})")
+        else:
+            print("  ✗ surfaces       none — onboard one with `gecko add <api>`")
+    except Exception:
+        print("  ✗ surfaces       could not list")
+
+    print("\n→ Next: onboard an API with `gecko add <api>` or `gecko add <url>`")
+    return 0
+
+
+_BLUE = "\x1b[38;2;20;110;245m"
+_BOLD = "\x1b[1m"
+_RESET = "\x1b[0m"
+
+_WORDMARK = r"""
+  ▄▄ ▄▄▄ ▄▄  ▄  ▄  ▄▄▄
+ ▐▌ ▐▌   ▐▌ ▟▙ ▐▌ ▐▌ ▐▌   G E C K O
+ ▐▌▟▌▐▛▀ ▐▌ ▜▛ ▐▌ ▐▌ ▐▌
+  ▀▀ ▀▀▀ ▀▀▀▘  ▀  ▀▀▀
+""".rstrip("\n")
+
+
+def _banner() -> str:
+    """Return a GECKO ASCII wordmark, colored if TTY, plain otherwise."""
+    color = sys.stdout.isatty()
+    mark = (
+        f"{_BLUE}{_WORDMARK}{_RESET}"
+        if color
+        else _WORDMARK.replace("G E C K O", "GECKO")
+    )
+    return mark
+
+
 def _print_help() -> None:
-    print("gecko — make any API agent-usable without integration code\n")
-    print("usage: gecko <command> [options]\n")
-    print("commands:")
-    print(
-        "  serve <spec>       comprehend an OpenAPI spec and serve it to agents (MCP)"
-    )
-    print("  test  <spec>       generate + run first-call-correctness checks")
-    print(
-        "  from-docs <src>    recover a draft OpenAPI from a doc page, then comprehend"
-    )
+    print(_banner())
+    print("  make any API agent-usable — first call correct\n")
+    print(f"{_BOLD}Onboard:{_RESET}" if sys.stdout.isatty() else "Onboard:")
+    print("  add <api>          comprehend any API + wire it into your agent (stdio)")
+    print("  rm <name>          remove an onboarded surface")
+    print("  list               list onboarded surfaces")
+    print("\nKeys:")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
+    print("\nDiagnose:")
+    print("  doctor             check your setup, print the exact next step")
+    print("\nAdvanced:")
+    print("  serve <spec>       serve a comprehended spec to agents (MCP)")
+    print("  from-docs <src>    recover a draft OpenAPI from a doc page")
+    print("  test  <spec>       first-call-correctness checks")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd, rest = _default_to_serve(argv)
+    if cmd == "add":
+        return _cmd_add(rest)
     if cmd == "serve":
         return serve.main(rest)
     if cmd == "test":
@@ -316,6 +499,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_from_docs(rest)
     if cmd == "auth":
         return _cmd_auth(rest)
+    if cmd == "rm":
+        return _cmd_rm(rest)
+    if cmd == "list":
+        return _cmd_list(rest)
+    if cmd == "doctor":
+        return _cmd_doctor(rest)
     _print_help()
     return 0
 
