@@ -94,6 +94,26 @@ def _default_run(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
 
 
+def spec_needs_auth(spec: dict[str, Any]) -> bool:
+    """True if the spec declares any security scheme (so the API needs a key)."""
+    schemes = spec.get("components", {}).get("securitySchemes")
+    return bool(schemes) or bool(spec.get("security"))
+
+
+def ensure_key(
+    name: str,
+    *,
+    prompt: Callable[[str], str],
+    store: Callable[[str, str], None],
+) -> bool:
+    """Prompt (hidden, injected) for the provider key and store it. Never logged."""
+    secret = prompt(f"Enter API key for {name} (hidden, stored in OS keychain): ")
+    if not secret:
+        return False
+    store(name, secret)
+    return True
+
+
 def configure_claude(
     name: str,
     cache_path: Path,
