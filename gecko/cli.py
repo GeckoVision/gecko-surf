@@ -502,24 +502,12 @@ def _banner() -> str:
 
 
 def _hero() -> str:
-    """Gecko mark + wordmark lockup — the bare-`gecko` splash. Gradient on a TTY."""
-    gecko = _GECKO.strip("\n").split("\n")
-    word = _WORDMARK.split("\n")
-    gw = max(len(line) for line in gecko)
-    ww = max(len(line) for line in word)
-    height = max(len(gecko), len(word))
+    """The brand gecko mark — the bare-`gecko` splash. Gradient on a TTY.
 
-    def _pad(block: list[str], width: int) -> list[str]:
-        top = (height - len(block)) // 2
-        bottom = height - len(block) - top
-        return (
-            [" " * width] * top
-            + [ln.ljust(width) for ln in block]
-            + [" " * width] * bottom
-        )
-
-    g, w = _pad(gecko, gw), _pad(word, ww)
-    art = "\n".join(g[i] + "   " + w[i] for i in range(height))
+    Wordmark intentionally omitted for now (just the mark); the lockup can come back
+    later.
+    """
+    art = _GECKO.strip("\n")
     return _gradient(art) if sys.stdout.isatty() else art
 
 
