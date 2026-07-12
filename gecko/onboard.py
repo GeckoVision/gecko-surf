@@ -84,8 +84,9 @@ def pin_base_url(
     Returns ``(base_url, warning)``:
       * ``spec_url`` is ``None`` (docs-recovery / local path) -> ``(None, None)``. Stay
         unverified — that's CORRECT, there is nothing to pin.
-      * the spec's first server host agrees with ``spec_url``'s host -> trust the full
-        server URL (keeps any path prefix the origin alone would lose).
+      * the spec's first server is relative or same-host absolute -> extract its path,
+        force scheme/host/port from the trusted origin (defense against downgrade/port-
+        substitution attacks), and return origin + path with no warning.
       * anything else (host mismatch, or no ``servers[]`` at all) -> pin to the bare
         fetch ORIGIN, never the spec's claim, with a warning a path prefix may be lost.
     """
@@ -93,14 +94,28 @@ def pin_base_url(
         return None, None
     parsed = urlsplit(spec_url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
+    spec_host = parsed.hostname
     servers = spec.get("servers") or []
     first = servers[0].get("url") if servers and isinstance(servers[0], dict) else None
-    first_host = urlsplit(first).hostname if first else None
-    spec_host = parsed.hostname
-    if first_host and spec_host and first_host.lower() == spec_host.lower():
-        return first, None
+    if first is None:
+        warning = (
+            f"warning: the spec's server host (None) differs from where the spec "
+            f"was fetched ({spec_host}); pinning requests to the fetch origin — a path "
+            "prefix may be lost."
+        )
+        return origin, warning
+    fu = urlsplit(first)
+    # Relative server URL (e.g., "/v1" or "") or same-host absolute: keep path, force
+    # scheme/host/port from trusted origin.
+    if fu.hostname is None or (
+        spec_host and fu.hostname.lower() == spec_host.lower()
+    ):
+        # Reconstruct: origin (trusted scheme/host/port) + path (from spec).
+        base_url = origin + (fu.path or "")
+        return base_url, None
+    # Different host: reject the spec's claim, pin to origin with warning.
     warning = (
-        f"warning: the spec's server host ({first_host}) differs from where the spec "
+        f"warning: the spec's server host ({fu.hostname}) differs from where the spec "
         f"was fetched ({spec_host}); pinning requests to the fetch origin — a path "
         "prefix may be lost."
     )

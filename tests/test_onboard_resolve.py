@@ -78,3 +78,38 @@ def test_pin_base_url_falls_back_to_fetch_origin_when_no_servers():
     assert base_url == "https://api.example.com"
     assert warning is not None
     assert "api.example.com" in warning
+
+
+# --- hardening: relative & same-host server URLs keep only path, force trusted scheme/host/port -------
+
+
+def test_pin_base_url_relative_server_url():
+    # Relative server URL: extract path and combine with trusted origin.
+    spec = {**_SPEC, "servers": [{"url": "/v1"}]}
+    base_url, warning = pin_base_url("https://api.example.com/openapi.json", spec)
+    assert base_url == "https://api.example.com/v1"
+    assert warning is None
+
+
+def test_pin_base_url_same_host_http_downgrade_attempt():
+    # Same-host absolute with downgraded scheme: force scheme from trusted origin.
+    spec = {**_SPEC, "servers": [{"url": "http://api.example.com/v2"}]}
+    base_url, warning = pin_base_url("https://api.example.com/spec.json", spec)
+    assert base_url == "https://api.example.com/v2"
+    assert warning is None
+
+
+def test_pin_base_url_same_host_port_change_attempt():
+    # Same-host absolute with malicious port: force host+port from trusted origin.
+    spec = {**_SPEC, "servers": [{"url": "https://api.example.com:1337/v1"}]}
+    base_url, warning = pin_base_url("https://api.example.com/openapi.json", spec)
+    assert base_url == "https://api.example.com/v1"
+    assert warning is None
+
+
+def test_pin_base_url_relative_empty_path():
+    # Relative server URL with empty path: just return the origin.
+    spec = {**_SPEC, "servers": [{"url": ""}]}
+    base_url, warning = pin_base_url("https://api.example.com/openapi.json", spec)
+    assert base_url == "https://api.example.com"
+    assert warning is None
