@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from . import docs_reader
@@ -52,3 +54,23 @@ def resolve_spec(
             return json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
         raise OnboardError(f"could not read spec at {ref}: {exc}") from exc
+
+
+def safe_name(ref: str) -> str:
+    """A filesystem/name-safe surface id derived from a ref (host or slug)."""
+    base = ref
+    if ref.startswith(("http://", "https://")):
+        from urllib.parse import urlsplit
+
+        base = urlsplit(ref).netloc or ref
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", base).strip("-").lower()
+    return slug or "surface"
+
+
+def cache_spec(name: str, spec: dict[str, Any], *, home: Path | None = None) -> Path:
+    """Persist the comprehended spec (surface metadata only — no payloads)."""
+    root = (home or Path.home()) / ".gecko" / "surfaces"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{safe_name(name)}.json"
+    path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+    return path
