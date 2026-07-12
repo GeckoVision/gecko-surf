@@ -373,23 +373,44 @@ def _cmd_list(argv: list[str]) -> int:
     return 0
 
 
+_BLUE = "\x1b[38;2;20;110;245m"
+_BOLD = "\x1b[1m"
+_RESET = "\x1b[0m"
+
+_WORDMARK = r"""
+  ▄▄ ▄▄▄ ▄▄  ▄  ▄  ▄▄▄
+ ▐▌ ▐▌   ▐▌ ▟▙ ▐▌ ▐▌ ▐▌   G E C K O
+ ▐▌▟▌▐▛▀ ▐▌ ▜▛ ▐▌ ▐▌ ▐▌
+  ▀▀ ▀▀▀ ▀▀▀▘  ▀  ▀▀▀
+""".rstrip("\n")
+
+
+def _banner() -> str:
+    """Return a GECKO ASCII wordmark, colored if TTY, plain otherwise."""
+    color = sys.stdout.isatty()
+    mark = (
+        f"{_BLUE}{_WORDMARK}{_RESET}"
+        if color
+        else _WORDMARK.replace("G E C K O", "GECKO")
+    )
+    return mark
+
+
 def _print_help() -> None:
-    print("gecko — make any API agent-usable without integration code\n")
-    print("usage: gecko <command> [options]\n")
-    print("commands:")
-    print(
-        "  add <api>          comprehend an API and wire it into your agent (one command)"
-    )
-    print(
-        "  serve <spec>       comprehend an OpenAPI spec and serve it to agents (MCP)"
-    )
-    print("  test  <spec>       generate + run first-call-correctness checks")
-    print(
-        "  from-docs <src>    recover a draft OpenAPI from a doc page, then comprehend"
-    )
+    print(_banner())
+    print("  make any API agent-usable — first call correct\n")
+    print(f"{_BOLD}Onboard:{_RESET}" if sys.stdout.isatty() else "Onboard:")
+    print("  add <api>          comprehend any API + wire it into your agent (stdio)")
+    print("  rm <name>          remove an onboarded surface")
+    print("  list               list onboarded surfaces")
+    print("\nKeys:")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
-    print("  rm <surface>       delete a cached surface")
-    print("  list               list all cached surfaces")
+    print("\nDiagnose:")
+    print("  doctor             check your setup, print the exact next step")
+    print("\nAdvanced:")
+    print("  serve <spec>       serve a comprehended spec to agents (MCP)")
+    print("  from-docs <src>    recover a draft OpenAPI from a doc page")
+    print("  test  <spec>       first-call-correctness checks")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
