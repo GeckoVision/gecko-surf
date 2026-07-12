@@ -100,15 +100,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # v6 is what npm's trusted-publishing docs use — it writes an OIDC-compatible
+      # .npmrc. v4 wrote a legacy `always-auth` .npmrc that shadowed OIDC (npm then
+      # fell back to an empty token -> E404 on publish).
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"  # >= 22.14, required for OIDC trusted publishing
           registry-url: "https://registry.npmjs.org"
 
-      # Trusted publishing needs npm >= 11.5.1; guarantee it regardless of the
-      # npm bundled with the Node image.
+      # Trusted publishing needs npm >= 11.5.1; guarantee it + log what we got so a
+      # future failure is diagnosable (is OIDC even available to the job?).
       - name: Ensure npm supports OIDC
-        run: npm install -g npm@latest
+        run: |
+          npm install -g npm@latest
+          echo "npm $(npm --version) · node $(node --version)"
+          echo "OIDC token endpoint present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
 
       - name: Derive version from tag
         id: ver
