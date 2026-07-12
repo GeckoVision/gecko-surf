@@ -455,6 +455,24 @@ _WORDMARK = r"""  ____ _____ ____ _  _____
 | |_| | |__| |___| . \ |_| |
  \____|_____\____|_|\_\___/"""
 
+# The brand gecko mark (from gecko-icon.svg), for the bare-`gecko` hero splash.
+_GECKO = """
+             ▄████▄
+            ████████
+            ████████
+             █████▀
+  ▄▄▄▄      ▄██▀
+▄██████▄▄▄▄████       ▄▄▄▄
+████████████████▄   ▄██████▄
+▀██████▀   ▀████████████████
+  ▀▀▀▀       ████▀▀▀▀██████▀
+            ▄██▀      ▀▀▀▀
+         ▄█████
+        ▄███████
+        ▀███████
+         ▀████▀
+"""
+
 # Brand gradient — Gecko blue -> green (the `| lolcat` look, but on-brand and
 # self-contained: no external tool, so it renders in the shipped binary too).
 _GRAD_START = (20, 110, 245)
@@ -483,8 +501,30 @@ def _banner() -> str:
     return _gradient(_WORDMARK) if sys.stdout.isatty() else _WORDMARK
 
 
-def _print_help() -> None:
-    print(_banner())
+def _hero() -> str:
+    """Gecko mark + wordmark lockup — the bare-`gecko` splash. Gradient on a TTY."""
+    gecko = _GECKO.strip("\n").split("\n")
+    word = _WORDMARK.split("\n")
+    gw = max(len(line) for line in gecko)
+    ww = max(len(line) for line in word)
+    height = max(len(gecko), len(word))
+
+    def _pad(block: list[str], width: int) -> list[str]:
+        top = (height - len(block)) // 2
+        bottom = height - len(block) - top
+        return (
+            [" " * width] * top
+            + [ln.ljust(width) for ln in block]
+            + [" " * width] * bottom
+        )
+
+    g, w = _pad(gecko, gw), _pad(word, ww)
+    art = "\n".join(g[i] + "   " + w[i] for i in range(height))
+    return _gradient(art) if sys.stdout.isatty() else art
+
+
+def _print_help(hero: bool = False) -> None:
+    print(_hero() if hero else _banner())
     print("  make any API agent-usable — first call correct\n")
     print(f"{_BOLD}Onboard:{_RESET}" if sys.stdout.isatty() else "Onboard:")
     print("  add <api>          comprehend any API + wire it into your agent (stdio)")
@@ -520,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(rest)
     if cmd == "doctor":
         return _cmd_doctor(rest)
-    _print_help()
+    _print_help(hero=not argv)
     return 0
 
 
