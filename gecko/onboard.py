@@ -6,6 +6,7 @@ import json
 import re
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -74,3 +75,61 @@ def cache_spec(name: str, spec: dict[str, Any], *, home: Path | None = None) -> 
     path = root / f"{safe_name(name)}.json"
     path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     return path
+
+
+Runner = Callable[[list[str]], int]
+
+
+@dataclass(frozen=True)
+class ConfigResult:
+    ok: bool
+    command: list[str]
+    applied: bool
+    note: str
+
+
+def _default_run(cmd: list[str]) -> int:
+    import subprocess
+
+    return subprocess.run(cmd, check=False).returncode
+
+
+def configure_claude(
+    name: str,
+    cache_path: Path,
+    *,
+    gecko_bin: str = "gecko",
+    run: Runner | None = None,
+) -> ConfigResult:
+    """Register the surface with Claude Code over stdio (client spawns the server)."""
+    run = run or _default_run
+    command = [
+        "claude",
+        "mcp",
+        "add",
+        "--transport",
+        "stdio",
+        name,
+        "--",
+        gecko_bin,
+        "serve",
+        str(cache_path),
+        "--stdio",
+    ]
+    try:
+        code = run(command)
+    except FileNotFoundError:
+        return ConfigResult(
+            True,
+            command,
+            False,
+            "Claude Code CLI not found — run the command above yourself.",
+        )
+    if code == 0:
+        return ConfigResult(True, command, True, "added to Claude Code (stdio).")
+    return ConfigResult(
+        True,
+        command,
+        False,
+        f"`claude mcp add` exited {code} — run the command above yourself.",
+    )
