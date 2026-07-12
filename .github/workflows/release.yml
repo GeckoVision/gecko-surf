@@ -88,8 +88,8 @@ jobs:
 
   # Wrap the same binaries as npm packages so devs can `npx @geckovision/gecko`.
   # Bundled-binary model (esbuild pattern): one launcher + per-platform packages as
-  # optionalDependencies; npm installs only the host's match. Requires the NPM_TOKEN
-  # repo secret and the @geckovision npm org.
+  # optionalDependencies; npm installs only the host's match. Auth is Trusted
+  # Publishing (OIDC) — no stored token; see RELEASING.md for the one-time bootstrap.
   publish-npm:
     name: publish npm packages
     needs: build
