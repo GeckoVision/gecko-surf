@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import importlib.metadata
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,7 +28,7 @@ from .access import public_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth", "rm", "list")
+_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth", "rm", "list", "doctor")
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -373,6 +375,64 @@ def _cmd_list(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_doctor(argv: list[str]) -> int:
+    """`gecko doctor` — diagnose your setup and print the next step."""
+    p = argparse.ArgumentParser(
+        prog="gecko doctor",
+        description="Check your setup and print the exact next step.",
+    )
+    p.parse_args(argv)
+
+    print("Gecko doctor — check your setup\n" + "=" * 56)
+
+    # 1. Gecko version
+    try:
+        version = importlib.metadata.version("gecko-surf")
+        print(f"  ✓ gecko          {version}")
+    except Exception:
+        print("  ✗ gecko          unknown")
+
+    # 2. Engine (AgentApiClient import)
+    try:
+        _ = AgentApiClient
+        print("  ✓ engine         ok")
+    except Exception as exc:
+        print(f"  ✗ engine         {str(exc)}")
+
+    # 3. OS keychain
+    try:
+        backend = credentials.KeyringBackend()
+        if backend.available():
+            print("  ✓ keychain       available")
+        else:
+            print("  ✗ keychain       not available (keys fall back to env vars)")
+    except Exception:
+        print("  ✗ keychain       not available")
+
+    # 4. Claude Code CLI
+    if shutil.which("claude"):
+        print("  ✓ Claude Code CLI found")
+    else:
+        print(
+            "  ✗ Claude Code CLI not found (install it or use `gecko serve … --stdio` manually)"
+        )
+
+    # 5. Onboarded surfaces
+    try:
+        surfaces = onboard.list_surfaces(home=Path.home())
+        if surfaces:
+            count = len(surfaces)
+            names = ", ".join(surfaces)
+            print(f"  ✓ surfaces       {count} onboarded ({names})")
+        else:
+            print("  ✗ surfaces       none — onboard one with `gecko add <api>`")
+    except Exception:
+        print("  ✗ surfaces       could not list")
+
+    print("\n→ Next: onboard an API with `gecko add <api>` or `gecko add <url>`")
+    return 0
+
+
 _BLUE = "\x1b[38;2;20;110;245m"
 _BOLD = "\x1b[1m"
 _RESET = "\x1b[0m"
@@ -431,6 +491,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_rm(rest)
     if cmd == "list":
         return _cmd_list(rest)
+    if cmd == "doctor":
+        return _cmd_doctor(rest)
     _print_help()
     return 0
 
