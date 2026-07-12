@@ -105,14 +105,17 @@ def ensure_key(
     name: str,
     *,
     prompt: Callable[[str], str],
-    store: Callable[[str, str], None],
+    store: Callable[[str, str], bool],
 ) -> bool:
-    """Prompt (hidden, injected) for the provider key and store it. Never logged."""
+    """Prompt (hidden, injected) for the provider key and store it. Never logged.
+
+    Returns True only if a secret was entered AND actually persisted — a
+    degraded/unavailable keychain must not be reported as success.
+    """
     secret = prompt(f"Enter API key for {name} (hidden, stored in OS keychain): ")
     if not secret:
         return False
-    store(name, secret)
-    return True
+    return store(name, secret)
 
 
 def configure_claude(
@@ -163,7 +166,7 @@ class AddDeps:
     fetch: Fetcher
     comprehend: Callable[[dict[str, Any]], int]
     prompt: Callable[[str], str]
-    store: Callable[[str, str], None]
+    store: Callable[[str, str], bool]
     run: Runner
     home: Path
     resolver: Resolver | None = None

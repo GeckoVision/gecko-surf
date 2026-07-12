@@ -80,13 +80,14 @@ def _cmd_add(argv: list[str]) -> int:
     def _comprehend(spec: dict) -> int:
         return len(AgentApiClient(spec, session=public_session()).list_tools())
 
-    def _store(name: str, secret: str) -> None:
+    def _store(name: str, secret: str) -> bool:
         ref = credentials.CredentialRef(api=name)
         backend = credentials.KeyringBackend()
         if not backend.available():
             # Mirror `_auth_set`'s remediation — never crash the onboard flow, and
             # never write plaintext anywhere. The surface still works (no-auth calls
-            # or the key added later via the env fallback).
+            # or the key added later via the env fallback). Report failure so the
+            # caller never claims the key was sealed.
             print(
                 "No OS keychain available (install it: pip install "
                 "'gecko-surf[credentials]').",
@@ -97,8 +98,9 @@ def _cmd_add(argv: list[str]) -> int:
                 f"{credentials.env_var_name(ref)}=...",
                 file=sys.stderr,
             )
-            return
+            return False
         backend.store(ref, secret)
+        return True
 
     deps = onboard.AddDeps(
         fetch=onboard._default_fetch,

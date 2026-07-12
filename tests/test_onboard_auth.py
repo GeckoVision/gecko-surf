@@ -12,14 +12,21 @@ def test_detects_declared_auth():
 
 def test_ensure_key_stores_when_prompted():
     stored = {}
-    ok = ensure_key(
-        "stripe",
-        prompt=lambda q: "sk-live-x",
-        store=lambda name, secret: stored.__setitem__(name, secret),
-    )
+
+    def _store(name: str, secret: str) -> bool:
+        stored[name] = secret
+        return True
+
+    ok = ensure_key("stripe", prompt=lambda q: "sk-live-x", store=_store)
     assert ok and stored == {"stripe": "sk-live-x"}
 
 
 def test_ensure_key_skips_on_empty():
-    ok = ensure_key("stripe", prompt=lambda q: "", store=lambda n, s: None)
+    ok = ensure_key("stripe", prompt=lambda q: "", store=lambda n, s: True)
+    assert not ok
+
+
+def test_ensure_key_reports_failure_when_store_does_not_persist():
+    """A degraded/unavailable keychain: non-empty secret, store() returns False."""
+    ok = ensure_key("stripe", prompt=lambda q: "sk-live-x", store=lambda n, s: False)
     assert not ok

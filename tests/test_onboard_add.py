@@ -37,7 +37,7 @@ def test_add_end_to_end_with_fakes(tmp_path, capsys):
         fetch=lambda u: json.dumps(_SPEC),
         comprehend=lambda spec: 47,
         prompt=lambda q: "sk-live-x",
-        store=lambda n, s: calls.append(("store", n)),
+        store=lambda n, s: calls.append(("store", n)) or True,
         run=lambda cmd: calls.append(("run", cmd)) or 0,
         home=tmp_path,
         resolver=PUBLIC,
@@ -48,6 +48,7 @@ def test_add_end_to_end_with_fakes(tmp_path, capsys):
     assert ("store", "api-stripe-com") in calls
     assert (tmp_path / ".gecko" / "surfaces" / "api-stripe-com.json").exists()
     assert "47" in out and "ask your agent" in out.lower()
+    assert "sealed" in out.lower()
 
 
 def test_add_resolve_failure_returns_rc_2(tmp_path, capsys):
@@ -58,7 +59,7 @@ def test_add_resolve_failure_returns_rc_2(tmp_path, capsys):
         fetch=lambda u: json.dumps(_SPEC),
         comprehend=lambda spec: 47,
         prompt=lambda q: "sk-live-x",
-        store=lambda n, s: None,
+        store=lambda n, s: True,
         run=lambda cmd: 0,
         home=tmp_path,
         resolver=_resolver,
@@ -75,7 +76,7 @@ def test_add_no_auth_spec_skips_prompt_and_store(tmp_path):
         fetch=lambda u: json.dumps(_NO_AUTH_SPEC),
         comprehend=lambda spec: 3,
         prompt=lambda q: calls.append(("prompt", q)) or "sk-live-x",
-        store=lambda n, s: calls.append(("store", n)),
+        store=lambda n, s: bool(calls.append(("store", n)) or True),
         run=lambda cmd: 0,
         home=tmp_path,
         resolver=PUBLIC,
@@ -91,7 +92,7 @@ def test_add_empty_key_prints_add_later_still_rc_0(tmp_path, capsys):
         fetch=lambda u: json.dumps(_SPEC),
         comprehend=lambda spec: 47,
         prompt=lambda q: "",
-        store=lambda n, s: calls.append(("store", n)),
+        store=lambda n, s: bool(calls.append(("store", n)) or True),
         run=lambda cmd: 0,
         home=tmp_path,
         resolver=PUBLIC,
@@ -101,6 +102,25 @@ def test_add_empty_key_prints_add_later_still_rc_0(tmp_path, capsys):
     assert rc == 0
     assert calls == []
     assert "add later" in out.lower()
+
+
+def test_add_degraded_keychain_never_claims_sealed_still_rc_0(tmp_path, capsys):
+    """Regression: a non-empty key whose store() reports failure (e.g. no OS
+    keychain available) must never print '✓ sealed' — the secret was discarded."""
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_SPEC),
+        comprehend=lambda spec: 47,
+        prompt=lambda q: "sk-live-x",
+        store=lambda n, s: False,
+        run=lambda cmd: 0,
+        home=tmp_path,
+        resolver=PUBLIC,
+    )
+    rc = add("https://api.stripe.com/openapi.json", deps=deps)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "add later" in out.lower()
+    assert "sealed" not in out.lower()
 
 
 def test_add_claude_config_not_applied_prints_fallback_command_still_rc_0(
@@ -113,7 +133,7 @@ def test_add_claude_config_not_applied_prints_fallback_command_still_rc_0(
         fetch=lambda u: json.dumps(_NO_AUTH_SPEC),
         comprehend=lambda spec: 3,
         prompt=lambda q: "unused",
-        store=lambda n, s: None,
+        store=lambda n, s: True,
         run=_run,
         home=tmp_path,
         resolver=PUBLIC,
@@ -132,7 +152,7 @@ def test_add_local_path_needs_no_resolver(tmp_path, capsys):
         fetch=lambda u: "",
         comprehend=lambda spec: 1,
         prompt=lambda q: "unused",
-        store=lambda n, s: None,
+        store=lambda n, s: True,
         run=lambda cmd: 0,
         home=tmp_path,
     )
