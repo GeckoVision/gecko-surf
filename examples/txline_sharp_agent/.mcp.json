@@ -1,0 +1,13 @@
+{
+  "//": "Project MCP servers for this starter. Add the TxLINE surface itself with `gecko add` (see README). Surfpool gives the agent a local mainnet-fork to simulate settlement txns offline; solana-dev is the Foundation's Solana knowledge MCP.",
+  "mcpServers": {
+    "surfpool": {
+      "command": "surfpool",
+      "args": ["mcp"]
+    },
+    "solana-dev": {
+      "type": "http",
+      "url": "https://mcp.solana.com/mcp"
+    }
+  }
+}
