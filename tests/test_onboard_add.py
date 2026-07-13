@@ -170,6 +170,114 @@ def test_add_slugifies_a_raw_name_consistently_with_remove(tmp_path):
     assert "--auth-keychain" in run_cmd and expected_slug in run_cmd
 
 
+_HOSTED_ELSEWHERE_SPEC = {
+    "openapi": "3.0.3",
+    "info": {"title": "Colosseum", "version": "1"},
+    # servers[] points at the API host, but the spec is fetched from ELSEWHERE
+    # (GitHub raw) — the case pin_base_url can't trust on its own.
+    "servers": [{"url": "https://copilot.colosseum.com/api/v1"}],
+    "components": {"securitySchemes": {"b": {"type": "http", "scheme": "bearer"}}},
+    "security": [{"b": []}],
+    "paths": {},
+}
+
+_GH_AND_API = _fake_resolver(
+    {
+        "raw.githubusercontent.com": ["185.199.108.133"],
+        "copilot.colosseum.com": ["104.18.0.1"],
+    }
+)
+
+
+def test_add_explicit_base_url_pins_and_suppresses_mismatch_warning(tmp_path, capsys):
+    """`gecko add <spec> --base-url <host>` — the one-line path for a spec whose own
+    host doesn't serve it (Colosseum). The dev-asserted host OVERRIDES the fetch-origin
+    pin, reaches the spawned `serve`, and suppresses the host-mismatch warning."""
+    calls = []
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_HOSTED_ELSEWHERE_SPEC),
+        comprehend=lambda spec: 11,
+        prompt=lambda q: "pat-x",
+        store=lambda n, s: bool(calls.append(("store", n)) or True),
+        run=lambda cmd: bool(calls.append(("run", cmd))) or 0,
+        home=tmp_path,
+        resolver=_GH_AND_API,
+    )
+    rc = add(
+        "https://raw.githubusercontent.com/GeckoVision/gecko-surf/main/spec.json",
+        base_url="https://copilot.colosseum.com/api/v1",
+        deps=deps,
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    run_cmd = next(cmd for kind, cmd in calls if kind == "run")
+    assert "--base-url" in run_cmd
+    assert (
+        run_cmd[run_cmd.index("--base-url") + 1]
+        == "https://copilot.colosseum.com/api/v1"
+    )
+    # explicit assertion → no host-mismatch warning (the dev asserted the host)
+    assert "differs from where the spec" not in captured.err
+
+
+def test_add_mode_live_wires_live_surface(tmp_path):
+    """`gecko add … --mode live` wires the served surface for real upstream calls
+    (using the sealed key); recorded stays the default and omits the flag."""
+    live_calls: list = []
+    live = AddDeps(
+        fetch=lambda u: json.dumps(_HOSTED_ELSEWHERE_SPEC),
+        comprehend=lambda spec: 11,
+        prompt=lambda q: "pat-x",
+        store=lambda n, s: True,
+        run=lambda cmd: bool(live_calls.append(cmd)) or 0,
+        home=tmp_path,
+        resolver=_GH_AND_API,
+    )
+    add(
+        "https://raw.githubusercontent.com/x/spec.json",
+        base_url="https://copilot.colosseum.com/api/v1",
+        mode="live",
+        deps=live,
+    )
+    assert "--mode" in live_calls[0]
+    assert live_calls[0][live_calls[0].index("--mode") + 1] == "live"
+
+    # default (recorded) omits the flag entirely — byte-identical to pre-flag wiring
+    rec_calls: list = []
+    rec = AddDeps(
+        fetch=lambda u: json.dumps(_NO_AUTH_SPEC),
+        comprehend=lambda spec: 3,
+        prompt=lambda q: "unused",
+        store=lambda n, s: True,
+        run=lambda cmd: bool(rec_calls.append(cmd)) or 0,
+        home=tmp_path,
+        resolver=PUBLIC,
+    )
+    add("https://api.stripe.com/openapi.json", deps=rec)
+    assert "--mode" not in rec_calls[0]
+
+
+def test_add_rejects_unsafe_base_url(tmp_path, capsys):
+    """An explicit --base-url is SSRF-validated like any other request target."""
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_HOSTED_ELSEWHERE_SPEC),
+        comprehend=lambda spec: 11,
+        prompt=lambda q: "pat-x",
+        store=lambda n, s: True,
+        run=lambda cmd: 0,
+        home=tmp_path,
+        resolver=_fake_resolver({"raw.githubusercontent.com": ["185.199.108.133"]}),
+    )
+    rc = add(
+        "https://raw.githubusercontent.com/x/spec.json",
+        base_url="http://169.254.169.254/latest/meta-data/",
+        deps=deps,
+    )
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "unsafe" in err.lower() or "refusing" in err.lower()
+
+
 def test_add_local_path_needs_no_resolver(tmp_path, capsys):
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps(_NO_AUTH_SPEC))

@@ -77,6 +77,19 @@ def _cmd_add(argv: list[str]) -> int:
     p.add_argument(
         "--name", default=None, help="Surface name (default: derived from the ref)."
     )
+    p.add_argument(
+        "--base-url",
+        default=None,
+        help="Pin the request host explicitly — the one-line path for an API whose "
+        "OpenAPI is served elsewhere (e.g. Colosseum). Enables live auth injection.",
+    )
+    p.add_argument(
+        "--mode",
+        choices=("recorded", "live"),
+        default="recorded",
+        help="Mode the wired surface serves in: recorded ($0, synthesized — default) "
+        "or live (real upstream calls, using the sealed key).",
+    )
     args = p.parse_args(argv)
 
     def _comprehend(spec: dict) -> int:
@@ -125,7 +138,9 @@ def _cmd_add(argv: list[str]) -> int:
         home=Path.home(),
         resolver=None,  # real DNS in production; tests inject a fake resolver
     )
-    return onboard.add(args.api, name=args.name, deps=deps)
+    return onboard.add(
+        args.api, name=args.name, base_url=args.base_url, mode=args.mode, deps=deps
+    )
 
 
 def _cmd_test(argv: list[str]) -> int:

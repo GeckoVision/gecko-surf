@@ -1,8 +1,15 @@
 {
   "name": "@geckovision/gecko",
-  "version": "0.3.0",
+  "version": "0.3.5",
   "description": "Make any API agent-usable — first call correct. Point gecko at an API and your agent can use it.",
-  "keywords": ["gecko", "mcp", "api", "agent", "openapi", "cli"],
+  "keywords": [
+    "gecko",
+    "mcp",
+    "api",
+    "agent",
+    "openapi",
+    "cli"
+  ],
   "license": "Apache-2.0",
   "homepage": "https://geckovision.tech",
   "repository": "github:GeckoVision/gecko-surf",
@@ -14,9 +21,9 @@
     "lib"
   ],
   "optionalDependencies": {
-    "@geckovision/gecko-linux-x64": "=0.3.0",
-    "@geckovision/gecko-linux-arm64": "=0.3.0",
-    "@geckovision/gecko-darwin-arm64": "=0.3.0"
+    "@geckovision/gecko-linux-x64": "=0.3.5",
+    "@geckovision/gecko-linux-arm64": "=0.3.5",
+    "@geckovision/gecko-darwin-arm64": "=0.3.5"
   },
   "scripts": {
     "test": "node --test test/*.test.js"
