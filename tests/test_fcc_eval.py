@@ -13,14 +13,17 @@ from gecko.access import Session, public_session
 from gecko.client import AgentApiClient
 from gecko.evaluate import GoldenTask
 from gecko.fcc_eval import (
+    RunRecord,
     args_match,
     evaluate_fcc,
     fcc_rate,
     gecko_tools,
+    hallucination_rate,
     lift,
     per_archetype,
     pick,
     raw_tools,
+    retrieval_recall_at_k,
     run_variance,
     score,
     value_kind,
@@ -257,6 +260,73 @@ def test_evaluate_fcc_plumbing_and_lift():
     assert mean == 1.0 and stdev == 0.0
     arch = per_archetype(records, "gecko")
     assert arch["keyword_echo"] == 1.0 and arch["out_of_scope"] == 1.0
+
+
+# --- Phase 0.1: hallucination (picked ∉ presented tool names) --------------------------
+
+
+def _rec(**kw) -> RunRecord:
+    """Minimal RunRecord builder for aggregation tests — booleans + names only."""
+    base = dict(
+        fixture="f",
+        archetype="keyword_echo",
+        goal="g",
+        arm="gecko",
+        run=0,
+        picked=None,
+        retrieval_hit=False,
+        tool_correct=False,
+        well_formed=False,
+        args_match=False,
+        fcc=False,
+    )
+    base.update(kw)
+    return RunRecord(**base)  # type: ignore[arg-type]
+
+
+def test_score_flags_pick_not_presented_as_hallucination():
+    task = _snapshot_task()  # expects getApiOddsSnapshotFixtureid
+    presented = {"getApiOddsSnapshotFixtureid", "listFixtures"}
+    # An invented tool name the arm never offered -> hallucination.
+    s = score(task, "totally_made_up", {}, None, "", presented=presented)
+    assert s.hallucinated is True
+
+
+def test_score_real_but_wrong_pick_is_not_hallucination():
+    task = _snapshot_task()
+    presented = {"getApiOddsSnapshotFixtureid", "listFixtures"}
+    # A presented-but-wrong tool: real-but-wrong is NOT a hallucination.
+    s = score(task, "listFixtures", {}, None, "", presented=presented)
+    assert s.tool_correct is False and s.hallucinated is False
+
+
+def test_score_decline_is_not_hallucination():
+    task = _snapshot_task()
+    s = score(task, None, {}, None, "", presented={"getApiOddsSnapshotFixtureid"})
+    assert s.hallucinated is False
+
+
+def test_hallucination_rate_over_arm():
+    recs = [
+        _rec(arm="raw", picked="nope", hallucinated=True),
+        _rec(arm="raw", picked="listFixtures", hallucinated=False),
+        _rec(arm="gecko", picked="listFixtures", hallucinated=False),
+    ]
+    assert hallucination_rate(recs, "raw") == 0.5
+    assert hallucination_rate(recs, "gecko") == 0.0
+
+
+# --- Phase 0.2: retrieval ceiling (recall@k over surfaced top-k) -----------------------
+
+
+def test_retrieval_recall_at_k_over_arm():
+    recs = [
+        _rec(arm="gecko", goal="a", run=0, retrieval_hit=True),
+        _rec(arm="gecko", goal="a", run=1, retrieval_hit=True),  # same task -> dedup
+        _rec(arm="gecko", goal="b", run=0, retrieval_hit=False),
+    ]
+    # 1 of 2 distinct tasks had its gold op surfaced in the top-k.
+    assert retrieval_recall_at_k(recs, "gecko") == 0.5
 
 
 def test_evaluate_fcc_shows_gecko_lift_when_raw_omits_auth():
