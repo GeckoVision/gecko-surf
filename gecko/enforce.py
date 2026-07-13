@@ -141,6 +141,7 @@ REMEDIATION: dict[str, str] = {
     "op.transfer_maybe": "confirm whether this call moves value before proceeding",
     "cap.exceeded": "reduce the amount to within the operator's spend cap",
     "recipient.not_allowlisted": "use a recipient in the operator's allow-list",
+    "state.insufficient": "reduce the amount or credit the account first — the simulated balance is insufficient",
     "provenance.quarantined": "use a verified (pinned) surface rather than a quarantined one",
     "provenance.unverified": "pin the surface to a trusted origin before a state-changing call",
     "scope.not_allowed": "call only operations within this agent's allowed scope",

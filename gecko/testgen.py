@@ -23,6 +23,7 @@ from typing import Any
 from .access import AuthSession
 from .caller import CallError
 from .client import AgentApiClient
+from .modes import CallMode
 from .sample import example_from_schema
 
 _OK_STATUS = (200, 201)
@@ -49,7 +50,7 @@ def _args_for(tool: dict[str, Any]) -> dict[str, Any]:
 def check(
     spec: str | dict[str, Any],
     *,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     base_url: str | None = None,
     session: AuthSession | None = None,
 ) -> list[CaseResult]:

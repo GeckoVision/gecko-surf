@@ -35,9 +35,11 @@ from gecko.fcc_eval import (  # noqa: E402
     RunRecord,
     evaluate_fcc,
     fcc_rate,
+    hallucination_rate,
     lift,
     per_archetype,
     positive,
+    retrieval_recall_at_k,
     run_variance,
 )
 
@@ -124,6 +126,14 @@ def _fixture_section(
 ) -> list[str]:
     raw_c = _component_rates(recs, "raw")
     gk_c = _component_rates(recs, "gecko")
+    raw_recall, gk_recall = (
+        retrieval_recall_at_k(recs, "raw"),
+        retrieval_recall_at_k(recs, "gecko"),
+    )
+    raw_hall, gk_hall = (
+        hallucination_rate(recs, "raw"),
+        hallucination_rate(recs, "gecko"),
+    )
     raw_m, raw_sd = run_variance(recs, "raw")
     gk_m, gk_sd = run_variance(recs, "gecko")
     raw_dec, raw_dn = _oos_decline_rate(recs, "raw")
@@ -137,11 +147,13 @@ def _fixture_section(
         "",
         "| metric (positive tasks) | RAW | GECKO | lift |",
         "|---|---|---|---|",
-        f"| **FCC** | {raw_c['fcc']:.2f} | {gk_c['fcc']:.2f} | **{gk_c['fcc'] - raw_c['fcc']:+.2f}** |",
+        # Ceiling first: FCC can't exceed recall@k. Then the FCC conversion, then noise.
+        f"| **recall@k (ceiling)** | {raw_recall:.2f} | {gk_recall:.2f} | — |",
         f"| tool_correct | {raw_c['tool_correct']:.2f} | {gk_c['tool_correct']:.2f} | {gk_c['tool_correct'] - raw_c['tool_correct']:+.2f} |",
         f"| well_formed | {raw_c['well_formed']:.2f} | {gk_c['well_formed']:.2f} | {gk_c['well_formed'] - raw_c['well_formed']:+.2f} |",
         f"| args_match | {raw_c['args_match']:.2f} | {gk_c['args_match']:.2f} | {gk_c['args_match'] - raw_c['args_match']:+.2f} |",
-        f"| retrieval_hit | {raw_c['retrieval_hit']:.2f} | {gk_c['retrieval_hit']:.2f} | — |",
+        f"| **FCC (converted)** | {raw_c['fcc']:.2f} | {gk_c['fcc']:.2f} | **{gk_c['fcc'] - raw_c['fcc']:+.2f}** |",
+        f"| hallucination | {raw_hall:.2f} | {gk_hall:.2f} | — |",
         "",
         f"- FCC across runs — RAW {raw_m:.2f} ± {raw_sd:.2f} · GECKO {gk_m:.2f} ± {gk_sd:.2f}",
         f"- out-of-scope decline (correct): RAW {raw_dec}/{raw_dn} · GECKO {gk_dec}/{gk_dn}",
@@ -211,7 +223,10 @@ def run(n_runs: int, k: int) -> tuple[str, list[RunRecord]]:
         "sub-metric; this is the joint agent-in-the-loop metric.",
         "",
         "## Pooled headline (positive tasks, both fixtures)",
-        f"- **RAW FCC {pooled_raw:.2f} · GECKO FCC {pooled_gk:.2f} · lift {pooled_gk - pooled_raw:+.2f}**",
+        "Read order: recall@k (retrieval ceiling) → FCC (converted) → hallucination-rate.",
+        f"- **recall@k GECKO {retrieval_recall_at_k(all_recs, 'gecko'):.2f} (ceiling) · "
+        f"RAW FCC {pooled_raw:.2f} · GECKO FCC {pooled_gk:.2f} · lift {pooled_gk - pooled_raw:+.2f} · "
+        f"halluc RAW {hallucination_rate(all_recs, 'raw'):.2f} / GECKO {hallucination_rate(all_recs, 'gecko'):.2f}**",
         "- per-fixture lift: "
         + " · ".join(
             f"{n} {lift([r for r in all_recs if r.fixture == n]):+.2f}" for n in CASES

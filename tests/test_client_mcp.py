@@ -47,7 +47,8 @@ def test_mcp_surface_lists_search_plus_endpoints():
     surface = McpSurface(_client())
     tools = surface.list_tools()
     assert tools[0]["name"] == "search_capabilities"
-    assert len(tools) == 19  # 1 search tool + 18 endpoints
+    assert tools[1]["name"] == "query_docs"  # the self-heal tool must be discoverable
+    assert len(tools) == 20  # 2 synthetic tools (search + query_docs) + 18 endpoints
 
 
 def test_mcp_surface_search_and_call():

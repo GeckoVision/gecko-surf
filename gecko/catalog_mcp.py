@@ -26,6 +26,7 @@ from typing import Any
 
 from .caller import CallError
 from .mcp_server import _SEARCH_TOOL, to_lightweight_ref
+from .modes import CallMode
 from .paysh_catalog import CatalogRegistry
 
 # How many providers a cross-catalog search returns. Small: the agent wants the few most
@@ -38,7 +39,7 @@ class CatalogMcpSurface:
 
     surface_id = "paysh-catalog"
 
-    def __init__(self, registry: CatalogRegistry, mode: str = "recorded") -> None:
+    def __init__(self, registry: CatalogRegistry, mode: CallMode = "recorded") -> None:
         self.registry = registry
         self.mode = mode
 

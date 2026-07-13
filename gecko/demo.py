@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .client import AgentApiClient
+from .modes import CallMode
 from .sample import example_from_schema
 
 DEFAULT_SPEC = str(
@@ -41,7 +42,7 @@ def _fill_required(tool: dict[str, Any]) -> dict[str, Any]:
 def run(
     spec: str = DEFAULT_SPEC,
     goals: list[str] = GOALS,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     session=None,
 ) -> list[dict[str, Any]]:
     client = AgentApiClient(spec, session=session)

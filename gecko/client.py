@@ -1,9 +1,12 @@
 """AgentApiClient — the one object that makes an API agent-usable.
 
 Ties the layers together: ingest -> catalog (find) -> tools (comprehend) ->
-caller (correct request) -> access (auth) -> response. Two modes:
+caller (correct request) -> access (auth) -> response. Three modes (the canonical
+``gecko.modes.CallMode``):
   - "recorded": synthesize the response from the spec (no network, no spend) — for demos/CI.
   - "live": actually call the upstream API with the session's auth.
+  - "probe": the offline sandbox — a malformed call answers with the API's OWN
+    synthetic error + remediation (see ``gecko.sandbox``); never reaches the wire.
 
 Security seam (Priority 1/2): auth is only ever injected toward a host on the surface's
 OUT-OF-BAND trust anchor (``surfaces.anchor_for``), never toward the spec's own (poison-
@@ -29,6 +32,7 @@ from .catalog import Catalog
 from .fusion import RRF_K, rrf_fuse
 from .events import emit_surf_event
 from .ingest import Operation, extract_operations, load_spec
+from .modes import CallMode
 from .sample import example_from_schema
 from .sanitize import sanitize_schema
 from .scale import should_surface_all
@@ -150,7 +154,7 @@ class AgentApiClient:
         # base58 pubkey in a response example) don't false-quarantine, while real secrets
         # and injected instructions still do.
         poisoned = any(t.get("x-poison-flag") for t in self.tools) or any(
-            sanitize_schema(self._success_schema(op), route_to_arg=False)[1]
+            sanitize_schema(_success_schema(op), route_to_arg=False)[1]
             for op in self.operations
         )
         quarantined = spec_is_quarantined(self.spec) or poisoned
@@ -409,10 +413,13 @@ class AgentApiClient:
         emit_surf_event("surf.prepare", surface_id=self.surface_id, tool_name=tool_name)
         return req
 
-    def _effective_mode(self, tool_name: str, mode: str) -> str:
+    def _effective_mode(self, tool_name: str, mode: CallMode) -> CallMode:
         """Degrade live -> recorded when the surface can't be safely called live: a
         quarantined (poisoned-until-proven) surface, or one whose auth-expecting call
-        can't inject its secret (would otherwise fire un-authenticated to an unpinned host)."""
+        can't inject its secret (would otherwise fire un-authenticated to an unpinned
+        host). ``probe`` (like ``recorded``) passes through untouched — it never
+        reaches the wire, so the auth/host guard is moot and even a quarantined
+        surface may be probed."""
         if mode != "live":
             return mode
         if self.anchor.state == "quarantined":
@@ -461,10 +468,64 @@ class AgentApiClient:
                 )
         return status, body
 
-    def call(
-        self, tool_name: str, args: dict[str, Any], mode: str = "recorded"
+    def _call_probe(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        *,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
+        """The probe branch: recorded's transport edge swapped for the offline sandbox.
+
+        Deliberately does NOT run ``prepare``: the whole point of probing is that a
+        malformed call comes BACK as the API's own synthetic error the agent can
+        self-heal from — not a raised pre-flight ``CallError``. No wire is ever
+        reached, so auth injection and its host guard are skipped exactly like
+        recorded (invariant #3: the modes diverge only at the transport edge).
+
+        ``session_id`` will key the per-session ``SimWorld`` (the stateful gate);
+        it is accepted now so the agent-facing contract is stable, and never leaves
+        the process.
+        """
+        del session_id  # consumed by the SimWorld state gate when it lands
+        from . import sandbox  # lazy: sandbox imports this module's schema helpers
+
+        self._assert_tools_integrity()
+        if tool_name not in self._op_by_name:
+            raise ToolNotFound(f"no usable tool named {tool_name!r}")
+        op = self._op_by_name[tool_name]
+        sim = sandbox.evaluate(op, args)
+        self._capture(tool_name, sim.status, None, args, None, "probe")
+        return {
+            "status": sim.status,
+            "method": op.method,
+            # The TEMPLATED path only — never a filled URL (control plane): a
+            # malformed probe may lack the very params a URL would interpolate.
+            "path": op.path,
+            "data": sim.data,
+            "mode": "probe",
+            "mode_note": sim.mode_note,
+            "signals": sim.signals,
+            "remediation": sim.remediation,
+        }
+
+    def call(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        mode: CallMode = "recorded",
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke a tool in one of the three modes (see ``gecko.modes.CallMode``).
+
+        ``session_id`` is an opaque correlation token consumed ONLY by probe mode —
+        it will key the per-session sandbox world (SimWorld) so concurrent agents
+        never see each other's synthetic state. It is never sent upstream and is
+        ignored by recorded/live."""
         effective = self._effective_mode(tool_name, mode)
+        if effective == "probe":
+            return self._call_probe(tool_name, args, session_id=session_id)
         # Recorded synthesizes from the schema and never hits the wire, so don't inject
         # auth (or run its host guard) — that's a live-only concern.
         _inject = effective == "live"
@@ -493,7 +554,7 @@ class AgentApiClient:
                 "data": body,
                 "mode": "live",
             }
-        schema = self._success_schema(self._op_by_name[tool_name])
+        schema = _success_schema(self._op_by_name[tool_name])
         # Scrub the response schema before synthesizing agent-visible data: drop any
         # secret-looking or instruction-shaped example/default/enum so a poisoned response
         # schema can't surface a prompt-injection string / attacker address / leaked key.
@@ -571,16 +632,31 @@ class AgentApiClient:
             self._corpus_path,
         )
 
-    @staticmethod
-    def _success_schema(op) -> dict[str, Any]:
-        for code in ("200", "201", "default"):
-            r = op.responses.get(code)
-            if not isinstance(r, dict):
-                continue
-            content = r.get("content", {}) or {}
-            media = content.get("application/json") or next(
-                iter(content.values()), None
-            )
-            if isinstance(media, dict) and isinstance(media.get("schema"), dict):
-                return media["schema"]
-        return {}
+
+def _response_schema(op: Any, codes: tuple[str, ...]) -> dict[str, Any]:
+    """The first declared JSON response schema among ``codes`` (in order)."""
+    for code in codes:
+        r = op.responses.get(code)
+        if not isinstance(r, dict):
+            continue
+        content = r.get("content", {}) or {}
+        media = content.get("application/json") or next(iter(content.values()), None)
+        if isinstance(media, dict) and isinstance(media.get("schema"), dict):
+            return media["schema"]
+    return {}
+
+
+def _success_schema(op: Any) -> dict[str, Any]:
+    """The op's declared success-response schema — powers recorded/probe synthesis."""
+    return _response_schema(op, ("200", "201", "default"))
+
+
+def _error_schema(op: Any) -> dict[str, Any]:
+    """The op's OWN declared error-response schema (sibling of ``_success_schema``).
+
+    The comprehension-native differentiator for probe mode: a malformed offline call
+    answers with a body shaped like THIS API's error, not a generic Gecko message.
+    ``422`` is scanned first so the body shape aligns with the synthetic 422 status
+    the sandbox returns; then the other validation-adjacent codes, then ``default``.
+    """
+    return _response_schema(op, ("422", "400", "409", "default"))

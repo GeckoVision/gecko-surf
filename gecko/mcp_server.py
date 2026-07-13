@@ -41,6 +41,7 @@ from .honeypot import (
     honeypots_from_env,
     is_decoy,
 )
+from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 
 logger = logging.getLogger("gecko.mcp_server")
@@ -57,6 +58,27 @@ _SEARCH_TOOL = {
             }
         },
         "required": ["query"],
+    },
+}
+
+
+_QUERY_DOCS_TOOL = {
+    "name": "query_docs",
+    "description": (
+        "Search the comprehended API's virtualized docs (spec-derived summaries, "
+        "params, and agent-native artifacts) to understand WHY a call failed and how "
+        "to rewrite it. Returns doc snippets + the relevant tool's inputSchema. "
+        "Control-plane only: no auth, no payloads."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "intent": {
+                "type": "string",
+                "description": "What you were trying to do (or the error you hit), in plain language.",
+            }
+        },
+        "required": ["intent"],
     },
 }
 
@@ -93,7 +115,7 @@ class McpSurface:
     def __init__(
         self,
         client: AgentApiClient,
-        mode: str = "recorded",
+        mode: CallMode = "recorded",
         *,
         enforce: EnforceMode | None = None,
         policy: RiskPolicy | None = None,
@@ -137,12 +159,16 @@ class McpSurface:
         enumerating the surface sees a tempting target; when off, this stays byte-identical
         to a surface with no honeypot layer (at either scale)."""
         usable = self.client.list_tools()
+        # The synthetic navigation tools lead every surface: search_capabilities (intent ->
+        # endpoint) and query_docs (self-heal: WHY a call failed + how to rewrite). Both are
+        # full callable defs at either scale — an agent can only self-heal a call it can SEE.
+        synthetic = [_SEARCH_TOOL, _QUERY_DOCS_TOOL]
         if self.client.surface_all:
-            tools = [_SEARCH_TOOL]
+            tools = list(synthetic)
             for t in usable:
                 tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
         else:
-            tools = [_SEARCH_TOOL] + [to_lightweight_ref(t) for t in usable]
+            tools = list(synthetic) + [to_lightweight_ref(t) for t in usable]
         # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
         # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
         if self.honeypots:
@@ -157,6 +183,17 @@ class McpSurface:
         re-running ``search_capabilities``. Raises ``ToolNotFound`` for an unknown or
         auth-gated-unavailable name."""
         return self.client.get_tool(name)
+
+    def query_docs(self, intent: str) -> dict[str, Any]:
+        """Search the surface's virtualized docs for ``intent`` — the self-heal step:
+        after a call fails, the agent asks *why* and gets spec-derived doc snippets +
+        the relevant tool's inputSchema so it can rewrite. Thin transport wrapper over
+        ``docsearch.search_docs`` (all logic lives in the package). Control-plane only:
+        the result carries no auth, no ``_invoke`` routing, and no payload/arg value —
+        the "filesystem" in the founder's name is a METAPHOR, not a real mount."""
+        from .docsearch import search_docs
+
+        return search_docs(self.client, intent)
 
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
@@ -226,6 +263,12 @@ class McpSurface:
         if name == "get_capability":
             return self.get_capability(arguments.get("name", ""))
 
+        # Self-heal: search the virtualized docs so the agent can learn WHY a call
+        # failed and rewrite. Sibling of get_capability — dispatched by name, resolved
+        # in the package (docsearch), never reaching an upstream call.
+        if name == "query_docs":
+            return self.query_docs(arguments.get("intent", ""))
+
         # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
         # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there
         # is no upstream to invoke (it is a decoy), so nothing is called and no payload is
@@ -279,7 +322,17 @@ class McpSurface:
             )
             return refusal_payload(assessment)
 
-        result = self.client.call(name, arguments, mode=self.mode)
+        # Thread the transport session into the client ONLY in probe mode: it keys
+        # the per-session sandbox world (synthetic-state isolation) and never touches
+        # the upstream call. Conditional on purpose — duck-typed clients (the catalog
+        # aggregator, the red-team wrapper) don't accept the kwarg, and no other mode
+        # consumes it.
+        if self.mode == "probe":
+            result = self.client.call(
+                name, arguments, mode=self.mode, session_id=session_id
+            )
+        else:
+            result = self.client.call(name, arguments, mode=self.mode)
         emit_surf_event(
             "surf.call",
             surface_id=self.client.surface_id,
@@ -363,7 +416,7 @@ _STDIO_INSTALL_HINT = (
 def serve_stdio(
     spec_or_client: Any,
     base_url: str | None = None,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     *,
     server_name: str = "gecko",
     enforce: EnforceMode | None = None,
@@ -373,7 +426,8 @@ def serve_stdio(
     The client SPAWNS this process and talks JSON-RPC over stdin/stdout — no port,
     no network, no tunnel — so it is the zero-friction local transport. This is the
     SAME comprehended surface + auth injection the HTTP path serves; only the wire
-    edge differs (invariant: one code path, two modes).
+    edge differs (invariant: one code path, two modes). "bypass" = no Gecko-cloud
+    hop, not "no Gecko on the machine."
 
     ``spec_or_client`` accepts a spec (str/dict), an ``AgentApiClient`` (the caller
     resolves + injects the credential at call time), an ``McpSurface``, or any

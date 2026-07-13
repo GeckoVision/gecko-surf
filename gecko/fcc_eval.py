@@ -285,6 +285,7 @@ class FccScore:
     well_formed: bool
     args_match: bool
     fcc: bool
+    hallucinated: bool = False
 
 
 def score(
@@ -293,11 +294,21 @@ def score(
     agent_args: Mapping[str, Any],
     caller_tool: Mapping[str, Any] | None,
     base_url: str,
+    presented: set[str] | None = None,
 ) -> FccScore:
-    """Score one pick against the gold. Out-of-scope: correct iff the agent declined."""
+    """Score one pick against the gold. Out-of-scope: correct iff the agent declined.
+
+    ``hallucinated`` is True iff the model named a tool that was NOT among the ``presented``
+    names for its arm (an invented op), independent of scope. A real-but-wrong pick (picked ∈
+    presented but ∉ ``expect_ops``) is a miss, not a hallucination. When ``presented`` is
+    unknown (None) it cannot be judged and stays False. Reads tool NAMES only — control-plane
+    clean, never an arg value or payload."""
+    hallucinated = (
+        picked is not None and presented is not None and picked not in presented
+    )
     if not task.expect_ops:
         declined = picked is None
-        return FccScore(declined, declined, declined, declined)
+        return FccScore(declined, declined, declined, declined, hallucinated)
 
     tool_correct = picked is not None and picked in task.expect_ops
     well_formed = False
@@ -311,7 +322,7 @@ def score(
             well_formed = False
     matched = args_match(task.args, agent_args)
     fcc = tool_correct and well_formed and matched
-    return FccScore(tool_correct, well_formed, matched, fcc)
+    return FccScore(tool_correct, well_formed, matched, fcc, hallucinated)
 
 
 @dataclass(frozen=True)
@@ -331,6 +342,7 @@ class RunRecord:
     fcc: bool
     gold_shape: Mapping[str, str] = field(default_factory=dict)
     agent_shape: Mapping[str, str] = field(default_factory=dict)
+    hallucinated: bool = False
 
 
 def evaluate_fcc(
@@ -394,6 +406,7 @@ def evaluate_fcc(
                     agent_args,
                     caller_map.get(picked) if picked else None,
                     base_url,
+                    presented=set(caller_map),
                 )
                 records.append(
                     RunRecord(
@@ -410,6 +423,7 @@ def evaluate_fcc(
                         fcc=s.fcc,
                         gold_shape=arg_shape(task.args),
                         agent_shape=arg_shape(agent_args),
+                        hallucinated=s.hallucinated,
                     )
                 )
     return records
@@ -430,6 +444,27 @@ def positive(records: list[RunRecord]) -> list[RunRecord]:
 def fcc_rate(records: list[RunRecord], arm: str) -> float:
     """Headline FCC rate for an arm over POSITIVE tasks (out-of-scope scored separately)."""
     return _rate(positive(records), lambda r: r.arm == arm)
+
+
+def hallucination_rate(records: list[RunRecord], arm: str) -> float:
+    """Fraction of an arm's picks that named a tool the arm never presented (an invented op).
+
+    Denominator is every record for the arm (a pick or a decline); reads only the metadata
+    ``hallucinated`` boolean — control-plane clean. Sibling of ``fcc_rate``."""
+    rows = [r for r in records if r.arm == arm]
+    return sum(r.hallucinated for r in rows) / len(rows) if rows else 0.0
+
+
+def retrieval_recall_at_k(records: list[RunRecord], arm: str) -> float:
+    """The retrieval CEILING for an arm: fraction of positive tasks whose gold op was in the
+    surfaced top-k (``retrieval_hit``). This bounds achievable FCC — the model cannot pick an
+    op it never saw — so it is the number to read before any generation tuning. Deduped per
+    task (``retrieval_hit`` is run-invariant); reads booleans + names only."""
+    by_task: dict[tuple[str, str, str], bool] = {}
+    for r in positive(records):
+        if r.arm == arm:
+            by_task[(r.fixture, r.archetype, r.goal)] = r.retrieval_hit
+    return sum(by_task.values()) / len(by_task) if by_task else 0.0
 
 
 def per_archetype(records: list[RunRecord], arm: str) -> dict[str, float]:
