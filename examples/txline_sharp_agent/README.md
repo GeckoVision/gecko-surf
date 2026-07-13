@@ -11,6 +11,15 @@ Runs **$0 in recorded mode** (synthetic feed, no keys, no network). Goes **live*
 TxLINE subscription. Built for the Superteam **Trading Tools & Agents** and **Prediction
 Markets & Settlement** tracks.
 
+**See the whole use case in one run** — wallet setup → comprehend → subscribe → flag → settle:
+
+```bash
+uv run python -m examples.txline_sharp_agent.story
+```
+
+The user does 3 acts (fund · set up · authorize a policy); the agent does everything else,
+`$0`, offline. The rest of this page breaks that story into its parts.
+
 ---
 
 ## The 3 steps
@@ -56,8 +65,10 @@ t3  Home 54.800%  Draw 27.000%  Away 18.200%   ⚡ SHARP
 | `synthetic.py` | A deterministic, schema-valid **synthetic TxLINE feed** — drifts, then one sharp move. The local-simulation half. |
 | `surfcall_tools.py` | The Gecko⇄LLM seam: allow-listed TxLINE odds reads only, never-raises, output-capped. |
 | `agent.py` | A Claude tool-use loop (injectable LLM) that reasons over a flagged move using the odds tools. Offline-testable. |
+| `story.py` | **The whole use case, end to end, one `$0` run** — wallet setup → comprehend → subscribe → flag → settle. |
 | `demo.py` | The `$0` recorded showcase — comprehend → first-call-correct call → replay feed → flag the move. |
 | `settlement_sim.py` | Day 15 → Day 18 bridge: a flagged move → the risk-scored on-chain `validate_stat` settlement plan, `$0`. |
+| `wallet_sim.py` | Agentic wallet in the middle: the 3-step user surface (fund · set up · authorize a policy); the wallet signs only within the policy. `$0`, `WalletSeam`-pluggable. |
 | `.claude/agents/` | Curated Solana agents (`defi-engineer`, `solana-architect`, `solana-qa-engineer`) for the settlement build. See `NOTICE.md`. |
 | `.mcp.json` | Surfpool (local mainnet-fork) + solana-dev MCP servers. |
 | `tests/` | Detector logic, first-call-correctness, and the agent loop — all offline. |
@@ -86,6 +97,25 @@ outcome, the proof does. Runs `$0` recorded.
 `$0`, the CI path) or `RpcSurfpool` (founder-run). Both **profile** the transaction and **never
 sign or broadcast** — a real mainnet settle is always the user's own signed action. The bundled
 `.claude/agents/solana-qa-engineer` + the Surfpool MCP drive that fork.
+
+## Agentic wallet in the middle — 3 user steps
+
+```bash
+uv run python -m examples.txline_sharp_agent.wallet_sim
+```
+
+The user's *entire* on-chain surface collapses to three acts — **fund** a wallet, **set it up**
+once, **authorize one policy** ("spend ≤ $X for {subscription, settlement}"). The agent (Gecko
+the brain) comprehends TxLINE, builds the correct subscribe + settle transactions, and hands
+each to the wallet, which **signs only within the policy** — an over-cap request is refused.
+Gecko never holds keys or funds.
+
+`WalletSeam` is the injected boundary (like `gecko.access.Session`). `SandboxWallet` models a
+`$0` ephemeral wallet (`pay --sandbox`) for the offline demo. **Recommended mainnet hands:
+Privy** (Solana instruction-level policy enforced in-enclave; OKX OnchainOS is a valid
+alternate), with **pay.sh as the x402 rail** on top — the wallet signs, the rail settles.
+MagicBlock is deferred (session keys bind only if the counterparty program integrates them).
+Same tx-building code path, only the signer edge changes.
 
 ## Demo-day mapping
 
