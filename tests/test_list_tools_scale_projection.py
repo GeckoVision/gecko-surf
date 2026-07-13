@@ -17,7 +17,12 @@ from typing import Any
 import pytest
 
 from gecko.client import AgentApiClient
-from gecko.mcp_server import _SEARCH_TOOL, McpSurface, to_lightweight_ref
+from gecko.mcp_server import (
+    _QUERY_DOCS_TOOL,
+    _SEARCH_TOOL,
+    McpSurface,
+    to_lightweight_ref,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 
@@ -82,8 +87,8 @@ def _tokens(enc: Any, defs: list[dict[str, Any]]) -> int:
 
 def _todays_full_list(client: AgentApiClient) -> list[dict[str, Any]]:
     """Reconstruct exactly what list_tools emitted before the projection existed:
-    the search tool followed by a full {name, description, inputSchema} per usable tool."""
-    tools = [_SEARCH_TOOL]
+    the synthetic tools followed by a full {name, description, inputSchema} per usable tool."""
+    tools = [_SEARCH_TOOL, _QUERY_DOCS_TOOL]
     for t in client.list_tools():
         tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
     return tools
@@ -103,9 +108,10 @@ def test_below_scale_first_tool_is_full_search_and_rest_are_full_defs():
     client = AgentApiClient(str(FIXTURE))
     tools = McpSurface(client).list_tools()
     assert tools[0] == _SEARCH_TOOL
-    assert len(tools) == 19  # 1 search + 18 endpoints
+    assert tools[1] == _QUERY_DOCS_TOOL
+    assert len(tools) == 20  # 2 synthetic (search + query_docs) + 18 endpoints
     # full defs carry the real parameter schema (properties), not a stub
-    non_search = [t for t in tools[1:]]
+    non_search = [t for t in tools[2:]]
     assert all("properties" in t["inputSchema"] for t in non_search)
 
 
@@ -118,7 +124,8 @@ def test_above_scale_returns_lightweight_refs_plus_full_search():
     tools = McpSurface(client).list_tools()
 
     assert tools[0] == _SEARCH_TOOL  # search stays a full callable tool
-    refs = tools[1:]
+    assert tools[1] == _QUERY_DOCS_TOOL  # query_docs stays a full callable tool
+    refs = tools[2:]
     assert len(refs) == 120
     for ref in refs:
         assert set(ref.keys()) == {"name", "description", "inputSchema"}

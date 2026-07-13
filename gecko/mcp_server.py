@@ -159,12 +159,16 @@ class McpSurface:
         enumerating the surface sees a tempting target; when off, this stays byte-identical
         to a surface with no honeypot layer (at either scale)."""
         usable = self.client.list_tools()
+        # The synthetic navigation tools lead every surface: search_capabilities (intent ->
+        # endpoint) and query_docs (self-heal: WHY a call failed + how to rewrite). Both are
+        # full callable defs at either scale — an agent can only self-heal a call it can SEE.
+        synthetic = [_SEARCH_TOOL, _QUERY_DOCS_TOOL]
         if self.client.surface_all:
-            tools = [_SEARCH_TOOL]
+            tools = list(synthetic)
             for t in usable:
                 tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
         else:
-            tools = [_SEARCH_TOOL] + [to_lightweight_ref(t) for t in usable]
+            tools = list(synthetic) + [to_lightweight_ref(t) for t in usable]
         # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
         # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
         if self.honeypots:
