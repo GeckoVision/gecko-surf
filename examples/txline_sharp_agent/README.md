@@ -11,6 +11,15 @@ Runs **$0 in recorded mode** (synthetic feed, no keys, no network). Goes **live*
 TxLINE subscription. Built for the Superteam **Trading Tools & Agents** and **Prediction
 Markets & Settlement** tracks.
 
+**See the whole use case in one run** — wallet setup → comprehend → subscribe → flag → settle:
+
+```bash
+uv run python -m examples.txline_sharp_agent.story
+```
+
+The user does 3 acts (fund · set up · authorize a policy); the agent does everything else,
+`$0`, offline. The rest of this page breaks that story into its parts.
+
 ---
 
 ## The 3 steps
@@ -56,6 +65,7 @@ t3  Home 54.800%  Draw 27.000%  Away 18.200%   ⚡ SHARP
 | `synthetic.py` | A deterministic, schema-valid **synthetic TxLINE feed** — drifts, then one sharp move. The local-simulation half. |
 | `surfcall_tools.py` | The Gecko⇄LLM seam: allow-listed TxLINE odds reads only, never-raises, output-capped. |
 | `agent.py` | A Claude tool-use loop (injectable LLM) that reasons over a flagged move using the odds tools. Offline-testable. |
+| `story.py` | **The whole use case, end to end, one `$0` run** — wallet setup → comprehend → subscribe → flag → settle. |
 | `demo.py` | The `$0` recorded showcase — comprehend → first-call-correct call → replay feed → flag the move. |
 | `settlement_sim.py` | Day 15 → Day 18 bridge: a flagged move → the risk-scored on-chain `validate_stat` settlement plan, `$0`. |
 | `wallet_sim.py` | Agentic wallet in the middle: the 3-step user surface (fund · set up · authorize a policy); the wallet signs only within the policy. `$0`, `WalletSeam`-pluggable. |
