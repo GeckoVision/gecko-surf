@@ -23,12 +23,22 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import credentials, docs_reader, onboard, serve, testgen
-from .access import public_session
+from . import credentials, docs_reader, login, onboard, serve, testgen
+from .access import public_session, stub_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
-_SUBCOMMANDS = ("add", "serve", "test", "from-docs", "auth", "rm", "list", "doctor")
+_SUBCOMMANDS = (
+    "add",
+    "login",
+    "serve",
+    "test",
+    "from-docs",
+    "auth",
+    "rm",
+    "list",
+    "doctor",
+)
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
 
@@ -48,6 +58,27 @@ def _default_to_serve(argv: list[str]) -> tuple[str, list[str]]:
     if head in ("-h", "--help"):
         return "help", []
     return "serve", argv
+
+
+def _print_key_clarity(spec: str) -> None:
+    """Make the key situation explicit after a recorded run: everything was just tested
+    ``$0`` with NO key, and this says which ops would additionally need one for LIVE data.
+    Best-effort — clarity must never fail the command (a stub session unlocks the gated
+    tools so they're countable offline)."""
+    try:
+        tools = AgentApiClient(spec, session=stub_session()).list_tools()
+    except Exception:  # noqa: BLE001 — clarity is a nicety, never break `gecko test`
+        return
+    total = len(tools)
+    gated = sum(1 for t in tools if t.get("requires_auth"))
+    print("\n  ✓ simulated $0 in recorded mode — no API key needed.")
+    if gated == 0:
+        print("    This API needs no key at all: recorded and live both work keyless.")
+    else:
+        print(
+            f"    {gated} of {total} tool(s) also need a key for LIVE calls — seal one "
+            "with `gecko auth set <api>` when you want real data."
+        )
 
 
 def _reject_unsafe(url: str, verb: str) -> bool:
@@ -175,6 +206,9 @@ def _cmd_test(argv: list[str]) -> int:
         print(f"  [{'PASS' if r.ok else 'FAIL'}] {r.tool} · {r.kind} — {r.detail}")
     passed, total = testgen.summary(results)
     print(f"\n{passed}/{total} checks passed ({args.mode} mode)")
+
+    if args.mode == "recorded":
+        _print_key_clarity(args.spec)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -516,11 +550,59 @@ def _print_help() -> None:
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
+def _cmd_login(argv: list[str]) -> int:
+    """`gecko login` — enroll a hosted identity (email → one-time code → sealed key).
+
+    Thin transport: parse args, build the real seams (SSRF-safe POST, keychain store),
+    hand off to ``login.login``. Local `gecko add` (recorded, $0) never needs this — this
+    gates only the HOSTED plane (attribution, rate-limit, hosted features)."""
+    p = argparse.ArgumentParser(
+        prog="gecko login",
+        description="Enroll a hosted Gecko identity (email → one-time code). "
+        "Local `gecko add` (recorded, $0) never needs this.",
+    )
+    p.add_argument("--email", default=None, help="Your email (prompted if omitted).")
+    p.add_argument(
+        "--registry-url",
+        default="https://mcp.geckovision.tech",
+        help="Registry base URL.",
+    )
+    args = p.parse_args(argv)
+    email = args.email or input("Email: ")
+
+    def _store(ref: credentials.CredentialRef, secret: str) -> bool:
+        # Mirror onboard's sealing: seal in the OS keychain, report success as a bool so
+        # login never falsely claims "logged in" when no keychain is available.
+        backend = credentials.KeyringBackend()
+        if not backend.available():
+            return False
+        try:
+            backend.store(ref, secret)
+        except (credentials.CredentialError, OSError):
+            return False
+        return True
+
+    try:
+        return login.login(
+            email,
+            registry_url=args.registry_url,
+            post=login._default_post,
+            prompt=input,
+            store=_store,
+            home=credentials.config_home(),
+        )
+    except login.LoginError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd, rest = _default_to_serve(argv)
     if cmd == "add":
         return _cmd_add(rest)
+    if cmd == "login":
+        return _cmd_login(rest)
     if cmd == "serve":
         return serve.main(rest)
     if cmd == "test":
