@@ -376,7 +376,9 @@ class AgentApiClient:
             and auth_location_is_safe(self.spec, op)
         )
 
-    def prepare(self, tool_name: str, args: dict[str, Any]) -> PreparedRequest:
+    def prepare(
+        self, tool_name: str, args: dict[str, Any], *, inject_auth: bool = True
+    ) -> PreparedRequest:
         self._assert_tools_integrity()
         tool = self._tool_by_name[tool_name]
         if tool.get("requires_auth") and not self._session_has_auth:
@@ -387,14 +389,21 @@ class AgentApiClient:
         op = self._op_by_name[tool_name]
         # Fail closed: only pass the secret when the anchor + location allow it. Otherwise
         # auth is None and build_request proceeds in no-auth mode (never leaks the token).
-        inject_auth = (
-            self.session.auth_headers() if self._may_inject_auth_for(op) else None
+        # ``inject_auth=False`` (recorded mode) skips injection entirely: recorded never
+        # hits the wire, so auth — and its host guard — is moot. Without this, a spec
+        # fetched from a URL (anchor pinned to that host) with no ``base_url`` fails the
+        # host guard on the empty synthesized host, so `gecko test` recorded shows spurious
+        # auth failures on every gated op (a bad first-run for a new user).
+        auth = (
+            self.session.auth_headers()
+            if (inject_auth and self._may_inject_auth_for(op))
+            else None
         )
         req = build_request(
             tool,
             args,
             self.base_url,
-            inject_auth,
+            auth,
             allowed_auth_hosts=self._auth_allowed_hosts,
         )
         emit_surf_event("surf.prepare", surface_id=self.surface_id, tool_name=tool_name)
@@ -456,9 +465,12 @@ class AgentApiClient:
         self, tool_name: str, args: dict[str, Any], mode: str = "recorded"
     ) -> dict[str, Any]:
         effective = self._effective_mode(tool_name, mode)
+        # Recorded synthesizes from the schema and never hits the wire, so don't inject
+        # auth (or run its host guard) — that's a live-only concern.
+        _inject = effective == "live"
         start = time.perf_counter()
         try:
-            req = self.prepare(tool_name, args)
+            req = self.prepare(tool_name, args, inject_auth=_inject)
         except CallError as exc:
             # A pre-flight failure (missing param / auth-host refusal) is itself a
             # first-call outcome worth capturing; record it, then propagate unchanged.

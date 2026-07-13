@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from . import credentials, docs_reader, onboard, serve, testgen
-from .access import public_session
+from .access import public_session, stub_session
 from .client import AgentApiClient
 from .netguard import UnsafeUrlError, validate_public_url
 
@@ -48,6 +48,27 @@ def _default_to_serve(argv: list[str]) -> tuple[str, list[str]]:
     if head in ("-h", "--help"):
         return "help", []
     return "serve", argv
+
+
+def _print_key_clarity(spec: str) -> None:
+    """Make the key situation explicit after a recorded run: everything was just tested
+    ``$0`` with NO key, and this says which ops would additionally need one for LIVE data.
+    Best-effort — clarity must never fail the command (a stub session unlocks the gated
+    tools so they're countable offline)."""
+    try:
+        tools = AgentApiClient(spec, session=stub_session()).list_tools()
+    except Exception:  # noqa: BLE001 — clarity is a nicety, never break `gecko test`
+        return
+    total = len(tools)
+    gated = sum(1 for t in tools if t.get("requires_auth"))
+    print("\n  ✓ simulated $0 in recorded mode — no API key needed.")
+    if gated == 0:
+        print("    This API needs no key at all: recorded and live both work keyless.")
+    else:
+        print(
+            f"    {gated} of {total} tool(s) also need a key for LIVE calls — seal one "
+            "with `gecko auth set <api>` when you want real data."
+        )
 
 
 def _reject_unsafe(url: str, verb: str) -> bool:
@@ -175,6 +196,9 @@ def _cmd_test(argv: list[str]) -> int:
         print(f"  [{'PASS' if r.ok else 'FAIL'}] {r.tool} · {r.kind} — {r.detail}")
     passed, total = testgen.summary(results)
     print(f"\n{passed}/{total} checks passed ({args.mode} mode)")
+
+    if args.mode == "recorded":
+        _print_key_clarity(args.spec)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
