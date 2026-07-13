@@ -44,8 +44,10 @@ from gecko.evaluate import load_golden  # noqa: E402
 from gecko.fcc_eval import (  # noqa: E402
     evaluate_fcc,
     fcc_rate,
+    hallucination_rate,
     lift,
     lift_corpus,
+    retrieval_recall_at_k,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,21 +119,27 @@ def main() -> None:
         corrections=corrections,
     )
 
-    raw = fcc_rate(pass2, "raw")
-    gk = fcc_rate(pass2, "gecko")
-    gc = fcc_rate(pass2, "gecko_corpus")
     print(f"# Flywheel FCC eval (model {BLURB_MODEL}, k={args.k}, N={args.n})")
     print(f"captured corrections: {len(corrections)}")
     for c in corrections:
         print(f"  - {c.tool_name}.{c.param} [{c.kind}] n={c.n_observed}: {c.hint}")
     print()
-    print(f"RAW           FCC {raw:.2f}")
-    print(
-        f"GECKO         FCC {gk:.2f}   (comprehension lift {lift(pass2):+.2f} vs RAW)"
-    )
-    print(
-        f"GECKO+CORPUS  FCC {gc:.2f}   (corpus lift {lift_corpus(pass2):+.2f} vs GECKO)"
-    )
+    # Read order: recall@k (the retrieval CEILING — FCC can't exceed it) -> FCC (what the
+    # arm converted of that ceiling) -> hallucination-rate (invented-op noise). A retrieval
+    # bottleneck is visible before any generation tuning.
+    print(f"{'arm':<13} {'recall@k':>9} {'FCC':>6} {'halluc':>7}")
+    for label, arm in (
+        ("RAW", "raw"),
+        ("GECKO", "gecko"),
+        ("GECKO+CORPUS", "gecko_corpus"),
+    ):
+        print(
+            f"{label:<13} {retrieval_recall_at_k(pass2, arm):>9.2f}"
+            f" {fcc_rate(pass2, arm):>6.2f} {hallucination_rate(pass2, arm):>7.2f}"
+        )
+    print()
+    print(f"comprehension lift {lift(pass2):+.2f} (GECKO vs RAW, FCC)")
+    print(f"corpus lift        {lift_corpus(pass2):+.2f} (GECKO+CORPUS vs GECKO, FCC)")
 
     # Control-plane-clean substrate (shapes + booleans, never arg VALUES) to gitignored private/.
     out = ROOT / "private" / "flywheel-eval.jsonl"
