@@ -1,6 +1,6 @@
 {
   "name": "@geckovision/gecko",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "Make any API agent-usable — first call correct. Point gecko at an API and your agent can use it.",
   "keywords": [
     "gecko",
@@ -21,9 +21,9 @@
     "lib"
   ],
   "optionalDependencies": {
-    "@geckovision/gecko-linux-x64": "=0.3.5",
-    "@geckovision/gecko-linux-arm64": "=0.3.5",
-    "@geckovision/gecko-darwin-arm64": "=0.3.5"
+    "@geckovision/gecko-linux-x64": "=0.4.0",
+    "@geckovision/gecko-linux-arm64": "=0.4.0",
+    "@geckovision/gecko-darwin-arm64": "=0.4.0"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

@@ -175,3 +175,24 @@ jobs:
           else
             ( cd npm/gecko && npm publish --access public )
           fi
+
+  # Publish the Python package (gecko-surf) to PyPI via OIDC Trusted Publishing — no
+  # stored token, mirroring publish-npm. PyPI had silently lagged npm (npm 0.4.0 vs
+  # PyPI 0.3.0) because publishing was a manual step; this closes that gap so a tag
+  # publishes BOTH. Reads the version from pyproject.toml at the tagged commit — bump
+  # pyproject BEFORE tagging (the release PR does). One-time: configure a PyPI trusted
+  # publisher for gecko-surf (owner GeckoVision, repo gecko-surf, workflow release.yaml).
+  publish-pypi:
+    name: publish PyPI package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # OIDC — PyPI trusted publishing, no stored token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build sdist + wheel (version from pyproject at the tagged commit)
+        run: uv build
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true  # idempotent: re-runs don't fail on an existing version
