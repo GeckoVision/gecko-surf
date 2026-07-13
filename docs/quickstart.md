@@ -12,6 +12,61 @@ spending a cent or a token.
 
 <!-- 🎬 GIF: the paste→add→agent-calls-it loop — `gecko <url>` prints the add string, you paste it into Claude Code, the agent lists the tools and makes a correct first call. -->
 
+## For developers — add any API to your agent (`npx`, no Python)
+
+Bringing *someone else's* API into *your* agent? The branded CLI runs straight
+from `npx` — no clone, no Python, no key ever pasted into `mcp.json`. One command
+comprehends the API, seals your key in the OS keychain, and wires it into Claude
+Code over stdio.
+
+**Golden path — an API that publishes its own OpenAPI at its own host:**
+
+```bash
+npx @geckovision/gecko add https://api.provider.com/openapi.json
+```
+
+That single command fetches + SSRF-validates the spec, comprehends it into
+first-call-correct tools, prompts once (hidden) for the API key and seals it in
+your keychain, then runs `claude mcp add` for you. Because the spec is fetched
+from the API's own host, Gecko pins requests there and injects your key **live** —
+the agent never sees it.
+
+**Keyless API?** Same command, no prompt (e.g. Jupiter):
+
+```bash
+npx @geckovision/gecko add \
+  https://raw.githubusercontent.com/jup-ag/jupiter-quote-api-node/main/swagger.yaml
+```
+
+**Spec hosted somewhere other than the API?** Colosseum Copilot is the classic
+case — `copilot.colosseum.com` doesn't publish its OpenAPI, so the spec is
+distributed separately. Gecko's anti-poisoning rule **refuses to trust a spec's
+`servers[]` host when the spec was fetched from a different origin** (the
+token-exfil defense), so `add` can't *infer* the real host. Assert it yourself
+with `--base-url` — still one line:
+
+```bash
+npx @geckovision/gecko add \
+  https://raw.githubusercontent.com/GeckoVision/gecko-surf/main/gecko/examples/colosseum_copilot_openapi.json \
+  --base-url https://copilot.colosseum.com/api/v1 --mode live
+```
+
+`--base-url` is trusted provenance *you* assert, so Gecko pins requests to
+Colosseum; `add` prompts once for your PAT (free at `arena.colosseum.org/copilot`),
+seals it in your keychain, and wires the surface in **live** mode. Ask your agent
+*"search Colosseum for agent-payment projects"* and it makes the authenticated
+call, first try. (Drop `--mode live` to wire the $0 recorded surface first and
+falsify the calls offline.)
+
+> **Gecko never mints or holds API keys.** A provider's key is theirs — you get it
+> from the provider (here, Colosseum), and `gecko auth set` seals it in *your* OS
+> keychain, resolved only at call time. Control plane only: Gecko stores the API
+> surface, never your keys or response data.
+
+This whole path is **local** — it wires an API into your own agent and never
+touches Gecko's servers. Publishing a comprehended surface to the shared,
+discoverable MCP at `mcp.geckovision.tech` is a separate, provider-only path.
+
 ## In Claude Code — one command (the Marketplace)
 
 If you're in Claude Code, the fastest path is the plugin — it bundles the skills +

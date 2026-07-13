@@ -107,9 +107,7 @@ def pin_base_url(
     fu = urlsplit(first)
     # Relative server URL (e.g., "/v1" or "") or same-host absolute: keep path, force
     # scheme/host/port from trusted origin.
-    if fu.hostname is None or (
-        spec_host and fu.hostname.lower() == spec_host.lower()
-    ):
+    if fu.hostname is None or (spec_host and fu.hostname.lower() == spec_host.lower()):
         # Reconstruct: origin (trusted scheme/host/port) + path (from spec).
         base_url = origin + (fu.path or "")
         return base_url, None
@@ -188,6 +186,7 @@ def configure_claude(
     run: Runner | None = None,
     auth_surface: str | None = None,
     base_url: str | None = None,
+    mode: str = "recorded",
 ) -> ConfigResult:
     """Register the surface with Claude Code over stdio (client spawns the server).
 
@@ -220,6 +219,10 @@ def configure_claude(
     command += ["--stdio"]
     if auth_surface:
         command += ["--auth-keychain", auth_surface]
+    # Recorded is serve's default ($0, synthesized) — only spell out the live
+    # opt-in, so a recorded wiring stays byte-identical to before this flag existed.
+    if mode == "live":
+        command += ["--mode", "live"]
     try:
         code = run(command)
     except FileNotFoundError:
@@ -278,8 +281,28 @@ def remove(name: str, *, run: Runner, home: Path) -> int:
     return 0
 
 
-def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
-    """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude."""
+def add(
+    ref: str,
+    *,
+    name: str | None = None,
+    base_url: str | None = None,
+    mode: str = "recorded",
+    deps: AddDeps,
+) -> int:
+    """Comprehend `ref`, cache the surface, seal any key, and wire it into Claude.
+
+    ``base_url`` (from `gecko add --base-url`) is an explicit, dev-asserted trusted
+    host that OVERRIDES the fetch-origin pin — the one-line path for a spec whose own
+    host doesn't serve it (e.g. Colosseum, whose OpenAPI lives off-host). It is
+    SSRF-validated like any other request target, and it suppresses the host-mismatch
+    warning because the dev is deliberately asserting the host.
+    """
+    if base_url is not None:
+        try:
+            validate_public_url(base_url, resolver=deps.resolver)
+        except UnsafeUrlError as exc:
+            print(f"  ✗ refusing unsafe --base-url: {exc}", file=sys.stderr)
+            return 2
     try:
         resolved = resolve_spec(ref, fetch=deps.fetch, resolver=deps.resolver)
     except OnboardError as exc:
@@ -301,19 +324,25 @@ def add(ref: str, *, name: str | None = None, deps: AddDeps) -> int:
                 "  ○ no key entered — add later with `gecko auth set " + surface + "`"
             )
     path = cache_spec(surface, spec, home=deps.home)
-    # Reconcile the trusted fetch origin (never the spec's own servers[]) into an
-    # explicit base_url so the SERVED surface pins (surfaces.anchor_for) instead of
-    # degrading to unverified — the whole point: a cached-path surface can't pin on
-    # its own, but the fetch-time provenance we already validated it against can.
-    base_url, warn = pin_base_url(resolved.spec_url, spec)
-    if warn:
-        print(f"  ⚠ {warn}", file=sys.stderr)
+    if base_url is not None:
+        # Explicit dev-asserted host wins outright (already SSRF-validated above).
+        pinned: str | None = base_url
+        print(f"  ✓ request host pinned → {pinned}")
+    else:
+        # Reconcile the trusted fetch origin (never the spec's own servers[]) into an
+        # explicit base_url so the SERVED surface pins (surfaces.anchor_for) instead of
+        # degrading to unverified — the whole point: a cached-path surface can't pin on
+        # its own, but the fetch-time provenance we already validated it against can.
+        pinned, warn = pin_base_url(resolved.spec_url, spec)
+        if warn:
+            print(f"  ⚠ {warn}", file=sys.stderr)
     cfg = configure_claude(
         surface,
         path,
         run=deps.run,
         auth_surface=surface if needs_auth else None,
-        base_url=base_url,
+        base_url=pinned,
+        mode=mode,
     )
     mark = "✓" if cfg.applied else "→"
     print(f"  {mark} {cfg.note}")
