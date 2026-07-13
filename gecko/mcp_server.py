@@ -62,6 +62,27 @@ _SEARCH_TOOL = {
 }
 
 
+_QUERY_DOCS_TOOL = {
+    "name": "query_docs",
+    "description": (
+        "Search the comprehended API's virtualized docs (spec-derived summaries, "
+        "params, and agent-native artifacts) to understand WHY a call failed and how "
+        "to rewrite it. Returns doc snippets + the relevant tool's inputSchema. "
+        "Control-plane only: no auth, no payloads."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "intent": {
+                "type": "string",
+                "description": "What you were trying to do (or the error you hit), in plain language.",
+            }
+        },
+        "required": ["intent"],
+    },
+}
+
+
 # The lightweight-ref hint: an above-scale list entry keeps only enough for the agent to
 # know the tool EXISTS and how to get its real schema. This exact suffix is asserted by the
 # projection tests — keep it stable.
@@ -159,6 +180,17 @@ class McpSurface:
         auth-gated-unavailable name."""
         return self.client.get_tool(name)
 
+    def query_docs(self, intent: str) -> dict[str, Any]:
+        """Search the surface's virtualized docs for ``intent`` — the self-heal step:
+        after a call fails, the agent asks *why* and gets spec-derived doc snippets +
+        the relevant tool's inputSchema so it can rewrite. Thin transport wrapper over
+        ``docsearch.search_docs`` (all logic lives in the package). Control-plane only:
+        the result carries no auth, no ``_invoke`` routing, and no payload/arg value —
+        the "filesystem" in the founder's name is a METAPHOR, not a real mount."""
+        from .docsearch import search_docs
+
+        return search_docs(self.client, intent)
+
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
         (→ treat as allow) if scoring itself raised — a scoring bug must never break the
@@ -226,6 +258,12 @@ class McpSurface:
         # byte-identical), but callable by name once the agent knows which tool it wants.
         if name == "get_capability":
             return self.get_capability(arguments.get("name", ""))
+
+        # Self-heal: search the virtualized docs so the agent can learn WHY a call
+        # failed and rewrite. Sibling of get_capability — dispatched by name, resolved
+        # in the package (docsearch), never reaching an upstream call.
+        if name == "query_docs":
+            return self.query_docs(arguments.get("intent", ""))
 
         # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
         # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there
@@ -384,7 +422,8 @@ def serve_stdio(
     The client SPAWNS this process and talks JSON-RPC over stdin/stdout — no port,
     no network, no tunnel — so it is the zero-friction local transport. This is the
     SAME comprehended surface + auth injection the HTTP path serves; only the wire
-    edge differs (invariant: one code path, two modes).
+    edge differs (invariant: one code path, two modes). "bypass" = no Gecko-cloud
+    hop, not "no Gecko on the machine."
 
     ``spec_or_client`` accepts a spec (str/dict), an ``AgentApiClient`` (the caller
     resolves + injects the credential at call time), an ``McpSurface``, or any
