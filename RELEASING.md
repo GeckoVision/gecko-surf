@@ -38,8 +38,21 @@ separate artifacts). This checklist keeps them in sync.
      four packages: npmjs.com → Packages → `<pkg>` → Settings → Trusted publishing →
      GitHub Actions, org `GeckoVision`, repo `gecko-surf`, workflow file `release.yaml`,
      action `npm publish`. Every release after that publishes from CI via OIDC — no token.
-7. **Publish to PyPI** (founder-run, token-gated — not in CI):
-   `uv build && uv publish dist/gecko_surf-X.Y.Z*`
+7. **PyPI publishes from CI on the same tag** as step 6 — the `publish-pypi` job in
+   `release.yaml` builds the sdist+wheel and publishes `gecko-surf` via **Trusted Publishing
+   (OIDC)**, no stored token. So one tag pushes **both** PyPI and npm. It builds from
+   `pyproject.toml` at the tagged commit, so the step-1 bump must be merged before tagging.
+   - **One-time bootstrap:** like npm, trusted publishing needs the project configured. Do
+     the first/current publish by hand once (token-gated), then wire OIDC:
+     - **Manual publish:** `uv build && uv publish dist/gecko_surf-X.Y.Z*` (token in
+       `UV_PUBLISH_TOKEN` or `~/.pypirc`).
+     - **Configure Trusted Publishing:** pypi.org → `gecko-surf` → *Manage → Publishing →
+       Add a new publisher (GitHub)* → owner `GeckoVision`, repo `gecko-surf`, workflow
+       `release.yaml`, environment *(blank)*. Every release after that publishes from CI via
+       OIDC — no token.
+   - ⚠️ **History:** before this job existed, PyPI publishing was manual and silently lagged
+     npm (npm reached 0.4.0 while PyPI sat at 0.3.0). **0.4.0 was the last manual publish;**
+     configure the trusted publisher so the next release publishes both automatically.
 8. **Redeploy** `mcp.geckovision.tech` (founder-run — the Docker host, no deploy CI).
 9. **Plugin refresh** propagates automatically once the marketplace source (this repo) is
    updated; users pull it with `/plugin marketplace update geckovision` + reinstall, or via
