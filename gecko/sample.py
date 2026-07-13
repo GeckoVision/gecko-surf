@@ -36,9 +36,17 @@ def example_from_schema(schema: Any, _depth: int = 0) -> Any:
     if isinstance(t, list):
         t = next((x for x in t if x != "null"), None)
 
-    if t == "object" or "properties" in schema:
+    if t == "object" or "properties" in schema or schema.get("required"):
         props = schema.get("properties", {}) or {}
-        return {k: example_from_schema(v, _depth + 1) for k, v in props.items()}
+        obj = {k: example_from_schema(v, _depth + 1) for k, v in props.items()}
+        # Guarantee every REQUIRED field is present, even when the spec lists it in
+        # `required` without a matching `properties` entry (common in large specs like
+        # Stripe). Otherwise a nested required field is "missing" on an otherwise
+        # well-formed synthesized call, failing recorded first-call-correctness.
+        for req_key in schema.get("required") or []:
+            if req_key not in obj:
+                obj[req_key] = example_from_schema(props.get(req_key, {}), _depth + 1)
+        return obj
     if t == "array":
         items = schema.get("items")
         return [example_from_schema(items, _depth + 1)] if items else []
