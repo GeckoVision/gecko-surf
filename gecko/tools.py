@@ -41,16 +41,40 @@ def _body_schema(op: Operation) -> tuple[dict[str, Any] | None, bool]:
     return (schema if isinstance(schema, dict) else None), bool(rb.get("required"))
 
 
+def _safe_key(name: str) -> str:
+    """An Anthropic/OpenAI tool-schema property key must match ``^[a-zA-Z0-9_.-]{1,64}$``.
+    A param named ``filter[user]`` / ``page[size]`` (JSON:API — a common style) otherwise
+    makes the whole tool def rejected (400), so the agent can't use it at all. Sanitize the
+    agent-facing key; the caller maps it back to the real name via ``arg_aliases``."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:64] or "_"
+
+
+def _agent_key_map(op: Operation) -> dict[str, str]:
+    """Real param name -> Anthropic-safe schema key. Deterministic + collision-free, so the
+    schema (keys/required) and the caller (arg_aliases) agree on the same sanitized keys."""
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    for p in _agent_params(op):
+        safe = _safe_key(p.name)
+        while safe != p.name and safe in used:  # dedupe a sanitize-induced collision
+            safe = f"{safe}_"
+        used.add(safe)
+        mapping[p.name] = safe
+    return mapping
+
+
 def _input_schema(op: Operation) -> dict[str, Any]:
+    keymap = _agent_key_map(op)
     props: dict[str, Any] = {}
     required: list[str] = []
     for p in _agent_params(op):
         schema = dict(p.schema) if isinstance(p.schema, dict) else {}
         if p.description and "description" not in schema:
             schema["description"] = p.description
-        props[p.name] = schema
+        key = keymap[p.name]
+        props[key] = schema
         if p.required:
-            required.append(p.name)
+            required.append(key)
     body_schema, body_required = _body_schema(op)
     if body_schema is not None:
         props["body"] = body_schema
@@ -149,6 +173,11 @@ def to_tool(op: Operation) -> dict[str, Any]:
             "method": op.method,
             "path": op.path,
             "param_locations": {p.name: p.location for p in _agent_params(op)},
+            # safe_key -> real param name, for params whose name had to be sanitized
+            # (e.g. JSON:API `filter[user]`); the caller translates the agent's args back.
+            "arg_aliases": {
+                safe: real for real, safe in _agent_key_map(op).items() if safe != real
+            },
         },
     }
     if poisoned_desc or poisoned_schema:

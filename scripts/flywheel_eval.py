@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict
+import pathlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -83,6 +84,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=3, help="runs per task per arm (variance)")
     ap.add_argument("--k", type=int, default=8, help="GECKO search top-k surfaced")
+    ap.add_argument("--spec", default=str(SPEC), help="OpenAPI spec/docs path")
+    ap.add_argument("--tasks", default=str(TASKS), help="golden tasks jsonl")
+    ap.add_argument("--label", default="txodds", help="fixture label for the run")
     args = ap.parse_args()
 
     key = _read_key()
@@ -91,19 +95,19 @@ def main() -> None:
     llm = anthropic.Anthropic(api_key=key)
     # Recorded-mode session — the pick+emit is the only spend; the API stays $0.
     client = AgentApiClient(
-        str(SPEC), session=Session(jwt="recorded-mode", api_token="recorded-mode")
+        args.spec, session=Session(jwt="recorded-mode", api_token="recorded-mode")
     )
-    tasks = load_golden(TASKS)
+    tasks = load_golden(pathlib.Path(args.tasks))
 
     # PASS 1 — comprehension only; capture where GECKO picked right but under-supplied a param.
     pass1 = evaluate_fcc(
-        "txodds", client, tasks, llm, model=BLURB_MODEL, k=args.k, n_runs=args.n
+        args.label, client, tasks, llm, model=BLURB_MODEL, k=args.k, n_runs=args.n
     )
     corrections = corrections_from_records(pass1)
 
     # PASS 2 — three arms, corrections re-injected into the GECKO+CORPUS tools.
     pass2 = evaluate_fcc(
-        "txodds",
+        args.label,
         client,
         tasks,
         llm,
