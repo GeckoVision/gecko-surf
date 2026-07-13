@@ -35,6 +35,7 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
+from .modes import CallMode
 from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
 from .mcp_server import McpSurface
@@ -293,7 +294,7 @@ def _session_id_from_context(server: Any) -> str | None:
 def _surface_from(
     spec_or_client: Any,
     base_url: str | None,
-    mode: str,
+    mode: CallMode,
     enforce: EnforceMode | None = None,
 ) -> Any:
     """Accept a spec (str/dict), an AgentApiClient, an McpSurface, or any duck-typed
@@ -333,7 +334,7 @@ def build_http_app(
     spec_or_client: Any,
     *,
     base_url: str | None = None,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     server_name: str = DEFAULT_SERVER_NAME,
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
@@ -519,7 +520,7 @@ def build_http_app(
 def build_multi_surface_app(
     surfaces: list[tuple[str, Any]],
     *,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
     public_url: str | None = None,
@@ -826,7 +827,7 @@ def serve_http(
     spec_or_client: Any,
     host: str = "127.0.0.1",
     port: int = 8000,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     *,
     base_url: str | None = None,
     server_name: str = DEFAULT_SERVER_NAME,
@@ -860,7 +861,7 @@ def serve_multi_http(
     surfaces: list[tuple[str, Any]],
     host: str = "127.0.0.1",
     port: int = 8000,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     *,
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,

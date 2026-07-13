@@ -41,6 +41,7 @@ from .honeypot import (
     honeypots_from_env,
     is_decoy,
 )
+from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 
 logger = logging.getLogger("gecko.mcp_server")
@@ -93,7 +94,7 @@ class McpSurface:
     def __init__(
         self,
         client: AgentApiClient,
-        mode: str = "recorded",
+        mode: CallMode = "recorded",
         *,
         enforce: EnforceMode | None = None,
         policy: RiskPolicy | None = None,
@@ -279,7 +280,17 @@ class McpSurface:
             )
             return refusal_payload(assessment)
 
-        result = self.client.call(name, arguments, mode=self.mode)
+        # Thread the transport session into the client ONLY in probe mode: it keys
+        # the per-session sandbox world (synthetic-state isolation) and never touches
+        # the upstream call. Conditional on purpose — duck-typed clients (the catalog
+        # aggregator, the red-team wrapper) don't accept the kwarg, and no other mode
+        # consumes it.
+        if self.mode == "probe":
+            result = self.client.call(
+                name, arguments, mode=self.mode, session_id=session_id
+            )
+        else:
+            result = self.client.call(name, arguments, mode=self.mode)
         emit_surf_event(
             "surf.call",
             surface_id=self.client.surface_id,
@@ -363,7 +374,7 @@ _STDIO_INSTALL_HINT = (
 def serve_stdio(
     spec_or_client: Any,
     base_url: str | None = None,
-    mode: str = "recorded",
+    mode: CallMode = "recorded",
     *,
     server_name: str = "gecko",
     enforce: EnforceMode | None = None,

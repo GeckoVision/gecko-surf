@@ -23,6 +23,7 @@ from .access import AuthSession, public_session
 from .client import AgentApiClient
 from .entitlements import Entitlement, Entitlements
 from .mcp_server import McpSurface
+from .modes import CallMode
 from .surfaces import SurfaceRegistry
 
 # Turns a BYOK entitlement (carrying an opaque cred_ref) into a live, auth-injecting
@@ -47,7 +48,7 @@ class CustomerBinder:
         entitlements: Entitlements,
         *,
         byok_resolver: ByokResolver | None = None,
-        mode: str = "recorded",
+        mode: CallMode = "recorded",
     ) -> None:
         self._surfaces = surfaces
         self._entitlements = entitlements

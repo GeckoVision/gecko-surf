@@ -39,6 +39,7 @@ from ..caller import CallError, build_request
 from ..client import AgentApiClient, IntegrityError
 from ..events import _safe_client, build_surf_record
 from ..mcp_server import McpSurface
+from ..modes import CallMode
 from ..netguard import UnsafeUrlError, safe_get, validate_public_url
 from ..risk import RiskPolicy, score_call
 from ..sanitize import sanitize_schema
@@ -109,7 +110,7 @@ class RecordingClient:
         return self._inner.search(query, limit)
 
     def call(
-        self, name: str, args: dict[str, Any], mode: str = "recorded"
+        self, name: str, args: dict[str, Any], mode: CallMode = "recorded"
     ) -> dict[str, Any]:
         self.calls.append((name, dict(args)))
         return self._inner.call(name, args, mode=mode)

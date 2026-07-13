@@ -165,6 +165,11 @@ _MODE_TO_SOURCE: dict[str, str] = {
     "live": "observed",  # a real upstream status came off the wire
     "reported": "reported",  # an agent claimed the status (future report path)
     "recorded": "synthetic",  # recorded mode fabricates a 200 — never observed
+    # probe = the offline sandbox (gecko.sandbox): the status is fabricated from the
+    # spec's own schemas, so it routes synthetic — structurally excluded from every
+    # published metric. Explicit (not just the fail-closed default) so the routing is
+    # a stated contract, not an accident of the fallback.
+    "probe": "synthetic",
 }
 
 

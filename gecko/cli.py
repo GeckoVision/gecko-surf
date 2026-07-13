@@ -26,6 +26,7 @@ from pathlib import Path
 from . import credentials, docs_reader, login, onboard, serve, testgen
 from .access import public_session, stub_session
 from .client import AgentApiClient
+from .modes import coerce_mode
 from .netguard import UnsafeUrlError, validate_public_url
 
 _SUBCOMMANDS = (
@@ -197,7 +198,7 @@ def _cmd_test(argv: list[str]) -> int:
     if _reject_unsafe(args.spec, "ingest"):
         return 2
     try:
-        results = testgen.check(args.spec, mode=args.mode)
+        results = testgen.check(args.spec, mode=coerce_mode(args.mode))
     except (UnsafeUrlError, ValueError) as exc:
         print(f"Could not comprehend spec: {exc}", file=sys.stderr)
         return 2

@@ -22,6 +22,7 @@ from .credentials import CredentialError
 from .deeplinks import all_add_strings, claude_stdio_add_command
 from .http_server import MCP_PATH, serve_http
 from .mcp_server import serve_stdio
+from .modes import coerce_mode
 from .netguard import UnsafeUrlError, validate_public_url
 
 
@@ -362,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
             "Control plane only — no data, no payloads, no secrets stored.",
             file=sys.stderr,
         )
-        serve_stdio(client, mode=args.mode, server_name=name)
+        serve_stdio(client, mode=coerce_mode(args.mode), server_name=name)
         return 0
 
     _print_banner(name, mcp_url, _summary(client), _stdio_spawn(args))
@@ -371,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         client,
         host=args.host,
         port=args.port,
-        mode=args.mode,
+        mode=coerce_mode(args.mode),
         server_name=name,
         allowed_hosts=extra_hosts or None,
         allowed_origins=extra_origins or None,
