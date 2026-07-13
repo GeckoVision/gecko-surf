@@ -85,6 +85,9 @@ def build_request(
         raise CallError(f"missing required field(s): {', '.join(missing_required)}")
 
     locations: dict[str, str] = invoke.get("param_locations", {})
+    # safe_key -> real param name: the agent supplies sanitized keys (e.g. `filter_user_`)
+    # per the tool schema; the request must carry the API's actual name (`filter[user]`).
+    aliases: dict[str, str] = invoke.get("arg_aliases", {})
     url_path = invoke["path"]
     query: dict[str, Any] = {}
     headers: dict[str, str] = {}
@@ -92,13 +95,14 @@ def build_request(
     for name, value in args.items():
         if name == "body":
             continue
-        loc = locations.get(name, "query")
+        real = aliases.get(name, name)  # translate back to the API's real param name
+        loc = locations.get(real, "query")
         if loc == "path":
-            url_path = url_path.replace("{" + name + "}", quote(str(value), safe=""))
+            url_path = url_path.replace("{" + real + "}", quote(str(value), safe=""))
         elif loc == "header":
-            headers[name] = str(value)
+            headers[real] = str(value)
         else:  # query (default)
-            query[name] = value
+            query[real] = value
 
     missing = _UNFILLED.findall(url_path)
     if missing:
