@@ -57,6 +57,7 @@ t3  Home 54.800%  Draw 27.000%  Away 18.200%   ⚡ SHARP
 | `surfcall_tools.py` | The Gecko⇄LLM seam: allow-listed TxLINE odds reads only, never-raises, output-capped. |
 | `agent.py` | A Claude tool-use loop (injectable LLM) that reasons over a flagged move using the odds tools. Offline-testable. |
 | `demo.py` | The `$0` recorded showcase — comprehend → first-call-correct call → replay feed → flag the move. |
+| `settlement_sim.py` | Day 15 → Day 18 bridge: a flagged move → the risk-scored on-chain `validate_stat` settlement plan, `$0`. |
 | `.claude/agents/` | Curated Solana agents (`defi-engineer`, `solana-architect`, `solana-qa-engineer`) for the settlement build. See `NOTICE.md`. |
 | `.mcp.json` | Surfpool (local mainnet-fork) + solana-dev MCP servers. |
 | `tests/` | Detector logic, first-call-correctness, and the agent loop — all offline. |
@@ -69,16 +70,22 @@ The loop is bounded and testable offline with a fake LLM (see `tests/test_agent.
 
 ## Next: settle it on-chain (Prediction Markets track)
 
-A sharp move is a *signal*; the payout is *settlement*. This starter chains into
-[`../txodds_settlement`](../txodds_settlement), where an agent pulls TxLINE's **Merkle proof**
-and settles a prediction escrow **trustlessly** by CPI-ing into the on-chain oracle — the
-program never decides the outcome, the proof does.
+A sharp move is a *signal*; the payout is *settlement*. Run the bridge:
 
-**Local mainnet-fork simulation (in progress):** the bundled `.claude/agents/solana-qa-engineer`
-+ the Surfpool MCP let the agent stand up a local mainnet fork and **simulate the settlement
-transaction against synthetic TxLINE data** — a fully offline, $0 dry-run of the on-chain path
-before any real broadcast. (Broadcasting a real mainnet tx is always the founder/user's own
-signed action; Gecko never signs.)
+```bash
+uv run python -m examples.txline_sharp_agent.settlement_sim
+```
+
+It chains a flagged move into [`../txodds_settlement`](../txodds_settlement), where an agent
+(every call **risk-scored** by the security gateway) pulls TxLINE's **3-stage Merkle proof** and
+maps it onto the on-chain `validate_stat` settlement instruction — the program never decides the
+outcome, the proof does. Runs `$0` recorded.
+
+**Local mainnet-fork simulation:** that instruction is profiled on **Surfpool** by
+[`gecko-programs`](https://github.com/GeckoVision/gecko-programs) — `FakeSurfpool` (offline,
+`$0`, the CI path) or `RpcSurfpool` (founder-run). Both **profile** the transaction and **never
+sign or broadcast** — a real mainnet settle is always the user's own signed action. The bundled
+`.claude/agents/solana-qa-engineer` + the Surfpool MCP drive that fork.
 
 ## Demo-day mapping
 
