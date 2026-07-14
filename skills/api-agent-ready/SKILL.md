@@ -30,6 +30,11 @@ enums/required fields, a machine-authable auth path) *before* Gecko comprehends 
 A surface designed to that checklist lands first-call-correct because it's
 unambiguous — not because a layer papered over the ambiguity.
 
+**Designed to the checklist? Measure it.** `gecko inspect <api>` scores your API's
+agent-readiness across four dimensions and prints located, fixable findings — the
+best-practices checklist made **automatic**, and a CI gate you can fail a deploy on
+([inspect.md](inspect.md)).
+
 **"Make every API easily pluggable."**
 
 ## The spine
@@ -41,6 +46,7 @@ discipline that keeps it in lane.
 | # | Step | Read | Status |
 |---|---|---|---|
 | 0 | **Design for agents** — the API best-practices checklist (do this while building) | [best-practices.md](best-practices.md) | provider-side guidance |
+| ✓ | **Inspect** — score agent-readiness + gate CI (the checklist, automated) | [inspect.md](inspect.md) | **Live** (≥ 0.4.4) |
 | 1 | **Comprehend** the OpenAPI/docs → first-call-correct tools | [comprehend.md](comprehend.md) | **Live** |
 | 2 | **Emit artifacts** — `llms.txt`, `x-gecko`, `gecko.json` breadcrumbs | [artifacts.md](artifacts.md) | **Building** (hand-authored pattern) |
 | 3 | **Serve MCP** — Streamable-HTTP + one-click `claude mcp add` | [serve-mcp.md](serve-mcp.md) | **Live** |
@@ -77,6 +83,7 @@ gecko https://api.example.com/openapi.json     # == gecko serve <spec>
 
 It prints the comprehension summary (operations ingested, tools generated), the MCP
 URL, and a one-click add for Claude Code / Cursor / VS Code. Also available:
+`gecko inspect <spec>` (score agent-readiness + gate CI — see [inspect.md](inspect.md)),
 `gecko test <spec>` (first-call-correctness checks) and `gecko from-docs <src>`
 (recover a draft OpenAPI from a human doc page, then comprehend).
 
