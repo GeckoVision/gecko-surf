@@ -43,6 +43,7 @@ COPY examples/reportavnzla_demo/spec ./examples/reportavnzla_demo/spec
 # Provider-space surfaces (served by gecko.serve_providers, a second service).
 COPY examples/pegana_demo/spec ./examples/pegana_demo/spec
 COPY examples/jito_demo/spec ./examples/jito_demo/spec
+COPY examples/jito/spec ./examples/jito/spec
 # Gecko-brand recorded demo surfaces (TxLINE, Jito) served by gecko.serve_mcp.
 COPY examples/txline_demo/spec ./examples/txline_demo/spec
 
