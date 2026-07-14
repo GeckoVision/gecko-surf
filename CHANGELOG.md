@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3 — 2026-07-13
+
+### Added
+- **`gecko add <domain>` auto-discovers the spec.** When the ref isn't itself an OpenAPI
+  document, `resolve_spec` probes common locations on the host (`/openapi.json`,
+  `/swagger.json`, `/v1/openapi.json`, `/.well-known/openapi.json`, …) before falling
+  back to docs recovery. Each probe is SSRF-validated and best-effort. So a dev can point
+  `gecko add` at a bare domain, a docs page, or a spec — one command, any API — instead of
+  hunting for an `openapi.json` a painful API probably doesn't publish. Direct spec URLs
+  still short-circuit (no extra probing).
+
 ## 0.4.2 — 2026-07-13
 
 ### Added
