@@ -64,7 +64,12 @@ def resolve_spec(
                 return ResolvedRef(spec=spec, spec_url=ref)
         except json.JSONDecodeError:
             pass
-        # Not a JSON spec — try docs recovery. The parser guessed; no provenance yet.
+        # The exact ref wasn't a spec. Auto-discover: probe common spec locations on the
+        # host (so `gecko add <domain>` just works), THEN fall back to docs recovery on the
+        # original page. Docs recovery has no provenance — the parser guessed.
+        discovered = discover_spec(ref, fetch=fetch, resolver=resolver)
+        if discovered is not None:
+            return discovered
         result = docs_reader.from_docs(ref)
         return ResolvedRef(spec=result.draft, spec_url=None)
     # Local path (dev convenience) — never pinning provenance.
@@ -73,6 +78,51 @@ def resolve_spec(
             return ResolvedRef(spec=json.load(fh), spec_url=None)
     except (OSError, json.JSONDecodeError) as exc:
         raise OnboardError(f"could not read spec at {ref}: {exc}") from exc
+
+
+#: Common locations an OpenAPI spec is served under, probed in order when the ref itself
+#: isn't a spec — turns `gecko add <domain>` into a one-liner that finds the surface.
+_COMMON_SPEC_PATHS: tuple[str, ...] = (
+    "/openapi.json",
+    "/swagger.json",
+    "/v1/openapi.json",
+    "/api/openapi.json",
+    "/api-docs",
+    "/swagger/v1/swagger.json",
+    "/.well-known/openapi.json",
+    "/openapi",
+)
+
+
+def discover_spec(
+    ref: str, *, fetch: Fetcher, resolver: Resolver | None = None
+) -> ResolvedRef | None:
+    """Probe common OpenAPI locations on ``ref``'s host; return the first that fetches
+    and parses as an OpenAPI dict, else ``None``.
+
+    Each probe is SSRF-validated independently (``validate_public_url`` + the socket-
+    pinning ``fetch``). Best-effort: a probe that 404s, times out, is blocked, or returns
+    non-JSON simply advances to the next path — it never raises. This is what lets a dev
+    point ``gecko add`` at a bare domain and have Gecko locate the spec for them.
+    """
+    parsed = urlsplit(ref)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    for path in _COMMON_SPEC_PATHS:
+        url = base + path
+        if url == ref:
+            continue  # the exact ref was already tried by the caller
+        try:
+            validate_public_url(url, resolver=resolver)
+            spec = json.loads(fetch(url))
+        except (ValueError, OSError):
+            # ValueError covers UnsafeUrlError (SSRF) + json.JSONDecodeError; OSError
+            # covers fetch/HTTP failures. Any of them -> try the next candidate path.
+            continue
+        if isinstance(spec, dict) and spec.get("openapi"):
+            return ResolvedRef(spec=spec, spec_url=url)
+    return None
 
 
 def pin_base_url(
