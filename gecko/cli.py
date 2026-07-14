@@ -147,7 +147,7 @@ def _cmd_add(argv: list[str]) -> int:
         "--mode",
         choices=("recorded", "live"),
         default="recorded",
-        help="Mode the wired surface serves in: recorded ($0, synthesized — default) "
+        help="Mode the integrated surface serves in: recorded ($0, synthesized — default) "
         "or live (real upstream calls, using the sealed key).",
     )
     args = p.parse_args(argv)
