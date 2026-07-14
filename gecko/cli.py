@@ -39,6 +39,11 @@ _SUBCOMMANDS = (
     "rm",
     "list",
     "doctor",
+    # Bundled ready-to-run example surfaces — also exposed as their own console
+    # scripts, but registered here so the single `gecko` binary (and thus
+    # `npx @geckovision/gecko <name>`) can run them with no local spec file.
+    "jupiter-mcp",
+    "colosseum-mcp",
 )
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
@@ -624,6 +629,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_login(rest)
     if cmd == "serve":
         return serve.main(rest)
+    if cmd == "jupiter-mcp":
+        from .examples import jupiter  # lazy: pulls serve deps only when invoked
+
+        return jupiter.main(rest)
+    if cmd == "colosseum-mcp":
+        from .examples import colosseum  # lazy: pulls serve deps only when invoked
+
+        return colosseum.main(rest)
     if cmd == "test":
         return _cmd_test(rest)
     if cmd == "from-docs":
