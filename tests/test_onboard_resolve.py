@@ -1,9 +1,20 @@
 import json
 import pytest
 from gecko.netguard import UnsafeUrlError
-from gecko.onboard import resolve_spec, pin_base_url, OnboardError
+from gecko.onboard import discover_spec, resolve_spec, pin_base_url, OnboardError
 
 _SPEC = {"openapi": "3.0.3", "info": {"title": "T", "version": "1"}, "paths": {}}
+
+
+def _multi_fetch(mapping: dict[str, str]):
+    """Fake fetch: url -> body; an unknown url raises (like a 404)."""
+
+    def fetch(url: str) -> str:
+        if url not in mapping:
+            raise OSError(f"404 {url}")
+        return mapping[url]
+
+    return fetch
 
 
 def _resolver(mapping: dict[str, list[str]]):
@@ -43,6 +54,78 @@ def test_resolves_local_path(tmp_path):
 def test_rejects_unsafe_url():
     with pytest.raises(OnboardError):
         resolve_spec("http://169.254.169.254/openapi.json", fetch=lambda u: "{}")
+
+
+# --- auto-discovery: `gecko add <domain>` finds the spec ----------------------------
+
+
+def test_discovers_spec_at_common_path_from_bare_domain():
+    # Root is HTML, but /openapi.json is a spec — discovery finds it.
+    fetch = _multi_fetch(
+        {
+            "https://api.example.com": "<html>docs</html>",
+            "https://api.example.com/openapi.json": json.dumps(_SPEC),
+        }
+    )
+    resolved = resolve_spec("https://api.example.com", fetch=fetch, resolver=PUBLIC)
+    assert resolved.spec["openapi"] == "3.0.3"
+    # the DISCOVERED url is the provenance we pin to, not the bare domain
+    assert resolved.spec_url == "https://api.example.com/openapi.json"
+
+
+def test_discovery_probes_past_missing_paths_to_swagger():
+    fetch = _multi_fetch(
+        {
+            "https://api.example.com": "<html/>",
+            "https://api.example.com/swagger.json": json.dumps(_SPEC),
+        }
+    )
+    resolved = resolve_spec("https://api.example.com", fetch=fetch, resolver=PUBLIC)
+    assert resolved.spec_url == "https://api.example.com/swagger.json"
+
+
+def test_direct_spec_url_short_circuits_without_probing():
+    calls: list[str] = []
+
+    def fetch(url: str) -> str:
+        calls.append(url)
+        return json.dumps(_SPEC)
+
+    resolved = resolve_spec(
+        "https://api.example.com/openapi.json", fetch=fetch, resolver=PUBLIC
+    )
+    assert resolved.spec_url == "https://api.example.com/openapi.json"
+    assert calls == [
+        "https://api.example.com/openapi.json"
+    ]  # exact ref only, no probes
+
+
+def test_discover_spec_ssrf_blocks_every_probe():
+    # A resolver that resolves nothing -> every probe fails validate_public_url -> None.
+    result = discover_spec(
+        "https://api.example.com",
+        fetch=lambda u: json.dumps(_SPEC),
+        resolver=_resolver({}),
+    )
+    assert result is None
+
+
+def test_discovery_falls_back_to_docs_when_nothing_found(monkeypatch):
+    import gecko.onboard as onboard
+
+    fetch = _multi_fetch({"https://api.example.com": "<html>docs</html>"})
+
+    class _Draft:
+        draft = {
+            "openapi": "3.0.3",
+            "info": {"title": "recovered", "version": "1"},
+            "paths": {},
+        }
+
+    monkeypatch.setattr(onboard.docs_reader, "from_docs", lambda ref: _Draft())
+    resolved = resolve_spec("https://api.example.com", fetch=fetch, resolver=PUBLIC)
+    assert resolved.spec["info"]["title"] == "recovered"
+    assert resolved.spec_url is None  # docs-recovery -> unpinned
 
 
 # --- pin_base_url: reconcile the fetch origin against the spec's own servers[] -------

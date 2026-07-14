@@ -128,7 +128,11 @@ def _cmd_add(argv: list[str]) -> int:
         prog="gecko add",
         description="Comprehend an API and wire it into your agent (stdio, key in keychain).",
     )
-    p.add_argument("api", help="OpenAPI URL, docs URL, or local path.")
+    p.add_argument(
+        "api",
+        help="An API domain, OpenAPI URL, docs URL, or local path — Gecko finds the "
+        "spec (probes common paths, else recovers one from the docs).",
+    )
     p.add_argument(
         "--name", default=None, help="Surface name (default: derived from the ref)."
     )
