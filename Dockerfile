@@ -36,16 +36,12 @@ WORKDIR /app
 COPY --from=builder /app/.venv ./.venv
 COPY --from=builder /app/pyproject.toml /app/uv.lock /app/README.md ./
 COPY gecko ./gecko
-# The OpenAPI specs the container comprehends + serves (one per surface in
-# gecko/serve_mcp.py). Control plane only: no payloads, no secrets.
-COPY examples/sos_vzla_bot/spec ./examples/sos_vzla_bot/spec
-COPY examples/reportavnzla_demo/spec ./examples/reportavnzla_demo/spec
-# Provider-space surfaces (served by gecko.serve_providers, a second service).
-COPY examples/pegana_demo/spec ./examples/pegana_demo/spec
-COPY examples/jito_demo/spec ./examples/jito_demo/spec
-COPY examples/jito/spec ./examples/jito/spec
-# Gecko-brand recorded demo surfaces (TxLINE, Jito) served by gecko.serve_mcp.
-COPY examples/txline_demo/spec ./examples/txline_demo/spec
+# Every example surface spec, served by gecko.serve_mcp / gecko.serve_providers.
+# Copy the whole tree — a per-surface COPY silently missed examples/jito/spec once
+# and crashed serve_mcp at startup (FileNotFoundError), stalling a deploy. Copying
+# examples/ wholesale means a new surface's spec can never be left out of the image.
+# Control plane only: no payloads, no secrets.
+COPY examples ./examples
 
 RUN chown -R gecko:gecko /app
 USER gecko
