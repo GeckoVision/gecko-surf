@@ -143,3 +143,24 @@ def test_test_rejects_unsafe_url(capsys) -> None:
     rc = cli.main(["test", "http://169.254.169.254/openapi.json"])
     assert rc == 2
     assert "unsafe" in capsys.readouterr().err.lower()
+
+
+def test_dispatch_bundled_example_subcommands(monkeypatch) -> None:
+    """`gecko jupiter-mcp` / `gecko colosseum-mcp` route to the bundled example mains
+    (so `npx @geckovision/gecko <name>` runs them, no local spec), forwarding the
+    remaining args — recognized subcommands, NOT defaulted to `serve`."""
+    import gecko.examples.colosseum as col
+    import gecko.examples.jupiter as jup
+
+    seen: dict[str, list[str] | None] = {}
+    monkeypatch.setattr(
+        jup, "main", lambda argv=None: seen.__setitem__("jup", argv) or 0
+    )
+    monkeypatch.setattr(
+        col, "main", lambda argv=None: seen.__setitem__("col", argv) or 0
+    )
+
+    assert cli.main(["jupiter-mcp", "--stdio"]) == 0
+    assert cli.main(["colosseum-mcp", "--public-url", "https://x.example"]) == 0
+    assert seen["jup"] == ["--stdio"]
+    assert seen["col"] == ["--public-url", "https://x.example"]

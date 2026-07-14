@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2 — 2026-07-13
+
+### Added
+- **Bundled example surfaces are now `gecko` subcommands** — `gecko jupiter-mcp` and
+  `gecko colosseum-mcp` (previously only standalone console scripts). This gives them a
+  zero-install path through the single `gecko` binary, so **`npx @geckovision/gecko
+  jupiter-mcp`** (and `colosseum-mcp`) work with no Python and no local spec file. Lazy-
+  imported, so they add nothing to `gecko add`/`doctor`.
+
 ## 0.4.1 — 2026-07-13
 
 ### Fixed
