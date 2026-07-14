@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1 — 2026-07-13
+
+### Fixed
+- **`gecko add` no longer crashes without a TTY.** For an API that declares auth, the
+  hidden key prompt previously raised a raw `getpass`/`termios` traceback when run
+  under an agent, in CI, or with piped stdin — the exact non-interactive contexts our
+  agent-first users onboard in. It now degrades gracefully off a TTY: no key is read,
+  the surface still comprehends and wires (recorded/$0 needs no key), and the CLI
+  prints the documented "add later with `gecko auth set`" hint. The secret is never
+  echoed or logged.
+
 ## 0.3.0 — 2026-07-10
 
 Governance + sessions. This release turns Gecko from "call the API correctly" into

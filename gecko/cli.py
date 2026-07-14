@@ -94,6 +94,24 @@ def _reject_unsafe(url: str, verb: str) -> bool:
     return False
 
 
+def _key_prompt(question: str) -> str:
+    """Hidden key prompt that degrades gracefully when there's no TTY.
+
+    ``gecko add`` often runs under an agent, in CI, or with piped stdin — contexts
+    with no controlling terminal, where ``getpass`` raises and would crash onboarding
+    with a raw traceback (the worst possible first impression). Off a TTY, return ""
+    so ``onboard.add`` takes its documented "no key entered — add later with
+    `gecko auth set`" path and still wires the surface (recorded/$0 needs no key). The
+    secret is never echoed or logged.
+    """
+    if not sys.stdin.isatty():
+        return ""
+    try:
+        return getpass.getpass(question)
+    except (EOFError, OSError):  # no usable terminal (termios error / closed stdin)
+        return ""
+
+
 def _cmd_add(argv: list[str]) -> int:
     """`gecko add <api>` — comprehend an API and wire it into Claude Code (stdio).
 
@@ -164,7 +182,7 @@ def _cmd_add(argv: list[str]) -> int:
     deps = onboard.AddDeps(
         fetch=onboard._default_fetch,
         comprehend=_comprehend,
-        prompt=lambda q: getpass.getpass(q),
+        prompt=_key_prompt,
         store=_store,
         run=onboard._default_run,
         home=Path.home(),
