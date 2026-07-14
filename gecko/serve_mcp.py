@@ -70,7 +70,7 @@ _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_opena
 # still visible as tools (recorded mode never sends the stub header anywhere); Jito's
 # JSON-RPC methods are public.
 _TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
-_JITO_SPEC = _ROOT / "examples" / "jito_demo" / "spec" / "jito_openapi.json"
+_JITO_SPEC = _ROOT / "examples" / "jito" / "spec" / "jito_blockengine_openapi.json"
 
 # Jupiter Swap — keyless + PUBLIC, so UNLIKE TxLINE/Jito we serve it LIVE: real swap
 # quotes from Jupiter's free lite-api host. No key, no cost, public data — a genuine

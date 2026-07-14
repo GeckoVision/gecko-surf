@@ -32,7 +32,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 # endpoint (from the spec's servers[].url) — agents reach the provider directly.
 _SURFACES: list[tuple[str, Path]] = [
     ("pegana", _ROOT / "examples" / "pegana_demo" / "spec" / "pegana_openapi.json"),
-    ("jito", _ROOT / "examples" / "jito_demo" / "spec" / "jito_openapi.json"),
+    ("jito", _ROOT / "examples" / "jito" / "spec" / "jito_blockengine_openapi.json"),
 ]
 
 # The provider host — set to the real domain at deploy time (DNS-rebinding allowlist).
