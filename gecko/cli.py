@@ -34,6 +34,7 @@ _SUBCOMMANDS = (
     "login",
     "serve",
     "test",
+    "inspect",
     "from-docs",
     "auth",
     "rm",
@@ -200,6 +201,64 @@ def _cmd_add(argv: list[str]) -> int:
     return onboard.add(
         args.api, name=args.name, base_url=args.base_url, mode=args.mode, deps=deps
     )
+
+
+def _cmd_inspect(argv: list[str]) -> int:
+    """`gecko inspect <api>` — score an API's agent-readiness (offline, $0).
+
+    Runs the four dimensions (first-call-correct, hygiene, agent-friendliness, security)
+    and prints a graded scorecard. `--min-grade` gates a CI deploy; any blocking finding
+    also exits non-zero (TDD-for-APIs).
+    """
+    from . import inspect as inspect_mod
+
+    p = argparse.ArgumentParser(
+        prog="gecko inspect",
+        description="Score an API's agent-readiness (offline, $0): first-call-correct, "
+        "spec hygiene, agent-friendliness, security.",
+    )
+    p.add_argument(
+        "api",
+        help="An API domain, OpenAPI URL, docs URL, or local path — Gecko finds the spec.",
+    )
+    p.add_argument(
+        "-o", "--out", default=None, help="Also write the report as JSON to this path."
+    )
+    p.add_argument(
+        "--min-grade",
+        default=None,
+        choices=("A", "B", "C", "D"),
+        help="Exit non-zero if the grade is below this (CI gate).",
+    )
+    args = p.parse_args(argv)
+    if _reject_unsafe(args.api, "inspect"):
+        return 2
+    try:
+        resolved = onboard.resolve_spec(args.api)
+    except onboard.OnboardError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+
+    report = inspect_mod.inspect(resolved.spec, api=onboard.safe_name(args.api))
+    print(inspect_mod.render(report))
+    if args.out:
+        import dataclasses
+
+        Path(args.out).write_text(
+            json.dumps(dataclasses.asdict(report), indent=2), encoding="utf-8"
+        )
+        print(f"\n  → wrote {args.out}")
+
+    grade_order = "FDCBA"
+    below = args.min_grade is not None and grade_order.index(
+        report.grade
+    ) < grade_order.index(args.min_grade)
+    if below:
+        print(
+            f"\n  ✗ grade {report.grade} is below --min-grade {args.min_grade}",
+            file=sys.stderr,
+        )
+    return 1 if (below or inspect_mod.has_blocking(report)) else 0
 
 
 def _cmd_test(argv: list[str]) -> int:
@@ -643,6 +702,8 @@ def main(argv: list[str] | None = None) -> int:
         return colosseum.main(rest)
     if cmd == "test":
         return _cmd_test(rest)
+    if cmd == "inspect":
+        return _cmd_inspect(rest)
     if cmd == "from-docs":
         return _cmd_from_docs(rest)
     if cmd == "auth":
