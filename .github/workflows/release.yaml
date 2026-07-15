@@ -119,6 +119,33 @@ jobs:
             exit 1
           fi
 
+      # PER-ARCH POSITIVE CA ASSERTION (EVERY matrix leg — this is the macOS + arm64
+      # guarantee). The cert-stripped Docker gate below runs ONLY on linux-x86_64: there is
+      # no equivalent for macOS-arm64 or linux-arm64 (no matching container to strip; we
+      # cannot purge Apple's system trust store on a hosted runner). So on those arches the
+      # https smoke above can pass on the runner's OWN cert store even if `--collect-data
+      # certifi` shipped nothing — it cannot prove the bundle exists. THIS step can: it runs
+      # the binary's hidden self-test (GECKO_CA_SELFTEST=1), which reports IN-PROCESS the
+      # bundled certifi it resolved — absolute path, on-disk existence, and byte size — before
+      # PyInstaller deletes the _MEIPASS temp dir on exit (so CI can't stat it from outside).
+      # The checker then fails the build unless, independent of the runner's cert store, the
+      # line proves THIS frozen binary shipped + resolved a real (~200KB) cacert.pem INSIDE
+      # _MEIPASS (not a system/keychain path). It asserts physical presence, not a TLS
+      # handshake — that end-to-end proof stays the linux Docker gate's job, on the one arch
+      # where a storeless container is possible.
+      - name: CA bundle assertion — bundled certifi shipped + resolved on THIS arch
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "out/${{ matrix.asset }}"
+          # The self-test reads certifi.where() computed IN-PROCESS, which is the bundled
+          # cacert.pem regardless of the runner's own store — no env scrubbing needed to be
+          # runner-independent. The binary exits 0 in self-test mode; the checker is the gate.
+          GECKO_CA_SELFTEST=1 "out/${{ matrix.asset }}" > ca_selftest.out 2> ca_selftest.err || true
+          echo "--- self-test stdout ---"; cat ca_selftest.out || true
+          echo "--- self-test stderr ---"; cat ca_selftest.err || true
+          python packaging/ca_selftest_check.py ca_selftest.out
+
       # THE REAL TLS GATE (linux-x86_64 only). The per-runner smoke above can pass on the
       # runner's OWN compiled-in CA path even if `--collect-data certifi` shipped nothing —
       # scrubbing SSL_CERT_FILE/DIR is not enough because OpenSSL then falls back to the
