@@ -2,7 +2,7 @@
   "$schema": "https://cursor.com/schemas/cursor-plugin/plugin.json",
   "name": "gecko-surf",
   "displayName": "Gecko Surf — API Agent-Ready",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "description": "Make any API agent-usable — even one with broken docs, no OpenAPI, a WAF, or an auth wall. Comprehend a spec (or JS-rendered docs) into first-call-correct MCP tools your agent calls right the first time (10% → 65% on a painful API, measured), auth injected, no integration code. Installs a live TxLINE demo surface.",
   "author": {
     "name": "GeckoVision",

@@ -10,7 +10,7 @@
       "name": "gecko-surf",
       "source": "./skills",
       "description": "Make any API agent-usable — even with broken docs, no OpenAPI, a WAF, or an auth wall. Comprehend a spec (or JS-rendered docs) into first-call-correct MCP tools your agent calls right the first time (10% → 65% on a painful API, measured), auth injected, no integration code. Bundles use-any-api, read-js-docs, anti-poisoning, api-agent-ready, x402-payai-setup, plus agents and commands. Installs a live TxLINE demo MCP.",
-      "version": "0.4.3"
+      "version": "0.4.5"
     }
   ]
 }
