@@ -40,15 +40,18 @@ jobs:
 
       # Install the tagged source with the `serve` extra (mcp + uvicorn) plus the
       # freezer. PyInstaller is built in this ephemeral CI env only — it is NOT a
-      # project dependency.
-      - name: Install gecko-surf[serve] + pyinstaller
+      # project dependency. certifi is a BUILD requirement, not a wheel dependency:
+      # the frozen binary bundles its cacert.pem so https works on machines where
+      # the build Python's CA paths don't exist (the darwin-arm64 field blocker).
+      - name: Install gecko-surf[serve] + pyinstaller + certifi
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ".[serve]" pyinstaller
+          python -m pip install ".[serve]" pyinstaller certifi
 
       # Flags mirror the locally-proven build exactly. The serve path imports
       # mcp/uvicorn/starlette lazily, so they must be force-collected; pyyaml is a
-      # top-level import in gecko.ingest.
+      # top-level import in gecko.ingest; certifi's cacert.pem is the CA store the
+      # gecko_entry hook exports as SSL_CERT_FILE when frozen (no system store needed).
       - name: Build standalone binary
         run: |
           pyinstaller --onefile --name gecko \
@@ -56,6 +59,7 @@ jobs:
             --collect-all uvicorn \
             --collect-all starlette \
             --collect-submodules anyio \
+            --collect-data certifi \
             --hidden-import yaml \
             --hidden-import gecko \
             --noconfirm \
@@ -78,6 +82,31 @@ jobs:
         run: |
           chmod +x "out/${{ matrix.asset }}"
           "out/${{ matrix.asset }}" --help
+
+      # TLS smoke: ONE real https GET through the binary's own code path (netguard's
+      # pinned HTTPS connect — the exact line that failed on darwin-arm64 in the field
+      # when the binary shipped without a CA store). SSL_CERT_FILE/SSL_CERT_DIR are
+      # scrubbed so the bundled-certifi hook is what's under test. Target = this repo's
+      # own jito spec fixture pinned to the tagged commit (we own it; content can't
+      # drift). Gate on the rendered scorecard, NOT the exit code alone: a transport
+      # failure escapes `inspect` as a traceback with the same exit 1 that grading
+      # semantics use, so only "NN/100" output proves the https fetch succeeded.
+      - name: Smoke test (real https through the frozen binary)
+        shell: bash
+        run: |
+          rc=0
+          env -u SSL_CERT_FILE -u SSL_CERT_DIR "out/${{ matrix.asset }}" inspect \
+            "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/examples/jito/spec/jito_blockengine_openapi.json" \
+            > inspect.out 2>&1 || rc=$?
+          cat inspect.out
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::https smoke exited $rc — the frozen binary could not fetch over TLS"
+            exit 1
+          fi
+          if ! grep -q "/100" inspect.out; then
+            echo "::error::no scorecard in inspect output — TLS is broken in the frozen binary"
+            exit 1
+          fi
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
