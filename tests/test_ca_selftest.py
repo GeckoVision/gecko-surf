@@ -4,15 +4,18 @@ Two units, both fully offline (no frozen build needed):
 
   * ``packaging/gecko_entry._ca_selftest_line`` builds ONE machine-parseable
     ``GECKO_CA ...`` line describing the bundled certifi this process resolved
-    in-process (path / exists / bytes / frozen). CI runs ``GECKO_CA_SELFTEST=1
-    <binary>`` and feeds that line to the gate below — the per-arch positive
-    assertion that the bundled cert shipped + resolved on macOS + linux-arm64,
-    where the cert-stripped Docker gate (linux-x86_64 only) cannot run. The
-    ``GECKO_CA_SELFTEST`` env gate must NEVER affect normal CLI operation.
+    in-process (path / exists / bytes / frozen / ssl_cert_file). CI runs
+    ``GECKO_CA_SELFTEST=1 <binary>`` and feeds that line to the gate below — the
+    per-arch positive assertion that the bundled cert shipped + resolved on macOS
+    + linux-arm64, where the cert-stripped Docker gate (linux-x86_64 only) cannot
+    run. The ``GECKO_CA_SELFTEST`` env gate must NEVER affect normal CLI operation.
   * ``packaging/ca_selftest_check`` parses that line and decides pass/fail: it is
     the frozen binary, the cert exists, its size is plausible for a real CA
-    bundle, and its path is INSIDE the PyInstaller ``_MEIPASS`` extraction dir
-    (not the runner's own system/keychain trust store).
+    bundle, its path is INSIDE the PyInstaller ``_MEIPASS`` extraction dir (not
+    the runner's own system/keychain trust store), and — the export belt — when
+    frozen the hook actually pointed ``SSL_CERT_FILE`` at that bundled path
+    (``ssl_cert_file == path``), proving TLS would USE the bundle, not just that
+    it shipped.
 
 Both live in ``packaging/`` (not a package — the name clashes with the PyPI
 ``packaging`` lib), so they are loaded by file path, never imported.
@@ -61,30 +64,37 @@ def test_line_reports_a_real_bundle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A frozen process with a real, bundled cacert.pem emits exists=1, the true byte
-    size, frozen=1, and the resolved path — computed in-process (the _MEIPASS dir is
-    gone by the time CI could stat it from outside)."""
+    size, frozen=1, the resolved path, and the SSL_CERT_FILE the hook exported — all
+    computed in-process (the _MEIPASS dir is gone by the time CI could stat it from
+    outside)."""
     mei = tmp_path / "_MEI424242" / "certifi"
     mei.mkdir(parents=True)
     pem = mei / "cacert.pem"
     pem.write_bytes(b"x" * 60_000)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     _fake_certifi(monkeypatch, lambda: str(pem))
+    # main() runs the CA hook before the self-test; simulate its export.
+    monkeypatch.setenv("SSL_CERT_FILE", str(pem))
 
     line = _entry._ca_selftest_line()
-    assert line == f"GECKO_CA path={pem} exists=1 bytes=60000 frozen=1"
+    assert line == (
+        f"GECKO_CA path={pem} exists=1 bytes=60000 frozen=1 ssl_cert_file={pem}"
+    )
 
 
 def test_line_reports_absent_bundle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """certifi.where() points somewhere that isn't on disk -> exists=0, bytes=-1
-    (no size available), so the gate can distinguish absent from empty."""
+    (no size available), so the gate can distinguish absent from empty. The hook
+    exported nothing (cert absent), so ssl_cert_file is empty."""
     ghost = tmp_path / "_MEI000000" / "certifi" / "cacert.pem"
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     _fake_certifi(monkeypatch, lambda: str(ghost))
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
 
     line = _entry._ca_selftest_line()
-    assert line == f"GECKO_CA path={ghost} exists=0 bytes=-1 frozen=1"
+    assert line == f"GECKO_CA path={ghost} exists=0 bytes=-1 frozen=1 ssl_cert_file="
 
 
 def test_line_reports_not_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,13 +109,36 @@ def test_line_reports_not_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_line_survives_broken_certifi(monkeypatch: pytest.MonkeyPatch) -> None:
     """The self-test must never crash: a certifi that raises degrades to exists=0."""
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
 
     def boom() -> str:
         raise RuntimeError("certifi exploded")
 
     _fake_certifi(monkeypatch, boom)
     line = _entry._ca_selftest_line()
-    assert line == "GECKO_CA path= exists=0 bytes=-1 frozen=1"
+    assert line == "GECKO_CA path= exists=0 bytes=-1 frozen=1 ssl_cert_file="
+
+
+def test_line_reports_the_hook_export_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The belt, whole loop: run the REAL frozen CA hook (clean env), then the self-test.
+    The hook exports SSL_CERT_FILE=certifi.where(), and the line must echo that exact
+    value, so ssl_cert_file == path — the proof the gate keys off of."""
+    mei = tmp_path / "_MEI555555" / "certifi"
+    mei.mkdir(parents=True)
+    pem = mei / "cacert.pem"
+    pem.write_bytes(b"x" * 60_000)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    _fake_certifi(monkeypatch, lambda: str(pem))
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+
+    _entry._apply_frozen_ca_bundle()  # the hook main() runs before the self-test
+    line = _entry._ca_selftest_line()
+
+    parsed = _check.parse_line(line)
+    assert parsed.ssl_cert_file == str(pem) == parsed.path
 
 
 # --- the env gate must not leak into normal CLI operation ----------------------
@@ -167,10 +200,18 @@ def test_gate_only_triggers_on_exactly_one(
 # --- the gate parses the line and decides pass/fail ----------------------------
 
 _GOOD_LINUX = (
-    "GECKO_CA path=/tmp/_MEI123456/certifi/cacert.pem exists=1 bytes=220000 frozen=1"
+    "GECKO_CA path=/tmp/_MEI123456/certifi/cacert.pem exists=1 bytes=220000 frozen=1 "
+    "ssl_cert_file=/tmp/_MEI123456/certifi/cacert.pem"
 )
-_GOOD_MAC = "GECKO_CA path=/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem exists=1 bytes=220000 frozen=1"
-_GOOD_MAC_PRIVATE = "GECKO_CA path=/private/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem exists=1 bytes=220000 frozen=1"
+_GOOD_MAC = (
+    "GECKO_CA path=/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem exists=1 bytes=220000 "
+    "frozen=1 ssl_cert_file=/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem"
+)
+_GOOD_MAC_PRIVATE = (
+    "GECKO_CA path=/private/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem exists=1 "
+    "bytes=220000 frozen=1 "
+    "ssl_cert_file=/private/var/folders/2k/aa/T/_MEI99/certifi/cacert.pem"
+)
 
 
 def test_parse_round_trips() -> None:
@@ -179,6 +220,7 @@ def test_parse_round_trips() -> None:
     assert t.exists is True
     assert t.nbytes == 220000
     assert t.frozen is True
+    assert t.ssl_cert_file == "/tmp/_MEI123456/certifi/cacert.pem"
 
 
 def test_parse_finds_line_among_noise() -> None:
@@ -187,7 +229,15 @@ def test_parse_finds_line_among_noise() -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", ["", "no marker here", "GECKO_CA path=/x exists=? bytes=y frozen=1"]
+    "bad",
+    [
+        "",
+        "no marker here",
+        "GECKO_CA path=/x exists=? bytes=y frozen=1 ssl_cert_file=/x",
+        # the pre-belt format (no ssl_cert_file) must be rejected, not silently parsed —
+        # producer + consumer ship together and cannot drift on the field set.
+        "GECKO_CA path=/tmp/_MEI9/certifi/cacert.pem exists=1 bytes=220000 frozen=1",
+    ],
 )
 def test_parse_rejects_garbage(bad: str) -> None:
     with pytest.raises(_check.SelftestFormatError):
@@ -208,7 +258,8 @@ def test_check_rejects_not_frozen() -> None:
 
 
 def test_check_rejects_absent_cert() -> None:
-    line = "GECKO_CA path=/tmp/_MEI9/certifi/cacert.pem exists=0 bytes=-1 frozen=1"
+    pem = "/tmp/_MEI9/certifi/cacert.pem"
+    line = f"GECKO_CA path={pem} exists=0 bytes=-1 frozen=1 ssl_cert_file={pem}"
     reasons = _check.check(_check.parse_line(line))
     assert any("exists" in r for r in reasons)
 
@@ -216,15 +267,15 @@ def test_check_rejects_absent_cert() -> None:
 @pytest.mark.parametrize("nbytes", [0, 100, 49999, 50000])
 def test_check_rejects_small_bundle(nbytes: int) -> None:
     """The floor is exclusive: exactly 50000 must still fail (a real bundle is ~200KB)."""
-    line = (
-        f"GECKO_CA path=/tmp/_MEI9/certifi/cacert.pem exists=1 bytes={nbytes} frozen=1"
-    )
+    pem = "/tmp/_MEI9/certifi/cacert.pem"
+    line = f"GECKO_CA path={pem} exists=1 bytes={nbytes} frozen=1 ssl_cert_file={pem}"
     reasons = _check.check(_check.parse_line(line))
     assert any("bytes" in r for r in reasons)
 
 
 def test_check_accepts_just_over_floor() -> None:
-    line = "GECKO_CA path=/tmp/_MEI9/certifi/cacert.pem exists=1 bytes=50001 frozen=1"
+    pem = "/tmp/_MEI9/certifi/cacert.pem"
+    line = f"GECKO_CA path={pem} exists=1 bytes=50001 frozen=1 ssl_cert_file={pem}"
     assert _check.check(_check.parse_line(line)) == []
 
 
@@ -245,17 +296,54 @@ def test_check_accepts_just_over_floor() -> None:
 )
 def test_check_rejects_system_and_keychain_paths(path: str) -> None:
     """A path that resolves to the runner's OWN trust store (no _MEIPASS marker) must
-    fail — that would prove nothing about the bundled cert."""
-    line = f"GECKO_CA path={path} exists=1 bytes=220000 frozen=1"
+    fail — that would prove nothing about the bundled cert. (ssl_cert_file == path here,
+    so the export belt is satisfied and the rejection is purely the system-store check.)"""
+    line = f"GECKO_CA path={path} exists=1 bytes=220000 frozen=1 ssl_cert_file={path}"
     reasons = _check.check(_check.parse_line(line))
     assert reasons  # rejected for at least one reason (no _MEI and/or system path)
 
 
 def test_check_reports_every_failure_at_once() -> None:
     """A fully-broken line surfaces all reasons, so a CI log shows the whole story."""
-    line = "GECKO_CA path=/etc/ssl/cert.pem exists=0 bytes=0 frozen=0"
+    line = "GECKO_CA path=/etc/ssl/cert.pem exists=0 bytes=0 frozen=0 ssl_cert_file="
     reasons = _check.check(_check.parse_line(line))
     assert len(reasons) >= 4
+
+
+# --- the export belt: when frozen, the hook must have set SSL_CERT_FILE to the bundle ---
+
+
+def test_check_rejects_unexported_ssl_cert_file() -> None:
+    """A frozen binary whose bundle shipped + resolved (path/exists/bytes all fine) but
+    whose hook exported NOTHING — ssl_cert_file empty. The bundle is present yet unused;
+    the belt catches this even though every physical-presence check passes."""
+    pem = "/tmp/_MEI123456/certifi/cacert.pem"
+    line = f"GECKO_CA path={pem} exists=1 bytes=220000 frozen=1 ssl_cert_file="
+    reasons = _check.check(_check.parse_line(line))
+    assert any("ssl_cert_file" in r for r in reasons)
+
+
+def test_check_rejects_ssl_cert_file_pointing_elsewhere() -> None:
+    """The hook (or something) exported a DIFFERENT path than the bundled cert — e.g. a
+    stale system store. Equality fails, proving TLS would not use the shipped bundle."""
+    pem = "/tmp/_MEI123456/certifi/cacert.pem"
+    line = (
+        f"GECKO_CA path={pem} exists=1 bytes=220000 frozen=1 "
+        "ssl_cert_file=/etc/ssl/cert.pem"
+    )
+    reasons = _check.check(_check.parse_line(line))
+    assert any("ssl_cert_file" in r for r in reasons)
+
+
+def test_check_skips_export_belt_when_not_frozen() -> None:
+    """The equality is only asserted for the frozen binary (the hook only runs when
+    frozen). A frozen=0 line with a mismatching ssl_cert_file is NOT rejected FOR that
+    reason — only for frozen=0 itself."""
+    pem = "/tmp/_MEI123456/certifi/cacert.pem"
+    line = f"GECKO_CA path={pem} exists=1 bytes=220000 frozen=0 ssl_cert_file="
+    reasons = _check.check(_check.parse_line(line))
+    assert any("frozen" in r for r in reasons)
+    assert not any("ssl_cert_file" in r for r in reasons)
 
 
 # --- producer + consumer agree (the whole loop) --------------------------------
@@ -264,14 +352,18 @@ def test_check_reports_every_failure_at_once() -> None:
 def test_entry_line_is_accepted_by_the_gate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The exact line the frozen entry prints, for a realistic bundled cert, passes the
-    gate — the producer and consumer cannot silently drift on the format."""
+    """The exact line the frozen entry prints — AFTER the CA hook exported SSL_CERT_FILE,
+    as main() sequences it — for a realistic bundled cert, passes the gate. Producer and
+    consumer cannot silently drift on the format OR the export belt."""
     mei = tmp_path / "_MEI777777" / "certifi"
     mei.mkdir(parents=True)
     pem = mei / "cacert.pem"
     pem.write_bytes(b"x" * 220_000)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     _fake_certifi(monkeypatch, lambda: str(pem))
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
 
+    _entry._apply_frozen_ca_bundle()  # exports SSL_CERT_FILE, exactly as main() does
     line = _entry._ca_selftest_line()
     assert _check.check(_check.parse_line(line)) == []

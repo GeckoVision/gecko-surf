@@ -1,0 +1,65 @@
+name: ci
+
+# Enforce the repo's mandatory local workflow (ruff + mypy + pytest) as a merge gate.
+# release.yaml only fires on `v*` tags, so without THIS a red lint/type/test could merge
+# unnoticed. Lint/type/test ONLY — no PyInstaller build, no publish (those stay tag-gated
+# in release.yaml). Mirrors `.claude/rules/python.md`, using `--check` (not `--fix`) so the
+# gate is read-only and fails on drift instead of silently repairing it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One in-flight run per PR/branch; a newer push cancels the older run (fast feedback, less
+# queue). head_ref groups all pushes of a PR together; on a branch push it falls back to ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: lint / type / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Pin the interpreter to the project floor (pyproject requires-python >=3.11); uv
+      # auto-provisions a managed 3.11 during `uv sync`.
+      UV_PYTHON: "3.11"
+      # The four gate steps reuse the venv the sync step builds; `uv run` must never re-sync
+      # or mutate it (this does NOT affect the explicit `uv sync` below).
+      UV_NO_SYNC: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # uv drives everything, matching how the project runs locally. enable-cache keys the uv
+      # cache on the committed uv.lock, so unchanged deps restore instead of re-download.
+      - name: Set up uv (+ cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # `serve` is the one extra the suite needs: two tests import starlette at module scope
+      # (it arrives transitively via mcp[cli]) and ERROR on collection without it. dense/events
+      # are NOT required — the suite injects fakes for pymongo/anthropic — so serve-only
+      # reproduces the exact local green (1192 passed, 1 skipped: tiktoken, which is in no
+      # extra) without the heavier installs. `uv sync` installs the `dev` group by default, so
+      # ruff/mypy/pytest come with it — every gate step runs from this one sync.
+      - name: Install (serve extra + dev group)
+        run: uv sync --extra serve
+
+      # The four mandatory gates (.claude/rules/python.md). Any one red fails the PR.
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: mypy gecko
+        run: uv run mypy gecko
+
+      - name: pytest
+        run: uv run pytest -q
