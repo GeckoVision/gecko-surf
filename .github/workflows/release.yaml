@@ -43,15 +43,25 @@ jobs:
       # project dependency. certifi is a BUILD requirement, not a wheel dependency:
       # the frozen binary bundles its cacert.pem so https works on machines where
       # the build Python's CA paths don't exist (the darwin-arm64 field blocker).
-      - name: Install gecko-surf[serve] + pyinstaller + certifi
+      #
+      # certifi is PINNED to the exact version uv.lock resolves. A bare `pip install
+      # certifi` floats to whatever is latest at build time, so two builds of the same
+      # tag could bundle different CA snapshots; deriving the pin from the committed
+      # lockfile makes the bundled trust store reproducible and lock-governed.
+      - name: Install gecko-surf[serve] + pyinstaller + certifi (pinned to uv.lock)
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ".[serve]" pyinstaller certifi
+          CERTIFI_VER=$(python -c 'import tomllib;print(next(p["version"] for p in tomllib.load(open("uv.lock","rb"))["package"] if p["name"]=="certifi"))')
+          echo "Pinning certifi==$CERTIFI_VER (from uv.lock)"
+          python -m pip install ".[serve]" pyinstaller "certifi==$CERTIFI_VER"
 
       # Flags mirror the locally-proven build exactly. The serve path imports
       # mcp/uvicorn/starlette lazily, so they must be force-collected; pyyaml is a
       # top-level import in gecko.ingest; certifi's cacert.pem is the CA store the
       # gecko_entry hook exports as SSL_CERT_FILE when frozen (no system store needed).
+      # gecko.cli is force-collected because the entry imports it inside main() (after
+      # the CA hook), not at module scope, so PyInstaller must be told about it explicitly.
       - name: Build standalone binary
         run: |
           pyinstaller --onefile --name gecko \
@@ -62,6 +72,7 @@ jobs:
             --collect-data certifi \
             --hidden-import yaml \
             --hidden-import gecko \
+            --hidden-import gecko.cli \
             --noconfirm \
             packaging/gecko_entry.py
 
@@ -107,6 +118,49 @@ jobs:
             echo "::error::no scorecard in inspect output — TLS is broken in the frozen binary"
             exit 1
           fi
+
+      # THE REAL TLS GATE (linux-x86_64 only). The per-runner smoke above can pass on the
+      # runner's OWN compiled-in CA path even if `--collect-data certifi` shipped nothing —
+      # scrubbing SSL_CERT_FILE/DIR is not enough because OpenSSL then falls back to the
+      # runner's default cert dir, which exists on the build machine. So that smoke cannot
+      # catch a silently CA-less binary. THIS one can: it runs the freshly-built frozen
+      # binary inside a cert-stripped ubuntu:22.04 container (matching the build's glibc)
+      # with ca-certificates purged, /etc/ssl/certs + OpenSSL's default dirs emptied, and
+      # SSL_CERT_FILE/SSL_CERT_DIR unset. The ONLY possible cert source is then the certifi
+      # cacert.pem bundled INSIDE the binary. If the bundle is missing, TLS verification
+      # fails, `inspect` prints no "NN/100" scorecard, and this step fails — failing the
+      # build, hence the publishes that `needs: build`. This reproduces the reviewers'
+      # storeless-machine falsification inside CI. Docker is preinstalled on ubuntu runners.
+      - name: TLS gate — real https with NO system CA store (bundle is the only cert source)
+        if: matrix.asset == 'gecko-linux-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "out/${{ matrix.asset }}"
+          SPEC_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/examples/jito/spec/jito_blockengine_openapi.json"
+          docker run --rm \
+            -e SPEC_URL="$SPEC_URL" \
+            -v "$PWD/out:/opt/out:ro" \
+            ubuntu:22.04 bash -c '
+              set -u
+              # Strip EVERY system trust anchor so ONLY a bundled cacert.pem can verify TLS.
+              apt-get remove --purge -y ca-certificates >/dev/null 2>&1 || true
+              rm -rf /etc/ssl/certs /usr/lib/ssl/certs /etc/ssl/cert.pem \
+                     /usr/lib/ssl/cert.pem /usr/local/share/ca-certificates
+              rc=0
+              env -u SSL_CERT_FILE -u SSL_CERT_DIR \
+                /opt/out/${{ matrix.asset }} inspect "$SPEC_URL" > /tmp/inspect.out 2>&1 || rc=$?
+              cat /tmp/inspect.out
+              if [ "$rc" -gt 1 ]; then
+                echo "::error::cert-stripped https smoke exited $rc — the frozen binary cannot do TLS without its bundled certifi (no system CA store present)"
+                exit 1
+              fi
+              if ! grep -q "/100" /tmp/inspect.out; then
+                echo "::error::no scorecard from the cert-stripped run — the certifi bundle is absent or broken (THIS is the gate the per-runner smoke could not enforce)"
+                exit 1
+              fi
+              echo "TLS gate passed: https verified with ONLY the bundled certifi, no system CA store present."
+            '
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -211,8 +265,13 @@ jobs:
   # publishes BOTH. Reads the version from pyproject.toml at the tagged commit — bump
   # pyproject BEFORE tagging (the release PR does). One-time: configure a PyPI trusted
   # publisher for gecko-surf (owner GeckoVision, repo gecko-surf, workflow release.yaml).
+  #
+  # `needs: build` so the TLS gate (a step in `build`) blocks THIS publish too: a tag
+  # whose frozen binary can't do TLS must not ship a release on any channel. Re-runs are
+  # idempotent (skip-existing), so gating adds no risk.
   publish-pypi:
     name: publish PyPI package
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # OIDC — PyPI trusted publishing, no stored token
