@@ -1,4 +1,5 @@
 import json
+import sys
 
 from gecko.netguard import UnsafeUrlError
 from gecko.onboard import AddDeps, add, safe_name
@@ -359,6 +360,72 @@ def test_add_rejects_unsafe_base_url(tmp_path, capsys):
     err = capsys.readouterr().err
     assert rc == 2
     assert "unsafe" in err.lower() or "refusing" in err.lower()
+
+
+def test_add_bare_domain_discovers_spec_and_wires(tmp_path):
+    """The Pegana field repro: `gecko add api.stripe.com` (no scheme) must probe
+    https://api.stripe.com through discovery — never be read as a local file."""
+    bodies = {
+        "https://api.stripe.com": "<html>landing</html>",
+        "https://api.stripe.com/openapi.json": json.dumps(_NO_AUTH_SPEC),
+    }
+
+    def fetch(url: str) -> str:
+        if url not in bodies:
+            raise OSError(f"404 {url}")
+        return bodies[url]
+
+    calls: list = []
+    deps = AddDeps(
+        fetch=fetch,
+        comprehend=lambda spec: 3,
+        prompt=lambda q: "unused",
+        store=lambda n, s: True,
+        run=lambda cmd: bool(calls.append(cmd)) or 0,
+        home=tmp_path,
+        resolver=PUBLIC,
+    )
+    rc = add("api.stripe.com", deps=deps)
+    assert rc == 0
+    assert (tmp_path / ".gecko" / "surfaces" / "api-stripe-com.json").exists()
+    # the wired serve is pinned to the DISCOVERED https origin, not a file path
+    cmd = calls[0]
+    assert "--base-url" in cmd
+    assert cmd[cmd.index("--base-url") + 1] == "https://api.stripe.com"
+
+
+def test_add_fallback_print_shows_npx_launcher_when_frozen_from_npx(
+    tmp_path, capsys, monkeypatch
+):
+    """BUG C repro (npx world): when `gecko add` runs as the PyInstaller binary out
+    of the npm/npx cache, the 'run the command above yourself' fallback must show a
+    launcher that survives — `npx -y @geckovision/gecko serve …`, never a bare
+    `gecko` that is not on the user's PATH."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "executable",
+        "/Users/raff/.npm/_npx/0123abc/node_modules/"
+        "@geckovision/gecko-darwin-arm64/bin/gecko",
+    )
+
+    def _run(cmd: list[str]) -> int:
+        raise FileNotFoundError("claude not found")
+
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_NO_AUTH_SPEC),
+        comprehend=lambda spec: 3,
+        prompt=lambda q: "unused",
+        store=lambda n, s: True,
+        run=_run,
+        home=tmp_path,
+        resolver=PUBLIC,
+    )
+    rc = add("https://api.stripe.com/openapi.json", deps=deps)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "npx -y @geckovision/gecko serve" in out
+    assert "-- gecko serve" not in out  # the PATH-dependent spawn is gone
 
 
 def test_add_local_path_needs_no_resolver(tmp_path, capsys):

@@ -48,41 +48,68 @@ class ResolvedRef:
     spec_url: str | None
 
 
+#: Any URI scheme (``https://``, ``ftp://``, ``file://`` …) — the classifier that
+#: separates "URL-shaped" from "a bare domain the dev typed" (``api.example.com``).
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
+
 def resolve_spec(
     ref: str, *, fetch: Fetcher | None = None, resolver: Resolver | None = None
 ) -> ResolvedRef:
     """Resolve an API reference to an OpenAPI dict + its trusted provenance.
 
     ``ref`` may be an http(s) OpenAPI URL, an http(s) docs page (recovered via
-    from-docs), or a local path (dev). http(s) inputs are SSRF-validated first.
+    from-docs), a local path (dev), or a schemeless bare domain
+    (``gecko add api.example.com``) — retried as ``https://<ref>`` through the same
+    pipeline. http(s) inputs are SSRF-validated first; an existing local file always
+    wins over the https interpretation (no network for something on disk).
     """
     fetch = fetch or _default_fetch
     if ref.startswith(("http://", "https://")):
+        return _resolve_url(ref, fetch=fetch, resolver=resolver)
+    if not _SCHEME_RE.match(ref) and not os.path.exists(ref):
+        # A bare domain (the Pegana field repro): nothing on disk to read, so retry
+        # as https through the SAME SSRF-validated URL/discovery pipeline. When that
+        # also fails, name BOTH interpretations — a bare ENOENT for a domain-shaped
+        # ref is what confused the field.
+        candidate = f"https://{ref}"
         try:
-            validate_public_url(ref, resolver=resolver)
-        except UnsafeUrlError as exc:
-            raise OnboardError(f"refusing unsafe URL: {exc}") from exc
-        body = fetch(ref)
-        try:
-            spec = json.loads(body)
-            if isinstance(spec, dict) and spec.get("openapi"):
-                return ResolvedRef(spec=spec, spec_url=ref)
-        except json.JSONDecodeError:
-            pass
-        # The exact ref wasn't a spec. Auto-discover: probe common spec locations on the
-        # host (so `gecko add <domain>` just works), THEN fall back to docs recovery on the
-        # original page. Docs recovery has no provenance — the parser guessed.
-        discovered = discover_spec(ref, fetch=fetch, resolver=resolver)
-        if discovered is not None:
-            return discovered
-        result = docs_reader.from_docs(ref)
-        return ResolvedRef(spec=result.draft, spec_url=None)
-    # Local path (dev convenience) — never pinning provenance.
+            return _resolve_url(candidate, fetch=fetch, resolver=resolver)
+        except (OnboardError, OSError, ValueError) as exc:
+            raise OnboardError(
+                f"could not resolve {ref!r}: no such local file, and trying it as "
+                f"{candidate} failed: {exc}"
+            ) from exc
+    # Local path (dev convenience) — never pinning provenance. Non-http(s) schemes
+    # also land here (unchanged): they never had URL handling.
     try:
         with open(ref, encoding="utf-8") as fh:
             return ResolvedRef(spec=json.load(fh), spec_url=None)
     except (OSError, json.JSONDecodeError) as exc:
         raise OnboardError(f"could not read spec at {ref}: {exc}") from exc
+
+
+def _resolve_url(ref: str, *, fetch: Fetcher, resolver: Resolver | None) -> ResolvedRef:
+    """The http(s) pipeline: SSRF-validate, fetch, then spec → discovery → docs."""
+    try:
+        validate_public_url(ref, resolver=resolver)
+    except UnsafeUrlError as exc:
+        raise OnboardError(f"refusing unsafe URL: {exc}") from exc
+    body = fetch(ref)
+    try:
+        spec = json.loads(body)
+        if isinstance(spec, dict) and spec.get("openapi"):
+            return ResolvedRef(spec=spec, spec_url=ref)
+    except json.JSONDecodeError:
+        pass
+    # The exact ref wasn't a spec. Auto-discover: probe common spec locations on the
+    # host (so `gecko add <domain>` just works), THEN fall back to docs recovery on the
+    # original page. Docs recovery has no provenance — the parser guessed.
+    discovered = discover_spec(ref, fetch=fetch, resolver=resolver)
+    if discovered is not None:
+        return discovered
+    result = docs_reader.from_docs(ref)
+    return ResolvedRef(spec=result.draft, spec_url=None)
 
 
 #: Common locations an OpenAPI spec is served under, probed in order when the ref itself
@@ -233,17 +260,48 @@ def ensure_key(
     return store(name, secret)
 
 
+#: The npm package that ships the frozen ``gecko`` binary — what ``npx -y`` re-resolves
+#: each spawn, so a wired server survives the npx cache being pruned.
+_NPX_PACKAGE = "@geckovision/gecko"
+
+
+def _serve_launcher() -> list[str]:
+    """The argv prefix that re-launches THIS gecko for a wired MCP server.
+
+    ``claude mcp add`` registers a command the client spawns LATER, from a fresh
+    shell — so it must survive the way gecko was invoked NOW. Three worlds:
+
+    * npx (``npx @geckovision/gecko add …``): the PyInstaller binary runs out of the
+      npm/npx cache (path contains ``_npx`` or ``.npm``) — a path npx prunes at will,
+      and ``gecko`` is NOT on PATH. Register ``npx -y <pkg>`` so the client
+      re-resolves the package on every spawn.
+    * a frozen binary at a stable path (real install): ``gecko`` may still not be on
+      the client's PATH — register the absolute executable path.
+    * pip/uvx (not frozen): ``gecko`` IS a console script on PATH — keep it.
+    """
+    if not getattr(sys, "frozen", False):  # PyInstaller sets sys.frozen = True
+        return ["gecko"]
+    executable = sys.executable or ""
+    if "_npx" in executable or ".npm" in executable:
+        return ["npx", "-y", _NPX_PACKAGE]
+    return [executable or "gecko"]
+
+
 def configure_claude(
     name: str,
     cache_path: Path,
     *,
-    gecko_bin: str = "gecko",
+    gecko_bin: str | None = None,
     run: Runner | None = None,
     auth_surface: str | None = None,
     base_url: str | None = None,
     mode: str = "recorded",
 ) -> ConfigResult:
     """Register the surface with Claude Code over stdio (client spawns the server).
+
+    The spawned command's launcher comes from ``_serve_launcher()`` — bare ``gecko``
+    only when a console script is actually on PATH, ``npx -y``/an absolute path for
+    the frozen-binary worlds. ``gecko_bin`` (when given) overrides it outright.
 
     ``auth_surface``, when given, appends ``--auth-keychain <auth_surface>`` to the
     spawned ``gecko serve`` command — the whole point of sealing the key via
@@ -257,6 +315,7 @@ def configure_claude(
     pinning provenance and stays ``unverified``.
     """
     run = run or _default_run
+    launcher = [gecko_bin] if gecko_bin is not None else _serve_launcher()
     command = [
         "claude",
         "mcp",
@@ -265,7 +324,7 @@ def configure_claude(
         "stdio",
         name,
         "--",
-        gecko_bin,
+        *launcher,
         "serve",
         str(cache_path),
     ]

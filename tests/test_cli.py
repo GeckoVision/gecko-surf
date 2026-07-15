@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gecko import cli, serve
+import pytest
+
+from gecko import __version__, cli, serve
 
 _FIX = Path(__file__).resolve().parent / "fixtures"
 PEGANA = str(_FIX / "pegana_openapi.json")
@@ -91,6 +93,31 @@ def test_bare_and_serve_reach_serve_identically(monkeypatch) -> None:
     assert len(captured) == 2
     assert captured[0] == captured[1]  # identical serve_http invocation
     assert captured[0]["server_name"] == "pegana"
+
+
+# --- gecko --version ----------------------------------------------------------
+
+
+def test_version_flag_prints_version_and_exits_zero(capsys) -> None:
+    # The Pegana field repro: `gecko --version` must NOT fall into the serve parser.
+    rc = cli.main(["--version"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.strip() == f"gecko {__version__}"
+
+
+def test_version_routes_before_subcommand_dispatch() -> None:
+    assert cli._default_to_serve(["--version"]) == ("version", [])
+    # the neighbors are untouched
+    assert cli._default_to_serve([]) == ("help", [])
+    assert cli._default_to_serve(["-h"]) == ("help", [])
+
+
+def test_serve_help_still_works_after_version_flag(capsys) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["serve", "--help"])
+    assert excinfo.value.code == 0
+    assert "usage" in capsys.readouterr().out.lower()
 
 
 # --- gecko test --------------------------------------------------------------

@@ -23,7 +23,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import credentials, docs_reader, login, onboard, serve, testgen
+from . import __version__, credentials, docs_reader, login, onboard, serve, testgen
 from .access import public_session, stub_session
 from .client import AgentApiClient
 from .modes import coerce_mode
@@ -54,8 +54,9 @@ def _default_to_serve(argv: list[str]) -> tuple[str, list[str]]:
     """Split argv into (command, rest), defaulting the legacy bare form to ``serve``.
 
     ``gecko <spec>`` (no subcommand) must behave exactly like ``gecko serve <spec>``,
-    so anything that isn't a known subcommand token or a bare help flag is treated as
-    the first positional of ``serve``.
+    so anything that isn't a known subcommand token or a bare help/version flag is
+    treated as the first positional of ``serve``. ``--version`` is intercepted HERE —
+    before subcommand dispatch — so it never falls into the serve parser.
     """
     if not argv:
         return "help", []
@@ -64,6 +65,8 @@ def _default_to_serve(argv: list[str]) -> tuple[str, list[str]]:
         return head, argv[1:]
     if head in ("-h", "--help"):
         return "help", []
+    if head == "--version":
+        return "version", []
     return "serve", argv
 
 
@@ -633,6 +636,7 @@ def _print_help() -> None:
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
     print("\nDiagnose:")
     print("  doctor             check your setup, print the exact next step")
+    print("  --version          print the gecko version")
     print("\nAdvanced:")
     print("  serve <spec>       serve a comprehended spec to agents (MCP)")
     print("  from-docs <src>    recover a draft OpenAPI from a doc page")
@@ -689,6 +693,10 @@ def _cmd_login(argv: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd, rest = _default_to_serve(argv)
+    if cmd == "version":
+        # Same source of truth as doctor: the installed package version.
+        print(f"gecko {__version__}")
+        return 0
     if cmd == "add":
         return _cmd_add(rest)
     if cmd == "login":

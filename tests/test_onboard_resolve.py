@@ -128,6 +128,99 @@ def test_discovery_falls_back_to_docs_when_nothing_found(monkeypatch):
     assert resolved.spec_url is None  # docs-recovery -> unpinned
 
 
+# --- bare-domain refs: `gecko add api.example.com` (no scheme) -----------------------
+
+
+def test_bare_domain_retries_as_https_through_discovery():
+    # The Pegana field repro: a schemeless domain must NOT be read as a local file —
+    # it re-enters the SAME https URL/discovery pipeline as an explicit URL.
+    fetch = _multi_fetch(
+        {
+            "https://api.example.com": "<html>docs</html>",
+            "https://api.example.com/openapi.json": json.dumps(_SPEC),
+        }
+    )
+    resolved = resolve_spec("api.example.com", fetch=fetch, resolver=PUBLIC)
+    assert resolved.spec["openapi"] == "3.0.3"
+    assert resolved.spec_url == "https://api.example.com/openapi.json"
+
+
+def test_bare_domain_with_path_retries_as_https():
+    resolved = resolve_spec(
+        "api.example.com/openapi.json",
+        fetch=_multi_fetch({"https://api.example.com/openapi.json": json.dumps(_SPEC)}),
+        resolver=PUBLIC,
+    )
+    assert resolved.spec_url == "https://api.example.com/openapi.json"
+
+
+def test_bare_domain_is_ssrf_validated_before_any_fetch():
+    # The https retry goes through validate_public_url like any other URL — a
+    # link-local IP literal is refused without a single byte fetched.
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        return json.dumps(_SPEC)
+
+    with pytest.raises(OnboardError):
+        resolve_spec("169.254.169.254", fetch=fetch)
+    assert fetched == []
+
+
+def test_existing_file_named_like_a_domain_wins_over_https(tmp_path, monkeypatch):
+    # Files win: a ref that exists on disk is read as a file — no network at all.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "api.example.com").write_text(json.dumps(_SPEC))
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        raise OSError("must not fetch")
+
+    resolved = resolve_spec("api.example.com", fetch=fetch, resolver=PUBLIC)
+    assert resolved.spec["info"]["title"] == "T"
+    assert resolved.spec_url is None  # a local file is never pinning provenance
+    assert fetched == []
+
+
+def test_nonexistent_non_domain_ref_reports_both_interpretations(tmp_path):
+    # Neither a file nor a reachable https host: the error must name BOTH attempts
+    # so the next Raff sees what was tried instead of a bare ENOENT.
+    missing = str(tmp_path / "nope" / "spec.json")
+    with pytest.raises(OnboardError) as excinfo:
+        resolve_spec(missing, fetch=_multi_fetch({}), resolver=_resolver({}))
+    msg = str(excinfo.value)
+    assert "local file" in msg  # interpretation 1: a file — not found
+    assert f"https://{missing}" in msg  # interpretation 2: the https probe — failed
+    assert missing in msg
+
+
+def test_explicit_http_scheme_is_untouched_not_rewritten():
+    # A ref WITH a scheme keeps current behavior: explicit http:// stays http.
+    resolved = resolve_spec(
+        "http://api.example.com/openapi.json",
+        fetch=lambda u: json.dumps(_SPEC),
+        resolver=PUBLIC,
+    )
+    assert resolved.spec_url == "http://api.example.com/openapi.json"
+
+
+def test_non_http_scheme_keeps_local_read_error_without_fetching():
+    # ftp:// / file:// etc. never had URL handling; they keep the local-path error
+    # and never gain a network attempt.
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        return json.dumps(_SPEC)
+
+    with pytest.raises(OnboardError) as excinfo:
+        resolve_spec("ftp://api.example.com/spec.json", fetch=fetch)
+    assert "could not read spec at" in str(excinfo.value)
+    assert fetched == []
+
+
 # --- pin_base_url: reconcile the fetch origin against the spec's own servers[] -------
 
 
