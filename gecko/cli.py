@@ -197,6 +197,9 @@ def _cmd_add(argv: list[str]) -> int:
         run=onboard._default_run,
         home=Path.home(),
         resolver=None,  # real DNS in production; tests inject a fake resolver
+        # Default-on adoption ping (aggregate-only, GECKO_TELEMETRY=off to disable);
+        # wired ONLY here so library/test use of onboard.add stays network-silent.
+        ping_post=onboard._default_ping_post,
     )
     return onboard.add(
         args.api, name=args.name, base_url=args.base_url, mode=args.mode, deps=deps

@@ -90,6 +90,9 @@ def test_allowed_fields_is_the_exact_closed_set():
         "decision",
         "score",
         "reasons",
+        "version",
+        "client_os",
+        "install_id",
     }
 
 
@@ -124,6 +127,7 @@ def test_event_vocabulary_is_closed():
         "surf.connect",
         "surf.connect_failed",
         "surf.blocked",
+        "surf.onboard",
     }
 
 
@@ -344,6 +348,48 @@ def test_user_agent_secret_shape_is_neutralized_never_carried(sink: _FakeSink):
     )
     assert sink.docs[-1]["user_agent"] == "redacted"
     assert "sk-aaaa" not in json.dumps(sink.docs)
+
+
+# --------------------------------------------------------------------------- #
+# The onboard ping: surf.onboard + version/client_os/install_id
+# --------------------------------------------------------------------------- #
+def test_onboard_event_round_trips_with_its_fields(sink: _FakeSink):
+    emit_surf_event(
+        "surf.onboard",
+        surface_id="api.stripe.com",
+        version="0.4.4",
+        client_os="linux",
+        install_id="0f" * 16,  # uuid4 hex — random, opaque, never user-derived
+        mode="recorded",
+    )
+    doc = sink.docs[-1]
+    assert doc["event"] == "surf.onboard"
+    assert doc["surface_id"] == "api.stripe.com"
+    assert doc["version"] == "0.4.4"
+    assert doc["client_os"] == "linux"
+    assert doc["install_id"] == "0f" * 16
+    assert doc["mode"] == "recorded"
+    assert set(doc) <= RECORD_ALLOWED_KEYS
+
+
+def test_onboard_bogus_field_still_fails_closed(sink: _FakeSink):
+    # Extending the vocabulary must not soften the allowlist: an off-schema key on
+    # the NEW event (e.g. an email — PII) is still a build break.
+    with pytest.raises(TelemetryError):
+        emit_surf_event(
+            "surf.onboard", surface_id="api.stripe.com", email="dev@example.com"
+        )
+    assert sink.docs == []
+
+
+def test_onboard_secret_shaped_value_fails_closed(sink: _FakeSink):
+    # The new fields are label-gated like tool_name/mode/tier: a secret-shaped value
+    # (64-hex = raw-key shape; an sk- token) can never masquerade as one.
+    with pytest.raises(TelemetryError):
+        emit_surf_event("surf.onboard", surface_id="x", install_id="a" * 64)
+    with pytest.raises(TelemetryError):
+        emit_surf_event("surf.onboard", surface_id="x", version="sk-" + "a" * 30)
+    assert sink.docs == []
 
 
 def test_writer_allowlist_rejects_a_tampered_doc():

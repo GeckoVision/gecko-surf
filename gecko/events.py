@@ -62,6 +62,7 @@ SurfEvent = Literal[
     "surf.connect",  # a client opened an MCP session (initialize succeeded)
     "surf.connect_failed",  # an MCP initialize handshake failed (4xx / stale session)
     "surf.blocked",  # the enforcement gate refused a call (poisoned/malformed/exfil)
+    "surf.onboard",  # a `gecko add` completed — the CLI's anonymous adoption ping
 ]
 
 #: Runtime membership form of ``SurfEvent`` (a Literal is not iterable at runtime).
@@ -100,15 +101,30 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "decision",  # gate verdict: "allow"|"step_up"|"block"|"honeypot" (shape-validated label)
         "score",  # int — composite 0-100 risk score, never a payload
         "reasons",  # list of risk SIGNAL names (code constants), never arg values/messages
+        "version",  # the CLI package version string (a release label, never a value)
+        "client_os",  # normalized sys.platform family: linux|darwin|windows|<other>
+        "install_id",  # opaque RANDOM uuid4 hex — never user-derived, no PII
     }
 )
 
 #: A value-bearing string field may be at most this long — a payload/secret is
 #: longer and/or secret-shaped, so it cannot masquerade as a label.
 _MAX_LABEL = 128
-#: The closed set of modes; guarded by shape (not membership) so an unexpected but
-#: benign short mode never breaks a call, while a payload/secret is still rejected.
-_LABEL_FIELDS = ("tool_name", "mode", "tier", "decision")
+#: The label fields; guarded by shape (not membership) so an unexpected but benign
+#: short label never breaks a call, while a payload/secret is still rejected. The
+#: onboard-ping fields (version/client_os/install_id) are wiring-controlled on the
+#: client and pre-capped on the server route, so fail-closed shape-gating is right:
+#: a secret-shaped value (e.g. a 64-hex raw key posing as an install id) must raise,
+#: never ride out.
+_LABEL_FIELDS = (
+    "tool_name",
+    "mode",
+    "tier",
+    "decision",
+    "version",
+    "client_os",
+    "install_id",
+)
 #: ``reasons`` carries risk SIGNAL names (``risk.py`` code constants like
 #: "poison.injection"), never a human message or an arg value. Each is shape-validated
 #: as a safe label and the list is count-capped — belt-and-suspenders, since the only
@@ -164,6 +180,9 @@ class SurfEventRecord:
     decision: str | None = None  # gate verdict (allow|step_up|block|honeypot)
     score: int | None = None  # composite 0-100 risk score
     reasons: list[str] | None = None  # risk SIGNAL names, never messages/arg values
+    version: str | None = None  # CLI package version (the onboard ping)
+    client_os: str | None = None  # normalized OS family (the onboard ping)
+    install_id: str | None = None  # opaque random uuid4 hex — no PII (onboard ping)
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)

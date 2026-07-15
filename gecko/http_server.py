@@ -56,6 +56,49 @@ META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
 
+# The `gecko add` onboard-ping ingest — the attribution event that makes adopters
+# visible. Aggregate-only + control-plane: five short labels, never a payload/arg/
+# secret/user-datum. Every rejection answers the SAME empty 204 as success, so a
+# scraper probing the path learns nothing.
+EVENTS_ONBOARD_PATH = "/events/onboard"
+# A ping is a tiny fixed envelope; anything bigger is not a ping.
+MAX_ONBOARD_PING_BYTES = 2 * 1024
+#: EXACTLY the keys a ping may carry — an unknown OR missing key rejects the body.
+ONBOARD_PING_KEYS: frozenset[str] = frozenset(
+    {"surface_host", "version", "client_os", "install_id", "mode"}
+)
+_MAX_ONBOARD_VALUE = 64
+# `gecko add --mode` offers only recorded|live, so the ping set is deliberately
+# NARROWER than modes.CALL_MODES ("probe" is an engine mode, never an onboard).
+_ONBOARD_PING_MODES: frozenset[str] = frozenset({"recorded", "live"})
+
+
+def parse_onboard_ping(body: bytes) -> dict[str, str] | None:
+    """Strictly validate an onboard-ping body; ``None`` on ANY deviation (fail closed).
+
+    A valid body is a small JSON object carrying EXACTLY ``ONBOARD_PING_KEYS``, every
+    value a non-empty string of at most ``_MAX_ONBOARD_VALUE`` chars, and ``mode`` from
+    the closed recorded|live set. Junk JSON, an unknown/missing key, an oversized
+    body/value, a non-string — anything else yields ``None`` so the route emits nothing
+    (and still 204s; the caller never differentiates rejections on the wire)."""
+    if len(body) > MAX_ONBOARD_PING_BYTES:
+        return None
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):  # ValueError covers JSONDecodeError
+        return None
+    if not isinstance(payload, dict) or set(payload) != ONBOARD_PING_KEYS:
+        return None
+    fields: dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(value, str) or not value or len(value) > _MAX_ONBOARD_VALUE:
+            return None
+        fields[key] = value
+    if fields["mode"] not in _ONBOARD_PING_MODES:
+        return None
+    return fields
+
+
 # Trusted proxy range for uvicorn's X-Forwarded-For handling. Default "*" is safe here:
 # the ONLY ingress is the ALB (no direct public route to the task), so no untrusted peer
 # can reach us to spoof the header. Override to a CIDR to tighten it (redeploy).
@@ -742,6 +785,34 @@ def build_multi_surface_app(
             )
         return JSONResponse(asdict(result))
 
+    async def _events_onboard(request: Request) -> Any:
+        # ALWAYS an empty 204 — success and every rejection look identical on the
+        # wire, so a probing scraper learns nothing. Fire-and-forget: ANY failure
+        # (junk body, a value the events module refuses, a sink error) emits nothing
+        # and still 204s; this route can never 500.
+        try:
+            declared = request.headers.get("content-length")
+            if declared is not None and declared.isdigit():
+                if int(declared) > MAX_ONBOARD_PING_BYTES:
+                    return Response(status_code=204)
+            fields = parse_onboard_ping(await request.body())
+            if fields is not None:
+                # surface_id rides the events module's existing opaque-token
+                # reduction: a URL is cut to its bare host, a secret-shaped id folds
+                # to a stable hash — a credential can never be stored.
+                emit_surf_event(
+                    "surf.onboard",
+                    surface_id=fields["surface_host"],
+                    version=fields["version"],
+                    client_os=fields["client_os"],
+                    install_id=fields["install_id"],
+                    mode=fields["mode"],
+                )
+        except Exception:  # noqa: BLE001 - incl. TelemetryError: hostile wire input
+            # must fail closed to "emit nothing", never to a scraper-visible 500.
+            logger.warning("onboard ping rejected (redacted)")
+        return Response(status_code=204)
+
     routes: list[Any] = [
         Route("/healthz", endpoint=_healthz),
         Route("/", endpoint=_index),
@@ -754,6 +825,8 @@ def build_multi_surface_app(
         Route("/.well-known/x402", endpoint=_well_known_x402),
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
+        # The `gecko add` onboard-ping ingest (see parse_onboard_ping above).
+        Route(EVENTS_ONBOARD_PATH, endpoint=_events_onboard, methods=["POST"]),
     ]
     for name, sub in subs:
         routes.append(Mount(f"/{name}", app=sub))
