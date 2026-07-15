@@ -463,3 +463,42 @@ def test_stub_mode_ignores_the_env_entirely(monkeypatch):
 def test_unknown_mode_fails_closed():
     with pytest.raises(X402ConfigError):
         facilitator_for_mode("prod")
+
+
+class TestSsmBootSentinel:
+    """The `__unset__` SSM boot sentinel (infra/push-ssm-params.sh) is treated as
+    absent everywhere x402 env is read — a half-configured deploy boots in stub
+    and a live flip with sentinel config fails closed naming the real gaps."""
+
+    def test_factory_treats_sentinel_as_missing(self) -> None:
+        env = {
+            "X402_FACILITATOR_URL": "__unset__",
+            "X402_PAY_TO": "__unset__",
+            "X402_ASSET": "__unset__",
+            "X402_NETWORK": "__unset__",
+        }
+        with pytest.raises(X402ConfigError) as exc:
+            facilitator_from_env(env)
+        msg = str(exc.value)
+        for name in (
+            "X402_FACILITATOR_URL",
+            "X402_PAY_TO",
+            "X402_ASSET",
+            "X402_NETWORK",
+        ):
+            assert name in msg
+
+    def test_sentinel_token_means_no_token(self) -> None:
+        env = dict(_LIVE_ENV, X402_FACILITATOR_TOKEN="__unset__")
+        client = facilitator_from_env(env, resolver=_resolver, post=_Transport())
+        assert client._auth_token is None  # noqa: SLF001 — pins the sentinel-as-no-token contract
+
+    def test_x402_mode_sentinel_resolves_stub(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gecko.x402_pay import x402_mode
+
+        monkeypatch.setenv("X402_MODE", "__unset__")
+        assert x402_mode() == "stub"
+        monkeypatch.setenv("X402_MODE", "live")
+        assert x402_mode() == "live"

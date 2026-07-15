@@ -277,16 +277,22 @@ def facilitator_from_env(
     ``post`` are injectable for offline tests; defaults are ``os.environ`` + real DNS +
     stdlib urllib."""
     source: Mapping[str, str] = os.environ if env is None else env
-    missing = [
-        name for name in _REQUIRED_LIVE_ENVS if not (source.get(name) or "").strip()
-    ]
+
+    def _value(name: str) -> str:
+        # "__unset__" = the SSM boot sentinel (infra/push-ssm-params.sh): ECS
+        # `Secrets:` params must exist for the task to boot, so an unconfigured
+        # deploy carries the sentinel — treated as absent, like events._mongo_uri.
+        raw = (source.get(name) or "").strip()
+        return "" if raw == "__unset__" else raw
+
+    missing = [name for name in _REQUIRED_LIVE_ENVS if not _value(name)]
     if missing:
         raise X402ConfigError(
             "X402_MODE=live requires env config; missing: " + ", ".join(missing)
         )
-    token = (source.get(FACILITATOR_TOKEN_ENV) or "").strip() or None
+    token = _value(FACILITATOR_TOKEN_ENV) or None
     return HttpFacilitatorClient(
-        source[FACILITATOR_URL_ENV].strip(),
+        _value(FACILITATOR_URL_ENV),
         auth_token=token,
         post=post,
         resolver=resolver,

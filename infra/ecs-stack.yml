@@ -418,6 +418,21 @@ Resources:
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/MONGODB_URI
             - Name: GECKO_TELEMETRY
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_TELEMETRY
+            # x402 settlement config (gecko/x402_pay.py). All six must exist in
+            # SSM (push-ssm-params.sh writes safe defaults: stub + __unset__
+            # sentinels the engine treats as absent) or the task fails at boot.
+            - Name: X402_MODE
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_MODE
+            - Name: X402_FACILITATOR_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_FACILITATOR_URL
+            - Name: X402_FACILITATOR_TOKEN
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_FACILITATOR_TOKEN
+            - Name: X402_PAY_TO
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_PAY_TO
+            - Name: X402_ASSET
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_ASSET
+            - Name: X402_NETWORK
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_NETWORK
           LogConfiguration:
             LogDriver: awslogs
             Options:
