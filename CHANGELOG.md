@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.5 — 2026-07-14
+
+### Added
+- **Onboard ping (attribution).** `gecko add` emits one anonymous, control-plane-only
+  event (API host, CLI version, OS, a random install id) to the hosted
+  `/events/onboard` route — default-on with a printed transparency line;
+  `GECKO_TELEMETRY=off` disables it entirely. Adopters finally become countable. (#137)
+- **x402 live settlement client.** `HttpFacilitatorClient` (fail-closed, SSRF-validated,
+  token-redacting) + `facilitator_from_env()` reading `X402_FACILITATOR_URL`,
+  `X402_FACILITATOR_TOKEN`, `X402_PAY_TO`, `X402_ASSET`, `X402_NETWORK`.
+  `X402_MODE=stub` remains the shipped default; the go-live sequence is documented in
+  `docs/x402-go-live.md`. (#139)
+
+### Fixed
+- **Live mode on a multi-server spec fails closed.** `AmbiguousServerError` lists the
+  spec's servers and asks for an explicit `base_url`/`--base-url` instead of silently
+  calling `servers[0]` (often production — the money-API footgun). `gecko add --mode
+  live` refuses up front on ambiguous specs; the hosted Jito provider surface is now
+  pinned explicitly to mainnet. (#138)
+- CLI copy: "wired" → "integrated" in the `add --mode` help text. (#136)
+
+### Note
+- 0.4.4 was an npm-only re-stamp release; PyPI stayed at 0.4.3. This release realigns
+  npm and PyPI in lockstep.
+
 ## 0.4.3 — 2026-07-13
 
 ### Added
