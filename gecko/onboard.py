@@ -14,9 +14,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import docs_reader
-from .client import ambiguous_server_message
 from . import __version__, docs_reader
+from .client import ambiguous_server_message
 from .netguard import Resolver, UnsafeUrlError, safe_get, validate_public_url
 from .telemetry import telemetry_enabled
 
