@@ -23,6 +23,7 @@ from gecko.x402_pay import (
     FakeFacilitator,
     Plan,
     Settlement,
+    X402ConfigError,
     build_payment_requirements,
     facilitator_for_mode,
     is_entitled,
@@ -290,11 +291,15 @@ def test_stub_is_default_and_auto_grants(monkeypatch):
     assert ent.kind == "cloud"
 
 
-def test_live_mode_requires_injected_facilitator():
-    # live is never hardcoded to a wallet/facilitator — it must be injected (neutrality +
-    # founder go-ahead). The module refuses to conjure one.
-    with pytest.raises(NotImplementedError):
+def test_live_mode_without_env_fails_closed(monkeypatch):
+    # live is never hardcoded to a wallet/facilitator — it is built from deploy env
+    # (neutrality + founder go-ahead). With no env, the module refuses, naming the
+    # missing vars (see tests/test_x402_facilitator.py for the full live matrix).
+    for name in ("X402_FACILITATOR_URL", "X402_PAY_TO", "X402_ASSET", "X402_NETWORK"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(X402ConfigError) as excinfo:
         facilitator_for_mode("live")
+    assert "X402_FACILITATOR_URL" in str(excinfo.value)
 
 
 # --- control-plane discipline ---------------------------------------------------------

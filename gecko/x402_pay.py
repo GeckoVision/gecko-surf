@@ -10,15 +10,17 @@ a control-plane ``cloud`` entitlement.
 Hard invariants (structural, not just policy):
 
 1. **No signer, no broadcast.** This module signs nothing and sends no transaction.
-   Settlement is delegated to an INJECTED ``FacilitatorClient`` — a deterministic FAKE in
-   D1 (offline, no keys/network). Any real mainnet broadcast is founder-run only; the
-   customer wallet / facilitator broadcasts, never the Gecko server, never Claude.
+   Settlement is delegated to an INJECTED ``FacilitatorClient`` — the deterministic FAKE
+   in stub mode, the ``HttpFacilitatorClient`` RELAY (x402_facilitator.py) in live mode.
+   Any real mainnet broadcast is founder-run only; the customer wallet / facilitator
+   broadcasts, never the Gecko server, never Claude.
 2. **Control-plane only.** Persists ONLY ``{entitlement, expires_at, opaque payment_ref}``
    (in ``Entitlements``). NEVER the USDC, a wallet key, the ``X-PAYMENT`` payload, or any
    response body. ``payment_ref`` is an opaque dedupe key (like ``cred_ref``), not custody.
 3. **``X402_MODE=stub`` is the DEFAULT** — ``FakeFacilitator`` + auto-grant; cloud
-   user-testing needs no real USDC. ``live`` needs an injected real facilitator and is
-   never flipped without founder go-ahead.
+   user-testing needs no real USDC. ``live`` builds the HTTP relay from DEPLOY env only
+   (``facilitator_from_env``; incomplete config fails closed with ``X402ConfigError``)
+   and is never flipped without founder go-ahead (docs/x402-go-live.md).
 4. **Neutrality.** The facilitator, treasury (``pay_to``), USDC mint (``asset``), and
    network are all injected/config — never hardcoded to one provider/wallet/chain.
 
@@ -36,6 +38,16 @@ from typing import Any, Protocol, runtime_checkable
 
 from .entitlements import Entitlement, Entitlements
 from .x402 import ChallengeError, PaymentPolicy, validate_challenge
+
+# The live adapter (one seam, two adapters) — re-exported so callers keep a single
+# import surface. Safe direction: x402_facilitator never imports x402_pay at module
+# scope (Settlement is late-imported inside settle()), so no cycle.
+from .x402_facilitator import (
+    FacilitatorError as FacilitatorError,
+    HttpFacilitatorClient as HttpFacilitatorClient,
+    X402ConfigError as X402ConfigError,
+    facilitator_from_env as facilitator_from_env,
+)
 
 X402_MODE_ENV = "X402_MODE"
 
@@ -133,15 +145,19 @@ class FakeFacilitator:
 def facilitator_for_mode(mode: str | None = None) -> FacilitatorClient:
     """Resolve a facilitator for the mode.
 
-    ``stub`` (default) -> deterministic ``FakeFacilitator`` (no real USDC). ``live`` is NOT
-    resolved here: a real facilitator must be INJECTED (neutrality + founder go-ahead) — the
-    module refuses to conjure a wallet/chain."""
+    ``stub`` (default) -> deterministic ``FakeFacilitator`` (no real USDC; never reads
+    the facilitator env). ``live`` -> ``HttpFacilitatorClient`` built from DEPLOY env
+    (``facilitator_from_env``; raises ``X402ConfigError`` naming any missing var — the
+    flip itself needs founder go-ahead, see docs/x402-go-live.md). Any other value fails
+    closed. Neutrality holds: the facilitator/treasury/asset/network are env-injected,
+    never hardcoded."""
     resolved = mode or x402_mode()
     if resolved == "stub":
         return FakeFacilitator()
-    raise NotImplementedError(
-        f"X402_MODE={resolved!r} requires an injected live FacilitatorClient "
-        "(founder go-ahead required); the module never hardcodes one"
+    if resolved == "live":
+        return facilitator_from_env()
+    raise X402ConfigError(
+        f"unknown X402_MODE {resolved!r}: expected 'stub' (default) or 'live'"
     )
 
 
