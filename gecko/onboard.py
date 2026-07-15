@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import urllib.request
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import docs_reader
+from . import __version__, docs_reader
 from .netguard import Resolver, UnsafeUrlError, safe_get, validate_public_url
+from .telemetry import telemetry_enabled
 
 Fetcher = Callable[[str], str]
 
@@ -292,6 +296,122 @@ def configure_claude(
     )
 
 
+# --------------------------------------------------------------------------- #
+# The onboard ping — the attribution event that makes `gecko add` adopters visible.
+# Default-on, aggregate-only, opt-out (GECKO_TELEMETRY=off). Control plane by
+# construction: five short labels — API host, CLI version, OS family, a random
+# install id, the mode. Never an arg, payload, key, path, or email.
+# --------------------------------------------------------------------------- #
+#: Where the ping lands (the hosted server's POST /events/onboard ingest).
+ONBOARD_PING_URL = "https://mcp.geckovision.tech/events/onboard"
+#: Printed when (and only when) a ping actually left the machine. Non-negotiable:
+#: a default-on ping the user cannot see would be spyware.
+ONBOARD_PING_NOTE = (
+    "  · anonymous onboard ping (host, version, os — GECKO_TELEMETRY=off to disable)"
+)
+_PING_TIMEOUT_S = 2.0
+_PING_MAX_VALUE = 64  # mirror of the server's per-value cap
+
+#: The injected POST seam (mirrors ``login.Post``): tests record it, the CLI wires
+#: ``_default_ping_post``. ``AddDeps.ping_post is None`` (the library default) sends
+#: NOTHING — an embedded ``onboard.add`` stays network-silent.
+PingPost = Callable[[str, dict[str, str]], None]
+
+
+def _default_ping_post(url: str, payload: dict[str, str]) -> None:
+    """SSRF-validated fire-and-forget JSON POST (stdlib urllib, 2s hard cap)."""
+    validate_public_url(url)
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=_PING_TIMEOUT_S) as resp:  # noqa: S310
+        resp.read()
+
+
+def read_or_create_install_id(home: Path) -> str:
+    """The opaque install id: a RANDOM ``uuid4().hex`` persisted once at
+    ``<home>/.gecko/install_id`` (0600).
+
+    NOT user-derived — no hostname, email, or machine id goes in — so it counts an
+    install, never identifies a person. Best-effort: an unreadable or unwritable
+    file degrades to an ephemeral id rather than an error."""
+    path = home / ".gecko" / "install_id"
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    new_id = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # os.open sets 0600 atomically at creation (hygiene; the id is not a secret).
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(new_id + "\n")
+    except OSError:
+        pass  # ephemeral this run; the adopter still counts once
+    return new_id
+
+
+def _client_os() -> str:
+    """``sys.platform`` normalized to a coarse OS family — a label, not a fingerprint."""
+    platform = sys.platform
+    if platform.startswith("linux"):
+        return "linux"
+    if platform == "darwin":
+        return "darwin"
+    if platform.startswith(("win", "cygwin")):
+        return "windows"
+    return platform[:_PING_MAX_VALUE]
+
+
+def _ping_host(ref: str, base_url: str | None) -> str:
+    """The HOST an add is attributed to — never a path, query, credential, or local
+    file path. An http(s) ref wins; else an explicit ``--base-url``; a purely local
+    add is the literal ``"local"`` (a filesystem path could carry a username — never
+    send one)."""
+    for candidate in (ref, base_url or ""):
+        if candidate.startswith(("http://", "https://")):
+            host = urlsplit(candidate).hostname
+            if host:
+                return host[:_PING_MAX_VALUE]
+    return "local"
+
+
+def send_onboard_ping(
+    *,
+    ref: str,
+    base_url: str | None,
+    mode: str,
+    home: Path,
+    post: PingPost,
+    url: str = ONBOARD_PING_URL,
+) -> None:
+    """Fire the anonymous onboard ping and print the transparency line.
+
+    ``GECKO_TELEMETRY=off`` disables it — then NOTHING is sent or printed. Swallows
+    everything (a dead network, slow DNS under the 2s cap, even a bug here): the
+    ping must never break or noticeably slow ``gecko add``. The note prints only
+    AFTER a POST actually went out — never claim a send that failed."""
+    try:
+        if not telemetry_enabled():
+            return
+        payload = {
+            "surface_host": _ping_host(ref, base_url),
+            "version": str(__version__)[:_PING_MAX_VALUE],
+            "client_os": _client_os(),
+            "install_id": read_or_create_install_id(home),
+            # Fold anything unexpected to the $0 default — the wire set is closed.
+            "mode": mode if mode == "live" else "recorded",
+        }
+        post(url, payload)
+    except Exception:  # noqa: BLE001 - fire-and-forget; the ping never breaks `add`
+        return
+    print(ONBOARD_PING_NOTE)
+
+
 @dataclass
 class AddDeps:
     """Injected dependencies for ``add`` — the seam that keeps it network-free in tests."""
@@ -303,6 +423,10 @@ class AddDeps:
     run: Runner
     home: Path
     resolver: Resolver | None = None
+    #: The onboard-ping POST. ``None`` (the library default) sends NOTHING; only the
+    #: CLI wires the real transport — so `gecko add` is default-on (opt-out via
+    #: GECKO_TELEMETRY=off) while embedded/library use stays network-silent.
+    ping_post: PingPost | None = None
 
 
 def list_surfaces(*, home: Path) -> list[str]:
@@ -398,5 +522,11 @@ def add(
     print(f"  {mark} {cfg.note}")
     if not cfg.applied:
         print("     " + " ".join(cfg.command))
+    if deps.ping_post is not None:
+        # The adopter becomes visible — fires only HERE, after the surface actually
+        # wired. Default-on with the transparency line; GECKO_TELEMETRY=off opts out.
+        send_onboard_ping(
+            ref=ref, base_url=base_url, mode=mode, home=deps.home, post=deps.ping_post
+        )
     print(f"\n  → ask your agent to use the '{surface}' tools.")
     return 0
