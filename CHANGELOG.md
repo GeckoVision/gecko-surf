@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.7 — 2026-07-15
+
+### Fixed
+- **macOS TLS blocker.** Frozen (npx) binaries bundle `certifi` and point the SSL
+  context at it at startup, so every https call works out of the box — no more
+  `CERTIFICATE_VERIFY_FAILED` on a clean Mac. (#143)
+- **`gecko add <bare-domain>`** resolves via `https://` + spec discovery instead of
+  treating the domain as a local file. (#142)
+- **`gecko --version`** added at the top level (was falling into the serve parser). (#142)
+- **npx-aware MCP wiring** — the registered serve command survives the npx cache so
+  Claude can still spawn it. (#142)
+
+### Added
+- **Jito hosted surface: read ops live.** `getTipFloor` and the status/account reads
+  serve live against mainnet; the money-movers (`sendBundle`/`sendTransaction`) stay
+  catalog-only (the agent submits those directly to Jito — we are the catalog, not the
+  relay). (#144)
+
+### Note
+- **Realigns npm + PyPI.** 0.4.6 was an npm-only re-stamp: `pyproject.toml` was never
+  bumped, so the binary reported `0.4.5` and PyPI never advanced past 0.4.5. This release
+  moves every marker to 0.4.7 in lockstep, so `gecko --version` is honest again and both
+  registries land on the same version.
+
 ## 0.4.5 — 2026-07-14
 
 ### Added
