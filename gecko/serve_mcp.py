@@ -35,6 +35,7 @@ from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
 from .enforce import EnforceMode, resolve_hosted_enforce
 from .http_server import serve_multi_http
+from .jito_surface import build_jito_surface
 from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
@@ -62,15 +63,21 @@ _SURFACES: list[tuple[str, Path]] = [
 # Auth-gated surface: served only when its publishable key is present in the env.
 _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_openapi.json"
 
-# Gecko-brand DEMO surfaces — paid / mainnet-money APIs (TxLINE, Jito) that we can't
-# serve live publicly. Served in RECORDED mode: every response is synthesized from the
-# schema ($0, offline), no real credential is used or exposed. The point is to show
-# first-call-correct comprehension of the exact APIs Gecko pitches; live data needs the
-# caller's own subscription. TxLINE uses a stub session so its fully auth-gated ops are
-# still visible as tools (recorded mode never sends the stub header anywhere); Jito's
-# JSON-RPC methods are public.
+# Gecko-brand DEMO surfaces.
+# TxLINE is a paid / mainnet-money API we can't serve live publicly, so it stays RECORDED:
+# every response is synthesized from the schema ($0, offline), no real credential is used
+# or exposed — the point is first-call-correct comprehension of the exact API Gecko
+# pitches; live data needs the caller's own subscription. TxLINE uses a stub session so its
+# fully auth-gated ops stay visible as tools (recorded mode never sends the stub header).
+#
+# Jito is SPLIT (see gecko.jito_surface — the single source of truth for its boundary):
+# its four READ ops (getTipFloor + the JSON-RPC status reads — public, keyless, no money,
+# no signing) are served LIVE against mainnet, while its two money-moving WRITE ops
+# (sendBundle, sendTransaction) stay RECORDED — catalog-only. We are the catalog, not the
+# relay: serving those live would make this public endpoint an open MEV relay (control-
+# plane violation). The agent takes our first-call-correct comprehension and submits those
+# writes DIRECTLY to Jito with its own wallet.
 _TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
-_JITO_SPEC = _ROOT / "examples" / "jito" / "spec" / "jito_blockengine_openapi.json"
 
 # Jupiter Swap — keyless + PUBLIC, so UNLIKE TxLINE/Jito we serve it LIVE: real swap
 # quotes from Jupiter's free lite-api host. No key, no cost, public data — a genuine
@@ -101,16 +108,10 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             ),
         )
     )
-    surfaces.append(
-        (
-            "jito",
-            McpSurface(
-                AgentApiClient(str(_JITO_SPEC), session=public_session()),
-                mode="recorded",
-                enforce=hosted_enforce,
-            ),
-        )
-    )
+    # Jito — reads LIVE against mainnet, the two money-moving writes RECORDED
+    # (catalog-only). Built via the shared boundary builder so serve_mcp and
+    # serve_providers enforce the identical split; hosted enforce keeps the risk gate on.
+    surfaces.append(("jito", build_jito_surface(hosted_enforce)))
     # Jupiter Swap — served LIVE (keyless, public): a real external-call demo. base_url is
     # the free-tier host; public_session (no auth) means no secret can leak, and all four
     # ops are ungated so they're visible. The risk gate still runs.

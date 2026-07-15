@@ -167,15 +167,22 @@ def test_single_server_spec_live_call_is_unchanged() -> None:
 # --- hosted provider surface pins the multi-server jito spec explicitly ------
 
 
-def test_serve_providers_pins_jito_base_url_explicitly() -> None:
+def test_serve_providers_pins_jito_base_url_and_records_money_movers() -> None:
     # Confirm (not assume) the hosted path: the jito block-engine spec declares
-    # mainnet+testnet, and the provider host serves it LIVE — so its client must
-    # carry an explicit base_url or every hosted call would now fail closed.
+    # mainnet+testnet, and the provider host serves its READS live — so its client must
+    # carry an explicit base_url or every hosted read would fail closed. The two
+    # money-moving writes stay RECORDED (catalog-only), never relayed.
     from gecko import serve_providers
+    from gecko.jito_surface import JITO_MAINNET_BASE
+    from gecko.mcp_server import McpSurface
 
     surfaces = dict(serve_providers._build_surfaces())
     jito = surfaces["jito"]
-    assert isinstance(jito, AgentApiClient)
-    assert len(jito.servers) == 2
-    assert jito.base_url == serve_providers._JITO_BASE
-    assert jito._base_url_explicit is True
+    assert isinstance(jito, McpSurface)
+    assert jito.mode == "live"
+    client = jito.client
+    assert len(client.servers) == 2
+    assert client.base_url == JITO_MAINNET_BASE
+    assert client._base_url_explicit is True
+    # catalog, not relay: the money-movers are recorded even on the live surface.
+    assert jito.recorded_ops == {"sendBundle", "sendTransaction"}

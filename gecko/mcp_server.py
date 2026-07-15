@@ -120,6 +120,7 @@ class McpSurface:
         enforce: EnforceMode | None = None,
         policy: RiskPolicy | None = None,
         honeypots: bool | None = None,
+        recorded_ops: frozenset[str] = frozenset(),
     ):
         """``enforce`` sets the call-time risk gate stance (block | warn | off); ``None``
         resolves ``GECKO_ENFORCE`` (default: warn — a bare surface only observes). The
@@ -130,7 +131,15 @@ class McpSurface:
         ``honeypots`` opts IN to the decoy tripwire (``None`` resolves ``GECKO_HONEYPOTS``,
         default OFF). It is a DETECTION layer, not a moat — off by default so a real
         surface never shows fake tools unless the operator asks; when off, ``list_tools``
-        is byte-identical to a surface with no honeypot layer."""
+        is byte-identical to a surface with no honeypot layer.
+
+        ``recorded_ops`` is the per-op mode override: tool names listed here stay
+        RECORDED even when the surface ``mode`` is live. It is the catalog-not-the-relay
+        boundary — a money-moving write (e.g. Jito ``sendBundle`` / ``sendTransaction``)
+        is comprehended and served as a tool, but its response is SYNTHESIZED from the
+        schema and NEVER relayed to the wire, so this public endpoint can't become an open
+        broadcaster. Default empty set -> every call uses ``self.mode`` (byte-identical to
+        before)."""
         self.client = client
         self.mode = mode
         self.enforce: EnforceMode = (
@@ -140,6 +149,7 @@ class McpSurface:
         self.honeypots: bool = (
             honeypots if honeypots is not None else honeypots_from_env()
         )
+        self.recorded_ops = recorded_ops
 
     def list_tools(self) -> list[dict[str, Any]]:
         """The MCP ``tools/list`` view.
@@ -269,6 +279,13 @@ class McpSurface:
         if name == "query_docs":
             return self.query_docs(arguments.get("intent", ""))
 
+        # Per-op mode override: a tool named in ``recorded_ops`` stays RECORDED even on a
+        # live surface — the catalog-not-the-relay boundary for money-moving writes (Jito
+        # sendBundle/sendTransaction). ``eff_mode`` is what flows to the client call and
+        # every emitted event for THIS call; the risk gate below still runs unchanged.
+        # Default empty set -> eff_mode == self.mode (byte-identical to before).
+        eff_mode: CallMode = "recorded" if name in self.recorded_ops else self.mode
+
         # --- The honeypot tripwire (opt-in): a decoy has no originating operation, so a
         # CALL of one is definitionally hostile probing. Trip BEFORE the normal gate; there
         # is no upstream to invoke (it is a decoy), so nothing is called and no payload is
@@ -280,7 +297,7 @@ class McpSurface:
                 "surf.blocked",
                 surface_id=self.client.surface_id,
                 tool_name=name,  # the decoy name is spec-derived, a code constant
-                mode=self.mode,
+                mode=eff_mode,
                 decision=HONEYPOT_DECISION,
                 reasons=[HONEYPOT_REASON],
                 session_id=session_id,
@@ -299,7 +316,7 @@ class McpSurface:
                 "surf.blocked",
                 surface_id=self.client.surface_id,
                 tool_name=name,
-                mode=self.mode,
+                mode=eff_mode,
                 decision="block",
                 reasons=[FAIL_CLOSED_SIGNAL],
                 session_id=session_id,
@@ -314,7 +331,7 @@ class McpSurface:
                 "surf.blocked",
                 surface_id=self.client.surface_id,
                 tool_name=name,
-                mode=self.mode,
+                mode=eff_mode,
                 score=assessment.score,
                 decision="block",
                 reasons=blocked_signals(assessment),
@@ -327,17 +344,17 @@ class McpSurface:
         # the upstream call. Conditional on purpose — duck-typed clients (the catalog
         # aggregator, the red-team wrapper) don't accept the kwarg, and no other mode
         # consumes it.
-        if self.mode == "probe":
+        if eff_mode == "probe":
             result = self.client.call(
-                name, arguments, mode=self.mode, session_id=session_id
+                name, arguments, mode=eff_mode, session_id=session_id
             )
         else:
-            result = self.client.call(name, arguments, mode=self.mode)
+            result = self.client.call(name, arguments, mode=eff_mode)
         emit_surf_event(
             "surf.call",
             surface_id=self.client.surface_id,
             tool_name=name,
-            mode=self.mode,
+            mode=eff_mode,
             session_id=session_id,
         )
         # A step_up (or a warn-mode would-be block) executed — flag it, don't hide it.

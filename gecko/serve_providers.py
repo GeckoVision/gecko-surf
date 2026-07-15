@@ -12,6 +12,11 @@ NOT re-list providers as a browsable catalog/directory (that's the distribution 
 frames.ag / pay.sh — which we compose, never become). ``/`` lists the served surfaces as
 a breadcrumb, not a shop.
 
+**Money-boundary (Jito):** Jito's reads are served live, but its two money-moving writes
+(sendBundle, sendTransaction) are catalog-only (recorded) — we are the catalog, not the
+relay. That split lives in ``gecko.jito_surface`` so this host and ``serve_mcp`` can't
+diverge on it.
+
 Same image as ``serve_mcp``; deployed as a SECOND service with this module as the
 entrypoint and ``GECKO_PROVIDER_HOST`` set to the provider host. Thin by design.
 """
@@ -23,9 +28,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .access import public_session
-from .client import AgentApiClient
+from .enforce import resolve_hosted_enforce
 from .http_server import serve_multi_http
+from .jito_surface import build_jito_surface
 
 # In the image: /app/gecko/serve_providers.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -33,14 +38,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 # Provider surfaces served on this host. Public reads; each provider keeps its own
 # endpoint — agents reach the provider directly.
 _PEGANA_SPEC = _ROOT / "examples" / "pegana_demo" / "spec" / "pegana_openapi.json"
-_JITO_SPEC = _ROOT / "examples" / "jito" / "spec" / "jito_blockengine_openapi.json"
-
-# The jito spec declares TWO servers (mainnet first, testnet second), and live mode
-# fails closed on an ambiguous multi-server spec (client.AmbiguousServerError) — so
-# this host pins the target explicitly: mainnet, the server this surface has always
-# de-facto served. Keyless public JSON-RPC reads; public_session means no secret exists
-# to inject toward the pin.
-_JITO_BASE = "https://mainnet.block-engine.jito.wtf"
 
 # The provider host — set to the real domain at deploy time (DNS-rebinding allowlist).
 PROVIDER_HOST = os.environ.get("GECKO_PROVIDER_HOST", "providers.geckovision.tech")
@@ -49,15 +46,18 @@ PROVIDER_URL = f"https://{PROVIDER_HOST}"
 
 def _build_surfaces() -> list[tuple[str, Any]]:
     """The surfaces this host serves — factored out of ``main()`` so tests can assert
-    the construction offline (a live multi-server surface MUST carry an explicit pin)."""
+    the construction offline (a live multi-server surface MUST carry an explicit pin).
+
+    Jito is built via the SHARED boundary builder (``gecko.jito_surface``), the single
+    source of truth so this host and ``serve_mcp`` enforce the identical split: its READ
+    ops go LIVE against the pinned mainnet Block Engine, while its two money-moving WRITE
+    ops (sendBundle, sendTransaction) stay RECORDED — catalog-only, never relayed. That
+    matches this host's stated 'public reads' contract; without the builder the bare-live
+    client would have served those money-movers live (an open MEV relay)."""
+    hosted_enforce = resolve_hosted_enforce()
     return [
         ("pegana", json.loads(_PEGANA_SPEC.read_text("utf-8"))),
-        (
-            "jito",
-            AgentApiClient(
-                str(_JITO_SPEC), base_url=_JITO_BASE, session=public_session()
-            ),
-        ),
+        ("jito", build_jito_surface(hosted_enforce)),
     ]
 
 
