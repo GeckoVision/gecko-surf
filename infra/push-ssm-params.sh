@@ -63,6 +63,18 @@ declare -A PARAMS=(
   # Kill-switch (gecko/telemetry.py + events.py): "off" hard-disables emission
   # even with a live sink. Anything else leaves current behavior.
   [GECKO_TELEMETRY]="GECKO_TELEMETRY"
+
+  # x402 settlement (gecko/x402_pay.py + x402_facilitator.py). MODE `stub`
+  # (or the `__unset__` sentinel) = FakeFacilitator, no real USDC — the safe
+  # default. `live` requires the four config params below; the factory raises
+  # X402ConfigError naming any that are missing/sentinel. Go-live sequence:
+  # docs/x402-go-live.md (founder-run smoke, staged).
+  [X402_MODE]="X402_MODE"
+  [X402_FACILITATOR_URL]="X402_FACILITATOR_URL"    # e.g. PayAI's facilitator; SSRF-validated at boot of the client
+  [X402_FACILITATOR_TOKEN]="X402_FACILITATOR_TOKEN" # optional bearer; sentinel = none
+  [X402_PAY_TO]="X402_PAY_TO"                      # treasury address USDC lands in (founder's)
+  [X402_ASSET]="X402_ASSET"                        # USDC mint (Solana mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+  [X402_NETWORK]="X402_NETWORK"                    # x402 network id, e.g. `solana`
 )
 
 echo "==> Region:     $REGION"
@@ -80,6 +92,16 @@ declare -A REQUIRED_AT_BOOT=(
   # "on" = current default behavior (anything but "off"); flip to "off" in SSM
   # + force-new-deployment for an instant kill without a rebuild.
   [GECKO_TELEMETRY]="on"
+  # x402: every wired Secret must exist or the task fails at boot. "stub" is
+  # the safe mode default; the sentinel values are treated as unset by the
+  # engine (x402_mode / facilitator_from_env), so a half-configured deploy
+  # boots clean in stub and can never settle real funds by accident.
+  [X402_MODE]="stub"
+  [X402_FACILITATOR_URL]="__unset__"
+  [X402_FACILITATOR_TOKEN]="__unset__"
+  [X402_PAY_TO]="__unset__"
+  [X402_ASSET]="__unset__"
+  [X402_NETWORK]="__unset__"
 )
 
 SKIPPED=()

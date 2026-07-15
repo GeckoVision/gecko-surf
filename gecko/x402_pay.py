@@ -53,8 +53,16 @@ X402_MODE_ENV = "X402_MODE"
 
 
 def x402_mode() -> str:
-    """Resolve the settlement mode. Defaults to ``stub`` (fake facilitator, no real USDC)."""
-    return (os.environ.get(X402_MODE_ENV) or "stub").strip().lower()
+    """Resolve the settlement mode. Defaults to ``stub`` (fake facilitator, no real USDC).
+
+    ``__unset__`` is the SSM boot sentinel (infra/push-ssm-params.sh): ECS ``Secrets:``
+    params must exist for the task to boot, so an unconfigured deploy carries the
+    sentinel — treated as unset here, same contract as ``events._mongo_uri``.
+    """
+    raw = (os.environ.get(X402_MODE_ENV) or "").strip().lower()
+    if not raw or raw == "__unset__":
+        return "stub"
+    return raw
 
 
 @dataclass(frozen=True)
