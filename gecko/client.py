@@ -58,6 +58,43 @@ class ToolNotFound(CallError):
     we never leak that a callable-but-unauthed op exists (invariant #4)."""
 
 
+class AmbiguousServerError(CallError):
+    """A live call on a >1-server spec with no explicit ``base_url`` — fail closed.
+
+    The money-API footgun: many specs list production FIRST and sandbox second
+    (e.g. Woovi), so silently defaulting to ``servers[0]`` sends a live call to
+    production. When the caller never chose a server, refusing loudly — with the
+    full server list and the exact fix — beats guessing. Recorded/probe are
+    untouched: they never reach the wire, so the ``servers[0]`` default stays a
+    harmless synthesis template there."""
+
+
+#: Server descriptions are untrusted spec text surfaced in an agent-facing error —
+#: collapse whitespace and cap the length so a poisoned description can't smuggle
+#: an instruction-sized payload into the message.
+_SERVER_DESC_CAP = 80
+
+
+def ambiguous_server_message(servers: list[Any]) -> str:
+    """The one multi-server fail-closed message (client raise + ``gecko add`` refusal).
+
+    Lists every server as ``[index] url (description)`` — the description only when
+    the spec provides one; we never guess which server is the sandbox — and names the
+    remediation for both the SDK (``base_url=``) and the CLI (``--base-url``)."""
+    parts: list[str] = []
+    for index, server in enumerate(servers):
+        url = server.get("url", "") if isinstance(server, dict) else ""
+        entry = f"[{index}] {url}"
+        desc = server.get("description") if isinstance(server, dict) else None
+        if isinstance(desc, str) and desc.strip():
+            entry += f" ({' '.join(desc.split())[:_SERVER_DESC_CAP]})"
+        parts.append(entry)
+    return (
+        f"live mode needs an explicit base_url: this spec declares {len(servers)} "
+        f"servers — {', '.join(parts)} — pass base_url/--base-url to choose one."
+    )
+
+
 @dataclass(frozen=True)
 class ScoredHit:
     """A search result enriched with retrieval provenance — the introspection sibling
@@ -107,10 +144,13 @@ class AgentApiClient:
         """Make an API agent-usable from its OpenAPI spec.
 
         Live mode targets ``servers[0].url`` from the spec unless an explicit
-        ``base_url`` is given. This is a money-API footgun: if the spec lists a
-        production server first, a live call hits production — pass the sandbox
-        server's URL explicitly for live tests. An explicit ``base_url`` also pins
-        the trust anchor to that one host (see ``self.anchor``).
+        ``base_url`` is given — but ONLY when that choice is unambiguous: a live
+        call on a spec that declares >1 servers with no explicit ``base_url``
+        raises ``AmbiguousServerError`` instead of silently picking ``servers[0]``
+        (the money-API footgun: production is often listed first, sandbox second).
+        Recorded/probe never reach the wire, so they keep the ``servers[0]``
+        default as a synthesis template. An explicit ``base_url`` also pins the
+        trust anchor to that one host (see ``self.anchor``).
 
         ``corpus_path`` (opt-in, off by default) enables Phase-0 correctness-corpus
         capture on ``call()``: one control-plane-safe metadata record per call via the
@@ -123,6 +163,11 @@ class AgentApiClient:
         self.servers = self.spec.get("servers") or []
         servers = self.servers or [{}]
         self.base_url = base_url or servers[0].get("url", "")
+        # Whether the caller CHOSE the target host. The live-call seam fails closed on
+        # a multi-server spec when this is False — construction itself stays permissive
+        # so recorded/probe use on the same spec keeps working with the servers[0]
+        # default as a synthesis template.
+        self._base_url_explicit = base_url is not None
 
         self.operations = extract_operations(self.spec)
         # S0 enrich (optional): pre-generated, already-sanitized blurbs (keyed by tool_name)
@@ -531,6 +576,11 @@ class AgentApiClient:
         _inject = effective == "live"
         start = time.perf_counter()
         try:
+            # The multi-server fail-closed guard sits exactly where a call would leave
+            # the machine (EFFECTIVE live, after any degrade-to-recorded), so recorded,
+            # probe, and the quarantine degradation — the $0 flows — never gain friction.
+            if _inject and not self._base_url_explicit and len(self.servers) > 1:
+                raise AmbiguousServerError(ambiguous_server_message(self.servers))
             req = self.prepare(tool_name, args, inject_auth=_inject)
         except CallError as exc:
             # A pre-flight failure (missing param / auth-host refusal) is itself a

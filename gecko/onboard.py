@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import __version__, docs_reader
+from .client import ambiguous_server_message
 from .netguard import Resolver, UnsafeUrlError, safe_get, validate_public_url
 from .telemetry import telemetry_enabled
 
@@ -483,6 +484,13 @@ def add(
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
     spec = resolved.spec
+    servers = spec.get("servers") or []
+    if mode == "live" and base_url is None and len(servers) > 1:
+        # The same fail-closed the live-call seam enforces (client.AmbiguousServerError),
+        # surfaced at onboard time — BEFORE the key prompt, cache write, or Claude wiring
+        # — so a live surface is never wired to raise on its very first call.
+        print(f"  ✗ {ambiguous_server_message(servers)}", file=sys.stderr)
+        return 2
     # Slugify ONCE, here — cache_spec/remove re-slug via safe_name too, so a raw
     # `--name "My API"` must not desync the Claude registration from the cache
     # file / credential slot those look up by slug.

@@ -257,6 +257,89 @@ def test_add_mode_live_wires_live_surface(tmp_path):
     assert "--mode" not in rec_calls[0]
 
 
+_MULTI_SERVER_SPEC = {
+    "openapi": "3.0.3",
+    "info": {"title": "Woovi-ish", "version": "1"},
+    # Production FIRST — the money-API footgun order a silent servers[0] pick hits.
+    "servers": [
+        {"url": "https://api.woovi.example", "description": "Production"},
+        {"url": "https://api.woovi-sandbox.example", "description": "Sandbox"},
+    ],
+    "paths": {},
+}
+
+_WOOVI_HOST = _fake_resolver({"api.woovi.example": ["93.184.216.34"]})
+
+
+def test_add_mode_live_multi_server_without_base_url_refuses(tmp_path, capsys):
+    """`gecko add --mode live` on a >1-server spec with no --base-url refuses BEFORE
+    any wiring: non-zero exit, the server list + remediation on stderr, and neither
+    the key prompt, the cache write, nor `claude mcp add` ever runs."""
+    calls = []
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_MULTI_SERVER_SPEC),
+        comprehend=lambda spec: 5,
+        prompt=lambda q: calls.append(("prompt", q)) or "sk-live-x",
+        store=lambda n, s: bool(calls.append(("store", n)) or True),
+        run=lambda cmd: bool(calls.append(("run", cmd))) or 0,
+        home=tmp_path,
+        resolver=_WOOVI_HOST,
+    )
+    rc = add("https://api.woovi.example/openapi.json", mode="live", deps=deps)
+    err = capsys.readouterr().err
+    assert rc != 0
+    assert "✗" in err
+    assert "[0]" in err and "https://api.woovi.example" in err
+    assert "[1]" in err and "https://api.woovi-sandbox.example" in err
+    assert "--base-url" in err
+    assert calls == []  # refused before key prompt / store / configure_claude
+    assert not (tmp_path / ".gecko" / "surfaces").exists()
+
+
+def test_add_mode_live_multi_server_with_base_url_proceeds(tmp_path):
+    """The remediation works: the same spec + an explicit --base-url wires fine."""
+    calls = []
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_MULTI_SERVER_SPEC),
+        comprehend=lambda spec: 5,
+        prompt=lambda q: "",
+        store=lambda n, s: True,
+        run=lambda cmd: bool(calls.append(cmd)) or 0,
+        home=tmp_path,
+        resolver=_fake_resolver(
+            {
+                "api.woovi.example": ["93.184.216.34"],
+                "api.woovi-sandbox.example": ["93.184.216.35"],
+            }
+        ),
+    )
+    rc = add(
+        "https://api.woovi.example/openapi.json",
+        base_url="https://api.woovi-sandbox.example",
+        mode="live",
+        deps=deps,
+    )
+    assert rc == 0
+    assert calls and "--base-url" in calls[0]
+
+
+def test_add_recorded_multi_server_without_base_url_is_unchanged(tmp_path):
+    """Recorded (the default, $0) never gains friction from the live-only guard."""
+    calls = []
+    deps = AddDeps(
+        fetch=lambda u: json.dumps(_MULTI_SERVER_SPEC),
+        comprehend=lambda spec: 5,
+        prompt=lambda q: "",
+        store=lambda n, s: True,
+        run=lambda cmd: bool(calls.append(cmd)) or 0,
+        home=tmp_path,
+        resolver=_WOOVI_HOST,
+    )
+    rc = add("https://api.woovi.example/openapi.json", deps=deps)
+    assert rc == 0
+    assert calls  # wired as before
+
+
 def test_add_rejects_unsafe_base_url(tmp_path, capsys):
     """An explicit --base-url is SSRF-validated like any other request target."""
     deps = AddDeps(
