@@ -19,11 +19,21 @@ import argparse
 import getpass
 import importlib.metadata
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, credentials, docs_reader, login, onboard, serve, testgen
+from . import (
+    __version__,
+    credentials,
+    docs_reader,
+    login,
+    onboard,
+    privy_login,
+    serve,
+    testgen,
+)
 from .access import public_session, stub_session
 from .client import AgentApiClient
 from .modes import coerce_mode
@@ -645,23 +655,37 @@ def _print_help() -> None:
 
 
 def _cmd_login(argv: list[str]) -> int:
-    """`gecko login` — enroll a hosted identity (email → one-time code → sealed key).
+    """`gecko login` — enroll a hosted identity (email → one-time code → sealed token).
 
-    Thin transport: parse args, build the real seams (SSRF-safe POST, keychain store),
-    hand off to ``login.login``. Local `gecko add` (recorded, $0) never needs this — this
-    gates only the HOSTED plane (attribution, rate-limit, hosted features)."""
+    Thin transport: parse args, build the real seams (keychain store), hand off to
+    ``privy_login.privy_login`` (Privy passwordless email-OTP, PUBLIC app id only). Local
+    `gecko add` (recorded, $0) never needs this — this gates only the HOSTED plane
+    (attribution, rate-limit, hosted features).
+
+    Security: only the PUBLIC ``PRIVY_APP_ID`` is read here; ``PRIVY_APP_SECRET`` is never
+    referenced — it is a server-side-only credential."""
     p = argparse.ArgumentParser(
         prog="gecko login",
-        description="Enroll a hosted Gecko identity (email → one-time code). "
+        description="Enroll a hosted Gecko identity via Privy email one-time code. "
         "Local `gecko add` (recorded, $0) never needs this.",
     )
     p.add_argument("--email", default=None, help="Your email (prompted if omitted).")
     p.add_argument(
-        "--registry-url",
-        default="https://mcp.geckovision.tech",
-        help="Registry base URL.",
+        "--app-id",
+        default=os.environ.get("PRIVY_APP_ID"),
+        help="Privy app id (PUBLIC). Defaults to $PRIVY_APP_ID.",
     )
     args = p.parse_args(argv)
+
+    app_id = (args.app_id or "").strip()
+    if not app_id:
+        print(
+            "  ✗ set your Privy app id first: export PRIVY_APP_ID=... "
+            "(the PUBLIC app id — never the app secret)",
+            file=sys.stderr,
+        )
+        return 2
+
     email = args.email or input("Email: ")
 
     def _store(ref: credentials.CredentialRef, secret: str) -> bool:
@@ -677,10 +701,9 @@ def _cmd_login(argv: list[str]) -> int:
         return True
 
     try:
-        return login.login(
+        return privy_login.privy_login(
             email,
-            registry_url=args.registry_url,
-            post=login._default_post,
+            app_id=app_id,
             prompt=input,
             store=_store,
             home=credentials.config_home(),

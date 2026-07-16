@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.8 — 2026-07-16
+
+### Added
+- **`gecko login`** — hosted-identity enrollment via Privy passwordless email-OTP
+  (email → one-time code → sealed credential). Gates only the hosted plane; local
+  `gecko add` (recorded, $0) stays zero-login. Client-side flow, public app id only —
+  the Privy app secret never enters the CLI. (#148)
+
+### Fixed
+- **Cloudflare `1010` User-Agent ban.** Outbound provider calls now send a real
+  `gecko-surf/<version>` User-Agent instead of the default `Python-urllib/*`, which
+  Cloudflare-fronted providers (e.g. Privy) reject with HTTP 403. (#148)
+
 ## 0.4.7 — 2026-07-15
 
 ### Fixed
