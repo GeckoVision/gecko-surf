@@ -5,12 +5,21 @@ Usage (``.github/workflows/release.yaml``, on EVERY build-matrix leg):
     GECKO_CA_SELFTEST=1 ./gecko-<os>-<arch> > ca_selftest.out
     python packaging/ca_selftest_check.py ca_selftest.out   # or pipe on stdin
 
-Exit 0 iff the line proves the binary SHIPPED and RESOLVED the bundled certifi
-store: it is the frozen binary, the cert exists on disk, its size is plausible for
-a real CA bundle (~200 KB), and its path is INSIDE the PyInstaller ``_MEIPASS``
-extraction dir — NOT the runner's own system/keychain trust store. This is the
-build-machine-independent positive assertion that covers macOS-arm64 and
-linux-arm64, where the cert-stripped Docker gate (linux-x86_64 only) cannot run.
+Exit 0 iff the line proves the binary SHIPPED, RESOLVED, and EXPORTED the bundled
+certifi store: it is the frozen binary, the cert exists on disk, its size is
+plausible for a real CA bundle (~200 KB), its path is INSIDE the PyInstaller
+``_MEIPASS`` extraction dir — NOT the runner's own system/keychain trust store —
+and (the export belt) when frozen the hook actually set ``SSL_CERT_FILE`` to that
+bundled path (``ssl_cert_file == path``), so TLS would USE the bundle rather than
+merely carry it. This is the build-machine-independent positive assertion that
+covers macOS-arm64 and linux-arm64, where the cert-stripped Docker gate
+(linux-x86_64 only) cannot run.
+
+The export-belt check assumes a CLEAN env (CI scrubs ``SSL_CERT_FILE`` /
+``SSL_CERT_DIR`` before running the self-test) so the hook's OWN export is what is
+under test. At runtime a user who pre-sets ``SSL_CERT_FILE`` legitimately wins and
+the hook no-ops — that is correct behavior, not a build to gate, and never reaches
+this checker.
 
 Pure + import-light so the decision table is unit-testable (``tests/test_ca_selftest.py``
 loads this by path). ``packaging/`` is not a package — its name clashes with the
@@ -49,7 +58,8 @@ SYSTEM_PREFIXES = (
 
 _LINE_RE = re.compile(
     r"GECKO_CA path=(?P<path>\S*) exists=(?P<exists>[01]) "
-    r"bytes=(?P<bytes>-?\d+) frozen=(?P<frozen>[01])"
+    r"bytes=(?P<bytes>-?\d+) frozen=(?P<frozen>[01]) "
+    r"ssl_cert_file=(?P<ssl_cert_file>\S*)"
 )
 
 
@@ -63,6 +73,7 @@ class Selftest:
     exists: bool
     nbytes: int
     frozen: bool
+    ssl_cert_file: str
 
 
 def parse_line(text: str) -> Selftest:
@@ -84,6 +95,7 @@ def parse_line(text: str) -> Selftest:
         exists=match.group("exists") == "1",
         nbytes=int(match.group("bytes")),
         frozen=match.group("frozen") == "1",
+        ssl_cert_file=match.group("ssl_cert_file"),
     )
 
 
@@ -129,6 +141,18 @@ def check(t: Selftest) -> list[str]:
             f"path {t.path!r} resolves to a SYSTEM/keychain trust store, "
             "not the bundled cert — proves nothing about what shipped"
         )
+    # The export belt: for a frozen binary in a clean-env CI run, the hook must have
+    # pointed OpenSSL at the bundled cert. Physical presence (above) is necessary but not
+    # sufficient — a binary can SHIP the bundle yet never export it, so TLS would silently
+    # fall back to the (absent, in the storeless container) system store. Only asserted when
+    # frozen: the hook runs solely in the frozen binary, and a self-test under a plain
+    # interpreter (frozen=0, already rejected above) never sets SSL_CERT_FILE.
+    if t.frozen and t.ssl_cert_file != t.path:
+        reasons.append(
+            f"ssl_cert_file={t.ssl_cert_file!r} != path={t.path!r} — the frozen CA hook "
+            "did not export SSL_CERT_FILE to the bundled cert (bundle shipped but unused; "
+            "clean-env CI must show the hook pointed OpenSSL at what it bundled)"
+        )
     return reasons
 
 
@@ -147,7 +171,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"CA self-test line: path={t.path} exists={int(t.exists)} "
-        f"bytes={t.nbytes} frozen={int(t.frozen)}"
+        f"bytes={t.nbytes} frozen={int(t.frozen)} ssl_cert_file={t.ssl_cert_file}"
     )
     reasons = check(t)
     if reasons:
@@ -155,8 +179,8 @@ def main(argv: list[str]) -> int:
             print(f"::error::CA self-test FAILED: {reason}")
         return 1
     print(
-        "CA self-test PASSED: the binary shipped + resolved the bundled certifi "
-        "(inside _MEIPASS, not a system store)."
+        "CA self-test PASSED: the binary shipped + resolved + exported the bundled certifi "
+        "(inside _MEIPASS, not a system store; SSL_CERT_FILE points at it)."
     )
     return 0
 

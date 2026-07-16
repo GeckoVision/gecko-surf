@@ -51,18 +51,24 @@ def _apply_frozen_ca_bundle() -> None:
 def _ca_selftest_line() -> str:
     """Build ONE machine-parseable line describing the bundled certifi THIS process resolved.
 
-    Format: ``GECKO_CA path=<abs> exists=<0|1> bytes=<n> frozen=<0|1>`` — where ``path`` is
-    ``certifi.where()`` (the bundled ``cacert.pem`` inside the PyInstaller ``_MEIPASS``
-    extraction dir when frozen), ``exists``/``bytes`` come from an in-process ``os.stat``,
-    and ``frozen`` is ``sys.frozen``. ``bytes=-1`` means "no size available" (path absent or
-    unstattable), distinct from ``bytes=0`` (a real but empty file).
+    Format: ``GECKO_CA path=<abs> exists=<0|1> bytes=<n> frozen=<0|1> ssl_cert_file=<abs>``
+    — where ``path`` is ``certifi.where()`` (the bundled ``cacert.pem`` inside the
+    PyInstaller ``_MEIPASS`` extraction dir when frozen), ``exists``/``bytes`` come from an
+    in-process ``os.stat``, ``frozen`` is ``sys.frozen``, and ``ssl_cert_file`` is the
+    process's CURRENT ``SSL_CERT_FILE`` — the value ``_apply_frozen_ca_bundle`` exported
+    earlier in ``main()`` (empty when the hook was a no-op: not frozen, a user override
+    already won, or certifi was absent). ``bytes=-1`` means "no size available" (path absent
+    or unstattable), distinct from ``bytes=0`` (a real but empty file).
 
-    Computed IN-PROCESS on purpose: ``_MEIPASS`` is a temp dir PyInstaller deletes on exit,
-    so CI can't stat the cert from outside — the running binary must report it. The gate
-    (``packaging/ca_selftest_check.py``, run on every release matrix leg) parses this line
-    and fails the build unless it proves the BUNDLED cert shipped + resolved. This is the
-    per-arch positive assertion for macOS + linux-arm64, where the cert-stripped Docker gate
-    (linux-x86_64 only) can't run. Dependency-free (no ``gecko`` import) and never raises.
+    Emitting ``ssl_cert_file`` closes the belt: the gate can PROVE the frozen hook actually
+    pointed OpenSSL at the bundled cert (``ssl_cert_file == path``), not merely infer it from
+    the bundle being present. Computed IN-PROCESS on purpose: ``_MEIPASS`` is a temp dir
+    PyInstaller deletes on exit, so CI can't stat the cert from outside — the running binary
+    must report it. The gate (``packaging/ca_selftest_check.py``, run on every release matrix
+    leg) parses this line and fails the build unless it proves the BUNDLED cert shipped +
+    resolved + was exported. This is the per-arch positive assertion for macOS + linux-arm64,
+    where the cert-stripped Docker gate (linux-x86_64 only) can't run. Dependency-free (no
+    ``gecko`` import) and never raises.
     """
     frozen = 1 if getattr(sys, "frozen", False) else 0
     try:
@@ -80,7 +86,13 @@ def _ca_selftest_line() -> str:
             exists = 1
         except OSError:
             exists, nbytes = 0, -1
-    return f"GECKO_CA path={path} exists={exists} bytes={nbytes} frozen={frozen}"
+    # What the frozen CA hook exported earlier in main() (or a pre-existing user override).
+    # In a clean-env frozen run this equals `path`; the gate keys its export belt off that.
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE", "")
+    return (
+        f"GECKO_CA path={path} exists={exists} bytes={nbytes} "
+        f"frozen={frozen} ssl_cert_file={ssl_cert_file}"
+    )
 
 
 def main() -> None:
