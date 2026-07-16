@@ -107,3 +107,36 @@ def test_login_no_keychain_reports_failure_without_leaking(tmp_path, capsys):
 
 def test_load_identity_missing_returns_none(tmp_path):
     assert load_identity(tmp_path) is None
+
+
+def test_default_post_sends_real_user_agent(monkeypatch):
+    """``_default_post`` must send an honest UA — never the default ``Python-urllib/*``
+    that Cloudflare bans (HTTP 403 error 1010), which was the live gecko-login/Privy break."""
+    from gecko import login
+
+    captured: dict[str, str | None] = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        captured["ua"] = req.get_header("User-agent")  # urllib title-cases the key
+        return _Resp()
+
+    monkeypatch.setattr(login, "validate_public_url", lambda url: None)  # stay offline
+    monkeypatch.setattr(login.urllib.request, "urlopen", _fake_urlopen)
+
+    status, _ = login._default_post("https://auth.privy.io/x", {"email": "a@b.co"})
+
+    assert status == 200
+    assert captured["ua"] and captured["ua"].startswith("gecko-surf/")
+    assert "python-urllib" not in captured["ua"].lower()

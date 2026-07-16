@@ -31,6 +31,8 @@ import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -39,6 +41,15 @@ from .netguard import UnsafeUrlError, validate_public_url
 
 #: The keychain slot the hosted-identity token seals into (sibling of a provider key).
 IDENTITY_REF = CredentialRef(api="gecko-identity")
+
+#: Honest User-Agent for outbound provider calls. Some providers sit behind Cloudflare,
+#: which BANS the default ``Python-urllib/*`` signature outright (HTTP 403, error 1010
+#: "browser_signature_banned") — sending a real UA clears it. Verified against Privy's edge.
+try:
+    _CLIENT_VERSION = _pkg_version("gecko-surf")
+except PackageNotFoundError:  # editable/source checkout without installed metadata
+    _CLIENT_VERSION = "0.0.0+dev"
+_USER_AGENT = f"gecko-surf/{_CLIENT_VERSION} (+https://geckovision.tech)"
 
 # Injected seams (defaults wired in the CLI).
 Post = Callable[[str, dict[str, Any]], tuple[int, dict[str, Any]]]
@@ -109,7 +120,7 @@ def _default_post(
         url
     )  # blocks private/loopback/link-local/non-http, per invariant
     data = json.dumps(body).encode("utf-8")
-    request_headers = {"Content-Type": "application/json"}
+    request_headers = {"Content-Type": "application/json", "User-Agent": _USER_AGENT}
     if headers:
         request_headers.update(headers)
     req = urllib.request.Request(url, data=data, headers=request_headers, method="POST")
