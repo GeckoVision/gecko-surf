@@ -601,6 +601,7 @@ def build_multi_surface_app(
     from dataclasses import asdict
 
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import (
         JSONResponse,
@@ -616,6 +617,7 @@ def build_multi_surface_app(
         ensure_submittable,
     )
     from .mcp_server import MetaComprehendSurface
+    from .waf import WafMiddleware
     from .wellknown import build_onboard_breadcrumb, build_x402_manifest
 
     # Hosted default resolved in ONE place (enforce.resolve_hosted_enforce): explicit wins,
@@ -855,7 +857,13 @@ def build_multi_surface_app(
                     with contextlib.suppress(Exception, asyncio.CancelledError):
                         await task
 
-    return Starlette(routes=routes, lifespan=_lifespan)
+    # The WAF/robot-block middleware runs BEFORE routing (in front of every surface mount),
+    # so attack scanners and agent-discovery crawlers are triaged away before they reach —
+    # or even see — the mounts. Pure ASGI (never BaseHTTPMiddleware): it forwards the pass
+    # lane untouched, so the streaming /{name}/mcp transport and its DNS-rebinding guard are
+    # unaffected. See gecko.waf for the block-vs-breadcrumb-vs-serve lanes.
+    middleware = [Middleware(WafMiddleware, public_url=public_url)]
+    return Starlette(routes=routes, middleware=middleware, lifespan=_lifespan)
 
 
 def security_allowlist(
