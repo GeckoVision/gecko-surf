@@ -96,7 +96,15 @@ def live_demo() -> None:
         )
 
     fixtures = client.call(tool_for("/api/fixtures/snapshot"), {}, mode="live")
-    rows = fixtures["data"] if isinstance(fixtures["data"], list) else []
+    all_rows = fixtures["data"] if isinstance(fixtures["data"], list) else []
+    # The snapshot carries several competitions (Friendlies, World Cup, ...). Filter to the
+    # World Cup — otherwise the first row can be a friendly (e.g. Vietnam v Myanmar) that we
+    # would wrongly print under a "World Cup" heading.
+    rows = [
+        r
+        for r in all_rows
+        if str(r.get("Competition", "")).strip().lower() == "world cup"
+    ]
     first = rows[0] if rows else {}
     print("\nGOAL: what World Cup matches are coming up?")
     print(
@@ -104,7 +112,13 @@ def live_demo() -> None:
     )
     if first:
         print(
-            f"  → {first.get('Participant1')} vs {first.get('Participant2')}  (FixtureId {first.get('FixtureId')})"
+            f"  → {first.get('Participant1')} vs {first.get('Participant2')}  "
+            f"({first.get('Competition')}, FixtureId {first.get('FixtureId')})"
+        )
+    else:
+        print(
+            f"  → no World Cup fixtures in the feed right now "
+            f"({len(all_rows)} fixtures, none in the World Cup competition)."
         )
 
     chosen = None
