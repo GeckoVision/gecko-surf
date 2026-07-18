@@ -8,14 +8,18 @@ FRONT of the surface mounts and triages every request into one of five lanes BEF
 reaches routing:
 
 1. **attack** — clear malicious probes (``/.env``, ``/.git``, ``/wp-*``, ``*.php``,
-   path-traversal, admin/config, speculative ``/.well-known/oauth-*`` we don't serve).
-   -> **403 fast**, minimal work, DEBUG-logged (never INFO), and one countable
-   ``surf.blocked`` event (``client_kind=robot``) so the flood is VISIBLE, not buried.
+   path-traversal, admin/config). -> **403 fast**, minimal work, DEBUG-logged (never
+   INFO), and one countable ``surf.blocked`` event (``client_kind=robot``) so the flood
+   is VISIBLE, not buried.
 2. **discovery** — agents probing for a manifest (``/.well-known/mcp.json``,
-   ``/agent-card.json``, ``ai-plugin.json``, A2A cards). These are agents trying to FIND
-   us (our ICP). We do NOT slam the door: a clean, minimal **404 carrying a ``Link:``
-   header breadcrumb** to the real MCP endpoint + discovery doc. A full agent-card is a
-   separate product decision — this just points the way.
+   ``/agent-card.json``, ``ai-plugin.json``, A2A cards) or for OAuth metadata
+   (``/.well-known/oauth-*``, part of a real MCP client's connect handshake). These are
+   agents trying to FIND us (our ICP). We do NOT slam the door: a clean, minimal **404
+   carrying a ``Link:`` header breadcrumb** to the real MCP endpoint + discovery doc. A
+   full agent-card is a separate product decision — this just points the way.
+
+   The 404-not-403 choice is load-bearing, not cosmetic: the official MCP SDK aborts the
+   whole connection on any non-404 error from OAuth discovery. See ``_DISCOVERY_PREFIXES``.
 3. **robots** — ``/robots.txt``, served (disallow crawlers from the noise paths).
 4. **security** — ``/.well-known/security.txt`` (RFC 9116), served (a security contact —
    hygiene, and it's a probed path).
@@ -97,9 +101,8 @@ _ATTACK_SUFFIXES: tuple[str, ...] = (
     ".env",
 )
 
-# ATTACK — speculative OAuth discovery we do NOT serve (our surfaces are public / static-
-# key, never an OAuth flow). Per the WAF brief this is a hard 403, not a soft breadcrumb.
-_ATTACK_PREFIXES: tuple[str, ...] = ("/.well-known/oauth-",)
+# ATTACK — path prefixes that are probes on their own.
+_ATTACK_PREFIXES: tuple[str, ...] = ()
 
 # DISCOVERY — basenames (the LAST path segment, lowercased) of agent/MCP discovery
 # manifests. A basename match catches every observed variant in one rule:
@@ -123,6 +126,20 @@ _DISCOVERY_BASENAMES: frozenset[str] = frozenset(
 
 # DISCOVERY — bare index probes an agent tries (an /agent card root; the A2A path space).
 _DISCOVERY_EXACT: frozenset[str] = frozenset({"/agent", "/agents", "/agent-card"})
+
+# DISCOVERY — OAuth metadata. These look speculative but they are part of a REAL MCP
+# client's normal connect handshake: RFC 9728 protected-resource metadata (+ its
+# path-based fallback chain) and RFC 8414 authorization-server metadata. We serve no
+# OAuth flow, so the correct answer is "not supported" — and "not supported" is spelled
+# 404. It must NOT be 403: the official MCP SDK
+# (``mcp/client/auth/oauth2.py::_handle_protected_resource_response``) treats 404 as
+# "try the next URL" and every OTHER status as ``raise OAuthFlowError`` — so a 403 here
+# aborts a legitimate client's connection instead of letting it fall through to the
+# unauthenticated path. A false positive on our own ICP is worse than the noise.
+_DISCOVERY_PREFIXES: tuple[str, ...] = (
+    "/.well-known/oauth-",
+    "/.well-known/openid-configuration",
+)
 
 # HYGIENE — the two files we SERVE (never block): robots + the RFC 9116 security contact.
 _ROBOTS_PATH = "/robots.txt"
@@ -153,19 +170,35 @@ SECURITY_CONTACT = "mailto:security@geckovision.tech"
 WafLane = Literal["attack", "discovery", "robots", "security", "pass"]
 
 
+def _normalize(path: str) -> str:
+    """Fold a request path to its matching form: lowercased, with duplicate and trailing
+    slashes collapsed.
+
+    Collapsing repeated slashes is the anti-bypass step: ASGI hands us the path verbatim
+    (only percent-decoded), so ``//admin`` and ``/admin`` are the same request to a
+    scanner but only one of them matches an exact-set rule. Substring rules were already
+    immune; the exact sets were not.
+    """
+    lowered = path.lower()
+    while "//" in lowered:
+        lowered = lowered.replace("//", "/")
+    return lowered.rstrip("/") or "/"
+
+
 def classify_path(path: str) -> WafLane:
     """Triage a request path into a WAF lane. Pure + side-effect-free (testable offline).
 
     Order matters: traversal/null-byte first (most dangerous), then the served hygiene
     files (never mis-block them), then attack rules, then discovery, else pass. Matching
-    is done on a lowercased, trailing-slash-stripped copy; the caller routes on the
-    ORIGINAL path, so lowercasing here can never corrupt a real request.
+    is done on a NORMALIZED copy (lowercased, duplicate/trailing slashes collapsed); the
+    caller routes on the ORIGINAL path, so normalizing here can never corrupt a real
+    request.
     """
     # Traversal / null-byte on the RAW decoded path — a legit path never contains "..".
     if ".." in path or "\x00" in path:
         return "attack"
 
-    p = path.lower().rstrip("/") or "/"
+    p = _normalize(path)
 
     # Served hygiene files — checked before the block rules so they can never be caught.
     if p == _ROBOTS_PATH:
@@ -183,11 +216,14 @@ def classify_path(path: str) -> WafLane:
     if p in _ATTACK_EXACT:
         return "attack"
 
-    # Discovery: a manifest basename anywhere, a bare agent index, or the A2A path space.
+    # Discovery: a manifest basename anywhere, a bare agent index, the A2A path space,
+    # or an OAuth/OIDC metadata probe (a real client's handshake — 404, never 403).
     basename = p.rsplit("/", 1)[-1]
     if basename in _DISCOVERY_BASENAMES:
         return "discovery"
     if p in _DISCOVERY_EXACT or p == "/a2a" or p.startswith("/a2a/"):
+        return "discovery"
+    if any(p.startswith(pre) for pre in _DISCOVERY_PREFIXES):
         return "discovery"
 
     return "pass"

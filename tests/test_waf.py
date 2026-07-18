@@ -37,8 +37,6 @@ from gecko.waf import WAF_ATTACK_SIGNAL, classify_path
         "/phpmyadmin/index.php",
         "/../../etc/passwd",
         "/a/../../secret",
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/oauth-protected-resource",
         "/admin",
         "/config",
         "/backup.sql",
@@ -302,6 +300,163 @@ def test_discovery_probe_emits_no_block(monkeypatch: pytest.MonkeyPatch) -> None
     finally:
         events.set_surf_sink_override(None)
     assert not any(d["event"] == "surf.blocked" for d in docs)
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 THE DANGEROUS FAILURE CLASS: a WAF that 403s a REAL agent.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # RFC 9728 protected-resource metadata + its path-based fallback chain, and
+        # RFC 8414 authorization-server metadata — the exact URLs the official MCP
+        # SDK builds in mcp/client/auth/utils.py (build_protected_resource_urls /
+        # build_authorization_server_urls).
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource/gecko/mcp",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-authorization-server/mcp",
+    ],
+)
+def test_oauth_discovery_is_404_not_403(path: str) -> None:
+    """A spec-compliant MCP client probes these during a normal connect.
+
+    ``mcp/client/auth/oauth2.py::_handle_protected_resource_response`` treats **404** as
+    "not supported, try the next URL" and **anything else** as
+    ``raise OAuthFlowError(...)`` — so a 403 here does not merely annoy a real client,
+    it ABORTS the connection. These paths must land in the soft discovery lane.
+    """
+    assert classify_path(path) == "discovery"
+    with TestClient(_app()) as c:
+        assert c.get(path).status_code == 404, path
+
+
+def test_oauth_discovery_probe_is_not_counted_as_an_attack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A real client doing its auth handshake must not be logged as a blocked robot.
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink()
+    try:
+        with TestClient(_app()) as c:
+            r = c.get("/.well-known/oauth-protected-resource")
+    finally:
+        events.set_surf_sink_override(None)
+    assert r.status_code == 404
+    assert not any(d["event"] == "surf.blocked" for d in docs)
+
+
+# --- 🔴 the hosted surfaces must be completely unaffected --------------------
+
+HOSTED = ("gecko", "jito", "paysh", "txline")
+
+
+def _hosted_app() -> object:
+    # The four surfaces the public host actually serves. The spec behind each name is
+    # irrelevant to the WAF (it triages on PATH SHAPE only), so one fixture under four
+    # names is the honest falsifier for "the hosted mounts still serve".
+    return build_multi_surface_app(
+        [(name, PEGANA) for name in HOSTED],
+        public_url=PUBLIC,
+        allowed_hosts=["testserver"],
+    )
+
+
+@pytest.mark.parametrize("name", HOSTED)
+def test_hosted_surface_mcp_endpoints_still_serve(name: str) -> None:
+    """/gecko/mcp, /jito/mcp, /paysh/mcp, /txline/mcp must reach the MCP transport.
+
+    Proven by a real ``initialize`` round-trip through the middleware, not by inspection:
+    a 403/404 from the WAF, or a buffered (non-streaming) response, fails this.
+    """
+    assert classify_path(f"/{name}/mcp") == "pass"
+    with TestClient(_hosted_app()) as c:
+        r = c.post(f"/{name}/mcp", json=_INIT, headers=_MCP_HEADERS)
+        assert r.status_code == 200, (name, r.status_code, r.text[:200])
+        assert "mcp-session-id" in {k.lower() for k in r.headers}
+        assert "serverInfo" in r.text
+
+
+@pytest.mark.parametrize("name", HOSTED)
+def test_hosted_surface_healthz_and_artifacts_still_serve(name: str) -> None:
+    with TestClient(_hosted_app()) as c:
+        assert c.get(f"/{name}/healthz").status_code == 200
+        assert c.get(f"/{name}/.well-known/gecko.json").status_code == 200
+
+
+def test_host_healthz_and_root_still_serve() -> None:
+    with TestClient(_hosted_app()) as c:
+        assert c.get("/healthz").status_code == 200
+        assert c.get("/").status_code == 200
+        gecko_json = c.get("/.well-known/gecko.json")
+        assert gecko_json.status_code == 200
+        assert {s["name"] for s in gecko_json.json()["surfaces"]} == set(HOSTED)
+
+
+# --- bypass belt: normalization must not be dodgeable -----------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "//admin",  # duplicate leading slash dodges an exact-set match
+        "///admin",
+        "/admin/",  # trailing slash
+        "//config",
+        "/.git//config",
+        "//.env",
+        "/a//..//b",  # traversal behind a doubled slash
+    ],
+)
+def test_duplicate_slash_does_not_bypass_the_attack_lane(path: str) -> None:
+    assert classify_path(path) == "attack"
+
+
+@pytest.mark.parametrize("path", ["//agent", "//a2a/message", "//agent-card.json"])
+def test_duplicate_slash_does_not_bypass_the_discovery_lane(path: str) -> None:
+    assert classify_path(path) == "discovery"
+
+
+def test_slash_normalization_does_not_break_legit_paths() -> None:
+    # The normalizer must never turn a real surface path into a blocked one.
+    for path in ("//gecko/mcp", "/gecko//mcp", "/gecko/mcp/", "//healthz"):
+        assert classify_path(path) == "pass", path
+
+
+def test_blocked_event_carries_no_request_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control plane: the probe PATH is request content — it must never leave the process.
+
+    Complements the RECORD_ALLOWED_KEYS bound with a direct value-level check.
+    """
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink()
+    secret_ish = "/.env.production.deadbeefsecret"
+    try:
+        with TestClient(_app()) as c:
+            assert (
+                c.get(
+                    secret_ish, headers={"authorization": "Bearer SUPERSECRET"}
+                ).status_code
+                == 403
+            )
+    finally:
+        events.set_surf_sink_override(None)
+
+    blocked = [d for d in docs if d["event"] == "surf.blocked"]
+    assert len(blocked) == 1
+    serialized = repr(blocked[0])
+    assert "deadbeefsecret" not in serialized  # no path
+    assert "SUPERSECRET" not in serialized  # no headers/credentials
+    assert "authorization" not in serialized.lower()
 
 
 def test_middleware_works_without_public_url() -> None:
