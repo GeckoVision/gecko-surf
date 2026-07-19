@@ -24,6 +24,17 @@
   `gecko test`, recorded $0 flows included); `surf.call` only on MCP-surface
   invocations. The honest funnel queries are documented in `gecko/events.py`.
 
+## 0.4.13 — 2026-07-19
+
+### Added
+- **Chain plans reach the agent** — `search_capabilities` now attaches a `plan`
+  block (ordered supplier steps + provenance-carrying `explain`) to the top hit
+  when its required inputs aren't satisfiable from the stated intent. The agent
+  gets the right *sequence* of calls first try instead of discovering it by
+  trial and error; flat search is byte-identical when no chain is needed. Backed
+  by the chain-FCC harness (`gecko/chain_eval.py`): both known TxLINE chains
+  score first-plan-correct in recorded mode ($0).
+
 ## 0.4.12 — 2026-07-19
 
 ### Fixed
