@@ -92,6 +92,26 @@ def test_live_probe_reports_missing_credential_not_traceback(
     assert "missing" in r.detail.lower()
 
 
+def test_live_probe_is_inconclusive_when_the_call_degrades_to_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The false-green trap: a `mode="live"` call silently degrades to recorded
+    # (quarantined/auth-unsafe surface) and returns a SYNTHESIZED 200. `--live` must
+    # NOT report ✓ on a call that never hit the wire — that's the exact confidence it
+    # exists to give. Classify on `mode`, not `status` alone.
+    _seal(monkeypatch, {"probe-api": "sk"})
+    monkeypatch.setattr(
+        "gecko.client.AgentApiClient.call",
+        lambda self, name, args, mode="recorded", **kw: {
+            "status": 200,
+            "mode": "recorded",
+        },
+    )
+    r = authcheck.live_probe(_SPEC, "probe-api", live_transport=lambda req: (200, {}))
+    assert not r.ok
+    assert "recorded" in r.detail.lower()
+
+
 def test_bundled_target_resolves_txline_no_spec_needed() -> None:
     target = authcheck.bundled_probe_target("txline")
     assert target is not None

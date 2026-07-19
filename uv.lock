@@ -303,7 +303,7 @@ wheels = [
 
 [[package]]
 name = "gecko-surf"
-version = "0.4.11"
+version = "0.4.12"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },

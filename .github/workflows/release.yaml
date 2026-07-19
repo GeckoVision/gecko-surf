@@ -70,6 +70,7 @@ jobs:
             --collect-all starlette \
             --collect-submodules anyio \
             --collect-data certifi \
+            --collect-data gecko \
             --hidden-import yaml \
             --hidden-import gecko \
             --hidden-import gecko.cli \
