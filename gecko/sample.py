@@ -3,6 +3,12 @@
 The TxODDS spec ships almost no response examples, so to demo (and to validate)
 without live calls we synthesize a minimal valid instance from each response
 schema. Deterministic by design — same schema always yields the same sample.
+
+Also home to the response-schema PICKERS (``success_schema`` / ``error_schema``):
+which declared schema to synthesize FROM lives with the synthesizer, so both the
+client (recorded mode) and the sandbox (probe mode) import them from here instead
+of from each other — that shared need used to force a client<->sandbox import
+cycle worked around with a lazy import.
 """
 
 from __future__ import annotations
@@ -10,6 +16,35 @@ from __future__ import annotations
 from typing import Any
 
 _MAX_DEPTH = 8
+
+
+def response_schema(op: Any, codes: tuple[str, ...]) -> dict[str, Any]:
+    """The first declared JSON response schema among ``codes`` (in order)."""
+    for code in codes:
+        r = op.responses.get(code)
+        if not isinstance(r, dict):
+            continue
+        content = r.get("content", {}) or {}
+        media = content.get("application/json") or next(iter(content.values()), None)
+        if isinstance(media, dict) and isinstance(media.get("schema"), dict):
+            return media["schema"]
+    return {}
+
+
+def success_schema(op: Any) -> dict[str, Any]:
+    """The op's declared success-response schema — powers recorded/probe synthesis."""
+    return response_schema(op, ("200", "201", "default"))
+
+
+def error_schema(op: Any) -> dict[str, Any]:
+    """The op's OWN declared error-response schema (sibling of ``success_schema``).
+
+    The comprehension-native differentiator for probe mode: a malformed offline call
+    answers with a body shaped like THIS API's error, not a generic Gecko message.
+    ``422`` is scanned first so the body shape aligns with the synthetic 422 status
+    the sandbox returns; then the other validation-adjacent codes, then ``default``.
+    """
+    return response_schema(op, ("422", "400", "409", "default"))
 
 
 def example_from_schema(schema: Any, _depth: int = 0) -> Any:

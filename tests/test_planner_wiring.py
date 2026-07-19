@@ -128,6 +128,104 @@ def test_search_capabilities_no_plan_on_satisfiable_intent() -> None:
     assert all("plan" not in h for h in hits)  # flat search untouched
 
 
+# --- the genuine-hit gate: a fallback top hit must never grow a plan ------------
+# Below scale an out-of-scope query still returns EVERY usable tool as a score-0
+# fallback (the surface-all rule), so hits[0] is a query-independent ordering
+# artifact (GET-first-then-path), not intent. Attaching a supplier plan to it would
+# steer the agent into a chain nobody asked for — the plan block must ride ONLY a
+# lexically-corroborated (genuine) top hit.
+
+# Zero lexical overlap with every op below AND no entity/id token, so nothing is
+# genuine and nothing is "satisfiable from the intent".
+OOS_QUERY = "play relaxing jazz music"
+# Genuine (matches "detail") but chain-shaped: it never names the fixture entity,
+# so the required fixtureId stays unsatisfiable and the supplier plan is needed.
+GENUINE_CHAIN_QUERY = "show me the detail view"
+
+
+def _chainable_spec() -> dict[str, Any]:
+    """A minimal below-scale surface whose FIRST fallback-ordered op (GET, smallest
+    path) has a chainable required id — the exact shape where the ungated plan
+    attachment used to fire on an out-of-scope query."""
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "Chainable", "version": "1"},
+        "paths": {
+            # "/detail" sorts before "/fixtures", so this op tops the fallback order.
+            "/detail/{fixtureId}": {
+                "get": {
+                    "operationId": "getDetail",
+                    "summary": "Detail for one fixture",
+                    "parameters": [
+                        {
+                            "name": "fixtureId",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"},
+                        }
+                    ],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            },
+            "/fixtures": {
+                "get": {
+                    "operationId": "listFixtures",
+                    "summary": "List fixtures",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "FixtureId": {"type": "integer"}
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+    }
+
+
+def test_search_ranked_carries_fallback_provenance() -> None:
+    """The seam the gate reads: ``search_ranked`` is the provenance-carrying substrate
+    of ``search`` (same order, same names) and marks OOS surface-all hits fallback."""
+    client = AgentApiClient(_chainable_spec())
+    ranked = client.search_ranked(OOS_QUERY)
+    assert ranked and all(h.is_fallback for h in ranked)
+    # search stays a pure projection of search_ranked — they can never disagree.
+    assert [h.name for h in ranked] == [h["name"] for h in client.search(OOS_QUERY)]
+
+
+def test_no_plan_on_out_of_scope_fallback_top_hit() -> None:
+    surface = McpSurface(AgentApiClient(_chainable_spec()))
+    hits = surface.call_tool("search_capabilities", {"query": OOS_QUERY})
+    # surface-all: everything stays visible (the below-scale promise)...
+    assert [h["name"] for h in hits] == ["getDetail", "listFixtures"]
+    # ...but the fallback top hit gets NO plan — it isn't what the agent asked for.
+    assert all("plan" not in h for h in hits)
+
+
+def test_genuine_chain_hit_still_gets_plan_on_same_surface() -> None:
+    """Regression guard: the gate filters FALLBACK tops only — a genuine chain-shaped
+    hit on the very same surface keeps its supplier plan (with provenance)."""
+    surface = McpSurface(AgentApiClient(_chainable_spec()))
+    hits = surface.call_tool("search_capabilities", {"query": GENUINE_CHAIN_QUERY})
+    assert hits[0]["name"] == "getDetail"
+    plan = hits[0].get("plan")
+    assert plan is not None
+    assert [s["operation_id"] for s in plan["steps"]] == ["listFixtures", "getDetail"]
+    assert plan["explain"][0]["param"] == "fixtureId"
+
+
 # --- the "reaches the agent" proof: real streamable-HTTP MCP transport ----------
 def test_plan_reaches_agent_over_streamable_http_mcp() -> None:
     """Spin up the ACTUAL surface behind the real JSON-RPC streamable-HTTP transport,

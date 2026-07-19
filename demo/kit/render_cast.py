@@ -90,11 +90,15 @@ def render_frame(
 
     draw.rounded_rectangle(
         (TERM_X, TERM_Y, TERM_X + TERM_W, TERM_Y + TERM_H),
-        radius=20, fill=TERMINAL, outline=BORDER, width=2,
+        radius=20,
+        fill=TERMINAL,
+        outline=BORDER,
+        width=2,
     )
     draw.rounded_rectangle(
         (TERM_X + 1, TERM_Y + 1, TERM_X + TERM_W - 1, TERM_Y + 58),
-        radius=19, fill=TERMINAL_BAR,
+        radius=19,
+        fill=TERMINAL_BAR,
     )
     draw.rectangle(
         (TERM_X + 1, TERM_Y + 37, TERM_X + TERM_W - 1, TERM_Y + 59),
@@ -128,7 +132,9 @@ def render_frame(
                 )
             draw.text(
                 (CONTENT_X + col * CELL_W, CONTENT_Y + row * CELL_H),
-                data, font=font, fill=char_color(char),
+                data,
+                font=font,
+                fill=char_color(char),
             )
 
     draw.text((52, 650), brand, font=UI_BOLD, fill="#35C2D4")
@@ -142,17 +148,22 @@ def main() -> int:
     ap.add_argument("cast", type=Path)
     ap.add_argument("output", type=Path)
     ap.add_argument(
-        "--scene", action="append", default=[],
+        "--scene",
+        action="append",
+        default=[],
         metavar="TITLE|TAGLINE",
         help="Window title + footer tagline; repeat per scene. Advances on every "
         "clear-screen in the cast after t=1s.",
     )
     ap.add_argument(
-        "--brand", default="GECKO  •  THE API LANGUAGE LAYER FOR AGENTS",
+        "--brand",
+        default="GECKO  •  THE API LANGUAGE LAYER FOR AGENTS",
         help="Footer brand line (left side).",
     )
     ap.add_argument(
-        "--thumb-at", type=float, default=0.97,
+        "--thumb-at",
+        type=float,
+        default=0.97,
         help="Save a thumbnail PNG at this fraction of the duration (0 disables).",
     )
     args = ap.parse_args()
@@ -171,11 +182,32 @@ def main() -> int:
 
     proc = subprocess.Popen(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{WIDTH}x{HEIGHT}",
-            "-r", str(FPS), "-i", "-", "-an",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(args.output),
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{WIDTH}x{HEIGHT}",
+            "-r",
+            str(FPS),
+            "-i",
+            "-",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(args.output),
         ],
         stdin=subprocess.PIPE,
     )

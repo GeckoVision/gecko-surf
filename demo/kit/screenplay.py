@@ -25,7 +25,9 @@ YELLOW = "\033[38;5;220m"
 RESET = "\033[0m"
 
 
-def out(text: str = "", delay: float = 0.045, end: str = "\n", pause: float = 0.0) -> None:
+def out(
+    text: str = "", delay: float = 0.045, end: str = "\n", pause: float = 0.0
+) -> None:
     """Typewriter line — for headlines, narration, and ``$`` command lines."""
     for ch in text:
         sys.stdout.write(ch)

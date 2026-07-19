@@ -20,24 +20,25 @@ import logging
 import time
 import urllib.error
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from . import corpus
+from . import search as searchmod
 from .access import AuthError, AuthSession, is_refreshable, stub_session
 from .caller import CallError, LiveTransport, PreparedRequest, build_request, execute
+from .capture import capture_outcome
 from .catalog import Catalog
-from .fusion import RRF_K, rrf_fuse
 from .events import emit_surf_event
+from .fusion import RRF_K
 from .graph import SurfaceGraph, build_graph
 from .ingest import Operation, extract_operations, load_spec
 from .modes import CallMode
 from .planner import plan_for_query
-from .sample import example_from_schema
+from .sample import error_schema, example_from_schema, success_schema
 from .sanitize import sanitize_schema
 from .scale import should_surface_all
+from .search import FusedHit, ScoredHit
 from .surfaces import _host_of, anchor_for, spec_is_quarantined, surface_rev, tools_rev
 from .tools import auth_location_is_safe, build_tools, to_tool
 
@@ -45,6 +46,22 @@ if TYPE_CHECKING:
     from .dense import DenseIndex
 
 logger = logging.getLogger("gecko.client")
+
+# Back-compat aliases: the response-schema pickers moved to ``gecko.sample`` (shared
+# with the probe sandbox — the move dissolved the old client<->sandbox import cycle),
+# but external callers/tests historically import them from here.
+_success_schema = success_schema
+_error_schema = error_schema
+
+__all__ = [
+    "AgentApiClient",
+    "AmbiguousServerError",
+    "FusedHit",
+    "IntegrityError",
+    "ScoredHit",
+    "ToolNotFound",
+    "ambiguous_server_message",
+]
 
 
 class IntegrityError(Exception):
@@ -95,40 +112,6 @@ def ambiguous_server_message(servers: list[Any]) -> str:
         f"live mode needs an explicit base_url: this spec declares {len(servers)} "
         f"servers — {', '.join(parts)} — pass base_url/--base-url to choose one."
     )
-
-
-@dataclass(frozen=True)
-class ScoredHit:
-    """A search result enriched with retrieval provenance — the introspection sibling
-    of the frozen ``search`` dict shape. ``score``/``is_fallback`` power retrieval
-    evaluation and the out-of-scope confidence floor; the agent-facing ``search`` never
-    exposes them (its contract stays ``{name, summary, path, method}``)."""
-
-    name: str
-    summary: str
-    path: str
-    method: str
-    score: int
-    is_fallback: bool
-
-
-@dataclass(frozen=True)
-class FusedHit:
-    """A hybrid (lexical+dense) search result with fusion provenance — the scored sibling of
-    the frozen ``search_hybrid`` dict shape. ``score`` is the RRF score (drives order/recall).
-    ``is_fallback`` is the OOS confidence floor and is LEXICAL-ANCHORED: True unless the
-    lexical arm genuinely corroborated the hit (``score > 0``). The dense arm improves the
-    RANKING but never sets confidence on its own — measured on ``voyage-4-lite``, its cosine
-    scores are too compressed to separate an out-of-scope intent from a real paraphrase, so
-    tying confidence to lexical corroboration guarantees OOS pass-rate >= the lexical baseline
-    by construction, while dense still lifts paraphrase recall via rank."""
-
-    name: str
-    summary: str
-    path: str
-    method: str
-    score: float
-    is_fallback: bool
 
 
 class AgentApiClient:
@@ -201,7 +184,7 @@ class AgentApiClient:
         # base58 pubkey in a response example) don't false-quarantine, while real secrets
         # and injected instructions still do.
         poisoned = any(t.get("x-poison-flag") for t in self.tools) or any(
-            sanitize_schema(_success_schema(op), route_to_arg=False)[1]
+            sanitize_schema(success_schema(op), route_to_arg=False)[1]
             for op in self.operations
         )
         quarantined = spec_is_quarantined(self.spec) or poisoned
@@ -285,74 +268,37 @@ class AgentApiClient:
             return None
         return plan_for_query(self.surface_graph, op, query)
 
-    def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
-        """The pure ranked retrieval substrate — carries ``score``/``is_fallback`` (retrieval
-        eval + the out-of-scope confidence floor). Applies the auth filter and top-k over-
-        fetch. This is what the retrieval benchmark measures (recall@k / MRR), so it stays a
-        strict top-k ranker even below scale; the agent-facing ``search`` layers the below-
-        scale surface-all rule on TOP of it (see ``_surface_all_scored``)."""
-        out: list[ScoredHit] = []
-        for s in self.catalog.search_scored(query, limit + 20):
-            if s.entry.tool_name not in self._usable_tool_names:
-                continue
-            out.append(
-                ScoredHit(
-                    name=s.entry.tool_name,
-                    summary=s.entry.operation.summary,
-                    path=s.entry.operation.path,
-                    method=s.entry.operation.method,
-                    score=s.score,
-                    is_fallback=s.is_fallback,
-                )
-            )
-            if len(out) >= limit:
-                break
-        return out
+    # --- retrieval: thin, signature-stable delegators into ``gecko.search`` (the
+    # split keeps the graph-extending call path and the ranking logic in separate
+    # files; every retrieval WHY lives next to the logic it explains). -------------
 
-    def _surface_all_scored(self, query: str) -> list[ScoredHit]:
-        """Below-scale: surface EVERY usable tool (no top-k truncation) so Gecko is never
-        worse than the raw OpenAPI dump. Genuine lexical hits keep their relevance order and
-        score; every remaining usable op is APPENDED as a score-0 fallback (GET-first then
-        path — the catalog's query-independent prior), so a zero-overlap paraphrase op the
-        lexical catalog structurally drops is still visible and pickable. ``is_fallback``
-        stays truthful (appended ops are not genuine lexical matches), so any confidence-floor
-        reader is unchanged and relevance never sinks below a manufactured candidate."""
-        hits: list[ScoredHit] = []
-        seen: set[str] = set()
-        # Genuine lexical hits first, over the full usable pool (depth = #entries so nothing
-        # is censored). Skip fallbacks here — we append the not-yet-seen ops ourselves below.
-        for s in self.catalog.search_scored(query, len(self.catalog.entries)):
-            name = s.entry.tool_name
-            if name not in self._usable_tool_names or s.is_fallback:
-                continue
-            seen.add(name)
-            op = s.entry.operation
-            hits.append(ScoredHit(name, op.summary, op.path, op.method, s.score, False))
-        remaining = [
-            (name, op)
-            for name, op in self._op_by_name.items()
-            if name in self._usable_tool_names and name not in seen
-        ]
-        remaining.sort(key=lambda no: (0 if no[1].method == "GET" else 1, no[1].path))
-        for name, op in remaining:
-            hits.append(ScoredHit(name, op.summary, op.path, op.method, 0, True))
-        return hits
+    def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
+        """The pure ranked retrieval substrate — ``score``/``is_fallback`` provenance for
+        the retrieval eval + the out-of-scope confidence floor. A strict top-k ranker even
+        below scale (see ``gecko.search.search_scored``)."""
+        return searchmod.search_scored(
+            self.catalog, self._usable_tool_names, query, limit
+        )
+
+    def search_ranked(self, query: str, limit: int = 5) -> list[ScoredHit]:
+        """The provenance-carrying substrate of ``search``: surface-all below scale,
+        strict top-k above (see ``gecko.search.ranked_hits``). The MCP surface reads the
+        top hit's ``is_fallback`` from HERE to gate plan attachment on a genuine hit."""
+        return searchmod.ranked_hits(
+            self.catalog,
+            self._op_by_name,
+            self._usable_tool_names,
+            self._surface_all,
+            query,
+            limit,
+        )
 
     def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
-        """Agent-facing capability search (frozen dict shape ``{name, summary, path, method}``).
-
-        Below scale (``_surface_all``) this returns every usable tool — the full surface,
-        relevance-ordered — so a small/clean API is never worse than its raw OpenAPI dump.
-        Above scale it is a pure projection of the top-k ``search_scored`` ranker."""
-        hits = (
-            self._surface_all_scored(query)
-            if self._surface_all
-            else self.search_scored(query, limit)
-        )
-        return [
-            {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
-            for h in hits
-        ]
+        """Agent-facing capability search (frozen dict shape ``{name, summary, path,
+        method}``). A pure projection of ``search_ranked`` — the frozen shape and the
+        scored view can never disagree on order. Below scale this returns every usable
+        tool (never worse than the raw OpenAPI dump); above scale, the top-k ranker."""
+        return searchmod.project_hits(self.search_ranked(query, limit))
 
     def search_hybrid_scored(
         self,
@@ -362,47 +308,18 @@ class AgentApiClient:
         dense_index: DenseIndex,
         k: int = RRF_K,
     ) -> list[FusedHit]:
-        """Fuse the lexical arm (``catalog.search_scored``) with the injected dense arm via
-        RRF, joined on ``tool_name``. Over-fetches both arms, fuses, applies the auth filter
-        AFTER fusion, then truncates to ``limit`` (so reranking/hiding can't starve the top-k).
-        ``search_hybrid`` is a pure projection of this — the two can never disagree on order.
-
-        ``is_fallback`` is LEXICAL-ANCHORED (genuine iff the lexical arm scored the op > 0),
-        the out-of-scope confidence floor: an OOS intent has no lexical overlap so nothing is
-        promoted -> OOS pass-rate >= the lexical baseline by construction. The dense arm still
-        lifts paraphrase recall because RANK (not the flag) drives recall.
-        """
-        depth = limit + 20
-        lex = self.catalog.search_scored(query, depth)
-        lex_names = [s.entry.tool_name for s in lex]
-        lex_genuine = {s.entry.tool_name for s in lex if not s.is_fallback}
-
-        dense_names = [n for n, _ in dense_index.search(query, depth)]
-
-        fused = rrf_fuse([lex_names, dense_names], k)
-        # Deterministic order: RRF score desc, then tool_name for stable ties.
-        ranked = sorted(fused.items(), key=lambda ns: (-ns[1], ns[0]))
-
-        out: list[FusedHit] = []
-        for name, score in ranked:
-            if name not in self._usable_tool_names:  # auth filter AFTER fusion
-                continue
-            op = self._op_by_name.get(name)
-            if op is None:  # a stale dense doc for an op no longer on the surface
-                continue
-            out.append(
-                FusedHit(
-                    name=name,
-                    summary=op.summary,
-                    path=op.path,
-                    method=op.method,
-                    score=score,
-                    is_fallback=name not in lex_genuine,
-                )
-            )
-            if len(out) >= limit:
-                break
-        return out
+        """Hybrid lexical+dense retrieval fused via RRF, with fusion provenance.
+        ``is_fallback`` stays LEXICAL-ANCHORED — the OOS confidence floor (see
+        ``gecko.search.hybrid_scored`` for the measured why)."""
+        return searchmod.hybrid_scored(
+            self.catalog,
+            self._op_by_name,
+            self._usable_tool_names,
+            query,
+            limit,
+            dense_index=dense_index,
+            k=k,
+        )
 
     def search_hybrid(
         self,
@@ -415,12 +332,9 @@ class AgentApiClient:
         """Hybrid lexical+dense search. Returns the SAME frozen dict shape as ``search``
         (``{name, summary, path, method}``) — the agent-facing contract is unchanged; the
         dense arm only adds semantic reach behind it."""
-        return [
-            {"name": h.name, "summary": h.summary, "path": h.path, "method": h.method}
-            for h in self.search_hybrid_scored(
-                query, limit, dense_index=dense_index, k=k
-            )
-        ]
+        return searchmod.project_hits(
+            self.search_hybrid_scored(query, limit, dense_index=dense_index, k=k)
+        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [t for t in self.tools if t["name"] in self._usable_tool_names]
@@ -569,7 +483,9 @@ class AgentApiClient:
         the process.
         """
         del session_id  # consumed by the SimWorld state gate when it lands
-        from . import sandbox  # lazy: sandbox imports this module's schema helpers
+        from . import (
+            sandbox,
+        )  # lazy: keeps the sandbox machinery off the import hot path
 
         self._assert_tools_integrity()
         if tool_name not in self._op_by_name:
@@ -640,7 +556,7 @@ class AgentApiClient:
                 "data": body,
                 "mode": "live",
             }
-        schema = _success_schema(self._op_by_name[tool_name])
+        schema = success_schema(self._op_by_name[tool_name])
         # Scrub the response schema before synthesizing agent-visible data: drop any
         # secret-looking or instruction-shaped example/default/enum so a poisoned response
         # schema can't surface a prompt-injection string / attacker address / leaked key.
@@ -673,80 +589,21 @@ class AgentApiClient:
         latency_ms: int | None,
         mode: str,
     ) -> None:
-        """Append one control-plane-safe correctness record — metadata only, never the
-        body or filled URL. Uses the SAME narrow ``corpus.outcome_from`` boundary the
-        HTTP server uses (it structurally cannot receive a payload). Opt-in via
-        ``corpus_path``; a capture failure must never break the agent's call."""
-        # Usage instrumentation (independent of opt-in corpus capture): one
-        # control-plane-safe outcome event — the ok-bool + error CLASS, never a body.
-        # ``source`` carries the SAME provenance the corpus record derives (recorded ->
-        # synthetic, live -> observed), so the adoption FCC rate can filter observed-only
-        # and a faked recorded 200 never inflates it.
-        error_class = corpus.error_class_for(status, exc)
-        source = corpus.source_for_mode(mode)
-        # plane="engine": this fires on EVERY client call outcome — local $0 flows
-        # (demo, `gecko test`, recorded) included — whereas surf.call is a SURFACE
-        # event; see events.CallPlane for why all-time fcc > call is expected.
-        emit_surf_event(
-            "surf.first_call_correct",
-            surface_id=self.surface_id,
-            tool_name=tool_name,
-            mode=mode,
-            ok=status is not None and 200 <= status < 400,
-            error_class=error_class,
-            latency_ms=latency_ms,
-            source=source,
-            plane="engine",
-        )
-        if self._corpus_path is None:
-            return
-        tool = self._tool_by_name.get(tool_name)
-        invoke = tool.get("_invoke") if isinstance(tool, dict) else None
-        if not isinstance(invoke, dict):
-            return
+        """One control-plane-safe outcome capture per call — metadata only, never the
+        body or filled URL. Thin delegator into ``gecko.capture.capture_outcome`` (the
+        telemetry + opt-in corpus edge); the client only resolves its own state (the
+        tool def, whether auth was injectable for this op)."""
         op = self._op_by_name.get(tool_name)
-        corpus.record(
-            corpus.outcome_from(
-                operation_id=tool_name,
-                tool_invoke=invoke,
-                args=args,
-                status=status,
-                error_class=error_class,
-                latency_ms=latency_ms,
-                mode=mode,
-                auth_injected=bool(op is not None and self._may_inject_auth_for(op)),
-                ts=int(time.time() * 1000),
-                surface_id=self.surface_id,
-                surface_rev=self.surface_rev,
-            ),
-            self._corpus_path,
+        capture_outcome(
+            tool_name=tool_name,
+            status=status,
+            exc=exc,
+            args=args,
+            latency_ms=latency_ms,
+            mode=mode,
+            surface_id=self.surface_id,
+            surface_rev=self.surface_rev,
+            corpus_path=self._corpus_path,
+            tool=self._tool_by_name.get(tool_name),
+            auth_injected=bool(op is not None and self._may_inject_auth_for(op)),
         )
-
-
-def _response_schema(op: Any, codes: tuple[str, ...]) -> dict[str, Any]:
-    """The first declared JSON response schema among ``codes`` (in order)."""
-    for code in codes:
-        r = op.responses.get(code)
-        if not isinstance(r, dict):
-            continue
-        content = r.get("content", {}) or {}
-        media = content.get("application/json") or next(iter(content.values()), None)
-        if isinstance(media, dict) and isinstance(media.get("schema"), dict):
-            return media["schema"]
-    return {}
-
-
-def _success_schema(op: Any) -> dict[str, Any]:
-    """The op's declared success-response schema — powers recorded/probe synthesis."""
-    return _response_schema(op, ("200", "201", "default"))
-
-
-def _error_schema(op: Any) -> dict[str, Any]:
-    """The op's OWN declared error-response schema (sibling of ``_success_schema``).
-
-    The comprehension-native differentiator for probe mode: a malformed offline call
-    answers with a body shaped like THIS API's error, not a generic Gecko message.
-    ``422`` is scanned first so the body shape aligns with the synthetic 422 status
-    the sandbox returns; then the other validation-adjacent codes, then ``default``.
-    """
-    return _response_schema(op, ("422", "400", "409", "default"))
