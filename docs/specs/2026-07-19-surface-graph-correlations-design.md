@@ -366,3 +366,96 @@ bytes (`serialize()`); compose the small N a workspace needs at query time. No
 DB, no vectors — the evidence bars for either (a real multi-API false-link rate
 over the §7 gate AND per-workspace op count past the lexical ceiling) are not
 met, so both stay out.)*
+
+## 13. Cross-API entity-identity foundation (Phase 3/4 design)
+
+Answers the founder's foundation question: today's join is `fixture == fixture`
+(exact normalized-name equality, `graph.py:408` — `_entity_of`/genericity are only
+demotion filters on top). That holds intra-TxLINE because one team named
+everything `FixtureId`; across two independently-authored APIs it fails both ways —
+**over-links** shared generics (`id`, `status`, `currency`) and **cannot express**
+the same entity under different names (`FixtureId` vs `matchId` vs `event_id`). The
+foundation must stop keying on the *name* and key on the **value domain** the field
+ranges over — the deterministic, naming-convention-independent expression of "same
+entity."
+
+### 13.1 The entity signature (deterministic, no model)
+Per field/param, derived from the resolved schema the ingest already keeps but the
+graph extractor discards (`_response_leaves`, `graph.py:141-143` — capture fix, not
+a re-ingest):
+- **`pattern`** (regex) — a shared rare regex (`^0x[a-f0-9]{40}$`, `^[A-Z]{3}$`) is
+  near-conclusive same-value-domain — the **highest**-entropy signal.
+- **`enum`** — set overlap over a rare domain (ISO-4217 currencies, chain ids),
+  weighted by rarity/cardinality — high.
+- **`format`** — `uuid`/`uri`/`email`/`ipv4` discriminating; `int32`/`date-time`
+  common (low weight).
+- **`example` shape**, **structural origin** (which resource/response it came from)
+  — corroboration.
+- **name-entity** (`_entity_of`) — the NAME rung, **corroboration only, never
+  alone**.
+All are surface constraints (never a payload value — invariant #1 intact) and
+serialize deterministically, so the signature folds into `content_hash`
+(`graph.py:203`) — a one-way contract, landed once with the §12 Phase-3
+`surface_id` change, not incrementally.
+
+### 13.2 The trust ladder (concrete, resolves §9 and §12)
+```
+tier =
+  DECLARED          if an x-gecko / customer hint maps field↔param   → high, basis="declared:<ent>"
+  EXTRACTED-entity  elif value_domain_score ≥ HIGH_BAR              → high, basis="sig:<signals>"
+                      HIGH_BAR = ≥1 of {pattern-eq, enum-overlap≥τ, discriminating-fmt-eq}
+                      AND (name-entity-eq OR resource-eq)            # value domain + a locator
+  INFERRED-name     elif name-entity equal but NO value-domain signal → LOW / quarantined
+  (no edge)         otherwise
+```
+**The rule the foundation guarantees: bare name-match across APIs is NEVER a
+cross-API plan's basis.** A pair whose only agreement is the name is emitted
+`INFERRED/low` — visible/auditable via `basis`, excluded from `plan()`
+(`feeds_into(high_only=True)`) — upgraded only if a value-domain signal or a
+DECLARED hint corroborates it. The ladder is per-scope via `surface_id`: the same
+name-entity equality may carry `high` *intra*-API (naming discipline is a fair prior
+within one team) but is demoted *cross*-API. One predicate:
+`edge.src.surface_id == edge.dst.surface_id`.
+
+### 13.3 The evidence gate for embeddings (mirrors §7 / §10-11)
+The semantic/LLM tier stays OUT until a two-API probe (§13.4) measures that the
+deterministic signature + DECLARED leave *real entity-synonym gaps* on the table
+(same entity, value domains described inconsistently across specs, names diverge).
+Keep-out conditions (any one → no embeddings): all known-true cross-links found
+deterministically with zero high false cross-links (the v3-337 analogue); or the
+residue is generic-id over-linking (fix = stricter deterministic bar, not
+embeddings). Even when admitted, embeddings never mint a `high` edge — they propose
+`INFERRED/low` candidates over descriptions for a human/provider to confirm into a
+DECLARED hint. Semantic similarity is a *suggestion for annotation*, not a plan
+basis — determinism + anti-poisoning preserved.
+
+### 13.4 Falsifiable two-API probe (offline, $0, no model — build gate)
+Mirror `scripts/surface_graph_probe.py`, stricter bar than §7 (cost of a wrong
+cross-API plan = the agent calling the wrong **system**):
+- **Pair:** Stripe + a second payments/FX spec sharing `currency` (ISO-4217 `enum`),
+  with abundant confusable generics (`id`, `status`, `created`, `amount`) to stress
+  false-linking. Fully reproducible from public specs, no keys, no network. (Alt: two
+  Solana specs sharing a base58 token-mint `pattern`.)
+- **Protocol:** build one graph per API (never merged — compose at query time, §12),
+  compute cross-API candidates via §13.1, tier via §13.2.
+- **Gate:** the known-true link (`currency`) found at `high` via EXTRACTED-signature
+  **without** a DECLARED hint, AND **zero** high-confidence false cross-links (a bare
+  shared `id` reaching `high` fails the gate). If the deterministic tier can't reach
+  zero false-high, cross-API plans ship **DECLARED-only** until it can.
+
+### 13.5 Honest residue (the product truth)
+The deterministic tier fires only when specs *declare* `pattern`/`enum`/
+discriminating `format` on their ids. Many painful long-tail APIs — the ICP — ship
+**bare `type: string` ids with no constraints**; for those no deterministic signal
+exists, name-match is correctly quarantined, and the **only** high-confidence
+cross-API basis is a `DECLARED` hint. That is the honest floor, and it is why §12
+ranks DECLARED highest and why the provider/customer annotation motion (§8.5) is
+**load-bearing, not optional** — the hardest cross-API joins, on exactly the messiest
+APIs, require a provider to declare the mapping. The comprehension frontier and the
+provider-WTP motion are the same insight from two directions. If the two-API probe
+shows most real cross-links need DECLARED, that is a **product finding, surfaced —
+not an engine failure to paper over.**
+
+One genuine capture gap remains before cross-API mutate chains work: request-body
+fields are never nodes (`graph.py:366-393` walks only params + response leaves), so
+"create X referencing Y's id" is invisible (already flagged §12-3b).
