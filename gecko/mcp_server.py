@@ -151,7 +151,14 @@ class McpSurface:
         )
         self.recorded_ops = recorded_ops
 
-    def list_tools(self) -> list[dict[str, Any]]:
+    def list_tools(
+        self,
+        *,
+        session_id: str | None = None,
+        user_agent: str | None = None,
+        client_kind: str | None = None,
+        client: str | None = None,
+    ) -> list[dict[str, Any]]:
         """The MCP ``tools/list`` view.
 
         Below scale (``client.surface_all``) this is BYTE-IDENTICAL to the pre-projection
@@ -183,6 +190,20 @@ class McpSurface:
         # a tempting target. Off by default -> tools stay byte-identical to no honeypots.
         if self.honeypots:
             tools.extend(decoy_tool_defs())
+        # The connect->call bridge: an agent that enumerated tools is past connect but
+        # may still never call (the comprehension cliff). Emit ONE control-plane-safe
+        # funnel event carrying the SAME sanitized correlation fields the other surf
+        # events carry (never PII, no tool defs, no payload). Observe, never mutate: the
+        # returned list is untouched. Passed None on transports with no request context
+        # (stdio / build-time), so the emit is well-formed but uncorrelated there.
+        emit_surf_event(
+            "surf.list_tools",
+            surface_id=self.client.surface_id,
+            session_id=session_id,
+            user_agent=user_agent,
+            client_kind=client_kind,
+            client=client,
+        )
         return tools
 
     def get_capability(self, name: str) -> dict[str, Any]:
@@ -474,11 +495,14 @@ def serve_stdio(
     from .http_server import _surface_from
 
     surface = _surface_from(spec_or_client, base_url, mode, enforce)
-    tools = surface.list_tools()
     server: Any = Server(server_name)
 
     @server.list_tools()
     async def _list_tools() -> list[Any]:
+        # Per-request (not build-time): stdio is a single local session with no HTTP
+        # request metadata, so list_tools is called with no correlation kwargs; the emit
+        # is a no-op locally (no MONGODB_URI) and never a spurious build-time event.
+        tools = surface.list_tools()
         return [
             mcp_types.Tool(
                 name=t["name"],

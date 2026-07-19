@@ -337,6 +337,26 @@ def _session_id_from_context(server: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _user_agent_from_context(server: Any) -> str | None:
+    """Best-effort read of the HTTP ``User-Agent`` from the low-level server's per-request
+    context (same seam as ``_session_id_from_context``). UNTRUSTED — the caller sanitizes
+    it via ``_safe_user_agent`` before it is ever stored. ``None`` outside a request or when
+    the header is absent."""
+    try:
+        ctx = server.request_context
+    except LookupError:
+        return None
+    request = getattr(ctx, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get("user-agent")
+    except Exception:  # noqa: BLE001 - a non-mapping request object is simply no UA
+        return None
+    return value if isinstance(value, str) else None
+
+
 def _surface_from(
     spec_or_client: Any,
     base_url: str | None,
@@ -419,7 +439,6 @@ def build_http_app(
         raise SystemExit(_INSTALL_HINT) from exc
 
     surface = _surface_from(spec_or_client, base_url, mode, enforce)
-    tools = surface.list_tools()
 
     # Build the capture context once (zero request scope): the templated _invoke per
     # operation, and whether the session carries auth. Comes from the underlying
@@ -467,6 +486,22 @@ def build_http_app(
 
     @server.list_tools()
     async def _list_tools() -> list[Any]:
+        # Per-request (not build-time): so the funnel sees a tools/list per real session,
+        # and McpSurface.list_tools emits surf.list_tools joined to this session's connect.
+        # The projection is cheap (<50 ops on every hosted surface -> byte-identical branch).
+        if isinstance(surface, McpSurface):
+            user_agent = _safe_user_agent(_user_agent_from_context(server))
+            tools = surface.list_tools(
+                session_id=_session_id_from_context(server),
+                user_agent=user_agent,
+                # clientInfo is only in the initialize frame, not on this request; classify
+                # by UA alone (same UA-only stance as the non-init connect_failed path).
+                client_kind=classify_client(user_agent, None),
+            )
+        else:
+            tools = (
+                surface.list_tools()
+            )  # duck-typed meta surface: no correlation kwargs
         return [
             mcp_types.Tool(
                 name=t["name"],

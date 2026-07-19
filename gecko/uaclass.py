@@ -43,6 +43,13 @@ _ROBOT_SUBSTRINGS: tuple[str, ...] = (
     "registry",
     "lookup",
     "directory",
+    # The MCP directory / indexer fleet (seen live: glama, agent-tools.cloud,
+    # acton-skill-extractor, verifymcp-probe, mcp-indexer). These are PATTERN markers,
+    # not literals, so tomorrow's ``foo-mcp-indexer`` / ``bar-probe`` is caught too. Note
+    # ``indexer`` MUST precede the ``mcp-`` client rule below (robot wins), so ``mcp-indexer``
+    # is a crawler, not a real client. No real MCP client name embeds these substrings.
+    "indexer",
+    "extractor",
     "python-requests",
     "go-http-client",
     "curl",

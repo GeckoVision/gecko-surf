@@ -127,6 +127,7 @@ def test_event_vocabulary_is_closed():
         "surf.first_call_correct",
         "surf.connect",
         "surf.connect_failed",
+        "surf.list_tools",
         "surf.blocked",
         "surf.onboard",
     }

@@ -277,6 +277,28 @@ def test_call_carries_the_same_session_id_as_connect(monkeypatch):
     assert call["session_id"]  # non-empty -> retention join is real, not aggregate
 
 
+def test_tools_list_emits_list_tools_joined_to_connect(monkeypatch):
+    # The missing funnel stage: a tools/list request must emit surf.list_tools carrying
+    # the SAME session id as its surf.connect, so connect->list_tools->call is joinable
+    # (the blind connect->call segment becomes readable).
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        tools = _list_tool_specs(_app())
+    finally:
+        events.set_surf_sink_override(None)
+
+    assert {t.name for t in tools} >= {"search_capabilities"}
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    list_tools = [d for d in docs if d["event"] == "surf.list_tools"]
+    assert list_tools, "tools/list must emit surf.list_tools"
+    lt = list_tools[0]
+    assert lt["session_id"] == connect["session_id"]  # joinable to the connect
+    assert set(lt) <= events.RECORD_ALLOWED_KEYS
+
+
 # --- funnel telemetry: User-Agent + robot/human classification ---
 
 
