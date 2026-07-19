@@ -24,6 +24,44 @@
   `gecko test`, recorded $0 flows included); `surf.call` only on MCP-surface
   invocations. The honest funnel queries are documented in `gecko/events.py`.
 
+## 0.4.12 — 2026-07-19
+
+### Fixed
+- **`npx @geckovision/gecko jupiter-mcp` / `colosseum-mcp` crashed** — the
+  PyInstaller onefile binary did not bundle `gecko/examples/*.json|yaml`, so bundled
+  surfaces raised `FileNotFoundError` on the npx channel (`txline-mcp` survived via
+  its raw-URL fallback). Added `--collect-data gecko` to the build (~128 KB, no code
+  change) so all three bundled surfaces work offline in the frozen binary.
+- **`gecko auth test --live` could report ✓ on a call that never hit the wire** — it
+  classified on HTTP status alone, but a `mode="live"` call silently degrades to
+  recorded (quarantined / auth-unsafe surface) and returns a synthesized 200. It now
+  treats any non-live run mode as inconclusive — the exact false-confidence `--live`
+  exists to prevent.
+
+## 0.4.11 — 2026-07-19
+
+### Added
+- **`gecko auth test --live`** — proves a credential actually *authenticates* (one
+  safe auth-gated GET → HTTP status), not just that the keychain resolves a value. A
+  resolvable-but-expired token now reports ✗ instead of a misleading `resolved ✓`.
+  Auto-targets bundled surfaces (`txline`); `--spec`/`--base-url`/`--op` for any API.
+
+## 0.4.10 — 2026-07-19
+
+### Added
+- **Bundled `txline-mcp` surface** — serve the TxLINE (TxODDS) API with no local spec
+  file and no spec URL (`npx @geckovision/gecko txline-mcp --mode live --stdio`).
+  Two-token auth sealed via `gecko auth set txline --account httpAuth|apiKeyAuth`.
+
+## 0.4.9 — 2026-07-19
+
+### Added
+- **Multi-scheme (two-token) auth injection** — `gecko serve --auth-keychain` now
+  injects *every* header-shaped security scheme a spec declares (e.g. TxLINE's
+  `Authorization: Bearer` + `X-Api-Token` together), not just the first. Spec-driven
+  and API-agnostic; single-scheme APIs are unchanged. `gecko serve` prints the exact
+  per-scheme `gecko auth set` commands for a multi-token surface.
+
 ## 0.4.8 — 2026-07-16
 
 ### Added

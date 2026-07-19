@@ -85,6 +85,20 @@ def live_probe(
         return ProbeResult(False, None, op, f"credential missing — {exc}")
 
     status = result.get("status")
+    # A `mode="live"` call can silently DEGRADE to recorded (a quarantined surface or
+    # an unsafe auth location), returning a synthesized 200. Reporting ✓ on that is the
+    # exact false-confidence `--live` exists to prevent — so a call that did not reach
+    # the wire is inconclusive, never a pass, regardless of the synthesized status.
+    ran_mode = result.get("mode")
+    if ran_mode is not None and ran_mode != "live":
+        return ProbeResult(
+            False,
+            status if isinstance(status, int) else None,
+            probe,
+            f"inconclusive — the call ran in {ran_mode!r} mode, not live (the surface "
+            "may be quarantined or its auth location unsafe), so it never hit the "
+            "network. Credential NOT confirmed.",
+        )
     if isinstance(status, int) and 200 <= status < 300:
         return ProbeResult(
             True, status, probe, f"credential authenticates (HTTP {status})."
