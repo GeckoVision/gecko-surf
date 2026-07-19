@@ -64,6 +64,7 @@ SurfEvent = Literal[
     "surf.list_tools",  # a connected client enumerated tools/list (the connect->call bridge)
     "surf.blocked",  # the enforcement gate refused a call (poisoned/malformed/exfil)
     "surf.onboard",  # a `gecko add` completed — the CLI's anonymous adoption ping
+    "surf.identify",  # a logged-in identity links an anon `account` -> a durable login hash
 ]
 
 #: Runtime membership form of ``SurfEvent`` (a Literal is not iterable at runtime).
@@ -122,6 +123,7 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "client_os",  # normalized sys.platform family: linux|darwin|windows|<other>
         "install_id",  # opaque RANDOM uuid4 hex — never user-derived, no PII
         "plane",  # a CLOSED CALL_PLANES member (engine|surface) — see CallPlane
+        "account",  # opaque HASHED anon-person id (anon.account_hash) — the funnel join
     }
 )
 
@@ -142,6 +144,7 @@ _LABEL_FIELDS = (
     "version",
     "client_os",
     "install_id",
+    "account",
 )
 #: ``reasons`` carries risk SIGNAL names (``risk.py`` code constants like
 #: "poison.injection"), never a human message or an arg value. Each is shape-validated
@@ -202,6 +205,11 @@ class SurfEventRecord:
     client_os: str | None = None  # normalized OS family (the onboard ping)
     install_id: str | None = None  # opaque random uuid4 hex — no PII (onboard ping)
     plane: str | None = None  # closed CALL_PLANES member (engine|surface)
+    #: Opaque HASHED anon-person id (``anon.account_hash``) — the per-PERSON funnel join
+    #: key, stable across sessions where ``session_id`` rotates. PII-free (a sha256 of a
+    #: random install id, or of a client-hashed login subject). On ``surf.identify`` the
+    #: ``account`` is the anon join key and ``install_id`` carries the durable login hash.
+    account: str | None = None
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)

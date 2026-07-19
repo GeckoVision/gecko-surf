@@ -43,6 +43,16 @@ def test_anonymous_factory_mints_non_secret_free_tier_id() -> None:
     assert a.subject_id in repr(a)
 
 
+def test_for_install_is_stable_across_calls() -> None:
+    # The anonymous shape, made STABLE: bound to the persistent install id, so the SAME
+    # install yields the SAME subject run after run (the anon-first funnel join).
+    a = SessionIdentity.for_install("abc123")
+    b = SessionIdentity.for_install("abc123")
+    assert a.subject_id == b.subject_id == "anon-abc123"
+    assert SessionIdentity.for_install("other").subject_id != a.subject_id
+    assert a.subject_id in repr(a)  # non-secret identifier, safe to surface
+
+
 def test_pass_through_token_is_none_today() -> None:
     # Shape-now-token-later: no per-session token is minted yet, so the underlying
     # session's own credentials are used unchanged. Callers already handle None.

@@ -450,6 +450,137 @@ def test_capture_records_metadata_never_the_payload(tmp_path):
     assert rec["source"] == "synthetic"
 
 
+# --- anon-first: the per-person `account` join key + the login-merge identify event ---
+
+
+def test_connect_stamps_account_hashed_from_the_anon_header(monkeypatch):
+    # A connect our CLI configured carries X-Gecko-Anon (the raw install id); the SERVER
+    # hashes it into `account`. The raw id is NEVER stored, only the acct- hash.
+    from gecko import events
+    from gecko.anon import account_hash
+
+    install_id = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(
+            {
+                **_INIT_BODY,
+                "params": {
+                    **_INIT_BODY["params"],
+                    "clientInfo": {"name": "example-app", "version": "1"},
+                },
+            },
+            {
+                **_GOOD_HEADERS,
+                "user-agent": "claude-code/1.9",
+                "X-Gecko-Anon": install_id,
+            },
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert connect["account"] == account_hash(install_id)
+    assert install_id not in json.dumps(docs)  # the raw id never lands in an event
+    assert set(connect) <= events.RECORD_ALLOWED_KEYS
+
+
+def test_direct_third_party_connect_has_no_account(monkeypatch):
+    # A connect NOT via our CLI carries no header -> the event stays session-scoped only
+    # (honest limit #1). No account key is stamped.
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        _list_tool_specs(_app())  # real client, no anon header
+    finally:
+        events.set_surf_sink_override(None)
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert "account" not in connect
+
+
+def test_login_headers_emit_identify_linking_anon_to_login(monkeypatch):
+    # Both headers present on a successful init -> one surf.identify linking the anon
+    # `account` (join key) to the durable login hash (in install_id).
+    from gecko import events
+    from gecko.anon import account_hash
+
+    install_id = "f00df00df00df00df00df00df00df00d"
+    login_hash = "acct-deadbeefdeadbeef"
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(
+            {
+                **_INIT_BODY,
+                "params": {
+                    **_INIT_BODY["params"],
+                    "clientInfo": {"name": "example-app", "version": "1"},
+                },
+            },
+            {
+                **_GOOD_HEADERS,
+                "user-agent": "claude-code/1.9",
+                "X-Gecko-Anon": install_id,
+                "X-Gecko-Account": login_hash,
+            },
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    identify = next(d for d in docs if d["event"] == "surf.identify")
+    assert identify["account"] == account_hash(install_id)  # anon join key
+    assert identify["install_id"] == login_hash  # the durable login upgrade target
+    assert set(identify) <= events.RECORD_ALLOWED_KEYS
+
+
+def test_no_login_header_no_identify(monkeypatch):
+    from gecko import events
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        _raw_post(
+            {
+                **_INIT_BODY,
+                "params": {
+                    **_INIT_BODY["params"],
+                    "clientInfo": {"name": "example-app", "version": "1"},
+                },
+            },
+            {
+                **_GOOD_HEADERS,
+                "user-agent": "claude-code/1.9",
+                "X-Gecko-Anon": "abc123",
+            },
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert not any(d["event"] == "surf.identify" for d in docs)
+
+
+def test_surface_call_and_list_tools_stamp_account(monkeypatch):
+    # The account threads through the surface emits (surf.list_tools / surf.call / surf.search)
+    # so the whole funnel — not just connect — segments per person.
+    from gecko import events
+    from gecko.mcp_server import McpSurface
+
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    surface = McpSurface(_SentinelClient(), mode="recorded")  # type: ignore[arg-type]
+    docs = _sink_capture()
+    try:
+        surface.list_tools(account="acct-abc")
+        surface.call_tool("get_thing", {}, session_id="s1", account="acct-abc")
+    finally:
+        events.set_surf_sink_override(None)
+    lt = next(d for d in docs if d["event"] == "surf.list_tools")
+    call = next(d for d in docs if d["event"] == "surf.call")
+    assert lt["account"] == "acct-abc"
+    assert call["account"] == "acct-abc"
+
+
 # --- Change 3: uvicorn kwargs trust the ALB's X-Forwarded-For (real client IP) ---
 
 

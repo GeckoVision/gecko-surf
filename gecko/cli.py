@@ -659,8 +659,9 @@ def _cmd_login(argv: list[str]) -> int:
 
     Thin transport: parse args, build the real seams (keychain store), hand off to
     ``privy_login.privy_login`` (Privy passwordless email-OTP, PUBLIC app id only). Local
-    `gecko add` (recorded, $0) never needs this — this gates only the HOSTED plane
-    (attribution, rate-limit, hosted features).
+    `gecko add` (recorded, $0) never needs this — login is an identity UPGRADE that feeds
+    ATTRIBUTION (a durable id on top of the anon install id), NOT a gate: nothing is
+    blocked without it.
 
     Security: only the PUBLIC ``PRIVY_APP_ID`` is read here; ``PRIVY_APP_SECRET`` is never
     referenced — it is a server-side-only credential."""

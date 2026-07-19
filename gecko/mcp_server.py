@@ -158,6 +158,7 @@ class McpSurface:
         user_agent: str | None = None,
         client_kind: str | None = None,
         client: str | None = None,
+        account: str | None = None,
     ) -> list[dict[str, Any]]:
         """The MCP ``tools/list`` view.
 
@@ -203,6 +204,7 @@ class McpSurface:
             user_agent=user_agent,
             client_kind=client_kind,
             client=client,
+            account=account,
         )
         return tools
 
@@ -258,12 +260,22 @@ class McpSurface:
         return False
 
     def call_tool(
-        self, name: str, arguments: dict[str, Any], session_id: str | None = None
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        session_id: str | None = None,
+        *,
+        account: str | None = None,
     ) -> Any:
         """Invoke a tool. ``session_id`` (the MCP transport session, when the caller
         is the HTTP surface) is threaded onto the usage event ONLY as an opaque
         correlation token — it joins connect->call for the retention funnel and is
-        sanitized by ``emit_surf_event``; it never touches the upstream call."""
+        sanitized by ``emit_surf_event``; it never touches the upstream call.
+
+        ``account`` is the hashed anon-person id (server-computed from the ``X-Gecko-Anon``
+        header) — the same per-PERSON join key the connect handshake stamped, threaded onto
+        every usage event so the funnel segments by person, not just by visit. Like
+        ``session_id`` it is control-plane metadata and never touches the upstream call."""
         if name == "search_capabilities":
             hits = self.client.search(arguments.get("query", ""))
             # Return FULL callable defs: enrich each ranked hit with its real inputSchema so
@@ -285,6 +297,7 @@ class McpSurface:
                 surface_id=self.client.surface_id,
                 k=len(hits),
                 session_id=session_id,
+                account=account,
             )
             return enriched
 
@@ -322,6 +335,7 @@ class McpSurface:
                 decision=HONEYPOT_DECISION,
                 reasons=[HONEYPOT_REASON],
                 session_id=session_id,
+                account=account,
             )
             return honeypot_refusal()
 
@@ -341,6 +355,7 @@ class McpSurface:
                 decision="block",
                 reasons=[FAIL_CLOSED_SIGNAL],
                 session_id=session_id,
+                account=account,
             )
             return fail_closed_refusal()
         outcome = apply_gate(assessment, self.enforce)
@@ -357,6 +372,7 @@ class McpSurface:
                 decision="block",
                 reasons=blocked_signals(assessment),
                 session_id=session_id,
+                account=account,
             )
             return refusal_payload(assessment)
 
@@ -381,6 +397,7 @@ class McpSurface:
             mode=eff_mode,
             session_id=session_id,
             plane="surface",
+            account=account,
         )
         # A step_up (or a warn-mode would-be block) executed — flag it, don't hide it.
         if outcome.warn and assessment is not None:

@@ -100,6 +100,67 @@ def test_call_without_session_id_is_not_attributed():
     assert row.activated == 0
 
 
+def _pconnect(surface, session, account, client="claude-code/1.0"):
+    return {
+        "event": "surf.connect",
+        "surface_id": surface,
+        "session_id": session,
+        "account": account,
+        "client": client,
+    }
+
+
+def _pcall(surface, session, account):
+    return {
+        "event": "surf.call",
+        "surface_id": surface,
+        "session_id": session,
+        "account": account,
+    }
+
+
+def test_per_person_segmentation_counts_people_not_visits():
+    # One person (acct-a) connects in TWO sessions and calls; a second person (acct-b)
+    # connects once and never calls. People-level: 2 reached, 1 activated, 1 returned.
+    events = [
+        _pconnect("pegana", "s1", "acct-a"),
+        _pconnect("pegana", "s2", "acct-a"),  # same person, new visit -> returned
+        _pcall("pegana", "s1", "acct-a"),
+        _pconnect("pegana", "s3", "acct-b"),  # a different person, never calls
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.people == 2  # two distinct humans
+    assert row.people_activated == 1  # only acct-a called
+    assert row.people_returned == 1  # acct-a connected across 2 sessions
+    assert row.person_activation_rate == 1 / 2
+
+
+def test_identify_event_counts_a_login_upgrade():
+    events = [
+        _pconnect("pegana", "s1", "acct-a"),
+        {
+            "event": "surf.identify",
+            "surface_id": "pegana",
+            "account": "acct-a",
+            "install_id": "acct-login-xyz",
+        },
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.logins == 1
+
+
+def test_self_account_is_excluded_from_people():
+    # A person whose connect used OUR own client label is us, not an external dev.
+    events = [
+        _pconnect("pegana", "ext", "acct-ext", client="claude-code/1.0"),
+        _pconnect("pegana", "mine", "acct-mine", client="gecko-smoke/9"),
+        _pcall("pegana", "mine", "acct-mine"),
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.people == 1  # only the external person
+    assert row.people_activated == 0  # the self person's call is excluded
+
+
 def test_multiple_surfaces_are_reported_separately():
     events = [
         _connect("pegana", "a"),

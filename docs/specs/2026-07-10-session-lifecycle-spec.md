@@ -8,7 +8,10 @@ status: DESIGN, ready to build falsifier-first*
 > capability:
 > *"Your token expired at 3am. Gecko refreshed it. Your agent didn't notice."*
 > Do not reposition the company on this; it's a reliability feature that we **instrument**
-> (the silent-refresh count becomes the next honest number — corrected-sequencing item #3).
+> (the silent-refresh count is intended as the next honest number — corrected-sequencing
+> item #3). **Status (2026-07-19): NOT built.** No silent-refresh counter is emitted yet —
+> the SurfEvent vocabulary carries no refresh event. Treat this as an aspiration, not a
+> shipped metric, until the counter lands.
 
 ## 1. The moment we're closing
 
@@ -39,7 +42,8 @@ never see it. The session self-heals; the caller is unchanged.
   refresh-token grant), **JWT-with-exp**, the **two-token subscribe** (generalized), and
   **API-key exchange** (key → short-lived token).
 - Instrumentation: a control-plane-clean **silent-refresh counter** (counts + classes, never
-  token values) — the metric that becomes the pitch.
+  token values) — the metric that becomes the pitch. **(Not yet built — no refresh event is
+  emitted today; this stays a planned metric.)**
 
 **Out (honest boundaries — state them, don't paper over):**
 - **True 2FA / human-in-the-loop auth is NOT automatable** — a hard wall for everyone. We own
