@@ -16,6 +16,8 @@ import re
 import sys
 from typing import Any
 
+from pathlib import Path
+
 from .access import keychain_session, public_session
 from .client import AgentApiClient
 from .credentials import CredentialError
@@ -24,6 +26,7 @@ from .http_server import MCP_PATH, serve_http
 from .mcp_server import serve_stdio
 from .modes import coerce_mode
 from .netguard import UnsafeUrlError, validate_public_url
+from .onboard import PingPost, send_serve_ping
 
 
 _DEFAULT_REGISTRY_URL = "https://mcp.geckovision.tech"
@@ -152,8 +155,6 @@ def _emit(
     client: AgentApiClient, out_dir: str, mcp_url: str | None, site_url: str | None
 ) -> int:
     """Write the agent-native artifacts to ``out_dir`` (control-plane only) and return."""
-    from pathlib import Path
-
     from .agentnative import build_artifacts
 
     artifacts = build_artifacts(client, mcp_url=mcp_url, site_url=site_url)
@@ -239,7 +240,13 @@ def _print_banner(name: str, mcp_url: str, summary: str, stdio_spawn: str) -> No
         print("       gecko <spec> --public-url https://<name>.trycloudflare.com\n")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) -> int:
+    """Serve a comprehended surface to agents (stdio or Streamable HTTP).
+
+    ``ping_post`` mirrors ``onboard.AddDeps.ping_post``: ``None`` (the library/test
+    default) sends NOTHING; only the CLI dispatcher wires the real transport, so the
+    first-run serve ping is default-on for `gecko serve` while embedded use stays
+    network-silent."""
     args = _parse_args(argv)
 
     if bool(args.spec) == bool(args.registry):
@@ -354,6 +361,19 @@ def main(argv: list[str] | None = None) -> int:
         emit_mcp = mcp_url if args.public_url else None
         return _emit(client, args.emit_dir, emit_mcp, args.site_url)
 
+    if ping_post is not None:
+        # The serve install channel becomes visible (the /make-agent-ready path runs
+        # serve). Fired here — after comprehension succeeded, before serving — ONCE
+        # per install+surface (a local marker, never per boot: stdio surfaces are
+        # re-spawned every agent session). Same envelope/opt-out as the add ping,
+        # mode="serve"; the transparency line rides stderr (stdout may be JSON-RPC).
+        send_serve_ping(
+            ref=args.spec or args.registry or "",
+            base_url=args.base_url,
+            home=Path.home(),
+            post=ping_post,
+        )
+
     # stdio: the client spawns this process and talks over stdin/stdout. NOTHING may
     # go to stdout except the JSON-RPC stream — the startup note goes to stderr, and
     # no HTTP port is bound. Same comprehended surface + call-time auth injection.
@@ -382,7 +402,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run() -> None:
-    raise SystemExit(main())
+    # ``python -m gecko.serve`` is a CLI entry too — wire the real ping transport,
+    # exactly like the ``gecko serve`` dispatch in cli.py.
+    from .onboard import _default_ping_post
+
+    raise SystemExit(main(ping_post=_default_ping_post))
 
 
 if __name__ == "__main__":

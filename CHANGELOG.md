@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Adoption telemetry counts adopters, not runs.** The install id is written
+  atomically (temp + rename, never a torn file) and reused forever; an unwritable
+  HOME degrades to a per-run id instead of crashing. The `gecko add` onboard ping is
+  now idempotent per install+surface (a local `~/.gecko/pinged/` marker, written only
+  after a ping actually left), so re-running `add` no longer re-counts. The ping URL
+  is resolved at call time, so a dev/test harness that redirects it can no longer
+  post into the production ingest. The test suite is structurally unable to post
+  telemetry (suite-wide transport kill-switch).
+
+### Added
+- **`gecko serve` first-run ping** (`mode="serve"`) — the skill/plugin install
+  channel (`/make-agent-ready` runs serve) becomes visible. Same envelope, same
+  `GECKO_TELEMETRY=off` opt-out, same transparency line (on stderr — stdout may be
+  the stdio JSON-RPC channel), fired once per install+surface, never per boot. The
+  hosted ingest accepts `mode="serve"` in the same change (client/server lockstep).
+- **`plane` event field** (`engine`|`surface`, closed set) on `surf.prepare` /
+  `surf.first_call_correct` (engine) and `surf.call` (surface), documenting why
+  all-time fcc > call is expected: fcc fires on every engine call outcome (demo,
+  `gecko test`, recorded $0 flows included); `surf.call` only on MCP-surface
+  invocations. The honest funnel queries are documented in `gecko/events.py`.
+
 ## 0.4.8 — 2026-07-16
 
 ### Added

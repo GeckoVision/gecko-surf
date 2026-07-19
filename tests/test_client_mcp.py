@@ -78,3 +78,33 @@ def test_recorded_call_is_synthetic_source_and_segregates_corpus(tmp_path):
     assert fcc and fcc[-1]["source"] == "synthetic"  # faked 200 is not observed
     assert not corpus_path.exists()  # nothing synthetic in the main corpus
     assert corpus.synthetic_sibling(corpus_path).exists()  # it landed here instead
+
+
+def test_events_carry_their_plane_so_fcc_vs_call_is_reconcilable():
+    # surf.first_call_correct fires at the ENGINE (every client.call — demo, `gecko
+    # test`, recorded $0 flows included); surf.call fires only when a tool is invoked
+    # THROUGH an MCP surface. They are different planes, not a funnel subset — so
+    # all-time fcc > call is expected, and each event must say which plane emitted it.
+    from gecko.events import set_surf_sink_override
+
+    events: list[dict] = []
+    set_surf_sink_override(lambda doc: events.append(dict(doc)))
+    try:
+        client = _client()
+        name = _odds_tool_name(client)
+        # Engine plane: a direct client call (the `gecko test` / demo shape).
+        client.call(name, {"fixtureId": 1}, mode="recorded")
+        # Surface plane: the same call THROUGH the MCP surface.
+        McpSurface(client).call_tool(name, {"fixtureId": 2})
+    finally:
+        set_surf_sink_override(None)
+
+    fcc = [e for e in events if e["event"] == "surf.first_call_correct"]
+    calls = [e for e in events if e["event"] == "surf.call"]
+    prepares = [e for e in events if e["event"] == "surf.prepare"]
+    assert fcc and all(e["plane"] == "engine" for e in fcc)
+    assert prepares and all(e["plane"] == "engine" for e in prepares)
+    assert calls and all(e["plane"] == "surface" for e in calls)
+    # The surface invocation ALSO resolved at the engine: 2 fcc, 1 surf.call — the
+    # exact fcc>call shape the plane field makes queryable.
+    assert len(fcc) == 2 and len(calls) == 1

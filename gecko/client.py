@@ -455,7 +455,12 @@ class AgentApiClient:
             auth,
             allowed_auth_hosts=self._auth_allowed_hosts,
         )
-        emit_surf_event("surf.prepare", surface_id=self.surface_id, tool_name=tool_name)
+        emit_surf_event(
+            "surf.prepare",
+            surface_id=self.surface_id,
+            tool_name=tool_name,
+            plane="engine",
+        )
         return req
 
     def _effective_mode(self, tool_name: str, mode: CallMode) -> CallMode:
@@ -648,6 +653,9 @@ class AgentApiClient:
         # and a faked recorded 200 never inflates it.
         error_class = corpus.error_class_for(status, exc)
         source = corpus.source_for_mode(mode)
+        # plane="engine": this fires on EVERY client call outcome — local $0 flows
+        # (demo, `gecko test`, recorded) included — whereas surf.call is a SURFACE
+        # event; see events.CallPlane for why all-time fcc > call is expected.
         emit_surf_event(
             "surf.first_call_correct",
             surface_id=self.surface_id,
@@ -657,6 +665,7 @@ class AgentApiClient:
             error_class=error_class,
             latency_ms=latency_ms,
             source=source,
+            plane="engine",
         )
         if self._corpus_path is None:
             return

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 import uuid
 from collections.abc import Callable
@@ -391,11 +393,16 @@ def _default_ping_post(url: str, payload: dict[str, str]) -> None:
 
 def read_or_create_install_id(home: Path) -> str:
     """The opaque install id: a RANDOM ``uuid4().hex`` persisted once at
-    ``<home>/.gecko/install_id`` (0600).
+    ``<home>/.gecko/install_id`` (0600), created on first ping and reused forever.
 
     NOT user-derived — no hostname, email, or machine id goes in — so it counts an
-    install, never identifies a person. Best-effort: an unreadable or unwritable
-    file degrades to an ephemeral id rather than an error."""
+    install, never identifies a person. The write is ATOMIC (temp file in the same
+    directory, then ``os.replace``): a reader can never observe a torn/empty file,
+    which would silently re-mint a fresh id on every later run and turn the
+    people-count into a run-count. Best-effort on failure: an unreadable path or an
+    unwritable HOME (read-only container, sandboxed agent shell) degrades to an
+    ephemeral per-run id rather than crashing — over-counting one run beats breaking
+    ``gecko add`` for a metric."""
     path = home / ".gecko" / "install_id"
     try:
         existing = path.read_text(encoding="utf-8").strip()
@@ -404,15 +411,52 @@ def read_or_create_install_id(home: Path) -> str:
     except OSError:
         pass
     new_id = uuid.uuid4().hex
+    tmp_name: str | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # os.open sets 0600 atomically at creation (hygiene; the id is not a secret).
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # mkstemp in the SAME directory so the final rename cannot cross filesystems;
+        # 0600 before any content lands (hygiene; the id is not a secret).
+        fd, tmp_name = tempfile.mkstemp(prefix="install_id.", dir=path.parent)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(new_id + "\n")
+        os.replace(tmp_name, path)
+        tmp_name = None
     except OSError:
-        pass  # ephemeral this run; the adopter still counts once
+        # Ephemeral this run (see docstring). Never raise: the ping must not break add.
+        if tmp_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
     return new_id
+
+
+# --------------------------------------------------------------------------- #
+# Once-per-install+surface markers — what makes the adoption metric count
+# adopters instead of runs. A marker lives NEXT TO the install-id file
+# (``<home>/.gecko/pinged/<surface-slug>``) and is written only AFTER a ping
+# actually left, so a dead network never burns an adopter's one count.
+# --------------------------------------------------------------------------- #
+def _ping_marker(home: Path, slug: str) -> Path:
+    return home / ".gecko" / "pinged" / slug
+
+
+def _already_pinged(home: Path, slug: str) -> bool:
+    try:
+        return _ping_marker(home, slug).exists()
+    except OSError:
+        return False  # unreadable HOME: fall through and count this run
+
+
+def _mark_pinged(home: Path, slug: str) -> None:
+    """Best-effort, atomic-create marker. An unwritable HOME simply means the next
+    run pings again (count per run) — degrade toward counting, never crash."""
+    marker = _ping_marker(home, slug)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+    except OSError:
+        pass
 
 
 def _client_os() -> str:
@@ -447,16 +491,30 @@ def send_onboard_ping(
     mode: str,
     home: Path,
     post: PingPost,
-    url: str = ONBOARD_PING_URL,
+    surface: str,
+    url: str | None = None,
 ) -> None:
     """Fire the anonymous onboard ping and print the transparency line.
 
-    ``GECKO_TELEMETRY=off`` disables it — then NOTHING is sent or printed. Swallows
-    everything (a dead network, slow DNS under the 2s cap, even a bug here): the
-    ping must never break or noticeably slow ``gecko add``. The note prints only
-    AFTER a POST actually went out — never claim a send that failed."""
+    Idempotent per (install, surface): the quickstart runs ``gecko add`` three times
+    and agents re-run it after a flag fix, so without the ``pinged/`` marker the
+    metric counted runs, not adopters. A re-add of an already-counted surface sends
+    (and prints) nothing.
+
+    ``GECKO_TELEMETRY=off`` disables it — then NOTHING is sent, printed, or marked
+    (opting back in later still counts the adopter once). Swallows everything (a dead
+    network, slow DNS under the 2s cap, even a bug here): the ping must never break
+    or noticeably slow ``gecko add``. The note prints — and the marker is written —
+    only AFTER a POST actually went out, never for a send that failed.
+
+    ``url`` defaults to ``ONBOARD_PING_URL`` resolved at CALL time, deliberately not
+    as a def-time default arg: a dev/test harness that redirects the module attribute
+    must actually take effect, or its fresh-tmp-home runs post straight into the real
+    ingest and pollute the adoption data with distinct-id ping pairs."""
     try:
         if not telemetry_enabled():
+            return
+        if _already_pinged(home, surface):
             return
         payload = {
             "surface_host": _ping_host(ref, base_url),
@@ -466,10 +524,57 @@ def send_onboard_ping(
             # Fold anything unexpected to the $0 default — the wire set is closed.
             "mode": mode if mode == "live" else "recorded",
         }
-        post(url, payload)
+        post(url if url is not None else ONBOARD_PING_URL, payload)
+        _mark_pinged(home, surface)
     except Exception:  # noqa: BLE001 - fire-and-forget; the ping never breaks `add`
         return
     print(ONBOARD_PING_NOTE)
+
+
+def serve_ping_slug(ref: str) -> str:
+    """The marker slug for a served ref. A ``gecko add``-wired surface is spawned as
+    ``gecko serve ~/.gecko/surfaces/<slug>.json`` — its file STEM is the same slug the
+    add already marked, so the wired spawn never double-counts an added surface. Any
+    other ref (a spec URL, a dev path, a registry name) slugs through ``safe_name``."""
+    if os.path.isfile(ref):
+        return safe_name(Path(ref).stem)
+    return safe_name(ref)
+
+
+def send_serve_ping(
+    *,
+    ref: str,
+    base_url: str | None,
+    home: Path,
+    post: PingPost,
+    url: str | None = None,
+) -> None:
+    """The first-run ping for ``gecko serve`` — the install channel the skill/plugin
+    paths use (``/make-agent-ready`` runs serve), previously invisible.
+
+    Same envelope, opt-out, and transparency line as the ``gecko add`` ping, with
+    ``mode="serve"`` distinguishing the channel — and fired ONCE per install+surface
+    via the same ``pinged/`` marker, never per boot: a Claude-wired stdio surface is
+    re-spawned every agent session. The note goes to STDERR — in stdio mode stdout IS
+    the JSON-RPC channel, and a stray line there would corrupt the handshake."""
+    try:
+        if not telemetry_enabled():
+            return
+        slug = serve_ping_slug(ref)
+        if _already_pinged(home, slug):
+            return
+        payload = {
+            "surface_host": _ping_host(ref, base_url),
+            "version": str(__version__)[:_PING_MAX_VALUE],
+            "client_os": _client_os(),
+            "install_id": read_or_create_install_id(home),
+            "mode": "serve",
+        }
+        post(url if url is not None else ONBOARD_PING_URL, payload)
+        _mark_pinged(home, slug)
+    except Exception:  # noqa: BLE001 - fire-and-forget; the ping never breaks serve
+        return
+    print(ONBOARD_PING_NOTE, file=sys.stderr)
 
 
 @dataclass
@@ -592,8 +697,14 @@ def add(
     if deps.ping_post is not None:
         # The adopter becomes visible — fires only HERE, after the surface actually
         # wired. Default-on with the transparency line; GECKO_TELEMETRY=off opts out.
+        # ``surface`` keys the once-per-install+surface marker (a re-add is silent).
         send_onboard_ping(
-            ref=ref, base_url=base_url, mode=mode, home=deps.home, post=deps.ping_post
+            ref=ref,
+            base_url=base_url,
+            mode=mode,
+            home=deps.home,
+            post=deps.ping_post,
+            surface=surface,
         )
     print(f"\n  → ask your agent to use the '{surface}' tools.")
     return 0

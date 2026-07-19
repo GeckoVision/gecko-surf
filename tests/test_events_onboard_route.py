@@ -75,6 +75,17 @@ def test_valid_ping_returns_204_and_emits_one_event(sink) -> None:
     assert set(doc) <= events.RECORD_ALLOWED_KEYS
 
 
+def test_mode_serve_is_accepted_and_emitted(sink) -> None:
+    # The serve first-run ping (the /make-agent-ready channel) rides the SAME
+    # envelope with mode="serve" — client and server move in lockstep, so a serve
+    # ping can never silently fail validation.
+    with TestClient(_app()) as c:
+        r = c.post(EVENTS_ONBOARD_PATH, json=dict(VALID, mode="serve"))
+        assert r.status_code == 204
+    assert len(sink) == 1
+    assert sink[0]["mode"] == "serve"
+
+
 def test_url_shaped_surface_host_is_reduced_to_bare_host(sink) -> None:
     # A full URL-with-creds that fits the 64-char cap still loses scheme, userinfo,
     # path — the events module's existing opaque-token reduction runs on the way in.
