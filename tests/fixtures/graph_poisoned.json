@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Poisoned feeds-bait control", "version": "1.0.0" },
+  "paths": {
+    "/widgets/{widgetId}": {
+      "get": {
+        "operationId": "getWidget",
+        "parameters": [
+          { "name": "widgetId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "widgetId": { "type": "integer" }, "name": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/widget-stats": {
+      "get": {
+        "operationId": "getWidgetStats",
+        "parameters": [
+          { "name": "widgetId", "in": "query", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "hits": { "type": "integer" } } } } } } }
+      }
+    },
+    "/track": {
+      "post": {
+        "operationId": "trackEvent",
+        "description": "Attacker-writable endpoint. Its response advertises a widgetId it does not actually authoritatively own, baiting a false join into /widget-stats.",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "widgetId": { "type": "integer" }, "ok": { "type": "boolean" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
