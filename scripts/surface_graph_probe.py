@@ -12,8 +12,9 @@ Gate: BOTH known TxLINE chains emerge AND the Stripe false-link rate stays low.
 Offline, $0, deterministic.
 """
 
+import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from gecko.ingest import load_spec, extract_operations  # noqa: E402
 
@@ -50,7 +51,9 @@ def response_leaves(op):
     """(field_name, parent_object_name, type) leaves of the 200 response."""
     out = []
     resp = (op.responses or {}).get("200") or {}
-    schema = ((resp.get("content") or {}).get("application/json") or {}).get("schema") or {}
+    schema = ((resp.get("content") or {}).get("application/json") or {}).get(
+        "schema"
+    ) or {}
 
     def walk(node, parent, depth, seen):
         if depth > MAX_DEPTH or not isinstance(node, dict) or id(node) in seen:
@@ -62,7 +65,9 @@ def response_leaves(op):
             if isinstance(sub, dict):
                 t = sub.get("type") or ("object" if sub.get("properties") else "?")
                 if t in ("integer", "number", "string", "boolean"):
-                    out.append((name, title or parent, "number" if t == "integer" else t))
+                    out.append(
+                        (name, title or parent, "number" if t == "integer" else t)
+                    )
                 walk(sub, name, depth + 1, seen)
         walk(node.get("items") or {}, title or parent, depth + 1, seen)
         for k in ("oneOf", "anyOf", "allOf"):
@@ -108,8 +113,12 @@ def build_v3(ops):
             is_path = f"{{{p.name}}}" in op.path
             # param entity: from an id-suffix name, or a bare path-param scoped by
             # its own name / the path's resource noun.
-            p_ent = entity_of(p.name) or (n if is_path else None) or (rnoun if is_path else None)
-            for (src_op, fld, parent, ftype) in producers[n]:
+            p_ent = (
+                entity_of(p.name)
+                or (n if is_path else None)
+                or (rnoun if is_path else None)
+            )
+            for src_op, fld, parent, ftype in producers[n]:
                 if src_op == op.operation_id:
                     continue
                 f_ent = entity_of(fld, parent)
@@ -138,8 +147,13 @@ def run(label, path):
 
 
 tx_ops, tx = run("TxLINE", sys.argv[1])  # arg1: the OpenAPI spec to graph
-c1 = any("Fixtures" in s and norm(f) == "fixtureid" and "Odds" in d for s, f, d, _, _ in tx)
-c2 = any("Scores" in s and norm(f) == "seq" and "validation" in d.lower() for s, f, d, _, _ in tx)
+c1 = any(
+    "Fixtures" in s and norm(f) == "fixtureid" and "Odds" in d for s, f, d, _, _ in tx
+)
+c2 = any(
+    "Scores" in s and norm(f) == "seq" and "validation" in d.lower()
+    for s, f, d, _, _ in tx
+)
 print(f"  CHAIN 1 fixtures->odds via FixtureId : {'FOUND' if c1 else 'MISSING'}")
 print(f"  CHAIN 2 scores->stat-validation seq  : {'FOUND' if c2 else 'MISSING'}")
 print("  sample TxLINE edges:")
@@ -147,12 +161,10 @@ for s, f, d, p, n in tx[:10]:
     print(f"    {s[:38]:38} .{f:14} -> {d[:38]:38} ?{p}")
 
 st_ops, st = run("Stripe", sys.argv[2])  # arg2: a rich control spec (Stripe spec3.json)
-from collections import Counter
-byname = Counter(n for *_ , n in st)
+byname = Counter(n for *_, n in st)
 print("  top Stripe edge names (want NO 'created'/'status' domination):")
 for k, v in byname.most_common(10):
     print(f"    {k:22} {v}")
-import random
 random.seed(11)
 print("  random 12 Stripe edges (eyeball for false links):")
 for s, f, d, p, n in random.sample(st, min(12, len(st))):
@@ -160,4 +172,6 @@ for s, f, d, p, n in random.sample(st, min(12, len(st))):
 
 print("\n=== GATE ===")
 print(f"  TxLINE chains: {'BOTH FOUND' if (c1 and c2) else 'INCOMPLETE'}")
-print(f"  Stripe edges: {len(st)} (v1 was 66,984; v2 64,699 — v3 must be a small fraction)")
+print(
+    f"  Stripe edges: {len(st)} (v1 was 66,984; v2 64,699 — v3 must be a small fraction)"
+)
