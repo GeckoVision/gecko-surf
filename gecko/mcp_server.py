@@ -279,6 +279,19 @@ class McpSurface:
                 if tool is not None:
                     item["inputSchema"] = tool["inputSchema"]
                 enriched.append(item)
+            # Chain enrichment (§5): when the TOP hit's required inputs are not
+            # satisfiable from the intent, attach the ordered supplier plan + its
+            # provenance-carrying explain so the agent can chain first-try instead of
+            # discovering the sequence by trial and error. A thin projection — all the
+            # logic (graph + satisfiability + suppression of trivial plans) lives in the
+            # package (client.plan_for). None when a chain isn't needed, so flat search is
+            # byte-identical there. getattr-guarded for duck-typed clients (catalog
+            # aggregator, test fakes) that carry no planner.
+            plan_for = getattr(self.client, "plan_for", None)
+            if enriched and callable(plan_for):
+                plan = plan_for(arguments.get("query", ""), enriched[0]["name"])
+                if plan is not None:
+                    enriched[0]["plan"] = plan
             # Observe, never mutate: usage metadata only (result breadth k), never the query.
             emit_surf_event(
                 "surf.search",
