@@ -30,7 +30,6 @@ from typing import Any, Literal
 
 from .caller import _missing_required
 from .catalog import _token_list  # the shared identifier tokenizer (do not re-invent)
-from .client import _error_schema, _success_schema
 from .enforce import REMEDIATION
 from .ingest import Operation
 from .risk import (
@@ -39,7 +38,7 @@ from .risk import (
     _schema_conformance,
     classify_operation,
 )
-from .sample import example_from_schema
+from .sample import error_schema, example_from_schema, success_schema
 from .sanitize import sanitize_schema
 from .tools import to_tool
 
@@ -56,7 +55,7 @@ PROBE_MODE_NOTE = (
 _GENERIC_ERROR_BODY: dict[str, str] = {"error": "invalid request (synthetic probe)"}
 
 #: The synthetic status for a call that fails validation. Fixed at 422 (the
-#: canonical "well-formed but semantically invalid" code); ``_error_schema`` scans
+#: canonical "well-formed but semantically invalid" code); ``error_schema`` scans
 #: 422 first so the body shape aligns whenever the API declares one.
 _VALIDATION_STATUS = 422
 
@@ -182,7 +181,7 @@ def _op_verb_tokens(op: Operation) -> set[str]:
 def _insufficient(op: Operation) -> SimResult:
     """The synthetic 422 for a debit that exceeds the simulated balance — the API's OWN
     declared error shape (or the generic constant body) + the remediation line."""
-    data = _synthesize(_error_schema(op))
+    data = _synthesize(error_schema(op))
     if data is None:
         data = dict(_GENERIC_ERROR_BODY)
     return SimResult(
@@ -244,7 +243,7 @@ def evaluate(
             signals.append(reason.signal)
 
     if signals:
-        data = _synthesize(_error_schema(op))
+        data = _synthesize(error_schema(op))
         if data is None:
             data = dict(_GENERIC_ERROR_BODY)
         return SimResult(
@@ -261,4 +260,4 @@ def evaluate(
         if state_result is not None:
             return state_result
 
-    return SimResult(status=200, data=_synthesize(_success_schema(op)))
+    return SimResult(status=200, data=_synthesize(success_schema(op)))
