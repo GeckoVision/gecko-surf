@@ -288,3 +288,81 @@ two orders of magnitude versus v1/v2.
 `scripts/surface_graph_probe.py` (offline, $0, deterministic; needs the TxLINE
 spec and a Stripe `spec3.json`). The `DECLARED`-hint fallback (§9) is NOT
 triggered — lexical inference on the v3 basis carries `feeds` at rich-API scale.
+
+## 12. Checkup revision (2026-07-19) — reordered build + the real-comprehension join
+
+A five-lane read-only audit (architecture, comprehension, code+test, storage,
+CI) ran after `gecko/graph.py` v1 landed. It changed the build order and
+resolved the open questions. **The headline: the multi-API graph is not the
+first thing to build — it is the fourth.** Three findings force the reorder:
+
+1. **The graph is orphaned — it reaches no agent.** `build_graph`/`plan` are
+   imported nowhere but their own tests; `catalog.search` has no planner hook,
+   `mcp_server` surfaces no `plan` block. By our own "wired ≠ reaches the agent"
+   rule, chain comprehension is currently dark. §5 is designed, not wired.
+2. **Chain-correctness is unmeasured.** `fcc_eval.py` scores one tool pick;
+   `test_graph.py` asserts plan *structure* but never *executes* a plan. The §6
+   "a whole plan is falsifiable offline at $0" promise is unbuilt. We cannot
+   honestly claim first-plan-correct for anything until this exists.
+3. **Two inference bugs will fire on API #2** (must fix before any measurement,
+   or they corrupt it): (a) the `endswith("id")` entity heuristic misfires on
+   English words (`paid`→`pai`, `valid`, `void`, `uuid`, `grid`) and those take
+   the entity-match branch, which — unlike the non-entity branch — skips the
+   `_ID_TYPES` filter, so a boolean field can mint a *high*-confidence `feeds`
+   edge; (b) `_required_inputs` sees only `path`/`query` params, so a join key
+   carried in a **request body** (every "create X referencing Y's id" chain) is
+   invisible — which kills exactly the multi-API mutate chains the ICP runs.
+
+### The reordered plan
+- **Phase 1 (now) — make the single-API chain real AND measured.** Fix the two
+  bugs → build the **chain-FCC harness** (recorded-mode plan executor: run each
+  `PlanStep` through the existing `prepare`/`call` path, thread step N's
+  synthesized output field named by the edge into step N+1's param, and score
+  the whole chain *well-formed* + *value-kind-correct* — the chain analogue of
+  `fcc`, $0, no live calls, no new corpus) → seed it with the two known TxLINE
+  chains → **wire `plan()` into `catalog.search`** and prove it reaches the
+  agent with a direct MCP probe. This is also the demo of the single-API a-ha.
+- **Phase 2 — de-risk the code the graph must extend.** Split `client.py` (721
+  lines) before wiring plans through it; peel the spec→scheme derivation out of
+  `access.py`; split `graph.py` into model/build/plan + an adjacency index.
+- **Phase 3 — the one-way foundation decision.** Node ids and the `Node`
+  dataclass gain a **`surface_id`** namespace (today's ids feed `content_hash`,
+  so this is a one-way contract — get it right first, before any cross-API
+  edge). `PlanStep` gains per-step surface/host (a cross-API plan is otherwise
+  unexecutable — the agent won't know which API each step hits). **Compose N
+  per-API graphs at query time — never merge into one** (genericity frequency
+  is computed per-union today, which pollutes each API's inference).
+- **Phase 4 — multi-API, gated by a two-API probe** (§8.5): known-true cross
+  link found AND false-cross-link count under a *stricter* bar than §7, because
+  the cost of a wrong cross-API plan is the agent calling the wrong **system**.
+
+### The cross-API join is REAL comprehension, not string-match (the crux)
+This is Graphify for API *surfaces*, and it is one of the hardest, most
+defensible pains — so the join must be genuine entity identity, ranked by a
+**trust ladder**, never coincidental name equality:
+
+1. **`DECLARED` (highest)** — a provider's `x-gecko` hint or a customer saying
+   "our `fixture_id` == TxODDS `FixtureId`". One line of metadata beats any
+   inference. *(Resolves §9: yes, `DECLARED` is a third provenance class, ranked
+   `EXTRACTED > DECLARED > INFERRED`.)*
+2. **`EXTRACTED` entity identity** — the same **well-known resource** (a token
+   address, a ticker, a fixture id) appearing as one API's typed output and
+   another's typed input, matched on entity, surface-scoped on both sides.
+3. **`INFERRED` name-match — demoted to `low`/quarantined across APIs.** Bare
+   name+type equality is the *least* portable signal between two independent
+   naming conventions; across APIs it silently under-links where it should chain
+   and over-links where two APIs share a generic id name. It is never a
+   cross-API plan's basis unless a `DECLARED` hint confirms it.
+
+Every cross-API edge records `surface_id` on both endpoints, its basis, its
+confidence, and the node-origin (`SPEC`|`DOCS`, §8.4) of its weakest node — so a
+plan's `explain` block can show *why two systems were chained* and a reviewer
+can audit it. This provenance ladder IS the anti-poisoning control extended to
+the cross-API surface. **Per-workspace, never global** (§8.5) still holds.
+
+*(Resolves §9 plan-caching: cache each surface's serialized graph keyed by
+`surface_rev` — it is a pure function of the spec and already control-plane-clean
+bytes (`serialize()`); compose the small N a workspace needs at query time. No
+DB, no vectors — the evidence bars for either (a real multi-API false-link rate
+over the §7 gate AND per-workspace op count past the lexical ceiling) are not
+met, so both stay out.)*
