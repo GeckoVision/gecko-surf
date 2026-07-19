@@ -43,6 +43,7 @@ from .honeypot import (
 )
 from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
+from .search import project_hits
 
 logger = logging.getLogger("gecko.mcp_server")
 
@@ -265,7 +266,21 @@ class McpSurface:
         correlation token — it joins connect->call for the retention funnel and is
         sanitized by ``emit_surf_event``; it never touches the upstream call."""
         if name == "search_capabilities":
-            hits = self.client.search(arguments.get("query", ""))
+            query = arguments.get("query", "")
+            # Prefer the provenance-carrying substrate when the client offers it
+            # (``AgentApiClient.search_ranked`` — a pure superset of ``search``): the top
+            # hit's ``is_fallback`` feeds the genuine-hit gate below. Duck-typed clients
+            # (catalog aggregator, test fakes) keep the frozen ``search`` path; they carry
+            # no retrieval provenance, so the gate stays permissive there (and they carry
+            # no planner either, so nothing changes).
+            ranked_fn = getattr(self.client, "search_ranked", None)
+            if callable(ranked_fn):
+                ranked = ranked_fn(query)
+                hits = project_hits(ranked)
+                top_hit_genuine = bool(ranked) and not ranked[0].is_fallback
+            else:
+                hits = self.client.search(query)
+                top_hit_genuine = bool(hits)
             # Return FULL callable defs: enrich each ranked hit with its real inputSchema so
             # the agent can recover the schema the above-scale list_tools projection withheld
             # and call the tool correctly first try. Below scale this is additive metadata on
@@ -287,9 +302,15 @@ class McpSurface:
             # package (client.plan_for). None when a chain isn't needed, so flat search is
             # byte-identical there. getattr-guarded for duck-typed clients (catalog
             # aggregator, test fakes) that carry no planner.
+            #
+            # Genuine-hit gate: below scale an out-of-scope query still returns EVERY
+            # usable tool as a score-0 fallback (the surface-all rule), so hits[0] is an
+            # ordering artifact (GET-first-then-path), not intent — attaching a supplier
+            # plan there would steer the agent into a chain nobody asked for. A plan rides
+            # the top hit ONLY when the lexical arm genuinely corroborated it.
             plan_for = getattr(self.client, "plan_for", None)
-            if enriched and callable(plan_for):
-                plan = plan_for(arguments.get("query", ""), enriched[0]["name"])
+            if enriched and top_hit_genuine and callable(plan_for):
+                plan = plan_for(query, enriched[0]["name"])
                 if plan is not None:
                     enriched[0]["plan"] = plan
             # Observe, never mutate: usage metadata only (result breadth k), never the query.
