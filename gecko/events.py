@@ -61,6 +61,7 @@ SurfEvent = Literal[
     "surf.first_call_correct",  # a call outcome resolved (ok + error_class)
     "surf.connect",  # a client opened an MCP session (initialize succeeded)
     "surf.connect_failed",  # an MCP initialize handshake failed (4xx / stale session)
+    "surf.list_tools",  # a connected client enumerated tools/list (the connect->call bridge)
     "surf.blocked",  # the enforcement gate refused a call (poisoned/malformed/exfil)
     "surf.onboard",  # a `gecko add` completed — the CLI's anonymous adoption ping
 ]

@@ -108,3 +108,38 @@ def test_events_carry_their_plane_so_fcc_vs_call_is_reconcilable():
     # The surface invocation ALSO resolved at the engine: 2 fcc, 1 surf.call — the
     # exact fcc>call shape the plane field makes queryable.
     assert len(fcc) == 2 and len(calls) == 1
+
+
+def test_list_tools_emits_one_list_tools_event_with_funnel_fields():
+    # The blind connect->call segment: surf.list_tools makes "an agent connected and
+    # enumerated the tools" visible, carrying the SAME sanitized correlation fields the
+    # other surf events carry (never PII, control-plane only).
+    from gecko.events import RECORD_ALLOWED_KEYS, set_surf_sink_override
+
+    events: list[dict] = []
+    set_surf_sink_override(lambda doc: events.append(dict(doc)))
+    try:
+        surface = McpSurface(_client())
+        surface.list_tools(
+            session_id="sess-abc123",
+            user_agent="claude-code/1.9",
+            client_kind="client",
+        )
+    finally:
+        set_surf_sink_override(None)
+
+    lt = [e for e in events if e["event"] == "surf.list_tools"]
+    assert len(lt) == 1  # exactly once per list_tools call
+    doc = lt[0]
+    assert doc["session_id"] == "sess-abc123"
+    assert doc["user_agent"] == "claude-code/1.9"
+    assert doc["client_kind"] == "client"
+    assert set(doc) <= RECORD_ALLOWED_KEYS  # nothing off-schema ever leaves
+
+
+def test_list_tools_is_a_noop_without_a_sink():
+    # Ships silent like the other emits: no override + no MONGODB_URI => no phone-home,
+    # and list_tools still returns the surface unchanged.
+    surface = McpSurface(_client())
+    tools = surface.list_tools()  # no sink armed -> emit is a no-op, must not raise
+    assert tools[0]["name"] == "search_capabilities"
