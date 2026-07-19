@@ -162,6 +162,48 @@ flowchart TD
 
 ---
 
+## The surface graph — intent → the right *chain* of calls
+
+Real questions rarely map to one endpoint. *"Get live odds updates"* needs a
+`fixtureId` the agent doesn't have — so the right answer is a **chain**:
+fetch the fixtures first, thread the id into the odds call. Gecko derives that
+chain **from the spec alone** — no call logs, no training data, no annotation —
+and hands it to the agent with the reasoning attached:
+
+```
+agent intent: "get live odds updates"
+
+plan:
+  1. GET /api/fixtures/snapshot              # supplies fixtureId
+  2. GET /api/odds/updates/{fixtureId}
+explain:
+  fixtureId ← FixtureId   [INFERRED · entity:fixture · high]
+```
+
+- **Spec-derived.** Every multi-call system we know of plans over a graph that
+  is dataset-annotated, learned from call logs, or simply given. Gecko infers
+  the `feeds` graph unilaterally from the raw OpenAPI — the same zero-cold-start
+  move as the rest of the engine.
+- **Provenance on every edge.** `EXTRACTED` (parsed from the spec) vs
+  `INFERRED` (derived, with its basis + confidence shown). A poisoned spec can
+  at worst mint an auditable low-confidence edge — never a silent fact. Plans
+  are suggestions-with-provenance; your agent still makes every call itself.
+- **Measured, not asserted.** The chain-FCC harness executes whole plans in
+  recorded mode ($0, offline) and scores them end-to-end; the inference basis
+  passed a falsifiable gate before we built it (on the Stripe control it cut
+  false links **66,984 → 337**, −99.5%, while still finding every known chain
+  on a real paywalled API). See [docs/benchmarks.md](docs/benchmarks.md).
+- **On by default.** `search_capabilities` attaches the `plan` block whenever
+  the top match needs inputs your stated intent doesn't supply — and stays
+  byte-identical flat search when it doesn't.
+
+Cross-API chains (one query spanning two APIs, joined on genuine entity
+identity rather than name coincidence) are the frontier we're building next —
+the design is public in
+[`docs/specs/2026-07-19-surface-graph-correlations-design.md`](docs/specs/2026-07-19-surface-graph-correlations-design.md).
+
+---
+
 ## Make any API agent-usable
 
 Point it at an OpenAPI and your agent can call it — no client code, auth handled,
