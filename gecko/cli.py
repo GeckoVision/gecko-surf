@@ -419,6 +419,28 @@ def _cmd_auth(argv: list[str]) -> int:
     )
     p_test.add_argument("api", help="Surface/provider name, e.g. colosseum.")
     p_test.add_argument("--account", default=None, help="Named identity (optional).")
+    p_test.add_argument(
+        "--live",
+        action="store_true",
+        help="Actually CALL the API to confirm the credential authenticates (a "
+        "resolvable value can still be expired/revoked). Reports the HTTP status.",
+    )
+    p_test.add_argument(
+        "--spec",
+        default=None,
+        help="OpenAPI spec (URL or path) for the --live probe. Auto for bundled "
+        "surfaces (e.g. txline).",
+    )
+    p_test.add_argument(
+        "--base-url",
+        default=None,
+        help="Host for the --live probe (default: the spec's first server).",
+    )
+    p_test.add_argument(
+        "--op",
+        default=None,
+        help="Operation to probe (default: first auth-gated GET with no required args).",
+    )
 
     args = p.parse_args(argv)
     if args.action == "set":
@@ -428,7 +450,14 @@ def _cmd_auth(argv: list[str]) -> int:
     if args.action == "list":
         return _auth_list()
     if args.action == "test":
-        return _auth_test(args.api, args.account)
+        return _auth_test(
+            args.api,
+            args.account,
+            live=args.live,
+            spec_src=args.spec,
+            base_url=args.base_url,
+            op=args.op,
+        )
     p.print_help()
     return 0
 
@@ -494,23 +523,68 @@ def _auth_list() -> int:
     return 0
 
 
-def _auth_test(api: str, account: str | None) -> int:
+def _auth_test(
+    api: str,
+    account: str | None,
+    *,
+    live: bool = False,
+    spec_src: str | None = None,
+    base_url: str | None = None,
+    op: str | None = None,
+) -> int:
     """Resolve the credential and report ONLY which backend answered — never the
     value, its length, or a prefix. ``which_backend`` reads the value internally to
-    confirm a non-empty hit but never returns or logs it."""
-    ref = credentials.CredentialRef(api=api, account=account)
-    resolver = credentials.default_resolver()
-    try:
-        who = credentials.which_backend(ref, resolver)
-    except credentials.CredentialError as exc:
-        # A configured command that failed: the error carries name + exit code only.
-        print(f"auth: {exc}", file=sys.stderr)
-        return 1
-    if who is None:
-        print(credentials.no_credential_message(ref), file=sys.stderr)
-        return 1
-    print(f"resolved ✓ via {who}")
-    return 0
+    confirm a non-empty hit but never returns or logs it.
+
+    With ``live=True``, go one step further and prove the credential actually
+    AUTHENTICATES — a resolvable value can still be expired/revoked, and only a real
+    call reveals that (the exact trap a stale TxODDS session sprang: resolved ✓, 401)."""
+    if not live:
+        # Resolve-only: does the keychain return a value for THIS exact slot?
+        ref = credentials.CredentialRef(api=api, account=account)
+        resolver = credentials.default_resolver()
+        try:
+            who = credentials.which_backend(ref, resolver)
+        except credentials.CredentialError as exc:
+            # A configured command that failed: error carries name + exit code only.
+            print(f"auth: {exc}", file=sys.stderr)
+            return 1
+        if who is None:
+            print(credentials.no_credential_message(ref), file=sys.stderr)
+            return 1
+        print(f"resolved ✓ via {who}")
+        return 0
+
+    # --live: the probe is authoritative. It builds the WHOLE surface session via
+    # keychain_session (which resolves per-scheme slots for a multi-token API like
+    # TxLINE), so it must NOT be gated on the bare `api` slot — that slot is empty by
+    # design when creds live under `api:<scheme>` accounts.
+    from . import authcheck
+
+    if spec_src:
+        from .ingest import load_spec
+
+        spec, base = load_spec(spec_src), base_url
+    else:
+        target = authcheck.bundled_probe_target(api)
+        if target is None:
+            print(
+                "--live needs a spec: pass --spec <url|path> "
+                "(auto only for bundled surfaces like txline).",
+                file=sys.stderr,
+            )
+            return 2
+        spec, default_base = target
+        base = base_url or default_base
+
+    result = authcheck.live_probe(spec, api, base_url=base, op=op)
+    mark = "✓" if result.ok else "✗"
+    probed = f"  (probed {result.op})" if result.op else ""
+    print(
+        f"live {mark} {result.detail}{probed}",
+        file=sys.stdout if result.ok else sys.stderr,
+    )
+    return 0 if result.ok else 1
 
 
 def _cmd_rm(argv: list[str]) -> int:
