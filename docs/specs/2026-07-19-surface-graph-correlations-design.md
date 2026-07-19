@@ -69,7 +69,7 @@ API #2 must not touch it).
 | `operation --consumes--> param` | EXTRACTED | spec parameter list |
 | `operation --produces--> field` | EXTRACTED | response schema |
 | `operation --on--> resource` | EXTRACTED | path template |
-| `field --feeds--> param` | **INFERRED** | recorded basis: exact-name + type match; name-variant match (`fixtureId`/`FixtureId`); never fuzzy-semantic in v1 |
+| `field --feeds--> param` | **INFERRED** | recorded basis: the **v3 entity basis** (§10 — probe-derived; the two simpler bases were falsified 2026-07-19); never fuzzy-semantic in v1 |
 | `operation --paginates--> operation` | EXTRACTED where the spec declares it; INFERRED from cursor-param patterns otherwise | |
 
 Every INFERRED edge carries `{basis, confidence ∈ {high, low}}`. Serialization
@@ -199,3 +199,46 @@ new machinery:
 - Plan caching: plans are derivable at ingest time for common intents —
   precompute per surface, or walk per query? (Measure at probe scale first;
   premature either way.)
+
+## 10. Probe results (run 2026-07-19 — gate NOT yet passed, two bases falsified)
+
+The §7 probe ran the same day this spec was written, offline, $0, against the
+full TxLINE spec (18 operations) and Stripe `spec3.json` (587 operations, the
+rich-API control). Two inference bases were tried; **both failed the gate**,
+each teaching a different thing. Per the gate's own rule, the build does not
+proceed on either — the findings define the v3 basis that must pass first.
+
+| Basis | TxLINE | Stripe (control) |
+|---|---|---|
+| **v1** exact-name + type match | ✅ both known chains found, no hand-hints; the 169-edge eyeball set is dominated by genuinely valid flows | ❌ 66,984 edges — `created` alone produces 24,050; `status` 11,256; `type`, `currency`, `object` follow. Generic *state/filter* fields, not identities |
+| **v2** id-shaped params only (path-param names or `*id`) | ❌ loses the `seq → stat-validation` chain — legitimate flow keys are not always ids | ❌ 64,699 edges — Stripe's bare `{id}` path param is **polymorphic** (every resource's `id`), so it matches every produced `id` field across unrelated resources |
+
+**What each failure teaches:**
+
+- Stripe's failure ⇒ identity needs **resource scope**. `Customer.id` feeds
+  customer-path params and nothing else; a bare `id` name carries no entity by
+  itself — the entity lives in the *parent object* of the produced field and
+  the *resource noun* of the consuming path.
+- TxLINE's v2 failure ⇒ legitimate flow keys are **not always id-shaped**
+  (`seq`). What actually distinguishes `seq` from `created` is **statistical
+  rarity**: `seq` is produced/consumed in a handful of places; `created`
+  appears in thousands. Genericity is measurable from the graph itself — no
+  hand-maintained stoplist required.
+
+**The v3 basis (the build prerequisite):** a `feeds` edge requires
+
+1. **entity naming** — the field name itself carries the entity
+   (`fixtureId` = fixture + id), matched to a same-entity param; **or**
+2. **scoped bare id** — a bare `id` field whose parent schema's object/resource
+   matches the consuming operation's path resource noun; **and in all cases**
+3. **statistical genericity demotion** — a name produced by more than a small
+   fraction of the API's operations is auto-demoted to `low` confidence and
+   excluded from plans (this replaces the §7 manual stoplist, which becomes a
+   seed list only).
+
+§7's gate re-runs with v3 on the same two specs plus the same eyeball
+protocol. If v3 also fails on the control, the honest conclusion is that
+lexical inference alone cannot carry `feeds` at rich-API scale and the design
+must lean on `DECLARED` hints (§9) — which changes the product motion
+(provider/customer annotation) and should be decided consciously, not slid
+into.
