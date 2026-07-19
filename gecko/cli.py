@@ -55,6 +55,7 @@ _SUBCOMMANDS = (
     # `npx @geckovision/gecko <name>`) can run them with no local spec file.
     "jupiter-mcp",
     "colosseum-mcp",
+    "txline-mcp",
 )
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
@@ -736,6 +737,10 @@ def main(argv: list[str] | None = None) -> int:
         from .examples import colosseum  # lazy: pulls serve deps only when invoked
 
         return colosseum.main(rest)
+    if cmd == "txline-mcp":
+        from .examples import txline  # lazy: pulls serve deps only when invoked
+
+        return txline.main(rest)
     if cmd == "test":
         return _cmd_test(rest)
     if cmd == "inspect":
