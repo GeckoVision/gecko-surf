@@ -76,6 +76,18 @@ class SessionIdentity:
         subject = _ANON_PREFIX + secrets.token_hex(_ANON_ENTROPY_BYTES)
         return cls(subject_id=subject, policy=policy or AgentPolicy())
 
+    @classmethod
+    def for_install(
+        cls, install_id: str, policy: AgentPolicy | None = None
+    ) -> SessionIdentity:
+        """The anonymous shape, made STABLE across sessions: bound to the persistent,
+        PII-free ``install_id`` (``onboard.read_or_create_install_id``) instead of a
+        fresh random suffix. Same non-secret ``anon-`` subject convention as
+        :meth:`anonymous`, so it stays safe to log/repr — but it identifies *the same
+        person* run after run, which is the whole point of the anon-first funnel. The
+        install id is an opaque identifier, never a credential."""
+        return cls(subject_id=_ANON_PREFIX + install_id, policy=policy or AgentPolicy())
+
     def bound_token(self) -> str | None:
         """The per-session identity token, or ``None`` when pass-through.
 

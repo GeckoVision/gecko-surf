@@ -28,9 +28,10 @@
 
 ### Added
 - **`gecko login`** — hosted-identity enrollment via Privy passwordless email-OTP
-  (email → one-time code → sealed credential). Gates only the hosted plane; local
-  `gecko add` (recorded, $0) stays zero-login. Client-side flow, public app id only —
-  the Privy app secret never enters the CLI. (#148)
+  (email → one-time code → sealed credential). Feeds ATTRIBUTION, not gating: it upgrades
+  the anonymous install identity to a durable one so we can tell real devs apart and reach
+  them — nothing is gated, and local `gecko add` / `serve` stay zero-login. Client-side
+  flow, public app id only — the Privy app secret never enters the CLI. (#148)
 
 ### Fixed
 - **Cloudflare `1010` User-Agent ban.** Outbound provider calls now send a real

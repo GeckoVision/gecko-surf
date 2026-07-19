@@ -94,6 +94,7 @@ def test_allowed_fields_is_the_exact_closed_set():
         "client_os",
         "install_id",
         "plane",
+        "account",
     }
 
 
@@ -130,6 +131,7 @@ def test_event_vocabulary_is_closed():
         "surf.list_tools",
         "surf.blocked",
         "surf.onboard",
+        "surf.identify",
     }
 
 

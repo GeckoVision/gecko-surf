@@ -9,10 +9,11 @@ identity). Two providers ship: :class:`RegistryProvider` (our own registry OTP e
 and, in ``privy_login``, the Privy passwordless email-OTP provider.
 
 Why this exists: local ``gecko add`` (recorded, $0) stays **zero-login** — it's the wedge.
-``gecko login`` gates only the HOSTED plane (attribution, rate-limit, hosted features), so
-we can finally tell real users from crawlers. The credential lives in the keychain and never
-in the config file; the identity file holds only non-secret references (email + issuer + a
-subject id).
+``gecko login`` is an identity UPGRADE that feeds ATTRIBUTION (a durable identity layered on
+top of the anonymous install id — see ``gecko.anon``), so we can finally tell real users from
+crawlers and reach the ones we attract. It does **not** gate anything: nothing is blocked
+without it. The credential lives in the keychain and never in the config file; the identity
+file holds only non-secret references (email + issuer + a subject id).
 
 Every side effect is an injected seam so the whole flow is falsifiable offline: the
 provider (HTTP), ``prompt`` (OTP entry), ``store`` (keychain), ``home`` (config dir). The

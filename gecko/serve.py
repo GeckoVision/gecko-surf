@@ -211,7 +211,11 @@ def _print_banner(name: str, mcp_url: str, summary: str, stdio_spawn: str) -> No
     # HTTP is for the real remote/shared case only — demoted below the stdio default.
     print("Serving to a remote or shared client? Use the HTTP URL instead:")
     print(f"  MCP URL (Streamable HTTP):  {mcp_url}")
-    adds = all_add_strings(name, mcp_url)
+    # Attach the anon-first attribution header so a connect WE handed the developer is
+    # joinable to their install per person (measurement-only; empty when telemetry off).
+    from .anon import anon_connect_headers
+
+    adds = all_add_strings(name, mcp_url, anon_connect_headers(Path.home()))
     print(f"  Claude Code:  {adds['claude']}")
     print(f"  Cursor:       {adds['cursor']}")
     print(f"  VS Code:      {adds['vscode']}\n")

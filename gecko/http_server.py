@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import corpus
 from .access import public_session
+from .anon import ACCOUNT_HEADER, ANON_HEADER, account_hash
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
@@ -207,13 +208,45 @@ def _user_agent_from_scope(scope: Any) -> str | None:
     """Pull the raw HTTP ``User-Agent`` from an ASGI ``scope`` header list (list of
     ``(name, value)`` byte tuples). UNTRUSTED — the caller sanitizes + caps it before it
     is ever stored (``_safe_user_agent``). A malformed/absent header is simply ``None``."""
+    return _header_from_scope(scope, b"user-agent")
+
+
+def _header_from_scope(scope: Any, name: bytes) -> str | None:
+    """Pull one header value (lowercase ``name``) from an ASGI ``scope`` header list, or
+    ``None``. A malformed/absent header is simply ``None`` (best-effort, never raises)."""
     for key, value in scope.get("headers") or []:
-        if bytes(key).lower() == b"user-agent":
+        if bytes(key).lower() == name:
             try:
                 return bytes(value).decode("latin-1")
-            except Exception:  # noqa: BLE001 - a malformed header is simply no UA
+            except Exception:  # noqa: BLE001 - a malformed header is simply no value
                 return None
     return None
+
+
+_ANON_HEADER_BYTES = ANON_HEADER.lower().encode("latin-1")
+_ACCOUNT_HEADER_BYTES = ACCOUNT_HEADER.lower().encode("latin-1")
+
+
+def _account_from_scope(scope: Any) -> str | None:
+    """The hashed anon-person ``account`` for this request, or ``None``.
+
+    Reads the ``X-Gecko-Anon`` header our CLI sets on a hosted connect it configured, and
+    hashes it SERVER-SIDE (``account_hash``) so the raw install id is never stored. A
+    direct third-party connect (not via our CLI) sends no header -> ``None`` -> the event
+    stays ``session_id``-scoped only (honest limit #1). Best-effort: a bad value hashes to
+    a stable token rather than raising."""
+    raw = _header_from_scope(scope, _ANON_HEADER_BYTES)
+    if not raw:
+        return None
+    return account_hash(raw[:_MAX_ANON_HEADER])
+
+
+#: Cap the raw anon header before hashing — a real install id is a 32-char uuid hex; a
+#: larger value is junk/hostile and must never be trusted verbatim (we hash it anyway).
+_MAX_ANON_HEADER = 128
+#: Cap the client-computed login hash (``acct-<hex>``, ~21 chars) before it is stored as a
+#: label — anything longer is junk; it is shape-validated fail-closed by ``events`` anyway.
+_MAX_LOGIN_HASH = 64
 
 
 def _emit_connect_outcome(
@@ -225,6 +258,8 @@ def _emit_connect_outcome(
     user_agent: str | None,
     client_kind: str,
     is_init: bool,
+    account: str | None = None,
+    login_hash: str | None = None,
 ) -> None:
     """Emit the control-plane-safe funnel event for a POST outcome to ``/mcp``.
 
@@ -235,8 +270,11 @@ def _emit_connect_outcome(
       UA-only) so bots are visible in the funnel. Non-init 2xx (a normal tools/call) and
       any other status emit NOTHING — the conditionals ARE the noise guard.
 
-    Every emit carries the sanitized ``user_agent`` + robot/human ``client_kind``.
-    Best-effort: only a control-plane violation surfaces (telemetry never breaks a call).
+    Every emit carries the sanitized ``user_agent`` + robot/human ``client_kind``, and the
+    hashed anon-person ``account`` (when our CLI configured the connect). On a successful
+    init connect that ALSO carries a login hash (``X-Gecko-Account``), one ``surf.identify``
+    row links the anon ``account`` -> the durable login hash (Tier-2 upgrade). Best-effort:
+    only a control-plane violation surfaces (telemetry never breaks a call).
     """
     try:
         if is_init and 200 <= status < 300:
@@ -247,7 +285,21 @@ def _emit_connect_outcome(
                 session_id=session_id,
                 user_agent=user_agent,
                 client_kind=client_kind,
+                account=account,
             )
+            if account is not None and login_hash is not None:
+                # The merge: anon `account` -> durable login hash. The login hash rides in
+                # `install_id` (opaque, PII-free — same shape as the field's usual uuid) so
+                # a query can group anon accounts sharing one login (cross-device merge).
+                # Attribution-only + passthrough-hash: the Privy token is not
+                # server-verifiable (honest limit #2), so this never gates.
+                emit_surf_event(
+                    "surf.identify",
+                    surface_id=surface_id,
+                    account=account,
+                    install_id=login_hash,
+                    session_id=session_id,
+                )
         elif 400 <= status < 500:
             emit_surf_event(
                 "surf.connect_failed",
@@ -255,6 +307,7 @@ def _emit_connect_outcome(
                 client=client,
                 user_agent=user_agent,
                 client_kind=client_kind,
+                account=account,
             )
     except TelemetryError:
         raise
@@ -287,6 +340,11 @@ class _InitializeCaptureASGI:
         # UA is request metadata (fine to store once sanitized); no raw IP (PII) here.
         user_agent = _safe_user_agent(_user_agent_from_scope(scope))
         client_kind = classify_client(user_agent, client)
+        # The per-person join key: hash the anon header server-side (None for a direct
+        # third-party connect). The login hash is client-computed + non-PII — passed
+        # through only to link the anon account on surf.identify (never gates).
+        account = _account_from_scope(scope)
+        login_hash = _header_from_scope(scope, _ACCOUNT_HEADER_BYTES)
 
         emitted = False
         surface_id = self._surface_id
@@ -310,6 +368,8 @@ class _InitializeCaptureASGI:
                     user_agent=user_agent,
                     client_kind=client_kind,
                     is_init=is_init,
+                    account=account,
+                    login_hash=login_hash[:_MAX_LOGIN_HASH] if login_hash else None,
                 )
             await send(event)
 
@@ -355,6 +415,29 @@ def _user_agent_from_context(server: Any) -> str | None:
     except Exception:  # noqa: BLE001 - a non-mapping request object is simply no UA
         return None
     return value if isinstance(value, str) else None
+
+
+def _account_from_context(server: Any) -> str | None:
+    """The hashed anon-person ``account`` from the low-level server's per-request context
+    (same seam as ``_session_id_from_context``) — so ``list_tools`` / ``call_tool`` carry
+    the SAME per-person join key the ``surf.connect`` handshake stamped. Reads the
+    ``X-Gecko-Anon`` header and hashes it server-side; ``None`` outside a request, when the
+    header is absent (direct third-party connect), or when it is empty."""
+    try:
+        ctx = server.request_context
+    except LookupError:
+        return None
+    request = getattr(ctx, "request", None)
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get(ANON_HEADER)
+    except Exception:  # noqa: BLE001 - a non-mapping request object is simply no account
+        return None
+    if not isinstance(raw, str) or not raw:
+        return None
+    return account_hash(raw[:_MAX_ANON_HEADER])
 
 
 def _surface_from(
@@ -497,6 +580,8 @@ def build_http_app(
                 # clientInfo is only in the initialize frame, not on this request; classify
                 # by UA alone (same UA-only stance as the non-init connect_failed path).
                 client_kind=classify_client(user_agent, None),
+                # Same per-person join key the connect handshake stamped (server-hashed).
+                account=_account_from_context(server),
             )
         else:
             tools = (
@@ -519,9 +604,12 @@ def build_http_app(
         # connect->call per session (retention). Only McpSurface accepts it; the meta
         # surface (duck-typed) does not, so it is passed conditionally.
         session_id = _session_id_from_context(server)
+        account = _account_from_context(server)
         try:
             if isinstance(surface, McpSurface):
-                result = surface.call_tool(name, args, session_id=session_id)
+                result = surface.call_tool(
+                    name, args, session_id=session_id, account=account
+                )
             else:
                 result = surface.call_tool(name, args)
         except CallError as exc:
@@ -847,6 +935,10 @@ def build_multi_surface_app(
                     client_os=fields["client_os"],
                     install_id=fields["install_id"],
                     mode=fields["mode"],
+                    # The per-person join key: hash the SAME install id the hosted-connect
+                    # header carries, so an onboard ping and a later connect share one
+                    # `account` and the whole funnel joins install -> connect -> call.
+                    account=account_hash(fields["install_id"]),
                 )
         except Exception:  # noqa: BLE001 - incl. TelemetryError: hostile wire input
             # must fail closed to "emit nothing", never to a scraper-visible 500.
