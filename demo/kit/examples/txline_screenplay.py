@@ -66,12 +66,14 @@ out(f"{CYAN}$ GET /api/fixtures/snapshot{RESET}", 0.02)
 code = status("/api/fixtures/snapshot")
 put(f"{RED}✗ HTTP {code}{RESET} — auth. Fine — we have a valid JWT.", 1.5)
 put("")
-out(f"{CYAN}$ GET /api/fixtures/snapshot   -H \"Authorization: Bearer $JWT\"{RESET}", 0.02)
+out(
+    f'{CYAN}$ GET /api/fixtures/snapshot   -H "Authorization: Bearer $JWT"{RESET}', 0.02
+)
 code = status("/api/fixtures/snapshot", {"Authorization": f"Bearer {JWT}"})
 put(f"{RED}✗ HTTP {code}{RESET} — valid token... still forbidden?!", 1.2)
 put(f"{YELLOW}It secretly needs a SECOND token — both headers, together.{RESET}", 1.6)
 put("")
-out(f"{CYAN}$ GET /api/fixtures/snapshot   + -H \"X-Api-Token: $TOKEN\"{RESET}", 0.02)
+out(f'{CYAN}$ GET /api/fixtures/snapshot   + -H "X-Api-Token: $TOKEN"{RESET}', 0.02)
 code = status(
     "/api/fixtures/snapshot",
     {"Authorization": f"Bearer {JWT}", "X-Api-Token": TOK},
@@ -81,7 +83,11 @@ put("An afternoon of doc-diving — and every agent relearns it from zero.", 2.6
 
 # ---------- scene 2 — with Gecko ----------
 clear()
-out(f"{BOLD}SAME API — WITH GECKO. KEYS SEALED IN THE OS KEYCHAIN.{RESET}", 0.03, pause=1.2)
+out(
+    f"{BOLD}SAME API — WITH GECKO. KEYS SEALED IN THE OS KEYCHAIN.{RESET}",
+    0.03,
+    pause=1.2,
+)
 put("")
 out(f"{CYAN}$ gecko auth test txline --live{RESET}", 0.02)
 put(f"{GREEN}✓ live — credential authenticates (HTTP 200){RESET}", 1.6)
