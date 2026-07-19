@@ -1,0 +1,75 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Generic-name control", "version": "1.0.0" },
+  "paths": {
+    "/orders": {
+      "get": {
+        "operationId": "getOrders",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orderId": { "type": "integer" },
+                    "status": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invoices": {
+      "get": {
+        "operationId": "getInvoices",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/shipments": {
+      "get": {
+        "operationId": "getShipments",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/payments": {
+      "get": {
+        "operationId": "getPayments",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/refunds": {
+      "get": {
+        "operationId": "getRefunds",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/returns": {
+      "get": {
+        "operationId": "getReturns",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/order-detail": {
+      "get": {
+        "operationId": "getOrderDetail",
+        "parameters": [
+          { "name": "orderId", "in": "query", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "total": { "type": "integer" } } } } } } }
+      }
+    },
+    "/filter": {
+      "get": {
+        "operationId": "filterByStatus",
+        "parameters": [
+          { "name": "status", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" } } } } } } }
+      }
+    }
+  }
+}
