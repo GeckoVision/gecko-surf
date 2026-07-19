@@ -242,3 +242,49 @@ lexical inference alone cannot carry `feeds` at rich-API scale and the design
 must lean on `DECLARED` hints (§9) — which changes the product motion
 (provider/customer annotation) and should be decided consciously, not slid
 into.
+
+## 11. Probe re-run with v3 — PASSED, build proceeds (2026-07-19)
+
+The §7 gate re-ran with the v3 basis, same two specs, same eyeball protocol.
+**v3 passes cleanly. The build is greenlit.**
+
+| basis | TxLINE chains | Stripe (control) edges |
+|---|---|---|
+| v1 name+type | 1 of 2 | 66,984 |
+| v2 id-shaped only | 1 of 2 | 64,699 |
+| **v3** | **both found** | **337** (−99.5%) |
+
+The v3 basis as implemented (three moves, all measurable from the surface, no
+hand-maintained stoplist):
+
+1. **Entity ids are the API's spine — exempt from genericity.** A name that is
+   an entity id (`fixtureId` → entity `fixture`; a bare `id` scoped by its
+   parent object) links only field→param of the *same* entity. `FixtureId`
+   appearing in most TxLINE ops is not noise — it is the join key, and the
+   entity scope already prevents over-linking. This was the v3-draft bug the
+   probe caught: a naive genericity fraction demoted `FixtureId` on the small
+   API and lost chain 1.
+2. **Genericity demotes non-id names by produce OR consume frequency, floored.**
+   `generic_t = max(4, ceil(0.03 · n_ops))`. The floor of 4 is load-bearing: on
+   an 18-op API a pure fraction makes anything in ≥1 op "generic" (1/18 = 5.5%)
+   and kills `seq` (chain 2). Consume-frequency is the other half — `limit` is
+   *produced* by few Stripe ops but *consumed* by 381, so a produce-only check
+   missed it; consume-frequency demotes it.
+3. **Non-id flow keys must be id-shaped (number/string).** Drops boolean/enum
+   false links (`shippable`, and similar) that share a name across unrelated
+   ops. Took Stripe 374 → 337.
+
+**Honest residue.** The 337 Stripe edges are dominated by legitimate
+resource-named ids (`client_reference_id`, `transaction`, `product`, `payout`,
+`payment_intent`, `location`, `meter` — Stripe names ids by resource, without an
+`Id` suffix). A small residue of string-enum filters (e.g. `device_type`)
+remains; a `feeds` *edge* is not a *plan* (a plan forms only when an agent's
+intent needs that chain), and `DECLARED` hints (§9) plus the same type/entity
+refinements shrink the residue further. This is well within the gate's bar
+("both chains found AND a small fraction on the control"), which v3 clears by
+two orders of magnitude versus v1/v2.
+
+**Decision:** build v1 of the graph on the v3 basis (§8). The probe script is
+`scripts/surface_graph_probe.py` (offline, $0, deterministic; needs the TxLINE
+spec and a Stripe `spec3.json`). The `DECLARED`-hint fallback (§9) is NOT
+triggered — lexical inference on the v3 basis carries `feeds` at rich-API scale.
