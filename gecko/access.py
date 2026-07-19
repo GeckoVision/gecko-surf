@@ -393,9 +393,8 @@ class ResolvedSession:
 # --- Keychain-backed session derived from a spec's own security scheme -------
 
 
-def _header_scheme_from_spec(spec: dict[str, Any]) -> tuple[str, str] | None:
-    """``(header_name, scheme)`` derived from the spec's FIRST declared
-    ``securityScheme`` — never a hardcoded ``Bearer``.
+def _scheme_mapping(defn: Any) -> tuple[str, str] | None:
+    """``(header_name, render)`` for one ``securityScheme`` definition, or ``None``.
 
     Only header-shaped schemes are supported, the same safety line
     ``tools.auth_location_is_safe`` already draws for tool visibility: ``apiKey``
@@ -405,19 +404,72 @@ def _header_scheme_from_spec(spec: dict[str, Any]) -> tuple[str, str] | None:
     caller fails closed rather than guess a wire shape ``ResolvedSession`` can't
     correctly express.
     """
-    schemes = (spec.get("components") or {}).get("securitySchemes")
-    if not isinstance(schemes, dict) or not schemes:
+    if not isinstance(defn, dict):
         return None
-    first = next(iter(schemes.values()), None)
-    if not isinstance(first, dict):
-        return None
-    kind = str(first.get("type", "")).lower()
-    if kind == "apikey" and str(first.get("in", "")).lower() == "header":
-        name = first.get("name")
+    kind = str(defn.get("type", "")).lower()
+    if kind == "apikey" and str(defn.get("in", "")).lower() == "header":
+        name = defn.get("name")
         return (str(name), "raw") if isinstance(name, str) and name else None
-    if kind == "http" and str(first.get("scheme", "")).lower() == "bearer":
+    if kind == "http" and str(defn.get("scheme", "")).lower() == "bearer":
         return "Authorization", "bearer"
     return None
+
+
+def _header_schemes_from_spec(spec: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Every header-shaped scheme the spec declares, as
+    ``[(scheme_name, header_name, render)]`` in declaration order.
+
+    A two-token API (TxLINE: ``httpAuth`` + ``apiKeyAuth``) yields two entries; a
+    one-scheme API yields one; a spec with only unsupported schemes yields none.
+    ``scheme_name`` is the KEY in ``components.securitySchemes`` — it names the
+    keychain account so ``gecko auth set <surface> --account <scheme_name>`` seals
+    the matching secret.
+    """
+    schemes = (spec.get("components") or {}).get("securitySchemes")
+    if not isinstance(schemes, dict):
+        return []
+    out: list[tuple[str, str, str]] = []
+    for scheme_name, defn in schemes.items():
+        mapping = _scheme_mapping(defn)
+        if mapping is not None:
+            header_name, render = mapping
+            out.append((str(scheme_name), header_name, render))
+    return out
+
+
+def _header_scheme_from_spec(spec: dict[str, Any]) -> tuple[str, str] | None:
+    """``(header_name, render)`` for the FIRST header-shaped scheme, or ``None``.
+
+    Kept as the single-scheme view over ``_header_schemes_from_spec`` for callers
+    that only need one mapping.
+    """
+    schemes = _header_schemes_from_spec(spec)
+    if not schemes:
+        return None
+    _, header_name, render = schemes[0]
+    return header_name, render
+
+
+@dataclass
+class MultiSession:
+    """Adapter for APIs whose endpoints require SEVERAL header schemes at once —
+    e.g. TxLINE's ``Authorization: Bearer <jwt>`` **and** ``X-Api-Token: <tok>``.
+
+    Holds one child ``AuthSession`` per declared header scheme and merges their
+    headers at call time. Every child resolves its own secret lazily from the
+    credential chain, so — like ``ResolvedSession`` — nothing secret is ever
+    stored on the instance, and its ``repr`` is safe (the children's resolvers are
+    excluded from theirs). The seam is unchanged: this is just an ``AuthSession``
+    that happens to emit more than one header.
+    """
+
+    sessions: list[AuthSession]
+
+    def auth_headers(self) -> dict[str, str]:
+        merged: dict[str, str] = {}
+        for session in self.sessions:
+            merged.update(session.auth_headers())
+        return merged
 
 
 def keychain_session(
@@ -426,32 +478,73 @@ def keychain_session(
     *,
     resolver: ChainResolver | None = None,
 ) -> tuple[AuthSession, str | None]:
-    """The session ``gecko serve --auth-keychain <surface>`` runs with: a live
-    ``ResolvedSession`` sourced from the credential chain (keychain -> command ->
-    env, see ``credentials.default_resolver``), with ``header_name``/``scheme``
-    derived from the SPEC's own first declared security scheme.
+    """The session ``gecko serve --auth-keychain <surface>`` runs with: live
+    ``ResolvedSession``(s) sourced from the credential chain (keychain -> command
+    -> env, see ``credentials.default_resolver``), with header/scheme derived from
+    the SPEC's own declared security schemes — never a hardcoded ``Bearer``.
 
-    Returns ``(session, warning)``. When the spec's scheme is missing or
-    unsupported this NEVER crashes — it degrades to ``public_session()`` and
-    returns a printable warning for the caller to surface (recorded-mode and
-    no-auth calls keep working; a live auth-gated call fails at the transport
-    edge, same as an unset ``--auth-env`` today).
+    - **No** header-shaped scheme → degrade to ``public_session()`` + a printable
+      warning (recorded/no-auth calls keep working; a live auth-gated call fails
+      at the transport edge, same as an unset ``--auth-env``). Never crashes.
+    - **One** scheme → a plain ``ResolvedSession`` keyed by the bare surface name
+      (``account=None``) — fully backward-compatible.
+    - **Two or more** (e.g. TxLINE's two-token) → a ``MultiSession`` that injects
+      every scheme together, each secret keyed by its scheme NAME
+      (``CredentialRef(api=surface, account=scheme_name)``).
+
+    Returns ``(session, warning)``.
     """
-    mapping = _header_scheme_from_spec(spec)
-    if mapping is None:
+    mappings = _header_schemes_from_spec(spec)
+    if not mappings:
         return public_session(), (
             f"auth: could not derive a header/scheme for {surface!r} from the "
             "spec's security schemes (need an apiKey-in-header or http/bearer "
             "scheme) — serving without auth injection."
         )
-    header_name, scheme = mapping
-    session = ResolvedSession(
-        CredentialRef(api=surface),
-        header_name,
-        scheme=scheme,
-        resolver=resolver or default_resolver(),
-    )
-    return session, None
+    res = resolver or default_resolver()
+    if len(mappings) == 1:
+        _, header_name, scheme = mappings[0]
+        return (
+            ResolvedSession(
+                CredentialRef(api=surface),
+                header_name,
+                scheme=scheme,
+                resolver=res,
+            ),
+            None,
+        )
+    sessions: list[AuthSession] = [
+        ResolvedSession(
+            CredentialRef(api=surface, account=scheme_name),
+            header_name,
+            scheme=scheme,
+            resolver=res,
+        )
+        for scheme_name, header_name, scheme in mappings
+    ]
+    return MultiSession(sessions), None
+
+
+def auth_setup_hint(spec: dict[str, Any], surface: str) -> str | None:
+    """Human guidance printed after comprehending a MULTI-scheme spec: the exact
+    per-scheme ``gecko auth set`` commands so nobody guesses which token is which.
+
+    Returns ``None`` for a zero/one-scheme spec (the plain flow already covers it).
+    """
+    mappings = _header_schemes_from_spec(spec)
+    if len(mappings) < 2:
+        return None
+    lines = [
+        f"{surface} declares {len(mappings)} auth schemes — seal one credential "
+        "for each:"
+    ]
+    for scheme_name, header_name, render in mappings:
+        flag = " --scheme bearer" if render == "bearer" else ""
+        lines.append(
+            f"  gecko auth set {surface} --account {scheme_name}{flag}"
+            f"    # -> {header_name}"
+        )
+    return "\n".join(lines)
 
 
 @dataclass

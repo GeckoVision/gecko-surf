@@ -18,7 +18,7 @@ from typing import Any
 
 from pathlib import Path
 
-from .access import keychain_session, public_session
+from .access import auth_setup_hint, keychain_session, public_session
 from .client import AgentApiClient
 from .credentials import CredentialError
 from .deeplinks import all_add_strings, claude_stdio_add_command
@@ -300,6 +300,9 @@ def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) ->
             session, warning = keychain_session(fetched.spec, args.auth_keychain)
             if warning:
                 print(warning, file=sys.stderr)
+            hint = auth_setup_hint(fetched.spec, args.auth_keychain)
+            if hint:
+                print(hint, file=sys.stderr)
         try:
             client = AgentApiClient(
                 fetched.spec, session=session, base_url=args.base_url
@@ -327,11 +330,13 @@ def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) ->
                 # is untouched.
                 from .ingest import load_spec
 
-                session, warning = keychain_session(
-                    load_spec(args.spec), args.auth_keychain
-                )
+                spec_for_auth = load_spec(args.spec)
+                session, warning = keychain_session(spec_for_auth, args.auth_keychain)
                 if warning:
                     print(warning, file=sys.stderr)
+                hint = auth_setup_hint(spec_for_auth, args.auth_keychain)
+                if hint:
+                    print(hint, file=sys.stderr)
             client = AgentApiClient(args.spec, session=session, base_url=args.base_url)
         except (UnsafeUrlError, ValueError) as exc:
             print(f"Could not comprehend spec: {exc}", file=sys.stderr)
