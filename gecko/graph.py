@@ -425,6 +425,13 @@ def build_graph(operations: list[Operation]) -> SurfaceGraph:
                 if f_ent and p_ent:
                     # rule 1: entity match — entity ids are the spine, exempt from
                     # genericity (the entity scope already prevents over-linking).
+                    # BUT still id-shape-filter here (§12 bug a): the endswith("id")
+                    # entity heuristic misfires on English words (`paid`->`pa`,
+                    # `valid`, `void`, `uuid`, `grid`), so a *boolean* field named
+                    # `paid` would otherwise mint a high-confidence join key. A join
+                    # key is number/string-shaped; drop bool/enum here too.
+                    if ftype not in _ID_TYPES:
+                        continue
                     if f_ent == p_ent:
                         basis = f"scoped-id:{f_ent}" if n == "id" else f"entity:{f_ent}"
                         edges.append(

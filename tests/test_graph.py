@@ -121,6 +121,66 @@ def test_real_entity_key_still_links_when_generic_names_are_demoted() -> None:
     assert p.explain[0].basis == "entity:order" and p.explain[0].confidence == "high"
 
 
+# --- entity-branch id-shape filter (§12 bug a) ----------------------------------
+def test_boolean_field_named_paid_mints_no_high_feeds_edge() -> None:
+    """The ``endswith('id')`` entity heuristic misfires on English words (``paid``
+    -> entity ``pa``), and the entity-match branch — unlike the non-entity branch —
+    must ALSO apply the ``_ID_TYPES`` id-shape filter. A *boolean* ``paid`` produced
+    by one op and consumed by another must NOT mint a high-confidence feeds edge
+    (a boolean is not a join key), or plans thread a truthy flag as an identifier."""
+    spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/invoices": {
+                "get": {
+                    "operationId": "listInvoices",
+                    "responses": {
+                        "200": {
+                            "description": "",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "title": "Invoice",
+                                        "properties": {"paid": {"type": "boolean"}},
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/filter": {
+                "get": {
+                    "operationId": "filterByPaid",
+                    "parameters": [
+                        {
+                            "name": "paid",
+                            "in": "query",
+                            "required": True,
+                            "schema": {"type": "boolean"},
+                        }
+                    ],
+                    "responses": {"200": {"description": ""}},
+                }
+            },
+        },
+    }
+    g = build_graph(extract_operations(spec))
+    paid_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "filterByPaid" and n.name == "paid"
+    )
+    # no high-confidence (plan-eligible) feeds edge for a boolean field.
+    assert g.feeds_into(paid_param, high_only=True) == []
+    # and no feeds edge at all: a boolean is not id-shaped, so the branch drops it
+    # rather than laundering it to a quarantined LOW edge.
+    assert g.feeds_into(paid_param, high_only=False) == []
+    assert plan(g, "filterByPaid", set()) is None
+
+
 # --- poisoned spec (§8) ---------------------------------------------------------
 def test_poisoned_feeds_bait_stays_quarantined_to_inferred() -> None:
     """A malicious endpoint advertising a `widgetId` it does not own creates only
