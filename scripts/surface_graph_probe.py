@@ -137,7 +137,7 @@ def run(label, path):
     return ops, kept
 
 
-tx_ops, tx = run("TxLINE", sys.argv[1]  # TxLINE (or any) OpenAPI spec)
+tx_ops, tx = run("TxLINE", sys.argv[1])  # arg1: the OpenAPI spec to graph
 c1 = any("Fixtures" in s and norm(f) == "fixtureid" and "Odds" in d for s, f, d, _, _ in tx)
 c2 = any("Scores" in s and norm(f) == "seq" and "validation" in d.lower() for s, f, d, _, _ in tx)
 print(f"  CHAIN 1 fixtures->odds via FixtureId : {'FOUND' if c1 else 'MISSING'}")
@@ -146,7 +146,7 @@ print("  sample TxLINE edges:")
 for s, f, d, p, n in tx[:10]:
     print(f"    {s[:38]:38} .{f:14} -> {d[:38]:38} ?{p}")
 
-st_ops, st = run("Stripe", sys.argv[2]  # a rich control spec (Stripe spec3.json))
+st_ops, st = run("Stripe", sys.argv[2])  # arg2: a rich control spec (Stripe spec3.json)
 from collections import Counter
 byname = Counter(n for *_ , n in st)
 print("  top Stripe edge names (want NO 'created'/'status' domination):")
