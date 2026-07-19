@@ -31,7 +31,7 @@ TERM_X, TERM_Y, TERM_W, TERM_H = 42, 38, 1116, 599
 CONTENT_X, CONTENT_Y = 72, 104
 CELL_W, CELL_H = 13, 26
 
-BG = "#F4F7FB"
+BG = "#0A0F1A"  # Gecko blue — the house frame
 TERMINAL = "#0D1117"
 TERMINAL_BAR = "#161B22"
 TEXT = "#E6EDF3"
@@ -131,9 +131,9 @@ def render_frame(
                 data, font=font, fill=char_color(char),
             )
 
-    draw.text((52, 650), brand, font=UI_BOLD, fill="#183B56")
+    draw.text((52, 650), brand, font=UI_BOLD, fill="#35C2D4")
     fw = draw.textbbox((0, 0), tagline, font=UI)[2]
-    draw.text((WIDTH - fw - 52, 650), tagline, font=UI, fill="#5C6B7A")
+    draw.text((WIDTH - fw - 52, 650), tagline, font=UI, fill="#8B949E")
     return image
 
 
