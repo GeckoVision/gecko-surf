@@ -140,8 +140,55 @@ eval tasks in `gecko test` (multi-step suites) go from "agent flails" to
   bytes); poisoned-spec test (malicious `feeds`-bait fields stay quarantined
   to INFERRED with their basis visible)
 
-Explicitly *not* in v1: cross-API edges, corpus-weighted edges, vector
-similarity for `feeds` inference, any UI.
+Explicitly *not* in v1: corpus-weighted edges, vector similarity for `feeds`
+inference, any UI. Cross-API edges are **phase 2, not a non-goal** — see §8.5.
+
+## 8.4 Docs as input — the full Graphify analogue
+
+Graphify runs on local docs; our analogue is not limited to OpenAPI. The
+`gecko from-docs` pipeline already turns human docs pages into normalized
+`Operation`s — and **the graph builder consumes normalized Operations, so
+docs-derived surfaces graph for free**. What changes is trust, and it must be
+explicit:
+
+- **Node-level provenance joins edge-level provenance.** Operations originate
+  as `SPEC` (OpenAPI, deterministic parse) or `DOCS` (from-docs extraction,
+  inherently softer). A plan is only as trustworthy as its weakest node, and
+  the plan's `explain` block must surface it: a chain through a `DOCS`-origin
+  operation says so.
+- **Same anti-poisoning posture, higher stakes.** Docs pages are the most
+  attacker-writable input we ingest. `DOCS`-origin nodes never *upgrade* an
+  INFERRED edge's confidence, and `feeds`-bait quarantine (§8 tests) runs on
+  docs-derived corpora too.
+- This is the wedge restated: the painful APIs — the ICP — are exactly the
+  ones *without* a clean OpenAPI. If the graph only worked on well-specified
+  APIs, it would work best where it is needed least.
+
+## 8.5 Cross-API correlation — phase 2, the ICP-shaped payoff
+
+The ICP is teams running **multi-API agents**, and their real chains cross
+APIs (fetch a price from API A → act on API B; resolve an id in one system →
+query it in another). Single-API plans (v1) prove the mechanism; cross-API
+plans are what the customer actually runs. Phase 2 extends the same model, no
+new machinery:
+
+- **Cross-API `feeds` edges** use stricter bases than intra-API ones: shared
+  *entity* identity (the same well-known resource — a token address, a ticker,
+  a fixture id — appearing as one API's output and another's input), never
+  bare name+type match (the generic-name over-linking risk squares across
+  APIs; the §7 stoplist becomes mandatory, not advisory).
+- **`DECLARED` hints get their strongest use here**: a provider or the
+  customer declaring "our `fixture_id` is TxODDS's `FixtureId`" is one line
+  of x-gecko metadata that beats any inference.
+- **Per-workspace, never global** — the day-one model holds: correlations are
+  computed inside a customer's own set of ingested surfaces. There is no
+  public cross-API graph, no catalog. Two customers ingesting the same two
+  APIs each get their own graph. (This also keeps the no-public-catalog
+  discipline from becoming accidentally violated by a "helpful" shared graph.)
+- **Probe extension before phase 2 builds:** a two-API falsifiable case with a
+  known-true cross link and counting false cross links — same gate logic
+  as §7, stricter bar (the cost of a wrong cross-API plan is an agent calling
+  the wrong *system*, not just the wrong endpoint).
 
 ## 9. Open questions (decide at probe time)
 
