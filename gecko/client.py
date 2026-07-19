@@ -31,8 +31,10 @@ from .caller import CallError, LiveTransport, PreparedRequest, build_request, ex
 from .catalog import Catalog
 from .fusion import RRF_K, rrf_fuse
 from .events import emit_surf_event
+from .graph import SurfaceGraph, build_graph
 from .ingest import Operation, extract_operations, load_spec
 from .modes import CallMode
+from .planner import plan_for_query
 from .sample import example_from_schema
 from .sanitize import sanitize_schema
 from .scale import should_surface_all
@@ -243,6 +245,10 @@ class AgentApiClient:
         self._corpus_path = corpus_path
         self.surface_rev = surface_rev(self.spec)
         self.surface_id = surface_id or _host_of(self.base_url) or "surface"
+        # Lazily-built surface graph (§4) — the correlations/planning index over this
+        # surface's operations. Built once on first plan request (pure, deterministic),
+        # kept out of construction so a client that never plans pays nothing.
+        self._surface_graph: SurfaceGraph | None = None
 
     @property
     def surface_all(self) -> bool:
@@ -253,6 +259,31 @@ class AgentApiClient:
         to decide list_tools projection — below scale it emits full defs (byte-identical to
         today), above scale lightweight refs — so there is never a second threshold."""
         return self._surface_all
+
+    @property
+    def surface_graph(self) -> SurfaceGraph:
+        """The deterministic surface graph over this client's operations (§4), built and
+        cached on first access. Pure/surface-only (invariants #1/#2) — operations, params,
+        fields, and INFERRED ``feeds`` edges, never payloads. Powers ``plan_for``."""
+        if self._surface_graph is None:
+            self._surface_graph = build_graph(self.operations)
+        return self._surface_graph
+
+    def plan_for(self, query: str, tool_name: str) -> dict[str, Any] | None:
+        """A supplier-chain plan (§5) for the operation behind ``tool_name`` under
+        ``query`` — or ``None`` when the top op's required inputs are already satisfiable
+        from the intent and flat search stands (no chain needed).
+
+        This is the seam that carries ``graph.plan()`` to an agent: the MCP surface calls
+        it on the TOP search hit and, when non-None, attaches the returned dict — ordered
+        steps + provenance-carrying ``explain`` — to that hit. The plan is a
+        suggestion-with-provenance; the agent still makes every call itself (Gecko never
+        becomes the data plane). Returns a control-plane-safe dict (no auth, no payloads).
+        """
+        op = self._op_by_name.get(tool_name)
+        if op is None:
+            return None
+        return plan_for_query(self.surface_graph, op, query)
 
     def search_scored(self, query: str, limit: int = 5) -> list[ScoredHit]:
         """The pure ranked retrieval substrate — carries ``score``/``is_fallback`` (retrieval

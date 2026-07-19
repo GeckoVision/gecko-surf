@@ -459,3 +459,32 @@ not an engine failure to paper over.**
 One genuine capture gap remains before cross-API mutate chains work: request-body
 fields are never nodes (`graph.py:366-393` walks only params + response leaves), so
 "create X referencing Y's id" is invisible (already flagged §12-3b).
+
+## 14. The authored-enrichment loop (founder, 2026-07-19) — Gecko on both sides
+
+Gecko is not only the *reader* of OpenAPI surfaces — it helps **author** them
+(`gecko from-docs`, provider onboarding). That closes a loop the cross-API
+foundation (§13) can lean on:
+
+1. **Author/enrich** — when we help build an `openapi.json`, we seed the
+   value-domain signals §13.1 needs (`pattern`, `enum`, `format`, examples) and
+   the `x-gecko` entity hints directly into the spec. The easier a surface is to
+   comprehend, the easier the entity-join lands — so we *make* surfaces easy to
+   comprehend rather than hoping they arrive that way.
+2. **Comprehend → join** — richer spec ⇒ the deterministic tier fires instead of
+   falling to the DECLARED-only floor (§13.5).
+3. **Save the relationship** — once an entity equivalence is established
+   (derived at high confidence, or human/provider-confirmed), it is persisted as
+   a **DECLARED edge** in the workspace graph and never re-derived. Confirmation
+   upgrades INFERRED → DECLARED, permanently, with its audit trail (the `explain`
+   provenance §5/Task-3 carries end-to-end is what makes that upgrade reviewable).
+
+**The guardrail (do not drift into the retired corpus):** "saved" means the
+confirmed **relationship** — surface-level metadata, provenance-tagged,
+per-workspace. NEVER observed traffic, call outcomes, or payload values (the
+retired corpus: ≈0 lift, and it would break invariant #1). Save the relationship,
+not the payload; per-workspace, never a global catalog.
+
+This is the compounding edge of the *allowed* kind, and it is the Gorilla-LLM
+discipline extended: the lift is in the **surface**, so we invest where the
+surface is made — and every confirmed join makes the next comprehension cheaper.
