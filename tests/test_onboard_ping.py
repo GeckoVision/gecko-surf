@@ -18,9 +18,13 @@ test stays network-silent.
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 
+import pytest
+
+from gecko import onboard
 from gecko.netguard import UnsafeUrlError
 from gecko.onboard import (
     ONBOARD_PING_NOTE,
@@ -199,11 +203,131 @@ def test_install_id_persists_and_is_uuid_hex(tmp_path):
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
-def test_two_adds_share_the_same_install_id(tmp_path, monkeypatch):
+def test_two_adds_of_different_surfaces_share_the_same_install_id(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    pings: list[tuple[str, dict[str, str]]] = []
+    deps = _deps(tmp_path, ping_post=lambda url, payload: pings.append((url, payload)))
+    add("https://api.stripe.com/openapi.json", deps=deps)
+    add("https://api.stripe.com/openapi.json", name="stripe-two", deps=deps)
+    assert len(pings) == 2
+    assert pings[0][1]["install_id"] == pings[1][1]["install_id"]
+
+
+def test_a_fresh_home_mints_a_new_install_id(tmp_path):
+    # Counting people = one id per machine, never one per person: a NEW home mints a
+    # NEW random id (no user-derived/machine-derived value could ever tie them).
+    first = read_or_create_install_id(tmp_path / "home-a")
+    second = read_or_create_install_id(tmp_path / "home-b")
+    assert first != second
+
+
+def test_install_id_write_is_atomic_never_a_partial_file(tmp_path, monkeypatch):
+    # The persist step must be write-tmp-then-rename: if the final rename never
+    # happens, NO install_id file may exist (a torn/empty file would make every
+    # later run re-mint, which is exactly the field bug: N pings, N distinct ids).
+    def no_replace(src, dst):
+        raise OSError("simulated crash before rename")
+
+    monkeypatch.setattr(os, "replace", no_replace)
+    got = read_or_create_install_id(tmp_path)
+    assert re.fullmatch(r"[0-9a-f]{32}", got)  # still returns a usable per-run id
+    assert not (tmp_path / ".gecko" / "install_id").exists()
+
+
+def test_unwritable_home_degrades_to_per_run_ids_and_never_crashes(
+    tmp_path, monkeypatch
+):
+    # An unwritable HOME (read-only container, sandboxed agent shell) must degrade
+    # toward counting — an ephemeral id and a ping per run — never a crash and never
+    # a lost adopter.
+    if os.geteuid() == 0:
+        pytest.skip("root ignores file modes")
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o500)  # ~/.gecko can never be created
+    try:
+        first = read_or_create_install_id(home)
+        second = read_or_create_install_id(home)
+        assert re.fullmatch(r"[0-9a-f]{32}", first)
+        assert first != second  # nothing persisted — per-run ids, honestly
+        pings: list[tuple[str, dict[str, str]]] = []
+        for _ in range(2):
+            onboard.send_onboard_ping(
+                ref="https://api.stripe.com/openapi.json",
+                base_url=None,
+                mode="recorded",
+                home=home,
+                post=lambda url, payload: pings.append((url, payload)),
+                surface="api-stripe-com",
+            )
+        assert len(pings) == 2  # the once-marker can't persist either: count per run
+    finally:
+        home.chmod(0o700)
+
+
+# --------------------------------------------------------------------------- #
+# (e) idempotence: re-adding the SAME surface from the same install pings ONCE
+# --------------------------------------------------------------------------- #
+def test_readding_the_same_surface_pings_once(tmp_path, capsys, monkeypatch):
+    # The field bug: every re-run of `gecko add` (quickstart runs it three times,
+    # agents retry after a flag fix) re-pinged, so the adoption metric counted runs,
+    # not adopters. A (install, surface) pair must count once.
     monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
     pings: list[tuple[str, dict[str, str]]] = []
     deps = _deps(tmp_path, ping_post=lambda url, payload: pings.append((url, payload)))
     add("https://api.stripe.com/openapi.json", deps=deps)
     add("https://api.stripe.com/openapi.json", deps=deps)
-    assert len(pings) == 2
-    assert pings[0][1]["install_id"] == pings[1][1]["install_id"]
+    assert len(pings) == 1
+    # The transparency note prints only for the ping that actually left.
+    out = capsys.readouterr().out
+    assert out.count(ONBOARD_PING_NOTE) == 1
+
+
+def test_failed_ping_leaves_no_marker_so_the_adopter_still_counts_later(
+    tmp_path, monkeypatch
+):
+    # A dead network on the first add must NOT permanently mark the surface as
+    # pinged — the next successful add still counts the adopter.
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+
+    def boom(url: str, payload: dict[str, str]) -> None:
+        raise urllib.error.URLError("network down")
+
+    add("https://api.stripe.com/openapi.json", deps=_deps(tmp_path, ping_post=boom))
+    pings: list[tuple[str, dict[str, str]]] = []
+    deps = _deps(tmp_path, ping_post=lambda url, payload: pings.append((url, payload)))
+    add("https://api.stripe.com/openapi.json", deps=deps)
+    assert len(pings) == 1
+
+
+def test_telemetry_off_leaves_no_marker(tmp_path, monkeypatch):
+    # Opting out must not burn the once-per-surface marker: opting back in later
+    # still counts the adopter.
+    monkeypatch.setenv("GECKO_TELEMETRY", "off")
+    deps_off = _deps(tmp_path, ping_post=lambda url, payload: None)
+    add("https://api.stripe.com/openapi.json", deps=deps_off)
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    pings: list[tuple[str, dict[str, str]]] = []
+    deps = _deps(tmp_path, ping_post=lambda url, payload: pings.append((url, payload)))
+    add("https://api.stripe.com/openapi.json", deps=deps)
+    assert len(pings) == 1
+
+
+# --------------------------------------------------------------------------- #
+# (f) the ping URL is resolved at CALL time, not bound at import time
+# --------------------------------------------------------------------------- #
+def test_ping_url_is_resolved_at_call_time(tmp_path, monkeypatch):
+    # A dev/test harness that redirects ``onboard.ONBOARD_PING_URL`` must actually
+    # take effect. The old default-arg binding froze the PRODUCTION URL at import
+    # time, so harness runs (fresh tmp homes, adds in quick succession) silently
+    # posted to the real ingest — polluting the adoption metric with distinct-id
+    # ping pairs.
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    monkeypatch.setattr(onboard, "ONBOARD_PING_URL", "https://example.test/redirected")
+    pings: list[tuple[str, dict[str, str]]] = []
+    deps = _deps(tmp_path, ping_post=lambda url, payload: pings.append((url, payload)))
+    add("https://api.stripe.com/openapi.json", deps=deps)
+    assert pings[0][0] == "https://example.test/redirected"

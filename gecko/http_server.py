@@ -68,9 +68,12 @@ ONBOARD_PING_KEYS: frozenset[str] = frozenset(
     {"surface_host", "version", "client_os", "install_id", "mode"}
 )
 _MAX_ONBOARD_VALUE = 64
-# `gecko add --mode` offers only recorded|live, so the ping set is deliberately
-# NARROWER than modes.CALL_MODES ("probe" is an engine mode, never an onboard).
-_ONBOARD_PING_MODES: frozenset[str] = frozenset({"recorded", "live"})
+# The closed wire set: `gecko add --mode` offers recorded|live, and "serve" is the
+# `gecko serve` first-run ping (the /make-agent-ready channel). Deliberately NARROWER
+# than modes.CALL_MODES ("probe" is an engine mode, never an onboard). Keep this in
+# lockstep with the client (onboard.send_onboard_ping / send_serve_ping) in the SAME
+# commit — a client mode this set lacks 204s but silently emits nothing.
+_ONBOARD_PING_MODES: frozenset[str] = frozenset({"recorded", "live", "serve"})
 
 
 def parse_onboard_ping(body: bytes) -> dict[str, str] | None:
@@ -78,7 +81,7 @@ def parse_onboard_ping(body: bytes) -> dict[str, str] | None:
 
     A valid body is a small JSON object carrying EXACTLY ``ONBOARD_PING_KEYS``, every
     value a non-empty string of at most ``_MAX_ONBOARD_VALUE`` chars, and ``mode`` from
-    the closed recorded|live set. Junk JSON, an unknown/missing key, an oversized
+    the closed recorded|live|serve set. Junk JSON, an unknown/missing key, an oversized
     body/value, a non-string — anything else yields ``None`` so the route emits nothing
     (and still 204s; the caller never differentiates rejections on the wire)."""
     if len(body) > MAX_ONBOARD_PING_BYTES:

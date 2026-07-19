@@ -93,6 +93,7 @@ def test_allowed_fields_is_the_exact_closed_set():
         "version",
         "client_os",
         "install_id",
+        "plane",
     }
 
 
@@ -389,6 +390,26 @@ def test_onboard_secret_shaped_value_fails_closed(sink: _FakeSink):
         emit_surf_event("surf.onboard", surface_id="x", install_id="a" * 64)
     with pytest.raises(TelemetryError):
         emit_surf_event("surf.onboard", surface_id="x", version="sk-" + "a" * 30)
+    assert sink.docs == []
+
+
+# --------------------------------------------------------------------------- #
+# The plane field: engine (local client flows) vs surface (MCP invocations)
+# --------------------------------------------------------------------------- #
+def test_plane_member_round_trips(sink: _FakeSink):
+    emit_surf_event("surf.call", surface_id="pegana", tool_name="t", plane="surface")
+    assert sink.docs[-1]["plane"] == "surface"
+    emit_surf_event(
+        "surf.first_call_correct", surface_id="pegana", tool_name="t", plane="engine"
+    )
+    assert sink.docs[-1]["plane"] == "engine"
+
+
+def test_plane_outside_the_closed_set_fails_closed(sink: _FakeSink):
+    # Like error_class/source/client_kind: free text can never smuggle a value in
+    # through the plane label.
+    with pytest.raises(TelemetryError):
+        emit_surf_event("surf.call", surface_id="pegana", plane="banana")
     assert sink.docs == []
 
 

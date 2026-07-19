@@ -725,7 +725,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "login":
         return _cmd_login(rest)
     if cmd == "serve":
-        return serve.main(rest)
+        # Wire the real first-run ping transport ONLY here (mirrors _cmd_add): the
+        # CLI is default-on; library/test calls of serve.main stay network-silent.
+        return serve.main(rest, ping_post=onboard._default_ping_post)
     if cmd == "jupiter-mcp":
         from .examples import jupiter  # lazy: pulls serve deps only when invoked
 

@@ -350,12 +350,16 @@ class McpSurface:
             )
         else:
             result = self.client.call(name, arguments, mode=eff_mode)
+        # plane="surface": a tool invoked THROUGH the MCP surface. The inner
+        # client.call above ALSO emitted its engine-plane outcome event — different
+        # planes by design, not double-counting; see events.CallPlane.
         emit_surf_event(
             "surf.call",
             surface_id=self.client.surface_id,
             tool_name=name,
             mode=eff_mode,
             session_id=session_id,
+            plane="surface",
         )
         # A step_up (or a warn-mode would-be block) executed — flag it, don't hide it.
         if outcome.warn and assessment is not None:

@@ -77,6 +77,22 @@ ClientKind = Literal["robot", "client", "unknown"]
 #: Runtime membership form of ``ClientKind`` (validated fail-closed, like ``error_class``).
 CLIENT_KINDS: frozenset[str] = frozenset(get_args(ClientKind))
 
+#: Which layer emitted a call-shaped event. ``surf.first_call_correct`` fires at the
+#: ENGINE — every ``AgentApiClient.call`` outcome, including the local $0 flows
+#: (``gecko test``, the demo, recorded mode) that never traverse an MCP surface —
+#: while ``surf.call`` fires at the SURFACE, only when a tool is invoked through
+#: ``McpSurface`` (hosted or stdio). They are different planes, NOT a funnel subset:
+#: a surface invocation emits BOTH (one ``surf.call`` + one engine outcome), and a
+#: local client flow emits only the outcome — so all-time fcc > call is expected.
+#: The honest funnel queries:
+#:   * surface traffic:      count ``surf.call`` (optionally join ``session_id``);
+#:   * first-call-correct:   ``surf.first_call_correct`` filtered ``source ==
+#:     "observed"`` (live outcomes only — synthetic recorded 200s never inflate it).
+CallPlane = Literal["engine", "surface"]
+
+#: Runtime membership form of ``CallPlane`` (validated fail-closed, like ``client_kind``).
+CALL_PLANES: frozenset[str] = frozenset(get_args(CallPlane))
+
 # --------------------------------------------------------------------------- #
 # The field allowlist — the writer's closed set of caller-supplied fields.
 # --------------------------------------------------------------------------- #
@@ -104,6 +120,7 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "version",  # the CLI package version string (a release label, never a value)
         "client_os",  # normalized sys.platform family: linux|darwin|windows|<other>
         "install_id",  # opaque RANDOM uuid4 hex — never user-derived, no PII
+        "plane",  # a CLOSED CALL_PLANES member (engine|surface) — see CallPlane
     }
 )
 
@@ -183,6 +200,7 @@ class SurfEventRecord:
     version: str | None = None  # CLI package version (the onboard ping)
     client_os: str | None = None  # normalized OS family (the onboard ping)
     install_id: str | None = None  # opaque random uuid4 hex — no PII (onboard ping)
+    plane: str | None = None  # closed CALL_PLANES member (engine|surface)
 
 
 RECORD_ALLOWED_KEYS: frozenset[str] = frozenset(SurfEventRecord.__dataclass_fields__)
@@ -228,6 +246,11 @@ def assert_fields_allowlisted(fields: Mapping[str, Any]) -> None:
         # never smuggle a value in through client_kind. Our classifier only ever emits a
         # member, so this fails closed on a wiring mistake, never in production.
         raise TelemetryError(f"client_kind {client_kind!r} not in the closed set")
+    plane = fields.get("plane")
+    if plane is not None and plane not in CALL_PLANES:
+        # Same closed-set discipline: the plane is a code constant at the two emit
+        # layers, so a non-member is a wiring mistake and fails closed in CI.
+        raise TelemetryError(f"plane {plane!r} not in the closed set")
     for key in _LABEL_FIELDS:
         value = fields.get(key)
         if isinstance(value, str) and not _is_safe_label(value):
@@ -481,11 +504,13 @@ def emit_surf_event(
 
 __all__ = [
     "ALLOWED_FIELDS",
+    "CALL_PLANES",
     "CLIENT_KINDS",
     "EVENTS_COLLECTION",
     "EVENTS_DB",
     "RECORD_ALLOWED_KEYS",
     "SURF_EVENTS",
+    "CallPlane",
     "ClientKind",
     "SurfEvent",
     "SurfEventRecord",
