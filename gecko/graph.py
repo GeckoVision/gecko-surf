@@ -6,11 +6,16 @@ Builds a deterministic, content-addressed graph from ingest's normalized
 and invariant #1 (surface only: operations/params/fields/edges, never payloads).
 
 Provenance is on **every** edge and is the anti-poisoning control (§2): facts the
-spec states are ``EXTRACTED`` (produces/consumes/on); links we *derive* are
-``INFERRED`` (``field --feeds--> param``) with a recorded ``basis`` +
-``confidence``. The two never mix silently — a ``feeds`` edge is *always*
-INFERRED, so a poisoned spec can at worst create an auditable, disableable
-INFERRED edge, never a fact masquerading as spec-stated.
+spec states are ``EXTRACTED`` (produces/consumes/on); explicit entity hints
+(x-gecko / a customer confirmation) mint ``DECLARED`` ``feeds`` edges; links we
+*derive* are ``INFERRED`` (``field --feeds--> param``) with a recorded ``basis``
++ ``confidence``. The classes never mix silently — a ``feeds`` edge is always
+DECLARED or INFERRED (never EXTRACTED), so a poisoned spec can at worst create
+an auditable, disableable edge with its origin on it, never a fact masquerading
+as spec-stated. The trust ladder for feeds (§13.2, locked by the §13.6 probe):
+DECLARED > INFERRED+signature-corroborated > INFERRED-name; the §13.1
+value-domain signature is captured on param/field nodes and used ONLY as a
+corroborator (``basis`` gains ``+sig``), never as a standalone join basis.
 
 The ``feeds`` inference is the v3 basis that passed the §7 probe (both TxLINE
 chains found; Stripe control 66,984 → 337 edges): entity ids are the join-key
@@ -25,13 +30,14 @@ import hashlib
 import json
 import math
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
 from .ingest import Operation, Param
 
 # --- single source of truth for the graph's Literal types (CLAUDE.md) -----------
-Provenance = Literal["EXTRACTED", "INFERRED"]
+Provenance = Literal["EXTRACTED", "DECLARED", "INFERRED"]
 Confidence = Literal["high", "low"]
 NodeKind = Literal["operation", "param", "field", "resource"]
 EdgeKind = Literal["consumes", "produces", "on", "feeds"]
@@ -43,16 +49,24 @@ _ID_TYPES = ("number", "string")  # a flow key must be id-shaped; drops bool/enu
 # ~3% for large APIs (Stripe `limit`, consumed by 381 of 587 ops, is demoted).
 _GENERIC_FLOOR = 4
 _GENERIC_FRAC = 0.03
+# formats that discriminate a value domain (§13.1). int32/int64 are NOT here on
+# purpose — every counter shares them; a shared int64 proves nothing (§13.6).
+_DISCRIMINATING_FMT = frozenset(
+    {"uuid", "uri", "email", "ipv4", "date-time", "currency"}
+)
+# planning tiebreak rank: the §13.2 ladder, lower is preferred.
+_PROV_RANK = {"DECLARED": 0, "INFERRED": 1}
 
 
 # --- graph model (typed dataclasses; no bare dicts as contracts) -----------------
 @dataclass(frozen=True)
 class Node:
     kind: NodeKind
-    id: str  # deterministic, unique
+    id: str  # deterministic, unique (namespaced by surface_id when set)
     name: str  # human label: op id / param name / field name / resource noun
     owner: str = ""  # operation_id for param+field+operation nodes; "" for resource
     detail: str = ""  # param: "{location}|{req|opt}"; field: parent object; op: path
+    sig: str = ""  # §13.1 value-domain signature (param/field): type|fmt|pat8|enum8
 
 
 @dataclass(frozen=True)
@@ -61,8 +75,8 @@ class Edge:
     src: str  # source node id
     dst: str  # destination node id
     provenance: Provenance
-    basis: str = ""  # recorded reason for an INFERRED edge (e.g. "entity:fixture")
-    confidence: Confidence | None = None  # high|low on INFERRED; None on EXTRACTED
+    basis: str = ""  # recorded reason for a feeds edge (e.g. "entity:fixture")
+    confidence: Confidence | None = None  # high|low on feeds; None on EXTRACTED
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,7 @@ class PlanStep:
     path: str
     consumes: tuple[str, ...]  # required non-auth inputs this step needs
     supplies: tuple[str, ...]  # inputs this step supplies to a later step
+    surface: str = ""  # owning surface_id — "" on a legacy un-namespaced graph
 
 
 @dataclass(frozen=True)
@@ -79,11 +94,12 @@ class ExplainEntry:
     param: str  # the consumed input this edge satisfies
     source_op: str
     source_field: str
-    provenance: (
-        Provenance  # always INFERRED for feeds — surfaced so a bait chain says so
-    )
+    # DECLARED (an explicit hint) or INFERRED (derived) — never EXTRACTED for
+    # feeds; surfaced so a bait chain says what it rests on.
+    provenance: Provenance
     basis: str
     confidence: Confidence | None
+    source_surface: str = ""  # the supplier's surface_id — set on cross-API plans
 
 
 @dataclass(frozen=True)
@@ -118,15 +134,62 @@ def _resource_noun(op: Operation) -> str | None:
     return last[:-1] if last.endswith("s") else last
 
 
-def _response_leaves(op: Operation) -> list[tuple[str, str | None, str]]:
-    """(field_name, parent_object_name, id-shape-type) leaves of the 200 response.
+def _sig_of(schema: object) -> str:
+    """The §13.1 value-domain signature of one schema, compact + control-plane clean:
+    ``type|format|pattern-hash8|enum-hash8`` ("" components when undeclared, "" when
+    nothing is declared at all). Pattern and enum are hashed — the signature carries
+    *identity of the constraint*, never the constraint text, so it can sit on a node
+    and inside content_hash without bloating either."""
+    if not isinstance(schema, dict):
+        return ""
+    t = schema.get("type") or ""
+    fmt = schema.get("format") or ""
+    pat = schema.get("pattern") or ""
+    pat8 = (
+        hashlib.sha256(pat.encode()).hexdigest()[:8]
+        if isinstance(pat, str) and pat
+        else ""
+    )
+    enum = schema.get("enum")
+    en8 = ""
+    if isinstance(enum, list) and enum:
+        joined = "|".join(sorted(str(v) for v in enum))
+        en8 = hashlib.sha256(joined.encode()).hexdigest()[:8]
+    if not (t or fmt or pat8 or en8):
+        return ""
+    return f"{t}|{fmt}|{pat8}|{en8}"
+
+
+def _sig_corroborates(a: str, b: str) -> bool:
+    """True iff two signatures share a DISCRIMINATING value-domain signal: equal
+    pattern, equal enum, or an equal discriminating format — same type required.
+
+    This is the §13.6 role of the signature: a **corroborator** that strengthens an
+    entity-name match (basis gains ``+sig``), never a standalone join basis. Bare
+    same-type (both plain strings) is NOT corroboration — that's exactly the
+    signal-free case the two-API probe measured on real specs."""
+    if not a or not b:
+        return False
+    ta, fa, pa, ea = a.split("|")
+    tb, fb, pb, eb = b.split("|")
+    if ta != tb:
+        return False
+    if pa and pa == pb:
+        return True
+    if ea and ea == eb:
+        return True
+    return bool(fa) and fa == fb and fa in _DISCRIMINATING_FMT
+
+
+def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
+    """(field_name, parent_object_name, id-shape-type, sig) leaves of the 200 response.
 
     ``id`` and ``number`` collapse to ``number``; cycle- and depth-guarded (ingest
     already resolved $refs, but self-referential schemas can still recurse)."""
     resp = (op.responses or {}).get("200") or {}
     content = (resp.get("content") or {}).get("application/json") or {}
     schema = content.get("schema") or {}
-    out: list[tuple[str, str | None, str]] = []
+    out: list[tuple[str, str | None, str, str]] = []
 
     def walk(
         node: object, parent: str | None, depth: int, seen: frozenset[int]
@@ -140,7 +203,14 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str]]:
                 continue
             t = sub.get("type") or ("object" if sub.get("properties") else "?")
             if t in ("integer", "number", "string", "boolean"):
-                out.append((name, title or parent, "number" if t == "integer" else t))
+                out.append(
+                    (
+                        name,
+                        title or parent,
+                        "number" if t == "integer" else t,
+                        _sig_of(sub),
+                    )
+                )
             walk(sub, name, depth + 1, seen)
         walk(node.get("items") or {}, title or parent, depth + 1, seen)
         for k in ("oneOf", "anyOf", "allOf"):
@@ -152,6 +222,14 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str]]:
 
 
 # --- node id builders (deterministic, unique) -----------------------------------
+def _ns(surface_id: str) -> str:
+    """The node-id namespace prefix for a surface. "" keeps legacy single-API ids
+    byte-identical; a set surface_id scopes every node id (§12 Phase 3) so graphs
+    from different surfaces can never collide when composed (§13.2 per-scope
+    ladder). One-way: the namespace feeds serialize() and thus content_hash."""
+    return f"{surface_id}::" if surface_id else ""
+
+
 def _op_id(op: Operation) -> str:
     return f"op:{op.operation_id}"
 
@@ -179,17 +257,25 @@ def _is_auth_param(p: Param) -> bool:
 class SurfaceGraph:
     nodes: tuple[Node, ...]
     edges: tuple[Edge, ...]
+    surface_id: str = ""  # namespace of every node id when set (§12 Phase 3)
+    # the DECLARED entity vocabulary this graph was built with, as sorted
+    # (normalized_name, entity) pairs — carried on the graph so compose() can
+    # join across surfaces on entity identity without re-reading any spec.
+    declared: tuple[tuple[str, str], ...] = ()
     # indices (not serialized) — kept out of the content hash on purpose.
     _by_id: dict[str, Node] = field(default_factory=dict, compare=False, repr=False)
 
     def serialize(self) -> bytes:
         """Deterministic, content-addressed bytes: same spec in -> identical bytes out.
 
-        Sorted nodes then edges, canonical compact JSON. A drifted spec produces a
-        reviewable diff (§4)."""
+        Sorted nodes then edges (+ surface_id and the declared vocabulary — both
+        one-way inputs to the hash, §12 Phase 3), canonical compact JSON. A drifted
+        spec produces a reviewable diff (§4)."""
         payload = {
+            "surface_id": self.surface_id,
+            "declared": sorted(list(pair) for pair in self.declared),
             "nodes": sorted(
-                ([n.kind, n.id, n.name, n.owner, n.detail] for n in self.nodes),
+                ([n.kind, n.id, n.name, n.owner, n.detail, n.sig] for n in self.nodes),
             ),
             "edges": sorted(
                 (
@@ -199,6 +285,10 @@ class SurfaceGraph:
             ),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+    def opnode(self, operation_id: str) -> str:
+        """The (namespaced) node id of an operation."""
+        return f"{_ns(self.surface_id)}op:{operation_id}"
 
     def content_hash(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
@@ -251,13 +341,13 @@ class SurfaceGraph:
         added: set[str] = set()
         explain: list[ExplainEntry] = []
         for pn in sorted(unsat, key=lambda n: _norm(n.name)):
-            best: tuple[int, str, list[str], list[ExplainEntry], Edge, Node] | None = (
-                None
-            )
+            best: (
+                tuple[int, int, str, list[str], list[ExplainEntry], Edge, Node] | None
+            ) = None
             for edge in self.feeds_into(pn.id):
                 src_field = self._by_id[edge.src]
                 src_op = src_field.owner
-                src_op_node = f"op:{src_op}"
+                src_op_node = self.opnode(src_op)
                 if src_op_node in visited or src_op_node == op_node_id:
                     continue  # cycle guard: an op cannot supply its own missing input
                 sub = self._resolve(
@@ -273,13 +363,27 @@ class SurfaceGraph:
                 }
                 cost = len(new_ops)
                 # prefer the supplier that adds the fewest new ops (the clean source
-                # with no unsatisfied inputs of its own), deterministic tiebreak by id.
-                cand = (cost, src_op_node, sub_order, sub_explain, edge, src_field)
-                if best is None or (cost, src_op_node) < (best[0], best[1]):
+                # with no unsatisfied inputs of its own); then the §13.2 ladder
+                # (DECLARED beats INFERRED at equal cost); deterministic tiebreak by id.
+                rank = _PROV_RANK.get(edge.provenance, 1)
+                cand = (
+                    cost,
+                    rank,
+                    src_op_node,
+                    sub_order,
+                    sub_explain,
+                    edge,
+                    src_field,
+                )
+                if best is None or (cost, rank, src_op_node) < (
+                    best[0],
+                    best[1],
+                    best[2],
+                ):
                     best = cand
             if best is None:
                 return None  # honest: no confident supplier -> whole plan is None
-            _cost, src_op_node, sub_order, sub_explain, edge, src_field = best
+            _cost, _rank, src_op_node, sub_order, sub_explain, edge, src_field = best
             for o in [*sub_order, src_op_node]:
                 if o not in added:
                     order.append(o)
@@ -309,6 +413,7 @@ class SurfaceGraph:
             path=path,
             consumes=consumes,
             supplies=supplies,
+            surface=self.surface_id,
         )
 
 
@@ -325,7 +430,7 @@ def plan(
     or None (honest "no confident plan") when the chain would exceed the depth
     cap or has an unsatisfiable input."""
     op_id = intent_op if isinstance(intent_op, str) else intent_op.operation_id
-    op_node_id = f"op:{op_id}"
+    op_node_id = graph.opnode(op_id)
     if op_node_id not in graph._by_id:
         return None
     sat = frozenset(_norm(x) for x in satisfiable_inputs)
@@ -337,7 +442,7 @@ def plan(
     # which inputs each predecessor supplies to a later step (from the explain block)
     supplied_by: dict[str, list[str]] = defaultdict(list)
     for entry in explain:
-        supplied_by[f"op:{entry.source_op}"].append(entry.param)
+        supplied_by[graph.opnode(entry.source_op)].append(entry.param)
 
     steps = tuple(
         graph._make_step(node_id, tuple(sorted(supplied_by.get(node_id, []))))
@@ -347,11 +452,26 @@ def plan(
 
 
 # --- build --------------------------------------------------------------------
-def build_graph(operations: list[Operation]) -> SurfaceGraph:
+def build_graph(
+    operations: list[Operation],
+    *,
+    surface_id: str = "",
+    declared: Mapping[str, str] | None = None,
+) -> SurfaceGraph:
     """Deterministic surface graph: operation/param/field/resource nodes + EXTRACTED
-    produces/consumes/on edges + INFERRED feeds edges (v3 basis). Surface only."""
+    produces/consumes/on edges + DECLARED feeds edges (explicit entity hints, the
+    ladder's top) + INFERRED feeds edges (v3 basis). Surface only.
+
+    ``surface_id`` namespaces every node id (§12 Phase 3) — "" keeps legacy ids.
+    ``declared`` maps a param/field NAME to an entity (from x-gecko hints or a
+    customer confirmation); two names declared to the same entity join with
+    provenance DECLARED even when their names differ — the only cross-API-grade
+    basis (§13.6). Hint names/entities are matched on normalized form."""
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
+    ns = _ns(surface_id)
+    # normalized declared vocabulary: name -> entity (both sides normalized).
+    decl = {_norm(k): _norm(v) for k, v in (declared or {}).items() if k and v}
 
     def add_node(node: Node) -> None:
         nodes.setdefault(node.id, node)
@@ -359,48 +479,89 @@ def build_graph(operations: list[Operation]) -> SurfaceGraph:
     # frequency tables for genericity demotion (from the graph itself, no stoplist)
     produced_by: dict[str, set[str]] = defaultdict(set)
     consumed_by: dict[str, set[str]] = defaultdict(set)
-    # producers[name] -> [(op_id, field_name, parent, id_type)], first field per name/op
-    producers: dict[str, list[tuple[str, str, str | None, str]]] = defaultdict(list)
+    # producers[name] -> [(op_id, field_name, parent, id_type, sig)], first per name/op
+    producers: dict[str, list[tuple[str, str, str | None, str, str]]] = defaultdict(
+        list
+    )
+    # declared_producers[entity] -> [(op_id, field_name, parent, id_type)]
+    declared_producers: dict[str, list[tuple[str, str, str | None, str]]] = defaultdict(
+        list
+    )
 
     # -- phase 1: nodes + EXTRACTED edges -----------------------------------------
     for op in operations:
         oid = op.operation_id
-        op_node_id = _op_id(op)
+        op_node_id = f"{ns}{_op_id(op)}"
         add_node(Node("operation", op_node_id, oid, oid, f"{op.method} {op.path}"))
 
         noun = _resource_noun(op)
         if noun:
-            rid = _resource_id(noun)
+            rid = f"{ns}{_resource_id(noun)}"
             add_node(Node("resource", rid, noun))
             edges.append(Edge("on", op_node_id, rid, "EXTRACTED"))
 
         for p in op.parameters:
-            pid = _param_id(op_node_id, p)
+            pid = f"{ns}{_param_id(_op_id(op), p)}"
             flag = "req" if p.required else "opt"
-            add_node(Node("param", pid, p.name, oid, f"{p.location}|{flag}"))
+            add_node(
+                Node(
+                    "param", pid, p.name, oid, f"{p.location}|{flag}", _sig_of(p.schema)
+                )
+            )
             edges.append(Edge("consumes", op_node_id, pid, "EXTRACTED"))
             consumed_by[_norm(p.name)].add(oid)
 
         seen_here: set[str] = set()
-        for fname, parent, ftype in _response_leaves(op):
-            fid = _field_id(op_node_id, fname, parent)
-            add_node(Node("field", fid, fname, oid, parent or ""))
+        for fname, parent, ftype, fsig in _response_leaves(op):
+            fid = f"{ns}{_field_id(_op_id(op), fname, parent)}"
+            add_node(Node("field", fid, fname, oid, parent or "", fsig))
             edges.append(Edge("produces", op_node_id, fid, "EXTRACTED"))
             n = _norm(fname)
             produced_by[n].add(oid)
             if n not in seen_here:
-                producers[n].append((oid, fname, parent, ftype))
+                producers[n].append((oid, fname, parent, ftype, fsig))
                 seen_here.add(n)
+            d_ent = decl.get(n)
+            # a declared join key must still be id-shaped — an explicit hint on a
+            # boolean cannot mint a join key (a nonsense thread, hint or not).
+            if d_ent and ftype in _ID_TYPES:
+                declared_producers[d_ent].append((oid, fname, parent, ftype))
 
     generic_t = max(_GENERIC_FLOOR, math.ceil(_GENERIC_FRAC * max(1, len(operations))))
 
     def is_generic(name: str) -> bool:
         return len(produced_by[name]) > generic_t or len(consumed_by[name]) > generic_t
 
-    # -- phase 2: INFERRED feeds edges (v3 basis) ---------------------------------
+    # -- phase 2a: DECLARED feeds edges (the ladder's top, §13.2) ------------------
+    # An explicit hint joins on ENTITY IDENTITY, not name equality — the whole point
+    # of DECLARED is carrying joins the deterministic tier structurally cannot see
+    # (synonym names, bare-string domains — the §13.6 finding). Auditable via basis.
+    if declared_producers:
+        for op in operations:
+            oid = op.operation_id
+            for p in op.parameters:
+                if _is_auth_param(p):
+                    continue
+                d_ent = decl.get(_norm(p.name))
+                if not d_ent:
+                    continue
+                for src_op, fld, parent, _ftype in declared_producers.get(d_ent, []):
+                    if src_op == oid:
+                        continue
+                    edges.append(
+                        Edge(
+                            "feeds",
+                            f"{ns}{_field_id(f'op:{src_op}', fld, parent)}",
+                            f"{ns}{_param_id(_op_id(op), p)}",
+                            "DECLARED",
+                            f"declared:{d_ent}",
+                            "high",
+                        )
+                    )
+
+    # -- phase 2b: INFERRED feeds edges (v3 basis) ---------------------------------
     for op in operations:
         oid = op.operation_id
-        op_node_id = _op_id(op)
         rnoun = _resource_noun(op)
         for p in op.parameters:
             if _is_auth_param(p):
@@ -416,12 +577,13 @@ def build_graph(operations: list[Operation]) -> SurfaceGraph:
                 or (n if is_path else None)
                 or (rnoun if is_path else None)
             )
-            for src_op, fld, parent, ftype in producers[n]:
+            p_sig = _sig_of(p.schema)
+            for src_op, fld, parent, ftype, fsig in producers[n]:
                 if src_op == oid:
                     continue
                 f_ent = _entity_of(fld, parent)
-                src_field_id = _field_id(f"op:{src_op}", fld, parent)
-                dst_param_id = _param_id(op_node_id, p)
+                src_field_id = f"{ns}{_field_id(f'op:{src_op}', fld, parent)}"
+                dst_param_id = f"{ns}{_param_id(_op_id(op), p)}"
                 if f_ent and p_ent:
                     # rule 1: entity match — entity ids are the spine, exempt from
                     # genericity (the entity scope already prevents over-linking).
@@ -434,6 +596,11 @@ def build_graph(operations: list[Operation]) -> SurfaceGraph:
                         continue
                     if f_ent == p_ent:
                         basis = f"scoped-id:{f_ent}" if n == "id" else f"entity:{f_ent}"
+                        # §13.6: the value-domain signature CORROBORATES a name-entity
+                        # match (recorded on the basis, visible in every explain) —
+                        # it never mints an edge alone.
+                        if _sig_corroborates(fsig, p_sig):
+                            basis += "+sig"
                         edges.append(
                             Edge(
                                 "feeds",
@@ -479,4 +646,10 @@ def build_graph(operations: list[Operation]) -> SurfaceGraph:
         key=lambda e: (e.kind, e.src, e.dst, e.provenance, e.basis, e.confidence or ""),
     )
     sorted_nodes = tuple(sorted(nodes.values(), key=lambda n: (n.kind, n.id)))
-    return SurfaceGraph(nodes=sorted_nodes, edges=tuple(uniq_edges), _by_id=by_id)
+    return SurfaceGraph(
+        nodes=sorted_nodes,
+        edges=tuple(uniq_edges),
+        surface_id=surface_id,
+        declared=tuple(sorted(decl.items())),
+        _by_id=by_id,
+    )
