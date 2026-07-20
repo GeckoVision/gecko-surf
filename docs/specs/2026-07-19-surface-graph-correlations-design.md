@@ -523,3 +523,67 @@ not the payload; per-workspace, never a global catalog.
 This is the compounding edge of the *allowed* kind, and it is the Gorilla-LLM
 discipline extended: the lift is in the **surface**, so we invest where the
 surface is made — and every confirmed join makes the next comprehension cheaper.
+
+## 15. BUILD RESULT — Steps 3-7 shipped (2026-07-20)
+
+The §12/§13 build ran to completion, DECLARED-first per the §13.6 lock. All
+offline, $0, control-plane clean; suite 1428 passing, mypy clean.
+
+**Step 3 — one-way foundation** (`gecko/graph.py`, `planner.py`, `client.py`):
+`surface_id` namespaces every node id (compose-safe scoping); `PlanStep.surface`
++ `ExplainEntry.source_surface` added (both `""` on a legacy graph). The §13.1
+value-domain signature (`type|fmt|pat8|enum8`, pattern/enum hashed — identity of
+the constraint, never its text) is captured on param/field nodes and feeds
+`content_hash`. Per the probe it is used ONLY as a **corroborator** (`+sig` on an
+entity match with a discriminating shared signal), never a standalone basis.
+`DECLARED` joins `Provenance`; the §13.2 ladder ranks it above INFERRED in the
+plan tiebreak.
+
+**Step 6a — DECLARED vocabulary** (`gecko/hints.py`): provider-authored
+`x-gecko` (root `entities` map + inline `x-gecko-entity` on params/properties;
+untrusted → shape-gated, capped, fail-quiet-drop) and the per-surface
+customer-confirmed store (`~/.gecko/declared/<surface>.json`, `0600`, names +
+entities + audit trail only). A DECLARED edge joins on **entity identity**, so it
+carries exactly the synonym / bare-string joins the deterministic tier structurally
+cannot see.
+
+**Step 5 — compose** (`gecko/compose.py`, `chain_eval.py`): `Workspace` holds
+per-surface graphs SIDE BY SIDE (never merged). `cross_plan` resolves a two-API
+intent intra-first, then sources unsatisfied inputs across surfaces on **DECLARED
+entity identity only** — INFERRED never crosses a surface boundary, whatever the
+name looks like. `evaluate_cross_chain` runs each step against its own surface's
+client (invariant #3 intact). **The success metric passes:** a real two-API intent
+(TxLINE fixtures → open a market on the fixture, param names `FixtureId` vs
+`fixture_ref` joined ONLY by DECLARED entity) is first-plan-correct offline.
+
+**Step 6b — the confirm loop** (`gecko/cli.py`, `serve.py`): `gecko graph
+confirm|declared|rm` persists a human confirmation with its audit trail; `serve`
+loads it at the edge and injects via `client.add_declared_hints`. Confirm on disk
+→ DECLARED join in the next graph build, content-addressed — the §14
+authored-enrichment / saved-relationship loop, realized.
+
+### Step 7 — the semantic-tier gate: VERDICT = embeddings stay OUT
+
+The §13.3 / §7 gate asks whether the deterministic signature + DECLARED leave
+**real entity-synonym gaps** that only embeddings could close. Evidence from
+Steps 4-6:
+
+1. **The two-API probe (§13.6)** showed the gap that exists is NOT a synonym-
+   detection gap — it is a *declaration* gap (Adyen ships a bare `type:string`).
+   No embedding recovers a constraint the spec never stated; it would only
+   *guess* the `currency`↔`currency` join it cannot verify — the precise failure
+   mode the gate exists to prevent.
+2. **Step 5** demonstrated that the genuinely hard case (synonym param names,
+   `FixtureId` vs `fixture_ref`) is closed **deterministically** by a single
+   DECLARED hint — cheaper, auditable, and reversible, with none of an
+   embedding's false-positive surface.
+3. **Step 6** made producing that hint a one-line human action with an audit
+   trail, so the marginal cost of the DECLARED path is now trivial.
+
+Therefore the semantic tier stays **gated OUT** (T2/T7 discipline). If a future
+multi-API corpus surfaces synonym misses that DECLARED genuinely cannot reach at
+acceptable human cost, embeddings may enter — but ONLY as *suggestions for
+annotation* (low candidates a human upgrades to DECLARED), NEVER minting a high
+edge from similarity. The gate is retained, not removed. **This closes the §13
+roadmap (Steps 3-7); the remaining frontier is real multi-API adoption, not more
+engine.**
