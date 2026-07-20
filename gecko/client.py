@@ -249,7 +249,9 @@ class AgentApiClient:
         cached on first access. Pure/surface-only (invariants #1/#2) — operations, params,
         fields, and INFERRED ``feeds`` edges, never payloads. Powers ``plan_for``."""
         if self._surface_graph is None:
-            self._surface_graph = build_graph(self.operations)
+            self._surface_graph = build_graph(
+                self.operations, surface_id=self.surface_id
+            )
         return self._surface_graph
 
     def plan_for(self, query: str, tool_name: str) -> dict[str, Any] | None:
