@@ -184,3 +184,120 @@ def test_gate_on_denial_does_not_echo_token_in_any_form():
     resp = _post_mcp(_app(_gate(set())), {"Authorization": f"Bearer {TOKEN}"})
     assert TOKEN not in resp.text
     assert ACCOUNT not in resp.text  # not even the account leaks to the client
+
+
+# --- gate ON with the REAL PrivyAccountResolver (end-to-end, offline JWT) -----
+# A signed Privy-shaped JWT flows through the same ASGI gate. Offline: an ephemeral
+# EC keypair signs the token and an injected key source verifies it (no JWKS network).
+
+import time  # noqa: E402
+
+from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+
+from gecko.privy_auth import (  # noqa: E402
+    PRIVY_JWT_ISSUER,
+    PrivyAccountResolver,
+)
+
+PRIVY_APP_ID = "clzappid123"
+PRIVY_SUBJECT = "did:privy:real-resolver-dev"
+
+
+def _privy_jwt(private_key: Any, *, aud: str = PRIVY_APP_ID) -> str:
+    jwt = pytest.importorskip("jwt")
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "sub": PRIVY_SUBJECT,
+            "aud": aud,
+            "iss": PRIVY_JWT_ISSUER,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        private_key,
+        algorithm="ES256",
+        headers={"kid": "kid-1"},
+    )
+
+
+def _privy_gate(enabled: set[str], public_key: Any) -> KeyGate:
+    resolver = PrivyAccountResolver(
+        app_id=PRIVY_APP_ID, key_source=lambda _kid: public_key
+    )
+    return KeyGate(resolve_account=resolver, allowlist=_SetAllowlist(enabled))
+
+
+def test_privy_resolver_enabled_subject_passes_through_first_call_correct():
+    key = ec.generate_private_key(ec.SECP256R1())
+    token = _privy_jwt(key)
+    raw = _call(
+        _app(_privy_gate({PRIVY_SUBJECT}, key.public_key())),
+        "state",
+        {"symbol": "USDC"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    result = json.loads(raw)
+    assert result["status"] == 200
+    assert result["request"].endswith("/v1/assets/USDC/state")
+
+
+def test_privy_resolver_valid_but_not_enabled_is_403():
+    key = ec.generate_private_key(ec.SECP256R1())
+    token = _privy_jwt(key)
+    resp = _post_mcp(
+        _app(_privy_gate(set(), key.public_key())),
+        {"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "not_enabled"
+    assert token not in resp.text  # the JWT is never echoed
+
+
+def test_privy_resolver_wrong_audience_is_403_invalid():
+    key = ec.generate_private_key(ec.SECP256R1())
+    token = _privy_jwt(key, aud="some-other-app")  # audience mismatch -> unverifiable
+    resp = _post_mcp(
+        _app(_privy_gate({PRIVY_SUBJECT}, key.public_key())),
+        {"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "invalid_token"
+
+
+# --- the default when the gate is on but Privy is NOT configured: deny_all ----
+
+
+def test_multi_surface_gate_on_without_privy_config_denies_everyone(monkeypatch):
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+
+    monkeypatch.setenv("GECKO_REQUIRE_KEY", "1")
+    monkeypatch.delenv("PRIVY_APP_ID", raising=False)  # no Privy config -> fail closed
+
+    app = build_multi_surface_app(
+        [("pegana", PEGANA)],
+        allowed_hosts=["testserver"],
+    )
+    # Even a well-formed bearer is denied — deny_all resolves nothing (invalid_token).
+    with TestClient(app) as client:
+        resp = client.post(
+            "/pegana/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "probe", "version": "1"},
+                },
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer any-well-formed-looking-token",
+            },
+        )
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "invalid_token"

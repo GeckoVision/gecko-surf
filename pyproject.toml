@@ -43,6 +43,11 @@ gecko-telemetry = "gecko.telemetry:_run"
 serve = [
     "mcp[cli]>=1.28.1",
     "uvicorn>=0.49.0",
+    # Gecko-key gate (Layer 1): PrivyAccountResolver verifies a Privy access-token JWT
+    # against Privy's JWKS (RS256/ES256), so the hosted serve path needs PyJWT + the
+    # `crypto` extra (cryptography). Only imported when the gate is on + Privy configured;
+    # a plain `gecko add` never touches it, so it stays out of the base deps.
+    "pyjwt[crypto]>=2.10",
 ]
 # Back-compat alias only. `keyring` moved to BASE dependencies (decision #4), so this
 # extra is now EMPTY — `gecko-surf[credentials]` still resolves (never errors) for anyone

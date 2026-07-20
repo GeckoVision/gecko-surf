@@ -324,6 +324,7 @@ fcc = [
 ]
 serve = [
     { name = "mcp", extra = ["cli"] },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
 ]
 sosbot = [
@@ -349,6 +350,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25" },
     { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
     { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'serve'", specifier = ">=2.10" },
     { name = "pymongo", marker = "extra == 'dense'", specifier = ">=4.10" },
     { name = "pymongo", marker = "extra == 'events'", specifier = ">=4.9" },
     { name = "python-telegram-bot", marker = "extra == 'sosbot'", specifier = ">=21" },

@@ -751,16 +751,21 @@ def build_multi_surface_app(
     # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
     hosted_enforce = resolve_hosted_enforce(enforce)
 
-    # Layer 1: resolve the gate stance once (explicit → env → OFF). When on, use the
-    # injected gate, else a fail-closed one (deny everyone) so an un-wired deploy never
-    # fails open. When off, `surface_gate` stays None → per-surface mounts unchanged.
+    # Layer 1: resolve the gate stance once (explicit → env → OFF). When on and no gate
+    # is injected, wire the REAL Privy verifier when Privy is configured (PRIVY_APP_ID),
+    # else fall back to a fail-closed resolver (deny everyone) so an un-configured deploy
+    # never fails open. When off, `surface_gate` stays None → per-surface mounts unchanged.
     surface_gate: KeyGate | None = None
     if resolve_require_gecko_key(require_gecko_key):
-        from .keyauth import FileAllowlist, deny_all_resolver
+        from .keyauth import AccountResolver, FileAllowlist, deny_all_resolver
 
-        surface_gate = key_gate or KeyGate(
-            resolve_account=deny_all_resolver, allowlist=FileAllowlist()
-        )
+        if key_gate is not None:
+            surface_gate = key_gate
+        else:
+            from .privy_auth import privy_resolver_from_env
+
+            resolver: AccountResolver = privy_resolver_from_env() or deny_all_resolver
+            surface_gate = KeyGate(resolve_account=resolver, allowlist=FileAllowlist())
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
