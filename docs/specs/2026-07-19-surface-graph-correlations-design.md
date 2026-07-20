@@ -460,6 +460,41 @@ One genuine capture gap remains before cross-API mutate chains work: request-bod
 fields are never nodes (`graph.py:366-393` walks only params + response leaves), so
 "create X referencing Y's id" is invisible (already flagged §12-3b).
 
+### 13.6 Two-API probe RESULT — run 2026-07-20 (`scripts/two_api_probe.py`)
+
+Ran the §13.4 gate on a real pair: **Stripe** (`spec3.json`, 1104 id-shaped
+fields) × **Adyen CheckoutService v71** (752 id-shaped fields), both live public
+specs, offline, no model. Known-true entity `currency`; confusable generics
+`id`/`status`/`amount`/`reference`.
+
+```
+HIGH cross-links (plan-basis):                 0
+known-true `currency` at HIGH (no DECLARED):   NO
+false HIGH cross-links:                         0
+currency ~ currency, id ~ id, country ~ country, reference ~ reference → LOW / quarantined
+```
+
+**Root cause (measured, not assumed):** Stripe declares `currency` as
+`format:"currency"`; **Adyen declares it as bare `type: string`** — no `enum`, no
+`pattern`, no `format`. The value-domain signature (§13.1) has nothing to match on,
+so it correctly stays silent rather than guessing on the shared name.
+
+**Gate outcome — the two halves split:**
+- ✅ **Zero false-high** — the conservatism holds. Generic `id`/`amount`/`reference`
+  do NOT over-join; name-only lands at LOW exactly as designed.
+- ❌ **The true link is NOT reachable from the signature alone** — because a real,
+  well-maintained payments API ships a bare-string `currency`. This is §13.5's
+  prediction, now **empirically confirmed on real specs** (not a synthetic fixture).
+
+**Decision (locks §13.4 for the build): cross-API plans ship `DECLARED`-only.** The
+deterministic value-domain tier is retained as a *corroborator that can upgrade a
+DECLARED/name candidate*, and as the false-high guard — but it is **not** a
+standalone cross-API auto-join basis. Do **not** predicate the one-way `surface_id`
+foundation commit (§12 reordered plan) on deterministic auto-join; predicate it on
+the DECLARED path (`x-gecko` / authored-enrichment §14), with the signature as the
+secondary confirm. The probe killed the risky assumption at $0 before the
+one-way commit — which is exactly what the gate is for.
+
 ## 14. The authored-enrichment loop (founder, 2026-07-19) — Gecko on both sides
 
 Gecko is not only the *reader* of OpenAPI surfaces — it helps **author** them
