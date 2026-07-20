@@ -75,6 +75,17 @@ declare -A PARAMS=(
   [X402_PAY_TO]="X402_PAY_TO"                      # treasury address USDC lands in (founder's)
   [X402_ASSET]="X402_ASSET"                        # USDC mint (Solana mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
   [X402_NETWORK]="X402_NETWORK"                    # x402 network id, e.g. `solana`
+
+  # Gecko-key access gate (gecko/http_server.py + keyauth.py + privy_auth.py) —
+  # gates the hosted paid-API surfaces behind a Gecko key (a Privy JWT) + a
+  # founder allowlist. The gate is OFF unless GECKO_REQUIRE_KEY is truthy
+  # ({1,true,yes,on}); PRIVY_APP_ID is the JWT AUDIENCE the resolver verifies
+  # against — unset/sentinel => the resolver denies everyone (fail-closed).
+  # PRIVY_JWKS_URL is an optional override (else auth.privy.io/.../{app_id}/jwks.json).
+  # Payment stays x402 STUB regardless — this gate is access control only.
+  [GECKO_REQUIRE_KEY]="GECKO_REQUIRE_KEY"
+  [PRIVY_APP_ID]="PRIVY_APP_ID"
+  [PRIVY_JWKS_URL]="PRIVY_JWKS_URL"
 )
 
 echo "==> Region:     $REGION"
@@ -102,6 +113,14 @@ declare -A REQUIRED_AT_BOOT=(
   [X402_PAY_TO]="__unset__"
   [X402_ASSET]="__unset__"
   [X402_NETWORK]="__unset__"
+  # Gecko-key gate: default "off" (NOT in the truthy set) so every existing
+  # keyless surface keeps working after a deploy; flip to "1" in SSM +
+  # force-new-deployment to gate the paid surfaces deliberately. The PRIVY_*
+  # sentinels keep the task booting; the resolver stays fail-closed (deny-all)
+  # until PRIVY_APP_ID holds a real app id.
+  [GECKO_REQUIRE_KEY]="off"
+  [PRIVY_APP_ID]="__unset__"
+  [PRIVY_JWKS_URL]="__unset__"
 )
 
 SKIPPED=()
