@@ -32,6 +32,7 @@ from .catalog import Catalog
 from .events import emit_surf_event
 from .fusion import RRF_K
 from .graph import SurfaceGraph, build_graph
+from .hints import declared_entity_hints
 from .ingest import Operation, extract_operations, load_spec
 from .modes import CallMode
 from .planner import plan_for_query
@@ -125,6 +126,7 @@ class AgentApiClient:
         surface_id: str | None = None,
         blurbs: Mapping[str, str] | None = None,
         live_transport: LiveTransport | None = None,
+        declared_hints: Mapping[str, str] | None = None,
     ):
         """Make an API agent-usable from its OpenAPI spec.
 
@@ -232,6 +234,10 @@ class AgentApiClient:
         # surface's operations. Built once on first plan request (pure, deterministic),
         # kept out of construction so a client that never plans pays nothing.
         self._surface_graph: SurfaceGraph | None = None
+        # Injected customer-confirmed DECLARED hints (§12 confirm loop) — merged over
+        # the spec's own x-gecko vocabulary at graph build. Injection (not disk I/O
+        # here) keeps the client pure; the CLI/serve edge loads and passes them.
+        self._declared_hints = dict(declared_hints or {})
 
     @property
     def surface_all(self) -> bool:
@@ -249,8 +255,12 @@ class AgentApiClient:
         cached on first access. Pure/surface-only (invariants #1/#2) — operations, params,
         fields, and INFERRED ``feeds`` edges, never payloads. Powers ``plan_for``."""
         if self._surface_graph is None:
+            # DECLARED vocabulary: the spec's own x-gecko hints (provider-authored,
+            # §14), with injected customer confirmations winning on conflict — a
+            # customer's local correction outranks the shipped hint (§13.2).
+            declared = {**declared_entity_hints(self.spec), **self._declared_hints}
             self._surface_graph = build_graph(
-                self.operations, surface_id=self.surface_id
+                self.operations, surface_id=self.surface_id, declared=declared
             )
         return self._surface_graph
 
