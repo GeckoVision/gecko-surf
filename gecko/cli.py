@@ -28,6 +28,7 @@ from . import (
     __version__,
     credentials,
     docs_reader,
+    keyauth,
     login,
     onboard,
     privy_login,
@@ -42,6 +43,7 @@ from .netguard import UnsafeUrlError, validate_public_url
 _SUBCOMMANDS = (
     "add",
     "login",
+    "keys",
     "serve",
     "test",
     "inspect",
@@ -797,6 +799,9 @@ def _print_help() -> None:
     print("  list               list onboarded surfaces")
     print("\nKeys:")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
+    print(
+        "  keys enable|disable|list <account>  founder allowlist for the hosted endpoint"
+    )
     print("\nDiagnose:")
     print("  doctor             check your setup, print the exact next step")
     print("  --version          print the gecko version")
@@ -866,6 +871,69 @@ def _cmd_login(argv: list[str]) -> int:
         return 2
 
 
+def _cmd_keys(argv: list[str]) -> int:
+    """`gecko keys enable|disable|list <account>` — founder-only per-developer allowlist.
+
+    Layer 1 access control: register which developer account ids may reach the hosted,
+    Gecko-key-gated endpoint (see ``keyauth``). Thin transport over the local allowlist
+    store; the hosted deploy swaps in its own store behind the same ``Allowlist`` seam.
+
+    Security: the store holds only NON-SECRET account ids (the login identity's subject),
+    never a token. ``list`` prints account ids only — never a key.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko keys",
+        description="Founder-only: enable/disable a developer account on the "
+        "Gecko-key-gated hosted endpoint. Stores non-secret account ids only.",
+    )
+    sub = p.add_subparsers(dest="action")
+
+    p_enable = sub.add_parser(
+        "enable", help="Allow a developer account (by account id)."
+    )
+    p_enable.add_argument("account", help="The developer's stable account id.")
+
+    p_disable = sub.add_parser(
+        "disable", help="Revoke a developer account (idempotent)."
+    )
+    p_disable.add_argument("account", help="The developer's stable account id.")
+
+    sub.add_parser("list", help="List enabled account IDs (never a token).")
+
+    args = p.parse_args(argv)
+    store = keyauth.FileAllowlist()
+    try:
+        if args.action == "enable":
+            added = store.enable(args.account)
+            print(
+                f"Enabled {args.account}."
+                if added
+                else f"{args.account} was already enabled."
+            )
+            return 0
+        if args.action == "disable":
+            removed = store.disable(args.account)
+            print(
+                f"Disabled {args.account}."
+                if removed
+                else f"{args.account} was not enabled (nothing to do)."
+            )
+            return 0
+        if args.action == "list":
+            accounts = store.accounts()
+            if not accounts:
+                print("No accounts enabled. Enable one:  gecko keys enable <account>")
+            else:
+                for account in accounts:
+                    print(f"  {account}")
+            return 0
+    except keyauth.KeyAuthError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    p.print_help()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd, rest = _default_to_serve(argv)
@@ -877,6 +945,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(rest)
     if cmd == "login":
         return _cmd_login(rest)
+    if cmd == "keys":
+        return _cmd_keys(rest)
     if cmd == "serve":
         # Wire the real first-run ping transport ONLY here (mirrors _cmd_add): the
         # CLI is default-on; library/test calls of serve.main stay network-silent.

@@ -35,6 +35,7 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
+from .keyauth import KeyGate
 from .modes import CallMode
 from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
@@ -318,6 +319,74 @@ class _InitializeCaptureASGI:
         await self._inner(scope, replay, _send)
 
 
+# The env switch that turns the Gecko-key gate on for a hosted deploy (Layer 1). OFF
+# unless explicitly truthy — every keyless/public surface must behave byte-identically
+# by default (the critical regression). A redeploy is required to flip it.
+REQUIRE_GECKO_KEY_ENV = "GECKO_REQUIRE_KEY"
+_TRUE = frozenset({"1", "true", "yes", "on"})
+
+
+def resolve_require_gecko_key(explicit: bool | None = None) -> bool:
+    """Resolve the gate stance: explicit wins, else ``GECKO_REQUIRE_KEY``, else OFF."""
+    if explicit is not None:
+        return explicit
+    return os.environ.get(REQUIRE_GECKO_KEY_ENV, "").strip().lower() in _TRUE
+
+
+def _bearer_from_scope(scope: Any) -> str | None:
+    """Pull the Gecko key from an ASGI scope's ``Authorization: Bearer <token>`` header.
+
+    Header-only (never the body), so the gate never consumes/blocks the streaming MCP
+    transport. UNTRUSTED input — the value is passed straight to the injected resolver
+    and NEVER logged. Absent/malformed ⇒ ``None`` (which the gate denies)."""
+    for key, value in scope.get("headers") or []:
+        if bytes(key).lower() == b"authorization":
+            try:
+                raw = bytes(value).decode("latin-1").strip()
+            except Exception:  # noqa: BLE001 - a malformed header is simply no key
+                return None
+            scheme, _, token = raw.partition(" ")
+            if scheme.lower() == "bearer" and token.strip():
+                return token.strip()
+            return None
+    return None
+
+
+class _GeckoKeyGateASGI:
+    """Access-control edge for one served MCP mount: verify the Gecko key + allowlist
+    (``keyauth.authorize``) and 403 everyone else, otherwise pass straight through.
+
+    Applied ONLY when a :class:`~gecko.keyauth.KeyGate` is wired (opt-in). It reads just
+    the ``Authorization`` header from the scope — never the body — so the streaming
+    transport, its DNS-rebinding guard, and the funnel wrapper it fronts are untouched
+    on the allow path. A denial NEVER echoes the token (redact-before-raise); the JSON
+    body carries the reason only. Non-HTTP scopes pass through unchanged.
+    """
+
+    def __init__(self, inner: Any, gate: KeyGate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self._inner(scope, receive, send)
+            return
+        decision = self._gate.decide(_bearer_from_scope(scope))
+        if decision.allowed:
+            await self._inner(scope, receive, send)
+            return
+        # Denied: a clean 403 with the REASON only. The account/token never appears in
+        # the body, and the log line names the reason (never the key).
+        logger.info("gecko-key gate denied (reason=%s)", decision.reason)
+        from starlette.responses import JSONResponse
+
+        response = JSONResponse(
+            {"error": "gecko key required", "reason": decision.reason},
+            status_code=403,
+        )
+        await response(scope, receive, send)
+
+
 def _session_id_from_context(server: Any) -> str | None:
     """Best-effort read of the MCP session id from the low-level server's per-request
     context (the transport attaches the Starlette ``Request``, whose headers carry
@@ -409,6 +478,7 @@ def build_http_app(
     surface_rev: str = "0",
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
+    gate: KeyGate | None = None,
 ) -> Starlette:
     """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
 
@@ -425,6 +495,12 @@ def build_http_app(
     the founder-ratified decision (spec §7-#1), so the caller must opt in explicitly.
     Capture is metadata-only by construction: the writer never receives the response
     body or filled URL.
+
+    ``gate`` (Layer 1 access control) wraps the ``/mcp`` mount with the Gecko-key auth
+    edge (``keyauth``). It is **off by default** (``None``): when ``None`` the ``/mcp``
+    route is byte-identical to before — no wrapper, no behavior change on any keyless/
+    public surface. When set, an unauthorized request gets a clean 403 and only an
+    enabled Gecko key passes through to the existing handler.
     """
     try:
         import mcp.types as mcp_types
@@ -552,6 +628,10 @@ def build_http_app(
     # request/response (tee+replay body, pass-through send), so the streamable-http
     # transport and its DNS-rebinding Host guard are unaffected.
     asgi_app = _InitializeCaptureASGI(StreamableHTTPASGIApp(manager), cid)
+    # Layer 1 access control (opt-in): when a gate is wired, front the mount with the
+    # Gecko-key edge so unauthorized keys 403 before reaching the transport/funnel. When
+    # `gate is None` (default) `mcp_app is asgi_app`, so the route below is byte-identical.
+    mcp_app = asgi_app if gate is None else _GeckoKeyGateASGI(asgi_app, gate)
 
     async def _healthz(_request: Any) -> Any:
         # Plain Starlette route — it never enters StreamableHTTPASGIApp, so the
@@ -592,7 +672,7 @@ def build_http_app(
         routes=[
             Route("/healthz", endpoint=_healthz),
             *artifact_routes,
-            Route(MCP_PATH, endpoint=asgi_app),
+            Route(MCP_PATH, endpoint=mcp_app),
         ],
         lifespan=lambda _app: manager.run(),
     )
@@ -608,6 +688,8 @@ def build_multi_surface_app(
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
+    require_gecko_key: bool | None = None,
+    key_gate: KeyGate | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -634,6 +716,13 @@ def build_multi_surface_app(
     the whole server lifetime, inside the same composed lifespan as the MCP mounts. The
     transport stays generic — it never imports any specific surface; a task just gets a
     coroutine factory it drives and cancels.
+
+    ``require_gecko_key`` (Layer 1 access control) gates the per-surface ``/{name}/mcp``
+    mounts behind a Gecko key + founder allowlist. It resolves explicit → ``GECKO_REQUIRE_KEY``
+    → OFF, so a keyless deploy is byte-identical to before. The **public submit door**
+    (``/comprehend`` + the meta ``/gecko/mcp``) stays open — it is the front door, not a
+    paid surface. ``key_gate`` injects the verifier+allowlist seam; when the gate is on
+    but none is given, a fail-closed gate (deny everyone) is used rather than fail-open.
     """
     from contextlib import AsyncExitStack, asynccontextmanager
     from dataclasses import asdict
@@ -662,6 +751,17 @@ def build_multi_surface_app(
     # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
     hosted_enforce = resolve_hosted_enforce(enforce)
 
+    # Layer 1: resolve the gate stance once (explicit → env → OFF). When on, use the
+    # injected gate, else a fail-closed one (deny everyone) so an un-wired deploy never
+    # fails open. When off, `surface_gate` stays None → per-surface mounts unchanged.
+    surface_gate: KeyGate | None = None
+    if resolve_require_gecko_key(require_gecko_key):
+        from .keyauth import FileAllowlist, deny_all_resolver
+
+        surface_gate = key_gate or KeyGate(
+            resolve_account=deny_all_resolver, allowlist=FileAllowlist()
+        )
+
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
         if registry_routes and name == "registry":
@@ -680,6 +780,7 @@ def build_multi_surface_app(
                     allowed_origins=allowed_origins,
                     public_url=site,
                     enforce=hosted_enforce,
+                    gate=surface_gate,
                 ),
             )
         )
