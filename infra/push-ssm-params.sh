@@ -86,6 +86,13 @@ declare -A PARAMS=(
   [GECKO_REQUIRE_KEY]="GECKO_REQUIRE_KEY"
   [PRIVY_APP_ID]="PRIVY_APP_ID"
   [PRIVY_JWKS_URL]="PRIVY_JWKS_URL"
+
+  # Hosted-login server secret (gecko/privy_server.py + authlogin.py) — the SERVER
+  # runs Privy email-OTP and mints a Gecko key. PRIVY_APP_SECRET is SERVER-ONLY:
+  # it must NEVER ship in a client .env. Unset/sentinel => hosted login stays
+  # disabled (the /auth/login/* endpoints 503) and the task boots clean. Requires
+  # MONGODB_URI (the key registry) to also be set for login to be enabled.
+  [PRIVY_APP_SECRET]="PRIVY_APP_SECRET"
 )
 
 echo "==> Region:     $REGION"
@@ -121,6 +128,9 @@ declare -A REQUIRED_AT_BOOT=(
   [GECKO_REQUIRE_KEY]="off"
   [PRIVY_APP_ID]="__unset__"
   [PRIVY_JWKS_URL]="__unset__"
+  # Server-only Privy secret: sentinel keeps the task booting with hosted login
+  # DISABLED (endpoints 503) until the founder pushes a real value in SSM.
+  [PRIVY_APP_SECRET]="__unset__"
 )
 
 SKIPPED=()

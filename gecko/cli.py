@@ -19,19 +19,19 @@ import argparse
 import getpass
 import importlib.metadata
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import (
     __version__,
     credentials,
     docs_reader,
+    hosted_login,
     keyauth,
     login,
     onboard,
-    privy_login,
     serve,
     testgen,
 )
@@ -813,36 +813,27 @@ def _print_help() -> None:
 
 
 def _cmd_login(argv: list[str]) -> int:
-    """`gecko login` — enroll a hosted identity (email → one-time code → sealed token).
+    """`gecko login` — enroll a hosted identity (email → one-time code → sealed Gecko key).
 
-    Thin transport: parse args, build the real seams (keychain store), hand off to
-    ``privy_login.privy_login`` (Privy passwordless email-OTP, PUBLIC app id only). Local
-    `gecko add` (recorded, $0) never needs this — this gates only the HOSTED plane
-    (attribution, rate-limit, hosted features).
+    Zero-config: it talks ONLY to Gecko's server, which runs identity (Privy is a server-side
+    detail) and returns a minted Gecko key that is sealed in the OS keychain. Users never touch
+    Privy or a ``PRIVY_APP_ID``. Local `gecko add` (recorded, $0) never needs this — login gates
+    only the HOSTED plane (attribution, rate-limit, hosted features).
 
-    Security: only the PUBLIC ``PRIVY_APP_ID`` is read here; ``PRIVY_APP_SECRET`` is never
-    referenced — it is a server-side-only credential."""
+    Thin transport: parse args, build the keychain-store seam, hand off to
+    ``hosted_login.hosted_login``. No secret is read client-side."""
     p = argparse.ArgumentParser(
         prog="gecko login",
-        description="Enroll a hosted Gecko identity via Privy email one-time code. "
+        description="Enroll a hosted Gecko identity via an email one-time code. "
         "Local `gecko add` (recorded, $0) never needs this.",
     )
     p.add_argument("--email", default=None, help="Your email (prompted if omitted).")
     p.add_argument(
-        "--app-id",
-        default=os.environ.get("PRIVY_APP_ID"),
-        help="Privy app id (PUBLIC). Defaults to $PRIVY_APP_ID.",
+        "--server",
+        default=hosted_login.DEFAULT_LOGIN_SERVER,
+        help=f"Gecko login server. Defaults to {hosted_login.DEFAULT_LOGIN_SERVER}.",
     )
     args = p.parse_args(argv)
-
-    app_id = (args.app_id or "").strip()
-    if not app_id:
-        print(
-            "  ✗ set your Privy app id first: export PRIVY_APP_ID=... "
-            "(the PUBLIC app id — never the app secret)",
-            file=sys.stderr,
-        )
-        return 2
 
     email = args.email or input("Email: ")
 
@@ -859,9 +850,9 @@ def _cmd_login(argv: list[str]) -> int:
         return True
 
     try:
-        return privy_login.privy_login(
+        return hosted_login.hosted_login(
             email,
-            app_id=app_id,
+            server_url=args.server,
             prompt=input,
             store=_store,
             home=credentials.config_home(),
@@ -869,6 +860,22 @@ def _cmd_login(argv: list[str]) -> int:
     except login.LoginError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
+
+
+def _keys_allowlist() -> Any:
+    """The allowlist store for `gecko keys`: the Gecko-key REGISTRY when configured (hosted
+    plane, toggles the minted keys' ``enabled``), else the local :class:`FileAllowlist`.
+
+    ``registry_from_env`` returns ``None`` unless ``MONGODB_URI`` is set, so a normal local run
+    keeps using the file store with zero behavior change; a founder with the hosted DB wired
+    toggles the registry record instead. Both satisfy the enable/disable/accounts contract.
+    """
+    from .keyregistry import RegistryAllowlist, registry_from_env
+
+    registry = registry_from_env()
+    if registry is not None:
+        return RegistryAllowlist(registry)
+    return keyauth.FileAllowlist()
 
 
 def _cmd_keys(argv: list[str]) -> int:
@@ -901,7 +908,7 @@ def _cmd_keys(argv: list[str]) -> int:
     sub.add_parser("list", help="List enabled account IDs (never a token).")
 
     args = p.parse_args(argv)
-    store = keyauth.FileAllowlist()
+    store = _keys_allowlist()
     try:
         if args.action == "enable":
             added = store.enable(args.account)

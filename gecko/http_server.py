@@ -57,6 +57,12 @@ META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
 
+# The hosted-login endpoints (email → OTP → minted Gecko key). Both bodies are tiny JSON
+# envelopes ({"email"} / {"login_id","code"}); cap hard before parsing (unauthenticated door).
+LOGIN_START_PATH = "/auth/login/start"
+LOGIN_VERIFY_PATH = "/auth/login/verify"
+MAX_LOGIN_REQUEST_BYTES = 4 * 1024
+
 # The `gecko add` onboard-ping ingest — the attribution event that makes adopters
 # visible. Aggregate-only + control-plane: five short labels, never a payload/arg/
 # secret/user-datum. Every rejection answers the SAME empty 204 as success, so a
@@ -690,6 +696,8 @@ def build_multi_surface_app(
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     require_gecko_key: bool | None = None,
     key_gate: KeyGate | None = None,
+    key_registry: Any | None = None,
+    login_service: Any | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -723,6 +731,13 @@ def build_multi_surface_app(
     (``/comprehend`` + the meta ``/gecko/mcp``) stays open — it is the front door, not a
     paid surface. ``key_gate`` injects the verifier+allowlist seam; when the gate is on
     but none is given, a fail-closed gate (deny everyone) is used rather than fail-open.
+
+    ``key_registry`` (the Gecko-key registry, ``gecko.keyregistry``) supersedes the Privy-JWT
+    resolver on the gate: when the gate is on and a registry is wired (explicit or via
+    ``MONGODB_URI``), the per-surface mounts verify minted ``gecko_sk_…`` keys against it.
+    ``login_service`` (``gecko.authlogin.LoginService``) powers the ``/auth/login/*`` endpoints
+    below; when neither it nor its env config is present, those routes answer a clean 503. Both
+    are injected in tests to stay fully offline.
     """
     from contextlib import AsyncExitStack, asynccontextmanager
     from dataclasses import asdict
@@ -762,10 +777,29 @@ def build_multi_surface_app(
         if key_gate is not None:
             surface_gate = key_gate
         else:
-            from .privy_auth import privy_resolver_from_env
+            from .keyregistry import (
+                GeckoKeyResolver,
+                RegistryAllowlist,
+                registry_from_env,
+            )
 
-            resolver: AccountResolver = privy_resolver_from_env() or deny_all_resolver
-            surface_gate = KeyGate(resolve_account=resolver, allowlist=FileAllowlist())
+            registry = key_registry or registry_from_env()
+            if registry is not None:
+                # Gecko-key registry configured: verify minted gecko_sk_… keys (enabled lives
+                # on the registry record) — supersedes the Privy-JWT resolver on this seam.
+                surface_gate = KeyGate(
+                    resolve_account=GeckoKeyResolver(registry),
+                    allowlist=RegistryAllowlist(registry),
+                )
+            else:
+                from .privy_auth import privy_resolver_from_env
+
+                resolver: AccountResolver = (
+                    privy_resolver_from_env() or deny_all_resolver
+                )
+                surface_gate = KeyGate(
+                    resolve_account=resolver, allowlist=FileAllowlist()
+                )
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
@@ -959,9 +993,67 @@ def build_multi_surface_app(
             logger.warning("onboard ping rejected (redacted)")
         return Response(status_code=204)
 
+    # Hosted login (server-side identity → minted Gecko key). Resolve the service once:
+    # injected wins, else env-wired (Privy secret + registry), else the endpoints 503.
+    from .authlogin import LoginServiceError, build_login_service_from_env
+
+    _login_svc = (
+        login_service if login_service is not None else build_login_service_from_env()
+    )
+
+    async def _login_body(request: Request) -> dict[str, Any] | None:
+        # Size-cap before AND after reading (same convention as _comprehend); None on junk.
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit():
+            if int(declared) > MAX_LOGIN_REQUEST_BYTES:
+                return None
+        raw = await request.body()
+        if len(raw) > MAX_LOGIN_REQUEST_BYTES:
+            return None
+        try:
+            payload = json.loads(raw) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _client_ip(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    async def _login_start(request: Request) -> Any:
+        if _login_svc is None:
+            return JSONResponse({"error": "login_disabled"}, status_code=503)
+        body = await _login_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid request"}, status_code=400)
+        try:
+            login_id = _login_svc.start(str(body.get("email", "")), _client_ip(request))
+        except LoginServiceError as exc:
+            # The message is redacted by construction (never a code/secret).
+            return JSONResponse({"error": str(exc)}, status_code=exc.status)
+        return JSONResponse({"login_id": login_id})
+
+    async def _login_verify(request: Request) -> Any:
+        if _login_svc is None:
+            return JSONResponse({"error": "login_disabled"}, status_code=503)
+        body = await _login_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid request"}, status_code=400)
+        try:
+            api_key = _login_svc.verify(
+                str(body.get("login_id", "")),
+                str(body.get("code", "")),
+                _client_ip(request),
+            )
+        except LoginServiceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status)
+        # The minted key is returned EXACTLY ONCE. It is never logged here or anywhere.
+        return JSONResponse({"api_key": api_key})
+
     routes: list[Any] = [
         Route("/healthz", endpoint=_healthz),
         Route("/", endpoint=_index),
+        Route(LOGIN_START_PATH, endpoint=_login_start, methods=["POST"]),
+        Route(LOGIN_VERIFY_PATH, endpoint=_login_verify, methods=["POST"]),
         # Root /mcp alias -> the meta front door (was 404; conventional default path).
         Route(MCP_PATH, endpoint=_mcp_root_redirect, methods=["GET", "POST"]),
         # Host-level discovery the public app serves at the root (per-surface artifacts
