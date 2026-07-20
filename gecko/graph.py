@@ -290,6 +290,12 @@ class SurfaceGraph:
         """The (namespaced) node id of an operation."""
         return f"{_ns(self.surface_id)}op:{operation_id}"
 
+    def required_inputs(self, operation_id: str) -> list[Node]:
+        """Public view of an operation's required non-auth inputs (path/query) —
+        the compose seam (§13): cross-surface planning needs to see what the
+        intent op consumes without reaching into private machinery."""
+        return self._required_inputs(self.opnode(operation_id))
+
     def content_hash(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
 
