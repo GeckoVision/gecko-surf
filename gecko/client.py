@@ -249,6 +249,17 @@ class AgentApiClient:
         today), above scale lightweight refs — so there is never a second threshold."""
         return self._surface_all
 
+    def add_declared_hints(self, hints: Mapping[str, str]) -> None:
+        """Merge customer-confirmed DECLARED hints (§12 confirm loop) into this
+        client's vocabulary — the serve-edge wiring for ``gecko graph confirm``.
+
+        Invalidates the lazily-built graph so the next plan sees the upgraded
+        ladder; a no-op merge is free (the graph is only rebuilt on next access)."""
+        if not hints:
+            return
+        self._declared_hints.update(hints)
+        self._surface_graph = None
+
     @property
     def surface_graph(self) -> SurfaceGraph:
         """The deterministic surface graph over this client's operations (§4), built and

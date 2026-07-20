@@ -47,6 +47,7 @@ _SUBCOMMANDS = (
     "inspect",
     "from-docs",
     "auth",
+    "graph",
     "rm",
     "list",
     "doctor",
@@ -383,6 +384,83 @@ def _cmd_from_docs(argv: list[str]) -> int:
             json.dump(result.draft, fh, indent=2)
         print(f"\nwrote draft OpenAPI -> {args.out}")
 
+    return 0
+
+
+def _cmd_graph(argv: list[str]) -> int:
+    """`gecko graph confirm|declared|rm` — thin transport over ``gecko.hints``.
+
+    The §12 confirm loop: a human upgrades a relationship to DECLARED (the top of
+    the §13.2 trust ladder — the only basis a cross-API join may plan on, §13.6)
+    with an audit trail. The store holds the RELATIONSHIP (name → entity, when,
+    what it upgraded) per surface — never traffic, never payloads (§14 guardrail).
+    """
+    from . import hints
+
+    p = argparse.ArgumentParser(
+        prog="gecko graph",
+        description="Confirm and inspect DECLARED entity mappings for a surface.",
+    )
+    sub = p.add_subparsers(dest="action")
+
+    p_confirm = sub.add_parser(
+        "confirm",
+        help="Confirm a param/field ↔ entity mapping (upgrades joins to DECLARED).",
+    )
+    p_confirm.add_argument("surface", help="Surface name, e.g. txline.")
+    p_confirm.add_argument("name", help="The param/field name, e.g. FixtureId.")
+    p_confirm.add_argument("entity", help="The entity it identifies, e.g. fixture.")
+    p_confirm.add_argument(
+        "--basis",
+        default="",
+        help="What this confirmation upgrades (e.g. an INFERRED edge's basis) — "
+        "recorded in the audit trail.",
+    )
+
+    p_list = sub.add_parser(
+        "declared", help="List the confirmed vocabulary for a surface."
+    )
+    p_list.add_argument("surface")
+
+    p_rm = sub.add_parser("rm", help="Remove a confirmed mapping (idempotent).")
+    p_rm.add_argument("surface")
+    p_rm.add_argument("name")
+
+    args = p.parse_args(argv)
+    if args.action == "confirm":
+        try:
+            record = hints.confirm_entity(
+                args.surface, args.name, args.entity, prior_basis=args.basis
+            )
+        except ValueError as exc:
+            print(f"graph: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"Confirmed {args.surface}: {record['name']} → {record['entity']} "
+            f"(DECLARED; used on the next serve/graph build)."
+        )
+        return 0
+    if args.action == "declared":
+        records = hints.list_confirmed(args.surface)
+        if not records:
+            print(f"No confirmed mappings for '{args.surface}'.")
+            return 0
+        for r in records:
+            print(
+                f"  {r.get('name')} → {r.get('entity')}   "
+                f"confirmed {r.get('confirmed_at', '?')}"
+                + (f"   (upgraded: {r['prior_basis']})" if r.get("prior_basis") else "")
+            )
+        return 0
+    if args.action == "rm":
+        removed = hints.remove_confirmed(args.surface, args.name)
+        print(
+            f"Removed {args.surface}:{args.name}."
+            if removed
+            else f"No confirmed mapping {args.surface}:{args.name} (nothing to remove)."
+        )
+        return 0
+    p.print_help()
     return 0
 
 
@@ -823,6 +901,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_from_docs(rest)
     if cmd == "auth":
         return _cmd_auth(rest)
+    if cmd == "graph":
+        return _cmd_graph(rest)
     if cmd == "rm":
         return _cmd_rm(rest)
     if cmd == "list":
