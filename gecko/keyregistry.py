@@ -231,7 +231,17 @@ class RegistryAllowlist:
     registry: KeyRegistry
 
     def is_enabled(self, account: str) -> bool:
-        return bool(account) and account in set(self.registry.enabled_accounts())
+        if not account:
+            return False
+        try:
+            return account in set(self.registry.enabled_accounts())
+        except Exception:  # noqa: BLE001 - a store error must fail closed, like the resolver
+            # Mirrors GeckoKeyResolver: an unreachable/raising registry is a DENY, not a
+            # propagated exception. Both were already fail-closed, but a raise here escaped
+            # the gate as an HTTP 500 instead of its clean 403 — an asymmetry that leaked
+            # store state to the caller. Never names the account or any key.
+            logger.warning("gecko key registry allowlist lookup failed (redacted)")
+            return False
 
     def enable(self, account: str) -> bool:
         """Re-enable every key for ``account``; ``True`` if anything changed."""

@@ -149,6 +149,31 @@ def test_gate_on_with_no_registry_denies_the_gated_surface_and_keeps_others_open
     assert open_one.status_code == 200
 
 
+def test_a_raising_registry_denies_with_403_not_500():
+    """R3: ``RegistryAllowlist.is_enabled`` used to let a store error propagate, so a
+    Mongo blip surfaced as an HTTP 500 (fail-closed, but a different shape — and a
+    stack-trace 500 tells a prober the store is reachable-but-broken). It must deny
+    exactly like an unresolvable key: a clean 403."""
+    registry, key = _registry_with_key()
+
+    class _AllowlistDown:
+        """The key still resolves; only the enablement read is down."""
+
+        def __getattr__(self, item):
+            return getattr(registry, item)
+
+        def enabled_accounts(self):
+            raise RuntimeError("store down")
+
+    with TestClient(_app(key_registry=_AllowlistDown())) as client:
+        resp = _init(client, GATED, key=key)
+        still_open = _init(client, "jupiter")
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "not_enabled"
+    assert key not in resp.text
+    assert still_open.status_code == 200
+
+
 # --- the set resolution ------------------------------------------------------
 
 

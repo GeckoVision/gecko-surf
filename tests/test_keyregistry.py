@@ -8,6 +8,8 @@ a repr, or an error.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from gecko.keyregistry import (
@@ -125,6 +127,29 @@ def test_registry_allowlist_unknown_account_is_not_enabled():
     allow = RegistryAllowlist(InMemoryKeyRegistry())
     assert allow.is_enabled("nobody") is False
     assert allow.is_enabled("") is False
+
+
+def test_registry_allowlist_swallows_registry_error_to_deny():
+    """R3: a raising registry made ``is_enabled`` propagate, so a Mongo blip answered
+    HTTP 500 instead of the gate's clean 403 — asymmetric with ``GeckoKeyResolver``,
+    which already swallows to a deny. Still fail-closed, now on the same shape."""
+
+    class _Boom:
+        def enabled_accounts(self):
+            raise KeyRegistryError("store down")
+
+    allow = RegistryAllowlist(_Boom())  # type: ignore[arg-type]
+    assert allow.is_enabled(ACCOUNT) is False
+
+
+def test_registry_allowlist_denial_on_store_error_never_names_the_account(caplog):
+    class _Boom:
+        def enabled_accounts(self):
+            raise KeyRegistryError("store down")
+
+    with caplog.at_level(logging.WARNING, logger="gecko.keyregistry"):
+        RegistryAllowlist(_Boom()).is_enabled(ACCOUNT)  # type: ignore[arg-type]
+    assert ACCOUNT not in " ".join(r.getMessage() for r in caplog.records)
 
 
 def test_registry_allowlist_rejects_blank_account():
