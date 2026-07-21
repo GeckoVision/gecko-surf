@@ -799,9 +799,7 @@ def _print_help() -> None:
     print("  list               list onboarded surfaces")
     print("\nKeys:")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
-    print(
-        "  keys enable|disable|list <account>  founder allowlist for the hosted endpoint"
-    )
+    print("  keys mint|enable|disable|list <account>  founder access to gated surfaces")
     print("\nDiagnose:")
     print("  doctor             check your setup, print the exact next step")
     print("  --version          print the gecko version")
@@ -878,22 +876,82 @@ def _keys_allowlist() -> Any:
     return keyauth.FileAllowlist()
 
 
+def _cmd_keys_mint(account: str, label: str) -> int:
+    """`gecko keys mint <account>` — mint ONE Gecko key for a developer, printed once.
+
+    The direct founder path to authorize a developer on a gated (paid) hosted surface,
+    independent of the hosted email-OTP login. Reuses the SAME primitives the login
+    endpoint uses (``keyregistry.mint_key`` + ``hash_key`` + ``store_key``) — one key
+    format, one storage path.
+
+    Security: only ``sha256(key) -> {account_id, created, enabled, label}`` is stored, so
+    the plaintext key exists solely in this one stdout line — it is never logged, never
+    persisted, and can never be re-retrieved (mint a new one and disable the old).
+    """
+    # Module-attr access (not `from ... import registry_from_env`) so the wiring stays
+    # one indirection the tests can swap for the in-memory fake — no Mongo in the suite.
+    from . import keyregistry
+    from .keyregistry import hash_key, mint_key
+
+    registry = keyregistry.registry_from_env()
+    if registry is None:
+        print(
+            "  ✗ no Gecko key registry configured — set MONGODB_URI to the hosted "
+            "registry and re-run (the key must live where the server can read it).",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        account = _require_nonblank_account(account)
+    except keyauth.KeyAuthError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    key = mint_key()
+    registry.store_key(key_hash=hash_key(key), account_id=account, label=label)
+    print(f"Minted a Gecko key for {account} (enabled).")
+    print("Shown ONCE — copy it now; it is never stored in plaintext or retrievable:\n")
+    print(f"  {key}\n")
+    print("The developer sends it on every request to a gated surface:")
+    print("  Authorization: Bearer <key>")
+    print(f"Revoke with:  gecko keys disable {account}")
+    return 0
+
+
+def _require_nonblank_account(account: str) -> str:
+    account = (account or "").strip()
+    if not account:
+        raise keyauth.KeyAuthError("account id must be a non-empty identifier")
+    return account
+
+
 def _cmd_keys(argv: list[str]) -> int:
-    """`gecko keys enable|disable|list <account>` — founder-only per-developer allowlist.
+    """`gecko keys mint|enable|disable|list <account>` — founder-only developer access.
 
     Layer 1 access control: register which developer account ids may reach the hosted,
-    Gecko-key-gated endpoint (see ``keyauth``). Thin transport over the local allowlist
-    store; the hosted deploy swaps in its own store behind the same ``Allowlist`` seam.
+    Gecko-key-gated (paid) surfaces (see ``keyauth``). Thin transport over the allowlist
+    store; the hosted deploy swaps in the registry-backed store behind the same
+    ``Allowlist`` seam.
 
-    Security: the store holds only NON-SECRET account ids (the login identity's subject),
-    never a token. ``list`` prints account ids only — never a key.
+    Security: the allowlist holds only NON-SECRET account ids (the login identity's
+    subject), never a token; the registry holds only a key HASH. ``list`` prints account
+    ids only, and ``mint`` prints its key exactly once — never to a log.
     """
     p = argparse.ArgumentParser(
         prog="gecko keys",
-        description="Founder-only: enable/disable a developer account on the "
-        "Gecko-key-gated hosted endpoint. Stores non-secret account ids only.",
+        description="Founder-only: mint/enable/disable a developer account on the "
+        "Gecko-key-gated hosted surfaces. Stores account ids + key hashes only.",
     )
     sub = p.add_subparsers(dest="action")
+
+    p_mint = sub.add_parser(
+        "mint", help="Mint a Gecko key for a developer (printed exactly once)."
+    )
+    p_mint.add_argument("account", help="The developer's stable account id.")
+    p_mint.add_argument(
+        "--label",
+        default="founder-minted",
+        help="A non-secret note stored with the key (who/what it is for).",
+    )
 
     p_enable = sub.add_parser(
         "enable", help="Allow a developer account (by account id)."
@@ -908,6 +966,9 @@ def _cmd_keys(argv: list[str]) -> int:
     sub.add_parser("list", help="List enabled account IDs (never a token).")
 
     args = p.parse_args(argv)
+    if args.action == "mint":
+        # Minting needs the REGISTRY itself (the allowlist seam only toggles `enabled`).
+        return _cmd_keys_mint(args.account, args.label)
     store = _keys_allowlist()
     try:
         if args.action == "enable":

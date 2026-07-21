@@ -70,4 +70,4 @@ def test_blank_account_is_rejected(capsys):
 
 def test_keys_appears_in_help(capsys):
     main([])
-    assert "keys enable|disable|list" in capsys.readouterr().out
+    assert "keys mint|enable|disable|list" in capsys.readouterr().out
