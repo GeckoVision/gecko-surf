@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -332,11 +332,40 @@ REQUIRE_GECKO_KEY_ENV = "GECKO_REQUIRE_KEY"
 _TRUE = frozenset({"1", "true", "yes", "on"})
 
 
+# WHICH surfaces the gate applies to (comma-separated names). The gate stance
+# (GECKO_REQUIRE_KEY) is host-wide; this narrows it to the PAID surfaces so the public
+# funnel (humanitarian + keyless demos) is never closed by turning the gate on.
+GATED_SURFACES_ENV = "GECKO_GATED_SURFACES"
+
+
 def resolve_require_gecko_key(explicit: bool | None = None) -> bool:
     """Resolve the gate stance: explicit wins, else ``GECKO_REQUIRE_KEY``, else OFF."""
     if explicit is not None:
         return explicit
     return os.environ.get(REQUIRE_GECKO_KEY_ENV, "").strip().lower() in _TRUE
+
+
+def resolve_gated_surfaces(
+    explicit: Iterable[str] | None = None,
+    *,
+    default: frozenset[str] | None = None,
+) -> frozenset[str] | None:
+    """Resolve WHICH surface names the Gecko-key gate applies to.
+
+    Explicit wins, else ``GECKO_GATED_SURFACES`` (comma-separated), else ``default``.
+
+    ``None`` means **every** mount is gated — the pre-existing behavior, kept as the
+    library default so no other caller silently changes. The hosted server passes its own
+    ``default`` (``serve_mcp.GATED_SURFACES``) so only the paid surfaces are gated there.
+    An empty/whitespace env value is treated as unset (fall back to ``default``) — the
+    safe direction, since the fallback can only ever gate MORE, never less.
+    """
+    if explicit is not None:
+        return frozenset(explicit)
+    raw = os.environ.get(GATED_SURFACES_ENV, "").strip()
+    if not raw:
+        return default
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 def _bearer_from_scope(scope: Any) -> str | None:
@@ -695,6 +724,7 @@ def build_multi_surface_app(
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     require_gecko_key: bool | None = None,
+    gated_surfaces: Iterable[str] | None = None,
     key_gate: KeyGate | None = None,
     key_registry: Any | None = None,
     login_service: Any | None = None,
@@ -731,6 +761,14 @@ def build_multi_surface_app(
     (``/comprehend`` + the meta ``/gecko/mcp``) stays open — it is the front door, not a
     paid surface. ``key_gate`` injects the verifier+allowlist seam; when the gate is on
     but none is given, a fail-closed gate (deny everyone) is used rather than fail-open.
+
+    ``gated_surfaces`` narrows WHICH mounts that gate applies to (explicit →
+    ``GECKO_GATED_SURFACES`` → ``None``). ``None`` gates every mount — the pre-existing
+    behavior, kept as the default so no caller changes silently. The hosted server passes
+    the paid set (``serve_mcp.GATED_SURFACES``) so a PAID third-party API can be closed to
+    named developers while the humanitarian + keyless demo surfaces — the funnel — stay
+    open. A name here that isn't served is simply inert. Fail-closed is preserved per
+    surface: a gated mount with no usable resolver denies; ungated mounts are untouched.
 
     ``key_registry`` (the Gecko-key registry, ``gecko.keyregistry``) supersedes the Privy-JWT
     resolver on the gate: when the gate is on and a registry is wired (explicit or via
@@ -801,6 +839,10 @@ def build_multi_surface_app(
                     resolve_account=resolver, allowlist=FileAllowlist()
                 )
 
+    # WHICH mounts that gate applies to. None = every mount (the pre-existing behavior);
+    # the hosted server names the paid surfaces so the public funnel stays open.
+    gated_names = resolve_gated_surfaces(gated_surfaces)
+
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
         if registry_routes and name == "registry":
@@ -808,6 +850,14 @@ def build_multi_surface_app(
                 "surface name 'registry' is reserved (would shadow /registry/*)"
             )
         site = f"{public_url.rstrip('/')}/{name}" if public_url else None
+        # Per-surface gate selection. `surface_gate` is None when the gate is OFF; when it
+        # is ON it is either the real verifier or the fail-closed deny-all one — so a
+        # NAMED (paid) surface can never fail open, and an unnamed one is never closed.
+        mount_gate = (
+            surface_gate
+            if surface_gate is not None and (gated_names is None or name in gated_names)
+            else None
+        )
         subs.append(
             (
                 name,
@@ -819,7 +869,7 @@ def build_multi_surface_app(
                     allowed_origins=allowed_origins,
                     public_url=site,
                     enforce=hosted_enforce,
-                    gate=surface_gate,
+                    gate=mount_gate,
                 ),
             )
         )
@@ -1186,12 +1236,14 @@ def serve_multi_http(
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
+    gated_surfaces: Iterable[str] | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
-    ``block`` default (see ``build_multi_surface_app``). ``registry_routes`` and
-    ``background_tasks`` are forwarded unchanged (see ``build_multi_surface_app``)."""
+    ``block`` default (see ``build_multi_surface_app``). ``registry_routes``,
+    ``background_tasks`` and ``gated_surfaces`` (which mounts the Gecko-key gate applies
+    to) are forwarded unchanged (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -1204,5 +1256,6 @@ def serve_multi_http(
         enforce=enforce,
         registry_routes=registry_routes,
         background_tasks=background_tasks,
+        gated_surfaces=gated_surfaces,
     )
     uvicorn.run(app, **_uvicorn_kwargs(host, port))

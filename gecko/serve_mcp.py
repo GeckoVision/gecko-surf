@@ -10,6 +10,10 @@ Supabase ``apikey`` (public by design) — served only when ``REFUGIOS_APIKEY`` 
 via a static-header session that injects the key at call time (hidden from the agent).
 No key ⇒ that surface is simply not served; the repo carries no key.
 
+One surface (``birdeye``) is a PAID third-party API, so it is gated to named developers
+holding a minted Gecko key — see :data:`GATED_SURFACES`. That gate applies to those names
+ONLY; every public/humanitarian mount stays keyless.
+
 Every host also exposes the 'submit your API' front doors (wired in by
 ``build_multi_surface_app``): ``POST /comprehend`` (human page backend, also directly
 agent-POST-able) and the ``comprehend_api`` MCP tool at ``/gecko/mcp``. A provider
@@ -34,7 +38,7 @@ from typing import Any
 from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
 from .enforce import EnforceMode, resolve_hosted_enforce
-from .http_server import serve_multi_http
+from .http_server import resolve_gated_surfaces, serve_multi_http
 from .jito_surface import build_jito_surface
 from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
@@ -99,6 +103,22 @@ _JUPITER_BASE = "https://lite-api.jup.ag/swap/v1"  # keyless free-tier host
 
 PUBLIC_HOST = "mcp.geckovision.tech"
 PUBLIC_URL = f"https://{PUBLIC_HOST}"
+
+# The ONLY surfaces the Gecko-key gate closes when GECKO_REQUIRE_KEY is on.
+#
+# `birdeye` is a PAID, key-gated third-party API. Serving a paid surface openly would
+# drift Gecko into being a marketplace / payment rail (the thesis explicitly forbids
+# both), so it is gated to NAMED developers holding a minted `gecko_sk_…` key
+# (`gecko keys mint <account>`).
+#
+# Everything else stays PUBLIC and keyless — the humanitarian surfaces (reportavnzla,
+# sosvenezuela, refugios) are real public-good users, and the keyless demos (txline,
+# jito, jupiter, paysh) plus the /comprehend + /gecko/mcp submit doors are the funnel.
+# Gating them would close the front door.
+#
+# Add a future PAID surface here (and only here); `GECKO_GATED_SURFACES` (comma-separated)
+# overrides this set at deploy time without a code change.
+GATED_SURFACES = frozenset({"birdeye"})
 
 
 def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
@@ -279,6 +299,9 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
         ),
         background_tasks=[_paysh_worker],
+        # Gate ONLY the paid surfaces (env can override; see GATED_SURFACES). Without
+        # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.
+        gated_surfaces=resolve_gated_surfaces(default=GATED_SURFACES),
     )
 
 
