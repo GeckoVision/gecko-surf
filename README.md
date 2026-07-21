@@ -25,7 +25,7 @@
 
 | Layer | What it does | Who |
 |---|---|---|
-| APIs get **PAID** | billing / settlement rail | Metera (gate402), MCPay |
+| APIs get **PAID** | billing / settlement rail | pay.sh |
 | skills get **DISTRIBUTED** | marketplace / discovery | frames.ag, Bazaar |
 | **APIs get USED** | **comprehension / consumption** | **Gecko** |
 
@@ -52,15 +52,6 @@ claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline
 Transport is **MCP Streamable HTTP** (`2025-11-25`), not SSE — use
 `streamablehttp_client`, not `sse_client`. Ready for your own API?
 → [Make any API agent-usable](#make-any-api-agent-usable).
-
----
-
-## ⚠️ Status (honest)
-
-V1 is **live on mainnet** against real TxODDS: ingest → comprehend → catalog → access →
-correct call → real data. **$0 recorded mode** runs the same path offline. **442 tests
-pass.** Not proven: **consumer willingness-to-pay** — discovery work, not a demo claim.
-What's real: a working comprehension path on one painful API, and an API-agnostic engine.
 
 ---
 
