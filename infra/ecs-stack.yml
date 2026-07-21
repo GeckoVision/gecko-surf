@@ -433,6 +433,24 @@ Resources:
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_ASSET
             - Name: X402_NETWORK
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/X402_NETWORK
+            # Gecko-key access gate (gecko/http_server.py + keyauth.py +
+            # privy_auth.py). All three must exist in SSM (push-ssm-params.sh
+            # writes safe defaults: GECKO_REQUIRE_KEY=off so keyless surfaces
+            # keep working, PRIVY_* __unset__ sentinels => resolver fail-closed)
+            # or the task fails at boot. Flip GECKO_REQUIRE_KEY to "1" in SSM +
+            # force-new-deployment to gate the paid surfaces deliberately.
+            - Name: GECKO_REQUIRE_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_REQUIRE_KEY
+            - Name: PRIVY_APP_ID
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_APP_ID
+            - Name: PRIVY_JWKS_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_JWKS_URL
+            # Hosted-login server secret (gecko/privy_server.py + authlogin.py). The
+            # server runs Privy email-OTP and mints a Gecko key; PRIVY_APP_SECRET is
+            # SERVER-ONLY (never a client). __unset__ sentinel => /auth/login/* 503
+            # (hosted login disabled) and the task boots clean.
+            - Name: PRIVY_APP_SECRET
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_APP_SECRET
           LogConfiguration:
             LogDriver: awslogs
             Options:

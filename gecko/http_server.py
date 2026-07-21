@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +35,7 @@ from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
 from .client import AgentApiClient
+from .keyauth import KeyGate
 from .modes import CallMode
 from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
@@ -55,6 +56,12 @@ COMPREHEND_PATH = "/comprehend"
 META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
+
+# The hosted-login endpoints (email → OTP → minted Gecko key). Both bodies are tiny JSON
+# envelopes ({"email"} / {"login_id","code"}); cap hard before parsing (unauthenticated door).
+LOGIN_START_PATH = "/auth/login/start"
+LOGIN_VERIFY_PATH = "/auth/login/verify"
+MAX_LOGIN_REQUEST_BYTES = 4 * 1024
 
 # The `gecko add` onboard-ping ingest — the attribution event that makes adopters
 # visible. Aggregate-only + control-plane: five short labels, never a payload/arg/
@@ -318,6 +325,117 @@ class _InitializeCaptureASGI:
         await self._inner(scope, replay, _send)
 
 
+# The env switch that turns the Gecko-key gate on for a hosted deploy (Layer 1). OFF
+# unless explicitly truthy — every keyless/public surface must behave byte-identically
+# by default (the critical regression). A redeploy is required to flip it.
+REQUIRE_GECKO_KEY_ENV = "GECKO_REQUIRE_KEY"
+_TRUE = frozenset({"1", "true", "yes", "on"})
+
+
+# WHICH surfaces the gate applies to (comma-separated names). The gate stance
+# (GECKO_REQUIRE_KEY) is host-wide; this narrows it to the PAID surfaces so the public
+# funnel (humanitarian + keyless demos) is never closed by turning the gate on.
+GATED_SURFACES_ENV = "GECKO_GATED_SURFACES"
+
+
+def resolve_require_gecko_key(explicit: bool | None = None) -> bool:
+    """Resolve the gate stance: explicit wins, else ``GECKO_REQUIRE_KEY``, else OFF."""
+    if explicit is not None:
+        return explicit
+    return os.environ.get(REQUIRE_GECKO_KEY_ENV, "").strip().lower() in _TRUE
+
+
+def resolve_gated_surfaces(
+    explicit: Iterable[str] | None = None,
+    *,
+    default: frozenset[str] | None = None,
+) -> frozenset[str] | None:
+    """Resolve WHICH surface names the Gecko-key gate applies to.
+
+    Explicit wins, else ``GECKO_GATED_SURFACES`` (comma-separated), else ``default``.
+
+    ``None`` means **every** mount is gated — the pre-existing behavior, kept as the
+    library default so no other caller silently changes. The hosted server passes its own
+    ``default`` (``serve_mcp.GATED_SURFACES``) so only the paid surfaces are gated there.
+    An empty/whitespace env value is treated as unset (fall back to ``default``) — the
+    safe direction, since the fallback can only ever gate MORE, never less.
+
+    **Fail closed on garbage.** A value that is non-empty but parses to ZERO names
+    (``","``, ``",,,"``) used to yield an empty set — i.e. the gate stayed ON while gating
+    NOTHING, silently leaving a PAID surface open. Such a value now falls back to
+    ``default`` and is logged at ERROR: the fallback can only ever gate more, and the
+    operator's mistake is visible instead of invisible.
+    """
+    if explicit is not None:
+        return frozenset(explicit)
+    raw = os.environ.get(GATED_SURFACES_ENV, "").strip()
+    if not raw:
+        return default
+    names = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    if not names:
+        logger.error(
+            "%s=%r names no surface — falling back to the default gated set (fail closed)",
+            GATED_SURFACES_ENV,
+            raw,
+        )
+        return default
+    return names
+
+
+def _bearer_from_scope(scope: Any) -> str | None:
+    """Pull the Gecko key from an ASGI scope's ``Authorization: Bearer <token>`` header.
+
+    Header-only (never the body), so the gate never consumes/blocks the streaming MCP
+    transport. UNTRUSTED input — the value is passed straight to the injected resolver
+    and NEVER logged. Absent/malformed ⇒ ``None`` (which the gate denies)."""
+    for key, value in scope.get("headers") or []:
+        if bytes(key).lower() == b"authorization":
+            try:
+                raw = bytes(value).decode("latin-1").strip()
+            except Exception:  # noqa: BLE001 - a malformed header is simply no key
+                return None
+            scheme, _, token = raw.partition(" ")
+            if scheme.lower() == "bearer" and token.strip():
+                return token.strip()
+            return None
+    return None
+
+
+class _GeckoKeyGateASGI:
+    """Access-control edge for one served MCP mount: verify the Gecko key + allowlist
+    (``keyauth.authorize``) and 403 everyone else, otherwise pass straight through.
+
+    Applied ONLY when a :class:`~gecko.keyauth.KeyGate` is wired (opt-in). It reads just
+    the ``Authorization`` header from the scope — never the body — so the streaming
+    transport, its DNS-rebinding guard, and the funnel wrapper it fronts are untouched
+    on the allow path. A denial NEVER echoes the token (redact-before-raise); the JSON
+    body carries the reason only. Non-HTTP scopes pass through unchanged.
+    """
+
+    def __init__(self, inner: Any, gate: KeyGate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self._inner(scope, receive, send)
+            return
+        decision = self._gate.decide(_bearer_from_scope(scope))
+        if decision.allowed:
+            await self._inner(scope, receive, send)
+            return
+        # Denied: a clean 403 with the REASON only. The account/token never appears in
+        # the body, and the log line names the reason (never the key).
+        logger.info("gecko-key gate denied (reason=%s)", decision.reason)
+        from starlette.responses import JSONResponse
+
+        response = JSONResponse(
+            {"error": "gecko key required", "reason": decision.reason},
+            status_code=403,
+        )
+        await response(scope, receive, send)
+
+
 def _session_id_from_context(server: Any) -> str | None:
     """Best-effort read of the MCP session id from the low-level server's per-request
     context (the transport attaches the Starlette ``Request``, whose headers carry
@@ -409,6 +527,7 @@ def build_http_app(
     surface_rev: str = "0",
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
+    gate: KeyGate | None = None,
 ) -> Starlette:
     """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
 
@@ -425,6 +544,12 @@ def build_http_app(
     the founder-ratified decision (spec §7-#1), so the caller must opt in explicitly.
     Capture is metadata-only by construction: the writer never receives the response
     body or filled URL.
+
+    ``gate`` (Layer 1 access control) wraps the ``/mcp`` mount with the Gecko-key auth
+    edge (``keyauth``). It is **off by default** (``None``): when ``None`` the ``/mcp``
+    route is byte-identical to before — no wrapper, no behavior change on any keyless/
+    public surface. When set, an unauthorized request gets a clean 403 and only an
+    enabled Gecko key passes through to the existing handler.
     """
     try:
         import mcp.types as mcp_types
@@ -552,6 +677,10 @@ def build_http_app(
     # request/response (tee+replay body, pass-through send), so the streamable-http
     # transport and its DNS-rebinding Host guard are unaffected.
     asgi_app = _InitializeCaptureASGI(StreamableHTTPASGIApp(manager), cid)
+    # Layer 1 access control (opt-in): when a gate is wired, front the mount with the
+    # Gecko-key edge so unauthorized keys 403 before reaching the transport/funnel. When
+    # `gate is None` (default) `mcp_app is asgi_app`, so the route below is byte-identical.
+    mcp_app = asgi_app if gate is None else _GeckoKeyGateASGI(asgi_app, gate)
 
     async def _healthz(_request: Any) -> Any:
         # Plain Starlette route — it never enters StreamableHTTPASGIApp, so the
@@ -592,7 +721,7 @@ def build_http_app(
         routes=[
             Route("/healthz", endpoint=_healthz),
             *artifact_routes,
-            Route(MCP_PATH, endpoint=asgi_app),
+            Route(MCP_PATH, endpoint=mcp_app),
         ],
         lifespan=lambda _app: manager.run(),
     )
@@ -608,6 +737,11 @@ def build_multi_surface_app(
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
+    require_gecko_key: bool | None = None,
+    gated_surfaces: Iterable[str] | None = None,
+    key_gate: KeyGate | None = None,
+    key_registry: Any | None = None,
+    login_service: Any | None = None,
 ) -> Starlette:
     """Serve MANY comprehended surfaces from one host — the centralization surface.
 
@@ -634,6 +768,35 @@ def build_multi_surface_app(
     the whole server lifetime, inside the same composed lifespan as the MCP mounts. The
     transport stays generic — it never imports any specific surface; a task just gets a
     coroutine factory it drives and cancels.
+
+    ``require_gecko_key`` (Layer 1 access control) gates the per-surface ``/{name}/mcp``
+    mounts behind a Gecko key + founder allowlist. It resolves explicit → ``GECKO_REQUIRE_KEY``
+    → OFF, so a keyless deploy is byte-identical to before. The **public submit door**
+    (``/comprehend`` + the meta ``/gecko/mcp``) stays open — it is the front door, not a
+    paid surface. ``key_gate`` injects the verifier+allowlist seam; when the gate is on
+    but none is given, a fail-closed gate (deny everyone) is used rather than fail-open.
+
+    ``gated_surfaces`` narrows WHICH mounts that gate applies to (explicit →
+    ``GECKO_GATED_SURFACES`` → ``None``). ``None`` gates every mount — the pre-existing
+    behavior, kept as the default so no caller changes silently. The hosted server passes
+    the paid set (``serve_mcp.GATED_SURFACES``) so a PAID third-party API can be closed to
+    named developers while the humanitarian + keyless demo surfaces — the funnel — stay
+    open. A name here that isn't served is simply inert. Fail-closed is preserved per
+    surface: a gated mount with no usable resolver denies; ungated mounts are untouched.
+
+    A gated surface is gated at the **Mount**, not just at ``/mcp``: its discovery
+    siblings (``tools.md`` / ``llms.txt`` / ``SKILL.md`` / ``gecko.json`` /
+    ``.well-known/gecko.json``) carry the whole comprehension artifact, and gating only
+    ``/mcp`` served them in the clear. It is also withheld from the anonymous root index
+    and the ``.well-known`` manifests (a valid key still sees it — same gate decision).
+    An UNGATED mount is appended as the raw sub-app, with no wrapper object anywhere.
+
+    ``key_registry`` (the Gecko-key registry, ``gecko.keyregistry``) supersedes the Privy-JWT
+    resolver on the gate: when the gate is on and a registry is wired (explicit or via
+    ``MONGODB_URI``), the per-surface mounts verify minted ``gecko_sk_…`` keys against it.
+    ``login_service`` (``gecko.authlogin.LoginService``) powers the ``/auth/login/*`` endpoints
+    below; when neither it nor its env config is present, those routes answer a clean 503. Both
+    are injected in tests to stay fully offline.
     """
     from contextlib import AsyncExitStack, asynccontextmanager
     from dataclasses import asdict
@@ -662,13 +825,94 @@ def build_multi_surface_app(
     # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
     hosted_enforce = resolve_hosted_enforce(enforce)
 
+    # Layer 1: resolve the gate stance once (explicit → env → OFF). When on and no gate
+    # is injected, wire the REAL Privy verifier when Privy is configured (PRIVY_APP_ID),
+    # else fall back to a fail-closed resolver (deny everyone) so an un-configured deploy
+    # never fails open. When off, `surface_gate` stays None → per-surface mounts unchanged.
+    surface_gate: KeyGate | None = None
+    if resolve_require_gecko_key(require_gecko_key):
+        from .keyauth import AccountResolver, FileAllowlist, deny_all_resolver
+
+        if key_gate is not None:
+            surface_gate = key_gate
+        else:
+            from .keyregistry import (
+                GeckoKeyResolver,
+                RegistryAllowlist,
+                registry_from_env,
+            )
+
+            registry = key_registry or registry_from_env()
+            if registry is not None:
+                # Gecko-key registry configured: verify minted gecko_sk_… keys (enabled lives
+                # on the registry record) — supersedes the Privy-JWT resolver on this seam.
+                surface_gate = KeyGate(
+                    resolve_account=GeckoKeyResolver(registry),
+                    allowlist=RegistryAllowlist(registry),
+                )
+            else:
+                from .privy_auth import privy_resolver_from_env
+
+                resolver: AccountResolver = (
+                    privy_resolver_from_env() or deny_all_resolver
+                )
+                surface_gate = KeyGate(
+                    resolve_account=resolver, allowlist=FileAllowlist()
+                )
+
+    # WHICH mounts that gate applies to. None = every mount (the pre-existing behavior);
+    # the hosted server names the paid surfaces so the public funnel stays open.
+    gated_names = resolve_gated_surfaces(gated_surfaces)
+    # Match case-INSENSITIVELY: mount names are lowercase by convention, and a casing slip
+    # in GECKO_GATED_SURFACES ("BIRDEYE") silently left the PAID mount open. Folding can
+    # only ever gate MORE surfaces, never fewer, so it is safe in the fail-closed direction.
+    gated_folded = None if gated_names is None else {n.casefold() for n in gated_names}
+
+    # A gated name this host does not serve is inert BY DESIGN (it lets an operator
+    # forward-declare a future paid surface) — but inert must never be SILENT: a typo
+    # ("birdye") is indistinguishable from a correct config on the wire, and the end state
+    # it produces (gate ON, every mount OPEN) is exactly the failure this gate exists to
+    # prevent. Loud at ERROR so the deploy log shows it; deliberately not fatal, so a typo
+    # cannot take the humanitarian/public mounts down with it.
+    if (
+        surface_gate is not None
+        and gated_names is not None
+        and gated_folded is not None
+    ):
+        served = {name.casefold() for name, _ in surfaces}
+        unserved = sorted(n for n in gated_names if n.casefold() not in served)
+        if unserved:
+            logger.error(
+                "gecko-key gate names surfaces this host does not serve: %s "
+                "(typo? they gate NOTHING) — served: %s",
+                unserved,
+                sorted(name for name, _ in surfaces),
+            )
+        if not (served & gated_folded):
+            logger.error(
+                "gecko-key gate is ON but gates NO served surface — every mount is OPEN. "
+                "Check %s.",
+                GATED_SURFACES_ENV,
+            )
+
     subs: list[tuple[str, Starlette]] = []
+    #: The mounts that actually carry a gate — i.e. the PAID surfaces, and only when the
+    #: gate is ON. Drives the Mount-level wrapping below AND what an anonymous caller is
+    #: told exists (index / .well-known). Empty ⇒ every route below is unchanged.
+    gated_mounts: set[str] = set()
     for name, spec in surfaces:
         if registry_routes and name == "registry":
             raise ValueError(
                 "surface name 'registry' is reserved (would shadow /registry/*)"
             )
         site = f"{public_url.rstrip('/')}/{name}" if public_url else None
+        # Per-surface gate selection. `surface_gate` is None when the gate is OFF; when it
+        # is ON it is either the real verifier or the fail-closed deny-all one — so a
+        # NAMED (paid) surface can never fail open, and an unnamed one is never closed.
+        if surface_gate is not None and (
+            gated_folded is None or name.casefold() in gated_folded
+        ):
+            gated_mounts.add(name)
         subs.append(
             (
                 name,
@@ -680,6 +924,10 @@ def build_multi_surface_app(
                     allowed_origins=allowed_origins,
                     public_url=site,
                     enforce=hosted_enforce,
+                    # NOT gated here: the gate goes around the whole Mount below, so it
+                    # covers the discovery siblings (tools.md / llms.txt / SKILL.md /
+                    # gecko.json) too — gating only `/mcp` served the ENTIRE comprehension
+                    # artifact of a paid surface in the clear (R1).
                 ),
             )
         )
@@ -701,21 +949,23 @@ def build_multi_surface_app(
     def _abs(path: str) -> str:
         return f"{public_url.rstrip('/')}{path}" if public_url else path
 
+    # Comprehended surfaces served on this host (NOT a public marketplace listing —
+    # each is a spec the operator chose to serve). Submissions are never added here.
+    surface_entries: list[dict[str, str]] = [
+        {
+            "name": name,
+            "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
+            if public_url
+            else f"/{name}/mcp",
+            "llms_txt": f"/{name}/llms.txt",
+        }
+        for name, _ in subs
+    ]
+
     index = {
         "name": "gecko",
         "description": "Comprehended API surfaces, served agent-native.",
-        # Comprehended surfaces served on this host (NOT a public marketplace listing —
-        # each is a spec the operator chose to serve). Submissions are never added here.
-        "surfaces": [
-            {
-                "name": name,
-                "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
-                if public_url
-                else f"/{name}/mcp",
-                "llms_txt": f"/{name}/llms.txt",
-            }
-            for name, _ in subs
-        ],
+        "surfaces": surface_entries,
         # The submit-your-API front doors — comprehend and return to the submitter only.
         "submit": {
             "http": _abs(COMPREHEND_PATH),
@@ -758,11 +1008,31 @@ def build_multi_surface_app(
         },
     }
 
+    # A gated (paid) surface is not ADVERTISED to anonymous callers: the root index and
+    # the host manifests used to name it, which both hands a scraper the paid catalog and
+    # drifts us toward the marketplace listing the thesis forbids. A caller holding a
+    # valid key still sees it (same gate decision as the mount — one source of truth), so
+    # discovery is not broken for the developers it was opened to. With no gated mount
+    # both dicts are the SAME object, so every public deploy is byte-identical.
+    _public_index = (
+        index
+        if not gated_mounts
+        else {
+            **index,
+            "surfaces": [e for e in surface_entries if e["name"] not in gated_mounts],
+        }
+    )
+
+    def _sees_gated(scope: Any) -> bool:
+        if not gated_mounts or surface_gate is None:
+            return True
+        return surface_gate.decide(_bearer_from_scope(scope)).allowed
+
     async def _healthz(_request: Any) -> Any:
         return PlainTextResponse("ok")
 
-    async def _index(_request: Any) -> Any:
-        return JSONResponse(index)
+    async def _index(request: Request) -> Any:
+        return JSONResponse(index if _sees_gated(request.scope) else _public_index)
 
     async def _mcp_root_redirect(_request: Any) -> Any:
         # /mcp is the conventional default path a real MCP client tries; it lives only
@@ -772,13 +1042,19 @@ def build_multi_surface_app(
         # check (Pattern B): httpx/fetch follow by default, but the founder confirms it.
         return RedirectResponse(url=f"/{META_SURFACE_NAME}{MCP_PATH}", status_code=307)
 
-    async def _well_known_gecko(_request: Any) -> Any:
+    async def _well_known_gecko(request: Request) -> Any:
         # Host-level discovery — the SAME content _index returns (surfaces + submit door).
-        return JSONResponse(index)
+        return JSONResponse(index if _sees_gated(request.scope) else _public_index)
 
-    async def _well_known_x402(_request: Any) -> Any:
+    async def _well_known_x402(request: Request) -> Any:
         # Honest, control-plane-safe x402 stance: Gecko composes x402, custody none.
-        return JSONResponse(build_x402_manifest(surfaces, public_url))
+        # Gated surfaces are withheld from anonymous callers on the same rule as the index.
+        visible = (
+            surfaces
+            if _sees_gated(request.scope)
+            else [(n, s) for n, s in surfaces if n not in gated_mounts]
+        )
+        return JSONResponse(build_x402_manifest(visible, public_url))
 
     # Built once (static per host): both onboarding paths + the canonical doc links.
     _onboard_md = build_onboard_breadcrumb(public_url)
@@ -853,9 +1129,67 @@ def build_multi_surface_app(
             logger.warning("onboard ping rejected (redacted)")
         return Response(status_code=204)
 
+    # Hosted login (server-side identity → minted Gecko key). Resolve the service once:
+    # injected wins, else env-wired (Privy secret + registry), else the endpoints 503.
+    from .authlogin import LoginServiceError, build_login_service_from_env
+
+    _login_svc = (
+        login_service if login_service is not None else build_login_service_from_env()
+    )
+
+    async def _login_body(request: Request) -> dict[str, Any] | None:
+        # Size-cap before AND after reading (same convention as _comprehend); None on junk.
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit():
+            if int(declared) > MAX_LOGIN_REQUEST_BYTES:
+                return None
+        raw = await request.body()
+        if len(raw) > MAX_LOGIN_REQUEST_BYTES:
+            return None
+        try:
+            payload = json.loads(raw) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _client_ip(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    async def _login_start(request: Request) -> Any:
+        if _login_svc is None:
+            return JSONResponse({"error": "login_disabled"}, status_code=503)
+        body = await _login_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid request"}, status_code=400)
+        try:
+            login_id = _login_svc.start(str(body.get("email", "")), _client_ip(request))
+        except LoginServiceError as exc:
+            # The message is redacted by construction (never a code/secret).
+            return JSONResponse({"error": str(exc)}, status_code=exc.status)
+        return JSONResponse({"login_id": login_id})
+
+    async def _login_verify(request: Request) -> Any:
+        if _login_svc is None:
+            return JSONResponse({"error": "login_disabled"}, status_code=503)
+        body = await _login_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid request"}, status_code=400)
+        try:
+            api_key = _login_svc.verify(
+                str(body.get("login_id", "")),
+                str(body.get("code", "")),
+                _client_ip(request),
+            )
+        except LoginServiceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status)
+        # The minted key is returned EXACTLY ONCE. It is never logged here or anywhere.
+        return JSONResponse({"api_key": api_key})
+
     routes: list[Any] = [
         Route("/healthz", endpoint=_healthz),
         Route("/", endpoint=_index),
+        Route(LOGIN_START_PATH, endpoint=_login_start, methods=["POST"]),
+        Route(LOGIN_VERIFY_PATH, endpoint=_login_verify, methods=["POST"]),
         # Root /mcp alias -> the meta front door (was 404; conventional default path).
         Route(MCP_PATH, endpoint=_mcp_root_redirect, methods=["GET", "POST"]),
         # Host-level discovery the public app serves at the root (per-surface artifacts
@@ -869,7 +1203,19 @@ def build_multi_surface_app(
         Route(EVENTS_ONBOARD_PATH, endpoint=_events_onboard, methods=["POST"]),
     ]
     for name, sub in subs:
-        routes.append(Mount(f"/{name}", app=sub))
+        # Gate the WHOLE mount for a paid surface — `/mcp` and every discovery sibling
+        # (tools.md / llms.txt / SKILL.md / gecko.json / .well-known/gecko.json), which
+        # carry the full comprehension artifact. Denials stay the same clean 403 the
+        # `/mcp` edge already returned (one status, one reason vocabulary). An UNGATED
+        # mount is appended exactly as before — the raw sub-app, no wrapper object.
+        routes.append(
+            Mount(
+                f"/{name}",
+                app=sub
+                if name not in gated_mounts or surface_gate is None
+                else _GeckoKeyGateASGI(sub, surface_gate),
+            )
+        )
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))
     if registry_routes:
         routes.extend(registry_routes)
@@ -988,12 +1334,14 @@ def serve_multi_http(
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
+    gated_surfaces: Iterable[str] | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
-    ``block`` default (see ``build_multi_surface_app``). ``registry_routes`` and
-    ``background_tasks`` are forwarded unchanged (see ``build_multi_surface_app``)."""
+    ``block`` default (see ``build_multi_surface_app``). ``registry_routes``,
+    ``background_tasks`` and ``gated_surfaces`` (which mounts the Gecko-key gate applies
+    to) are forwarded unchanged (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -1006,5 +1354,6 @@ def serve_multi_http(
         enforce=enforce,
         registry_routes=registry_routes,
         background_tasks=background_tasks,
+        gated_surfaces=gated_surfaces,
     )
     uvicorn.run(app, **_uvicorn_kwargs(host, port))

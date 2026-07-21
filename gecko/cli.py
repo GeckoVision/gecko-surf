@@ -19,18 +19,19 @@ import argparse
 import getpass
 import importlib.metadata
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import (
     __version__,
     credentials,
     docs_reader,
+    hosted_login,
+    keyauth,
     login,
     onboard,
-    privy_login,
     serve,
     testgen,
 )
@@ -42,6 +43,7 @@ from .netguard import UnsafeUrlError, validate_public_url
 _SUBCOMMANDS = (
     "add",
     "login",
+    "keys",
     "serve",
     "test",
     "inspect",
@@ -797,6 +799,7 @@ def _print_help() -> None:
     print("  list               list onboarded surfaces")
     print("\nKeys:")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
+    print("  keys mint|enable|disable|list <account>  founder access to gated surfaces")
     print("\nDiagnose:")
     print("  doctor             check your setup, print the exact next step")
     print("  --version          print the gecko version")
@@ -808,36 +811,27 @@ def _print_help() -> None:
 
 
 def _cmd_login(argv: list[str]) -> int:
-    """`gecko login` — enroll a hosted identity (email → one-time code → sealed token).
+    """`gecko login` — enroll a hosted identity (email → one-time code → sealed Gecko key).
 
-    Thin transport: parse args, build the real seams (keychain store), hand off to
-    ``privy_login.privy_login`` (Privy passwordless email-OTP, PUBLIC app id only). Local
-    `gecko add` (recorded, $0) never needs this — this gates only the HOSTED plane
-    (attribution, rate-limit, hosted features).
+    Zero-config: it talks ONLY to Gecko's server, which runs identity (Privy is a server-side
+    detail) and returns a minted Gecko key that is sealed in the OS keychain. Users never touch
+    Privy or a ``PRIVY_APP_ID``. Local `gecko add` (recorded, $0) never needs this — login gates
+    only the HOSTED plane (attribution, rate-limit, hosted features).
 
-    Security: only the PUBLIC ``PRIVY_APP_ID`` is read here; ``PRIVY_APP_SECRET`` is never
-    referenced — it is a server-side-only credential."""
+    Thin transport: parse args, build the keychain-store seam, hand off to
+    ``hosted_login.hosted_login``. No secret is read client-side."""
     p = argparse.ArgumentParser(
         prog="gecko login",
-        description="Enroll a hosted Gecko identity via Privy email one-time code. "
+        description="Enroll a hosted Gecko identity via an email one-time code. "
         "Local `gecko add` (recorded, $0) never needs this.",
     )
     p.add_argument("--email", default=None, help="Your email (prompted if omitted).")
     p.add_argument(
-        "--app-id",
-        default=os.environ.get("PRIVY_APP_ID"),
-        help="Privy app id (PUBLIC). Defaults to $PRIVY_APP_ID.",
+        "--server",
+        default=hosted_login.DEFAULT_LOGIN_SERVER,
+        help=f"Gecko login server. Defaults to {hosted_login.DEFAULT_LOGIN_SERVER}.",
     )
     args = p.parse_args(argv)
-
-    app_id = (args.app_id or "").strip()
-    if not app_id:
-        print(
-            "  ✗ set your Privy app id first: export PRIVY_APP_ID=... "
-            "(the PUBLIC app id — never the app secret)",
-            file=sys.stderr,
-        )
-        return 2
 
     email = args.email or input("Email: ")
 
@@ -854,9 +848,9 @@ def _cmd_login(argv: list[str]) -> int:
         return True
 
     try:
-        return privy_login.privy_login(
+        return hosted_login.hosted_login(
             email,
-            app_id=app_id,
+            server_url=args.server,
             prompt=input,
             store=_store,
             home=credentials.config_home(),
@@ -864,6 +858,148 @@ def _cmd_login(argv: list[str]) -> int:
     except login.LoginError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
+
+
+def _keys_allowlist() -> Any:
+    """The allowlist store for `gecko keys`: the Gecko-key REGISTRY when configured (hosted
+    plane, toggles the minted keys' ``enabled``), else the local :class:`FileAllowlist`.
+
+    ``registry_from_env`` returns ``None`` unless ``MONGODB_URI`` is set, so a normal local run
+    keeps using the file store with zero behavior change; a founder with the hosted DB wired
+    toggles the registry record instead. Both satisfy the enable/disable/accounts contract.
+    """
+    from .keyregistry import RegistryAllowlist, registry_from_env
+
+    registry = registry_from_env()
+    if registry is not None:
+        return RegistryAllowlist(registry)
+    return keyauth.FileAllowlist()
+
+
+def _cmd_keys_mint(account: str, label: str) -> int:
+    """`gecko keys mint <account>` — mint ONE Gecko key for a developer, printed once.
+
+    The direct founder path to authorize a developer on a gated (paid) hosted surface,
+    independent of the hosted email-OTP login. Reuses the SAME primitives the login
+    endpoint uses (``keyregistry.mint_key`` + ``hash_key`` + ``store_key``) — one key
+    format, one storage path.
+
+    Security: only ``sha256(key) -> {account_id, created, enabled, label}`` is stored, so
+    the plaintext key exists solely in this one stdout line — it is never logged, never
+    persisted, and can never be re-retrieved (mint a new one and disable the old).
+    """
+    # Module-attr access (not `from ... import registry_from_env`) so the wiring stays
+    # one indirection the tests can swap for the in-memory fake — no Mongo in the suite.
+    from . import keyregistry
+    from .keyregistry import hash_key, mint_key
+
+    registry = keyregistry.registry_from_env()
+    if registry is None:
+        print(
+            "  ✗ no Gecko key registry configured — set MONGODB_URI to the hosted "
+            "registry and re-run (the key must live where the server can read it).",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        account = _require_nonblank_account(account)
+    except keyauth.KeyAuthError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    key = mint_key()
+    registry.store_key(key_hash=hash_key(key), account_id=account, label=label)
+    print(f"Minted a Gecko key for {account} (enabled).")
+    print("Shown ONCE — copy it now; it is never stored in plaintext or retrievable:\n")
+    print(f"  {key}\n")
+    print("The developer sends it on every request to a gated surface:")
+    print("  Authorization: Bearer <key>")
+    print(f"Revoke with:  gecko keys disable {account}")
+    return 0
+
+
+def _require_nonblank_account(account: str) -> str:
+    account = (account or "").strip()
+    if not account:
+        raise keyauth.KeyAuthError("account id must be a non-empty identifier")
+    return account
+
+
+def _cmd_keys(argv: list[str]) -> int:
+    """`gecko keys mint|enable|disable|list <account>` — founder-only developer access.
+
+    Layer 1 access control: register which developer account ids may reach the hosted,
+    Gecko-key-gated (paid) surfaces (see ``keyauth``). Thin transport over the allowlist
+    store; the hosted deploy swaps in the registry-backed store behind the same
+    ``Allowlist`` seam.
+
+    Security: the allowlist holds only NON-SECRET account ids (the login identity's
+    subject), never a token; the registry holds only a key HASH. ``list`` prints account
+    ids only, and ``mint`` prints its key exactly once — never to a log.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko keys",
+        description="Founder-only: mint/enable/disable a developer account on the "
+        "Gecko-key-gated hosted surfaces. Stores account ids + key hashes only.",
+    )
+    sub = p.add_subparsers(dest="action")
+
+    p_mint = sub.add_parser(
+        "mint", help="Mint a Gecko key for a developer (printed exactly once)."
+    )
+    p_mint.add_argument("account", help="The developer's stable account id.")
+    p_mint.add_argument(
+        "--label",
+        default="founder-minted",
+        help="A non-secret note stored with the key (who/what it is for).",
+    )
+
+    p_enable = sub.add_parser(
+        "enable", help="Allow a developer account (by account id)."
+    )
+    p_enable.add_argument("account", help="The developer's stable account id.")
+
+    p_disable = sub.add_parser(
+        "disable", help="Revoke a developer account (idempotent)."
+    )
+    p_disable.add_argument("account", help="The developer's stable account id.")
+
+    sub.add_parser("list", help="List enabled account IDs (never a token).")
+
+    args = p.parse_args(argv)
+    if args.action == "mint":
+        # Minting needs the REGISTRY itself (the allowlist seam only toggles `enabled`).
+        return _cmd_keys_mint(args.account, args.label)
+    store = _keys_allowlist()
+    try:
+        if args.action == "enable":
+            added = store.enable(args.account)
+            print(
+                f"Enabled {args.account}."
+                if added
+                else f"{args.account} was already enabled."
+            )
+            return 0
+        if args.action == "disable":
+            removed = store.disable(args.account)
+            print(
+                f"Disabled {args.account}."
+                if removed
+                else f"{args.account} was not enabled (nothing to do)."
+            )
+            return 0
+        if args.action == "list":
+            accounts = store.accounts()
+            if not accounts:
+                print("No accounts enabled. Enable one:  gecko keys enable <account>")
+            else:
+                for account in accounts:
+                    print(f"  {account}")
+            return 0
+    except keyauth.KeyAuthError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    p.print_help()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -877,6 +1013,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(rest)
     if cmd == "login":
         return _cmd_login(rest)
+    if cmd == "keys":
+        return _cmd_keys(rest)
     if cmd == "serve":
         # Wire the real first-run ping transport ONLY here (mirrors _cmd_add): the
         # CLI is default-on; library/test calls of serve.main stay network-silent.
