@@ -56,7 +56,11 @@ def test_start_then_verify_mints_and_stores_key():
     assert login_id and privy.started == ["dev@example.com"]
 
     key = svc.verify(login_id, CODE, IP)
-    # The minted key resolves back to the Privy subject via the registry.
+    # The minted key maps to the Privy subject — but lands DISABLED, so the resolver
+    # (which is enable-gated) refuses it until the founder enables the account.
+    assert registry._by_hash[hash_key(key)]["account_id"] == SUBJECT
+    assert GeckoKeyResolver(registry)(key) is None
+    registry.set_account_enabled(SUBJECT, True)
     assert GeckoKeyResolver(registry)(key) == SUBJECT
     # Only the HASH is stored — never the plaintext key.
     assert hash_key(key) in registry._by_hash
@@ -68,6 +72,8 @@ def test_identity_falls_back_to_email_when_no_subject():
     privy = _FakePrivy(PrivyIdentity(subject="", email="only-email@example.com"))
     svc = LoginService(privy=privy, registry=registry)
     key = svc.verify(svc.start("only-email@example.com", IP), CODE, IP)
+    assert registry._by_hash[hash_key(key)]["account_id"] == "only-email@example.com"
+    registry.set_account_enabled("only-email@example.com", True)
     assert GeckoKeyResolver(registry)(key) == "only-email@example.com"
 
 
@@ -143,3 +149,20 @@ def test_code_and_key_never_appear_in_error():
     with pytest.raises(LoginServiceError) as exc:
         svc.verify(login_id, secret_code, IP)
     assert secret_code not in str(exc.value)
+
+
+# --- self-service login grants IDENTITY, never ACCESS ---------------------------
+
+
+def test_login_mints_a_disabled_key_so_anyone_with_an_email_gets_no_access():
+    """The finding this guards: `store_key` defaulted to enabled, so ANY email that
+    passed the OTP minted a key that opened every gated (paid) surface. Login must
+    establish identity only — access is a separate, deliberate founder act."""
+    svc, registry, _privy = _service()
+    key = svc.verify(svc.start("stranger@example.com", IP), CODE, IP)
+
+    record = registry._by_hash[hash_key(key)]
+    assert record["enabled"] is False
+    assert record["surfaces"] == []
+    assert GeckoKeyResolver(registry)(key) is None
+    assert registry.enabled_accounts() == []

@@ -83,7 +83,10 @@ def test_start_then_verify_returns_key_once_and_stores_hash_only():
         assert r2.status_code == 200
         api_key = r2.json()["api_key"]
 
-    # The key resolves to the Privy subject; only its hash is at rest.
+    # The key maps to the Privy subject but lands DISABLED (login = identity, not
+    # access), so the enable-gated resolver only returns it once the founder enables.
+    assert GeckoKeyResolver(registry)(api_key) is None
+    registry.set_account_enabled(SUBJECT, True)
     assert GeckoKeyResolver(registry)(api_key) == SUBJECT
     assert hash_key(api_key) in registry._by_hash
     assert api_key not in repr(registry._by_hash)
@@ -215,8 +218,20 @@ def _mint(registry: InMemoryKeyRegistry) -> str:
 def test_gate_with_enabled_gecko_key_passes_through():
     registry = InMemoryKeyRegistry()
     key = _mint(registry)
+    # A login-minted key is IDENTITY ONLY — the founder must enable the account and
+    # grant it this surface before it opens anything.
+    registry.set_account_enabled(SUBJECT, True)
     resp = _init_post(_gated_app(registry), key)
     assert resp.status_code == 200  # reached the transport (real init handshake)
+
+
+def test_a_freshly_logged_in_key_opens_nothing_until_the_founder_grants_it():
+    """Self-service login must not hand out access to a gated/paid surface."""
+    registry = InMemoryKeyRegistry()
+    key = _mint(registry)
+    resp = _init_post(_gated_app(registry), key)
+    assert resp.status_code == 403
+    assert json.loads(resp.text)["reason"] == "invalid_token"  # disabled -> no account
 
 
 def test_gate_with_disabled_gecko_key_is_403():

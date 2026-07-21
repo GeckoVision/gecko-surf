@@ -170,7 +170,7 @@ def test_plaintext_key_never_stored_or_reprd():
     assert key not in repr(stored)
     for record in stored.values():
         assert key not in repr(record)
-        assert set(record) == {"account_id", "created", "enabled", "label"}
+        assert set(record) == {"account_id", "created", "enabled", "label", "surfaces"}
     # The registry's own repr never surfaces the key (or the hash store).
     assert key not in repr(registry)
 

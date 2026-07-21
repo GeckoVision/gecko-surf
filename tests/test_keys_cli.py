@@ -30,7 +30,7 @@ def test_enable_writes_account_and_is_idempotent(_hermetic_home, capsys):
     assert main(["keys", "enable", ACCOUNT]) == 0
     assert "Enabled" in capsys.readouterr().out
     on_disk = json.loads(_keys_file(_hermetic_home).read_text(encoding="utf-8"))
-    assert on_disk == {"accounts": [ACCOUNT]}
+    assert on_disk == {"accounts": [ACCOUNT], "grants": {}}
 
     assert main(["keys", "enable", ACCOUNT]) == 0
     assert "already enabled" in capsys.readouterr().out
@@ -42,7 +42,7 @@ def test_disable_removes_account_and_is_idempotent(_hermetic_home, capsys):
     assert main(["keys", "disable", ACCOUNT]) == 0
     assert "Disabled" in capsys.readouterr().out
     on_disk = json.loads(_keys_file(_hermetic_home).read_text(encoding="utf-8"))
-    assert on_disk == {"accounts": []}
+    assert on_disk == {"accounts": [], "grants": {}}
 
     assert main(["keys", "disable", ACCOUNT]) == 0
     assert "nothing to do" in capsys.readouterr().out

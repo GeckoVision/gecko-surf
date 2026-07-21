@@ -803,6 +803,7 @@ def _print_help() -> None:
     print("  connect <surface>  use a gated hosted surface — key from the keychain")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
     print("  keys mint|enable|disable|list <account>  founder access to gated surfaces")
+    print("  keys grant|revoke <account> --surface X  per-surface access control")
     print("\nDiagnose:")
     print("  doctor             check your setup, print the exact next step")
     print("  --version          print the gecko version")
@@ -918,7 +919,7 @@ def _keys_allowlist() -> Any:
     return keyauth.FileAllowlist()
 
 
-def _cmd_keys_mint(account: str, label: str) -> int:
+def _cmd_keys_mint(account: str, label: str, surfaces: list[str] | None = None) -> int:
     """`gecko keys mint <account>` — mint ONE Gecko key for a developer, printed once.
 
     The direct founder path to authorize a developer on a gated (paid) hosted surface,
@@ -948,13 +949,28 @@ def _cmd_keys_mint(account: str, label: str) -> int:
     except keyauth.KeyAuthError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
+    granted = sorted({s.strip() for s in (surfaces or []) if s.strip()})
+    try:
+        for surface in granted:
+            keyauth._require_surface(surface)
+    except keyauth.KeyAuthError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
     key = mint_key()
-    registry.store_key(key_hash=hash_key(key), account_id=account, label=label)
-    print(f"Minted a Gecko key for {account} (enabled).")
+    registry.store_key(
+        key_hash=hash_key(key), account_id=account, label=label, surfaces=granted
+    )
+    scope = ", ".join(granted) if granted else "NO surfaces yet"
+    print(f"Minted a Gecko key for {account} (enabled; {scope}).")
     print("Shown ONCE — copy it now; it is never stored in plaintext or retrievable:\n")
     print(f"  {key}\n")
     print("The developer sends it on every request to a gated surface:")
     print("  Authorization: Bearer <key>")
+    if not granted:
+        print(
+            f"\nIt opens nothing until you grant a surface:\n"
+            f"  gecko keys grant {account} --surface birdeye"
+        )
     print(f"Revoke with:  gecko keys disable {account}")
     return 0
 
@@ -990,6 +1006,13 @@ def _cmd_keys(argv: list[str]) -> int:
     )
     p_mint.add_argument("account", help="The developer's stable account id.")
     p_mint.add_argument(
+        "--surface",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help="Grant a gated surface (repeatable). Omit and the key opens nothing.",
+    )
+    p_mint.add_argument(
         "--label",
         default="founder-minted",
         help="A non-secret note stored with the key (who/what it is for).",
@@ -1005,12 +1028,24 @@ def _cmd_keys(argv: list[str]) -> int:
     )
     p_disable.add_argument("account", help="The developer's stable account id.")
 
-    sub.add_parser("list", help="List enabled account IDs (never a token).")
+    p_grant = sub.add_parser(
+        "grant", help="Grant one gated surface to a developer account."
+    )
+    p_grant.add_argument("account", help="The developer's stable account id.")
+    p_grant.add_argument("--surface", required=True, help="Mount name, e.g. birdeye.")
+
+    p_revoke = sub.add_parser("revoke", help="Revoke one gated surface (idempotent).")
+    p_revoke.add_argument("account", help="The developer's stable account id.")
+    p_revoke.add_argument("--surface", required=True, help="Mount name, e.g. birdeye.")
+
+    sub.add_parser(
+        "list", help="List enabled account IDs + their grants (never a token)."
+    )
 
     args = p.parse_args(argv)
     if args.action == "mint":
         # Minting needs the REGISTRY itself (the allowlist seam only toggles `enabled`).
-        return _cmd_keys_mint(args.account, args.label)
+        return _cmd_keys_mint(args.account, args.label, args.surface)
     store = _keys_allowlist()
     try:
         if args.action == "enable":
@@ -1029,13 +1064,33 @@ def _cmd_keys(argv: list[str]) -> int:
                 else f"{args.account} was not enabled (nothing to do)."
             )
             return 0
+        if args.action == "grant":
+            surface = keyauth._require_surface(args.surface)
+            added = store.grant(args.account, surface)
+            print(
+                f"Granted {surface} to {args.account}."
+                if added
+                else f"{args.account} already had {surface}."
+            )
+            return 0
+        if args.action == "revoke":
+            surface = keyauth._require_surface(args.surface)
+            removed = store.revoke(args.account, surface)
+            print(
+                f"Revoked {surface} from {args.account}."
+                if removed
+                else f"{args.account} did not have {surface} (nothing to do)."
+            )
+            return 0
         if args.action == "list":
             accounts = store.accounts()
             if not accounts:
                 print("No accounts enabled. Enable one:  gecko keys enable <account>")
             else:
                 for account in accounts:
-                    print(f"  {account}")
+                    held = store.grants_for(account)
+                    scope = ", ".join(held) if held else "no surfaces granted"
+                    print(f"  {account}  ({scope})")
             return 0
     except keyauth.KeyAuthError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)

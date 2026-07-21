@@ -30,7 +30,7 @@ from collections.abc import Callable, Coroutine, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import corpus
+from . import corpus, keyauth
 from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
@@ -1213,7 +1213,10 @@ def build_multi_surface_app(
                 f"/{name}",
                 app=sub
                 if name not in gated_mounts or surface_gate is None
-                else _GeckoKeyGateASGI(sub, surface_gate),
+                # Scoped PER MOUNT: holding a valid enabled key is not enough, the
+                # account must also be granted THIS surface. Without the scoping a
+                # single key opened every gated surface at once.
+                else _GeckoKeyGateASGI(sub, keyauth.scope_gate(surface_gate, name)),
             )
         )
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))

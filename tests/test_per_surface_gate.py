@@ -79,7 +79,14 @@ def _init(client: TestClient, surface: str, key: str | None = None):
 def _registry_with_key() -> tuple[InMemoryKeyRegistry, str]:
     registry = InMemoryKeyRegistry()
     key = mint_key()
-    registry.store_key(key_hash=hash_key(key), account_id=ACCOUNT, label="co-founder")
+    registry.store_key(
+        key_hash=hash_key(key),
+        account_id=ACCOUNT,
+        label="co-founder",
+        surfaces=[
+            GATED
+        ],  # enabled is not enough: the account must be granted THIS surface
+    )
     return registry, key
 
 
@@ -205,3 +212,24 @@ def test_serve_mcp_gates_only_the_paid_surface():
     assert "birdeye" in GATED_SURFACES
     # The funnel + the humanitarian surfaces must never appear in the gated set.
     assert GATED_SURFACES.isdisjoint(UNGATED)
+
+
+def test_enabled_but_ungranted_is_denied():
+    """Being enabled is not the same as being allowed HERE. Without the per-surface
+    scope one key opened every gated surface at once, so enabling a developer for a
+    future paid API would silently hand them every other paid API too."""
+    registry, key = _registry_with_key()
+    registry.set_account_surfaces(ACCOUNT, [])  # enabled, granted nothing
+    with TestClient(_app(key_registry=registry)) as client:
+        resp = _init(client, GATED, key=key)
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "not_enabled"
+
+
+def test_a_grant_for_one_surface_does_not_open_another():
+    registry, key = _registry_with_key()
+    registry.set_account_surfaces(ACCOUNT, ["some-other-paid-api"])
+    with TestClient(_app(key_registry=registry)) as client:
+        resp = _init(client, GATED, key=key)
+    assert resp.status_code == 403
+    assert resp.json()["reason"] == "not_enabled"
