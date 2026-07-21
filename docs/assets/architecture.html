@@ -532,7 +532,7 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container">
-      <svg viewBox="0 0 1080 560" role="img" aria-label="Gecko — the API comprehension layer — control plane, never data plane (architecture diagram)">
+      <svg viewBox="0 0 1160 500" role="img" aria-label="Gecko — the API comprehension layer — control plane, never data plane (architecture diagram)">
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -556,91 +556,91 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect x="220" y="60" width="620" height="320" rx="12" class="c-region" stroke-width="1"/>
-        <text x="228" y="78" class="t-cloud" font-size="9" font-weight="600">Gecko control plane — surface + tool defs + correctness metadata</text>
+        <rect x="220" y="80" width="830" height="302" rx="12" class="c-region" stroke-width="1"/>
+        <text x="228" y="98" class="t-cloud" font-size="9" font-weight="600">Gecko control plane — surface + tool defs + correctness metadata (never payloads)</text>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path d="M 170 120 L 250 120" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path d="M 380 120 L 460 120" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path d="M 525 150 L 525 300" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path d="M 525 300 L 627 300 Q 635 300 635 292 L 635 158 Q 635 150 643 150 L 745 150" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path d="M 170 330 L 460 330" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 590 330 L 680 330" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path d="M 810 330 L 910 330" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path d="M 105 360 L 105 472 Q 105 480 113 480 L 967 480 Q 975 480 975 472 L 975 360" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 180 141 L 250 141" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 390 141 L 460 141" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 600 141 L 670 141" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 810 141 L 880 141" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 180 331 L 452 331 Q 460 331 460 323 L 460 180 Q 460 172 468 172 L 740 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 740 172 L 740 300" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 810 331 L 1000 331" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path d="M 110 362 L 110 437 Q 110 445 118 445 L 1062 445 Q 1070 445 1070 437 L 1070 362" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Components -->
-        <rect x="40" y="90" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="40" y="90" width="130" height="60" rx="6" class="c-external" stroke-width="1.5"/>
-        <text x="105" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">OpenAPI / docs</text>
-        <text x="105" y="134" class="t-muted" font-size="9" text-anchor="middle">the surface only</text>
+        <rect x="40" y="110" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="40" y="110" width="140" height="62" rx="6" class="c-external" stroke-width="1.5"/>
+        <text x="110" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">OpenAPI / docs</text>
+        <text x="110" y="155" class="t-muted" font-size="9" text-anchor="middle">the surface only</text>
 
-        <rect x="250" y="90" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="250" y="90" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="315" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Ingest</text>
-        <text x="315" y="134" class="t-muted" font-size="9" text-anchor="middle">normalize ops + params</text>
+        <rect x="250" y="110" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="250" y="110" width="140" height="62" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="320" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Ingest</text>
+        <text x="320" y="155" class="t-muted" font-size="9" text-anchor="middle">normalize ops + params</text>
 
-        <rect x="460" y="90" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="460" y="90" width="130" height="60" rx="6" class="c-database" stroke-width="1.5"/>
-        <text x="525" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Catalog</text>
-        <text x="525" y="134" class="t-muted" font-size="9" text-anchor="middle">intent → endpoint</text>
+        <rect x="460" y="110" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="460" y="110" width="140" height="62" rx="6" class="c-database" stroke-width="1.5"/>
+        <text x="530" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Catalog</text>
+        <text x="530" y="155" class="t-muted" font-size="9" text-anchor="middle">intent → endpoint</text>
 
-        <rect x="680" y="90" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="680" y="90" width="130" height="60" rx="6" class="c-cloud" stroke-width="1.5"/>
-        <text x="745" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Validator</text>
-        <text x="745" y="134" class="t-muted" font-size="9" text-anchor="middle">FCC + JSONL log</text>
-        <text x="745" y="142" class="t-cloud" font-size="7" text-anchor="middle">moat seed</text>
+        <rect x="670" y="110" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="670" y="110" width="140" height="62" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="740" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tools / MCP</text>
+        <text x="740" y="155" class="t-muted" font-size="9" text-anchor="middle">auth hidden</text>
+        <text x="740" y="164" class="t-backend" font-size="7" text-anchor="middle">first-call-correct</text>
 
-        <rect x="40" y="300" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="40" y="300" width="130" height="60" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="105" y="328" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI Agent</text>
-        <text x="105" y="344" class="t-muted" font-size="9" text-anchor="middle">goal, no API docs</text>
+        <rect x="880" y="110" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="880" y="110" width="140" height="62" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <text x="950" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Validator</text>
+        <text x="950" y="155" class="t-muted" font-size="9" text-anchor="middle">replay · FCC</text>
+        <text x="950" y="164" class="t-cloud" font-size="7" text-anchor="middle">V2 seed</text>
 
-        <rect x="460" y="300" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="460" y="300" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="525" y="328" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tools / MCP</text>
-        <text x="525" y="344" class="t-muted" font-size="9" text-anchor="middle">auth hidden</text>
-        <text x="525" y="352" class="t-backend" font-size="7" text-anchor="middle">first-call-correct</text>
+        <rect x="40" y="300" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="40" y="300" width="140" height="62" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <text x="110" y="329" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI Agent</text>
+        <text x="110" y="345" class="t-muted" font-size="9" text-anchor="middle">a goal, no API docs</text>
 
-        <rect x="680" y="300" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="680" y="300" width="130" height="60" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="745" y="328" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Access</text>
-        <text x="745" y="344" class="t-muted" font-size="9" text-anchor="middle">session handshake</text>
+        <rect x="670" y="300" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="670" y="300" width="140" height="62" rx="6" class="c-security" stroke-width="1.5"/>
+        <text x="740" y="329" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Access</text>
+        <text x="740" y="345" class="t-muted" font-size="9" text-anchor="middle">injects auth at call time</text>
 
-        <rect x="910" y="300" width="130" height="60" rx="6" class="c-mask"/>
-        <rect x="910" y="300" width="130" height="60" rx="6" class="c-external" stroke-width="1.5"/>
-        <text x="975" y="328" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The Real API</text>
-        <text x="975" y="344" class="t-muted" font-size="9" text-anchor="middle">data plane</text>
+        <rect x="1000" y="300" width="140" height="62" rx="6" class="c-mask"/>
+        <rect x="1000" y="300" width="140" height="62" rx="6" class="c-external" stroke-width="1.5"/>
+        <text x="1070" y="329" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The Real API</text>
+        <text x="1070" y="345" class="t-muted" font-size="9" text-anchor="middle">data plane</text>
 
         <!-- Connection labels -->
-        <rect x="159.4" y="76" width="101.2" height="14" rx="3" class="c-mask"/>
-        <text x="210" y="86" class="t-muted" font-size="8" text-anchor="middle">surface, never data</text>
+        <rect x="164.4" y="176" width="101.2" height="14" rx="3" class="c-mask"/>
+        <text x="215" y="186" class="t-muted" font-size="8" text-anchor="middle">surface, never data</text>
 
 
-        <rect x="615.6" y="157" width="38.8" height="14" rx="3" class="c-mask"/>
-        <text x="635" y="167" class="t-messagebus" font-size="8" text-anchor="middle">replay</text>
-        <rect x="295.6" y="310" width="38.8" height="14" rx="3" class="c-mask"/>
-        <text x="315" y="320" class="t-backend" font-size="8" text-anchor="middle">intent</text>
+        <rect x="825.6" y="121" width="38.8" height="14" rx="3" class="c-mask"/>
+        <text x="845" y="131" class="t-messagebus" font-size="8" text-anchor="middle">replay</text>
+        <rect x="440.6" y="231.5" width="38.8" height="14" rx="3" class="c-mask"/>
+        <text x="460" y="241.5" class="t-backend" font-size="8" text-anchor="middle">intent</text>
 
-        <rect x="826.2" y="310" width="67.6" height="14" rx="3" class="c-mask"/>
-        <text x="860" y="320" class="t-security" font-size="8" text-anchor="middle">injects auth</text>
-        <rect x="434.2" y="460" width="211.6" height="14" rx="3" class="c-mask"/>
-        <text x="540" y="470" class="t-backend" font-size="8" text-anchor="middle">calls the real API directly · data returns</text>
+        <rect x="871.2" y="311" width="67.6" height="14" rx="3" class="c-mask"/>
+        <text x="905" y="321" class="t-security" font-size="8" text-anchor="middle">injects auth</text>
+        <rect x="378.6" y="425" width="422.8" height="14" rx="3" class="c-mask"/>
+        <text x="590" y="435" class="t-backend" font-size="8" text-anchor="middle">the agent calls the real API directly · data returns to the agent, never through Gecko</text>
 
         <!-- Legend -->
-        <text x="40" y="531" class="t-primary" font-size="9" font-weight="600">Legend</text>
-        <rect x="40" y="536" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-        <text x="60" y="544" class="t-muted" font-size="8">External</text>
-        <rect x="138" y="536" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-        <text x="158" y="544" class="t-muted" font-size="8">Backend</text>
-        <rect x="231" y="536" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-        <text x="251" y="544" class="t-muted" font-size="8">Database</text>
-        <rect x="329" y="536" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
-        <text x="349" y="544" class="t-muted" font-size="8">Cloud</text>
-        <rect x="412" y="536" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-        <text x="432" y="544" class="t-muted" font-size="8">Frontend</text>
-        <rect x="510" y="536" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-        <text x="530" y="544" class="t-muted" font-size="8">Security</text>
+        <text x="40" y="471" class="t-primary" font-size="9" font-weight="600">Legend</text>
+        <rect x="40" y="476" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+        <text x="60" y="484" class="t-muted" font-size="8">External</text>
+        <rect x="138" y="476" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+        <text x="158" y="484" class="t-muted" font-size="8">Backend</text>
+        <rect x="231" y="476" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+        <text x="251" y="484" class="t-muted" font-size="8">Database</text>
+        <rect x="329" y="476" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+        <text x="349" y="484" class="t-muted" font-size="8">Cloud</text>
+        <rect x="412" y="476" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+        <text x="432" y="484" class="t-muted" font-size="8">Frontend</text>
+        <rect x="510" y="476" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+        <text x="530" y="484" class="t-muted" font-size="8">Security</text>
       </svg>
     </div>
 
@@ -652,30 +652,30 @@
           <h3>Control plane only</h3>
         </div>
         <ul>
-          <li>&bull; Stores the surface, tool defs, correctness metadata</li>
-          <li>&bull; Never response payloads, user data, or secrets</li>
+          <li>&bull; Holds the surface, tool defs, correctness metadata</li>
+          <li>&bull; Never response payloads, keys, or user data</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>One code path, two modes</h3>
+          <h3>One path, two modes</h3>
         </div>
         <ul>
           <li>&bull; recorded — synthesized from schema, $0, offline</li>
-          <li>&bull; live — same path, real transport</li>
+          <li>&bull; live — the same path, real calls</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot violet"></div>
-          <h3>Correctness</h3>
+          <h3>Off the data path</h3>
         </div>
         <ul>
-          <li>&bull; validator replays calls, logs outcomes (JSONL)</li>
-          <li>&bull; seeds the V2 correctness corpus</li>
+          <li>&bull; The agent calls the real API directly</li>
+          <li>&bull; Gecko injects auth, never sees the response</li>
         </ul>
       </div>
     </div>
