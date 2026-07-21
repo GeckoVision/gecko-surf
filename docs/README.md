@@ -9,20 +9,19 @@ Install: `pip install gecko-surf` · CLI: `gecko <openapi-url>` · SDK: `from ge
 ## Product docs
 | Page | What |
 |---|---|
-| [Overview](index.md) | The one-liner, the before/after, the hero demo, honest status. |
+| [Overview](index.md) | The one-liner, the before/after, the hero demo, where we are. |
 | [Quickstart](quickstart.md) | Serve any API over MCP, or embed the SDK — in minutes. |
 | [Why Gecko](why.md) | Using vs. not using; the before/after table; who it's for. |
 | [How it works](how-it-works.md) | The five-stage comprehension pipeline. |
 | [Stay correct](stay-correct.md) | What happens when the upstream API changes. |
 | [FAQ & data governance](faq.md) | BYOK, control-plane-only, SSRF, vs OpenAPI→MCP generators. |
 
-## Honest status
+## Where we are
 V1 — the comprehension path — is **live**: ingest → first-call-correct tools → access →
-direct call, proven end-to-end against the real, paywalled TxODDS API, with a **$0
+direct call, proven end-to-end against the real, paywalled TxODDS API, with a **`$0`
 recorded mode** that runs the whole path offline. The **vectorized semantic index**, the
-**docs→OpenAPI on-ramp**, and the **auto-update "stay-correct" job** are designed for V2
-and labeled as such throughout. Consumer willingness-to-pay is still being validated —
-Gecko is a working comprehension layer, not yet a proven business.
+**docs→OpenAPI on-ramp**, and the **auto-update "stay-correct" job** are on the V2
+roadmap, labeled as such throughout.
 
 ---
 

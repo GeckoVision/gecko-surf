@@ -12,7 +12,7 @@ Gecko is a comprehension layer, not a middleman:
 - It **never re-lists your API** in a public catalog. Your surface is served because
   you asked for it, to the agents you point at it — not marketed to the world.
 - Your developers **never pay Gecko** to use your API. (How the provider side is
-  eventually priced is a separate, later conversation — see *Honest status* below.)
+  eventually priced is a separate, later conversation — see *Where we are* below.)
 
 ## The five moves
 
@@ -150,12 +150,9 @@ changing hands to start, no exclusivity.**
 | **Aggregate, not replace** | Your own MCP, docs, and endpoints stay intact. Gecko sits beside them. |
 | **Auth is invisible to the agent** | Credentials are injected at call time; the agent never sees a token. |
 
-## Honest status
+## Where we are
 
 Moves **1–3** are live (move 3's new-partner hosting is founder-run while we build it
 toward self-serve). Move **4** is proven offline and early live — on-chain settlement is
 validated on devnet; mainnet is founder-run. Move **5** — drift-watch and the adoption
-dashboard — is designed for V2 and **not yet shipped**; it's labeled as such everywhere.
-And the honest open question underneath all of it: whether providers will *pay* for
-agent-readiness is still being validated. Gecko is a working comprehension layer that
-your API can join today — not yet a proven business.
+dashboard — is on the V2 roadmap, labeled as such everywhere. Your API can join today.
