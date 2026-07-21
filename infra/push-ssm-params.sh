@@ -120,12 +120,31 @@ declare -A REQUIRED_AT_BOOT=(
   [X402_PAY_TO]="__unset__"
   [X402_ASSET]="__unset__"
   [X402_NETWORK]="__unset__"
-  # Gecko-key gate: default "off" (NOT in the truthy set) so every existing
-  # keyless surface keeps working after a deploy; flip to "1" in SSM +
-  # force-new-deployment to gate the paid surfaces deliberately. The PRIVY_*
-  # sentinels keep the task booting; the resolver stays fail-closed (deny-all)
-  # until PRIVY_APP_ID holds a real app id.
-  [GECKO_REQUIRE_KEY]="off"
+  # Gecko-key gate: "1" (truthy) — REQUIRED now that a PAID surface is served.
+  # The gate is PER-SURFACE: it closes only the names in serve_mcp.GATED_SURFACES
+  # (today: birdeye), so every keyless/public surface (reportavnzla, sosvenezuela,
+  # txline, jito, jupiter) keeps answering with NO key. `serve_mcp` REFUSES TO
+  # START if a declared-paid surface would be served with this off, so "off" is
+  # no longer a safe value while birdeye is in the surface list.
+  #
+  # ⚠️ ORDER OF OPERATIONS: push "1" only once the per-surface-gating code is
+  # DEPLOYED. On the older build this flag gated EVERY mount — pushing it early
+  # (or rolling back the image while it is set) takes the public + humanitarian
+  # surfaces offline. Deploy the gated build, then force-new-deployment.
+  #
+  # ⚠️ MONGODB_URI must hold a REAL value (not the sentinel) — it is the key
+  # registry that verifies minted `gecko_sk_…` keys. Gate on + no registry =
+  # birdeye denies EVERYONE (correct fail-closed, but nobody gets in). Mint
+  # against the SAME Mongo the task reads: `gecko keys mint <account>`.
+  #
+  # NOT provisioned here on purpose: GECKO_GATED_SURFACES. The gated set lives in
+  # code (serve_mcp.GATED_SURFACES) as the single source of truth. Every param in
+  # this script uses the `__unset__` sentinel when empty, and that string parses
+  # to a surface NAME — `GECKO_GATED_SURFACES=__unset__` would gate a surface that
+  # does not exist and silently leave the PAID one open (a fail-open the boot
+  # guard cannot catch, because the gate is still "on"). Add a future paid surface
+  # to the code constant instead.
+  [GECKO_REQUIRE_KEY]="1"
   [PRIVY_APP_ID]="__unset__"
   [PRIVY_JWKS_URL]="__unset__"
   # Server-only Privy secret: sentinel keeps the task booting with hosted login
@@ -282,6 +301,35 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     echo ""
     echo "!! VERIFY DRIFT — these were meant to be real but are sentinel/missing:" >&2
     for P in "${VERIFY_DRIFT[@]}"; do echo "   - $SSM_PREFIX/$P" >&2; done
+  fi
+
+  # Gate/registry coherence. A truthy GECKO_REQUIRE_KEY with a sentinel/empty
+  # MONGODB_URI is the silent-lockout combo: the PAID surfaces deny EVERYONE
+  # (correct fail-closed — but not even the intended developer gets in), and
+  # `gecko keys mint` has no registry to write the key into. The generic
+  # VERIFY-DRIFT check cannot catch it, because a sentinel MONGODB_URI is a
+  # legitimate state for every OTHER consumer. Values are never printed.
+  GATE_RAW="$(aws ssm get-parameter --name "${SSM_PREFIX}/GECKO_REQUIRE_KEY" \
+      --with-decryption --region "$REGION" --output text \
+      --query 'Parameter.Value' 2>/dev/null || echo "")"
+  MONGO_RAW="$(aws ssm get-parameter --name "${SSM_PREFIX}/MONGODB_URI" \
+      --with-decryption --region "$REGION" --output text \
+      --query 'Parameter.Value' 2>/dev/null || echo "")"
+  GATE_ON=0
+  case "$(printf '%s' "$GATE_RAW" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) GATE_ON=1 ;;
+  esac
+  MONGO_REAL=1
+  if [[ -z "$MONGO_RAW" || "$MONGO_RAW" == "$SENTINEL" ]]; then MONGO_REAL=0; fi
+  GATE_RAW=""; MONGO_RAW=""  # drop both values from memory immediately
+  if [[ "$GATE_ON" -eq 1 && "$MONGO_REAL" -eq 0 ]]; then
+    echo "" >&2
+    echo "!! GATE ON, NO KEY REGISTRY — the paid surfaces will deny EVERYONE:" >&2
+    echo "   $SSM_PREFIX/GECKO_REQUIRE_KEY is truthy but $SSM_PREFIX/MONGODB_URI" >&2
+    echo "   is sentinel/empty, so no minted gecko_sk_ key can be verified." >&2
+    echo "   Fix: set MONGODB_URI in $ENV_FILE, re-run this script, then mint" >&2
+    echo "   against that SAME database:" >&2
+    echo "     MONGODB_URI=\"<same uri>\" gecko keys mint <account> --label <who>" >&2
   fi
 fi
 
