@@ -68,9 +68,8 @@ call(mode="recorded"|"live")`, `gecko/client.py`.)
    on-chain subscribe. Fork `examples/_starter/` — an app on any API in ~20 lines, $0 —
    or see `examples/sos_vzla_bot/` for a full LLM agent.
 
-> **Honest note:** today the capability search is **lexical** (`gecko/catalog.py`); the
-> vectorized semantic index is V2. And whether teams will *pay* for this is still being
-> validated — Gecko is a working comprehension layer, not yet a proven business.
+> **Note:** today the capability search is **lexical** (`gecko/catalog.py`); the
+> vectorized semantic index is on the V2 roadmap.
 
 **Who it's for:** teams shipping production multi-agent / multi-API systems, at the
 moment they hit the *Nth painful API* — long-tail, messy, poorly-documented, often

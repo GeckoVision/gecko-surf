@@ -26,13 +26,11 @@ $0**, before you spend a token or a cent.
 - **[Why Gecko](why.md)** — the before/after, and who this is for.
 - **[How it works](how-it-works.md)** — the five-stage comprehension pipeline.
 - **[Stay correct](stay-correct.md)** — what happens when the upstream API changes.
-- **[FAQ & data governance](faq.md)** — control-plane-only, BYOK, SSRF, and the honest roadmap.
+- **[FAQ & data governance](faq.md)** — control-plane-only, BYOK, SSRF, and the roadmap.
 
-## Honest status
+## Where we are
 V1 — the comprehension path — is **live**: ingest → first-call-correct tools →
 access → direct call, including a full two-token on-chain subscribe against the real,
-paywalled TxODDS API. The capability search is
-**lexical** today; the vectorized semantic index, the docs→OpenAPI on-ramp, and the
-auto-update "stay-correct" job are **designed for V2, not yet built** — and labeled as
-such wherever they appear. Whether teams will *pay* for this is still being validated:
-Gecko is a working comprehension layer, not yet a proven business.
+paywalled TxODDS API, with a **`$0` recorded mode** that runs the whole path offline. The
+vectorized semantic index, the docs→OpenAPI on-ramp, and the auto-update "stay-correct"
+job are on the V2 roadmap, labeled as such wherever they appear.
