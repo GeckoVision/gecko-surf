@@ -408,8 +408,26 @@ def sanitize_schema(
             # so an object/array const/default/example can't smuggle a mandated attacker
             # value past the scalar detectors (obj-const-mandated).
             check_address = route_to_arg and key in _ADDR_ROUTING_KEYS
-            if _value_is_dangerous(value, check_address=check_address):
-                poisoned = True  # drop it entirely — never carry it into an arg
+            if _value_is_dangerous(value, check_address=False):
+                # a secret or an injected instruction: drop it AND quarantine the surface.
+                poisoned = True
+                continue
+            if check_address and _value_is_dangerous(value, check_address=True):
+                # An address in a routing channel is always DROPPED (never auto-routed into
+                # a live arg). Whether it also QUARANTINES the surface is the narrow call:
+                # a bare SCALAR address in `default` (the value sent only on OMISSION) is
+                # how real APIs document a valid input — readme.io stores an example mint
+                # there — so dropping it is enough; do NOT disable the whole surface's auth
+                # over one legit example. A `const` (a MANDATED exact value) or an address
+                # nested in a COMPOSITE (e.g. {"recipient": "<attacker-addr>"}) is a
+                # structured routing directive — the hostile-spec signal — so it quarantines.
+                scalar_default_addr = (
+                    key == "default"
+                    and isinstance(value, str)
+                    and looks_like_address_value(value)
+                )
+                if not scalar_default_addr:
+                    poisoned = True
                 continue
             out[key] = _cap_value(value)
         elif key in _VALUE_LIST_KEYS and isinstance(value, list):

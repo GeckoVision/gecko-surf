@@ -84,6 +84,63 @@ def test_sanitize_schema_drops_secret_default_and_flags():
     assert "private key" not in cleaned["properties"]["note"]["description"].lower()
 
 
+# --- A crypto ADDRESS in a request value channel is DROPPED but must NOT quarantine ----
+# Regression: a real API (Birdeye) documents a valid mint as a request `default`/example.
+# The routing defense must still DROP it (never auto-send an address into a live arg), but
+# an address is not a poisoned spec — dropping already neutralizes the threat, so the
+# WHOLE surface must not be quarantined (which would disable live auth) over a legit mint.
+_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # a real Solana mint (44-char base58)
+
+
+def test_scalar_address_default_is_dropped_but_not_poisoned():
+    # THE Birdeye case: a real API documents a valid mint as a scalar `default`.
+    schema = {
+        "type": "object",
+        "properties": {
+            "address": {"type": "string", "default": _MINT},
+        },
+    }
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is False  # a legit mint must NOT quarantine the surface
+    assert (
+        "default" not in cleaned["properties"]["address"]
+    )  # still dropped from routing
+
+
+def test_address_in_example_is_kept_and_not_poisoned():
+    schema = {"type": "string", "example": _MINT}
+    cleaned, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is False
+    assert cleaned["example"] == _MINT  # hint channel keeps the example
+
+
+def test_secret_default_still_poisons_after_address_carveout():
+    schema = {"type": "string", "default": "sk-" + "Z" * 40}
+    _, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True  # a real secret still quarantines
+
+
+def test_scalar_address_const_still_poisons():
+    # a MANDATED address (const) is the hostile-spec signal — the carve-out is `default`
+    # ONLY, so a scalar address in `const` still quarantines.
+    _, poisoned = sanitize.sanitize_schema({"type": "string", "const": _MINT})
+    assert poisoned is True
+
+
+def test_address_inside_composite_default_still_poisons():
+    # an address nested in an object `default` (a structured routing directive) still
+    # quarantines even though the outer key is `default`.
+    schema = {"default": {"recipient": _MINT}}
+    _, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True
+
+
+def test_address_enum_member_still_poisons():
+    # enum lists ALLOWED values; an address member stays strict (drop + quarantine).
+    _, poisoned = sanitize.sanitize_schema({"enum": ["SOL", _MINT]})
+    assert poisoned is True
+
+
 # --- Fix #3: enum values and property KEYS are attacker-controlled channels too -------
 # Quarantine alone is insufficient: an instruction-shaped enum value / property key still
 # reaches the agent (as a suggested value / a field name) in recorded mode, so the
