@@ -66,13 +66,17 @@ What's real: a working comprehension path on one painful API, and an API-agnosti
 
 ## Watch it run — the 70-second launch demo
 
-<p align="center">
-  <img src="docs/assets/launch.gif" alt="Gecko launch demo — comprehend TxODDS into 8/8 first-call-correct tools + live odds; block a poisoned spec 8/8→0/8; gecko test writes 32/32 checks" width="820">
-</p>
+<div align="center">
+
+![Gecko 70s launch demo — 18 first-call-correct TxODDS tools; redteam blocks 8/8 poisoned attacks; gecko test 32/32 checks](docs/assets/launch.gif)
+
+[MP4 version](docs/assets/launch.mp4)
+
+</div>
 
 Every number from a real run:
 
-- **Plug in** TxODDS → 18 ops, **8/8 first-call-correct**, live World Cup odds.
+- **Plug in** TxODDS → **18 first-call-correct tools**, recorded/$0 first call (live when subscribed).
 - **Stay safe** → poisoned-spec attacks that hit a naive agent **8/8** are blocked **0/8**.
 - **Stay correct** → `gecko test` writes **32/32** first-call-correctness checks for CI.
 
@@ -84,13 +88,13 @@ Every number from a real run:
 correctness metadata — never response payloads, user data, or secrets. That invariant
 is what lets it ingest any API unilaterally.
 
-<p align="center">
-  <img src="docs/assets/architecture.svg" alt="Gecko architecture: agent intent → ingest/catalog/tools/access control plane → agent calls the real API directly" width="920">
-</p>
+<div align="center">
 
-<p align="center">
-  <a href="docs/assets/architecture.html">Interactive diagram</a> (dark/light toggle · PNG/SVG export)
-</p>
+![Gecko architecture — agent intent → ingest/catalog/tools/access control plane → agent calls the real API directly](docs/assets/architecture.png)
+
+[Interactive diagram](docs/assets/architecture.html) · [SVG](docs/assets/architecture.svg)
+
+</div>
 
 1. **Ingest** — OpenAPI 3.x → normalized ops/params (never response data).
 2. **Catalog** — intent → endpoint (lexical at this scale).
