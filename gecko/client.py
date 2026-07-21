@@ -33,7 +33,7 @@ from .events import emit_surf_event
 from .fusion import RRF_K
 from .graph import SurfaceGraph, build_graph
 from .hints import declared_entity_hints
-from .ingest import Operation, extract_operations, load_spec
+from .ingest import extract_operations, load_spec
 from .modes import CallMode
 from .planner import plan_for_query
 from .sample import error_schema, example_from_schema, success_schema
@@ -177,23 +177,44 @@ class AgentApiClient:
         # PR / "save this spec"); its servers[0] is attacker-controlled, so it fails closed
         # exactly like a dict. Any from-docs / low-confidence / poisoned spec is quarantined.
         spec_url = spec if (isinstance(spec, str) and spec_is_url) else None
-        # Poison can enter through the REQUEST side (tool x-poison-flag, from the input
-        # schema/description) OR the RESPONSE side: recorded mode ($0, the default) echoes
-        # the success-response schema's example/default/enum straight to the agent, so a
-        # poisoned response schema is an agent-facing channel request-only defenses miss.
-        # Response-schema poison quarantines too, but its values do NOT route into a
-        # request arg, so scan it with route_to_arg=False: address SHAPES (a benign
-        # base58 pubkey in a response example) don't false-quarantine, while real secrets
-        # and injected instructions still do.
-        poisoned = any(t.get("x-poison-flag") for t in self.tools) or any(
-            sanitize_schema(success_schema(op), route_to_arg=False)[1]
-            for op in self.operations
-        )
-        quarantined = spec_is_quarantined(self.spec) or poisoned
-        if poisoned:
+        # Poison can enter PER-OP through the REQUEST side (tool x-poison-flag, from the
+        # input schema/description) OR the RESPONSE side: recorded mode ($0, the default)
+        # echoes the success-response schema's example/default/enum straight to the agent,
+        # so a poisoned response schema is an agent-facing channel request-only defenses
+        # miss. Response-schema poison is scanned with route_to_arg=False: its values do
+        # NOT route into a request arg, so address SHAPES (a benign base58 pubkey in a
+        # response example) don't false-flag, while real secrets and injected instructions
+        # still do.
+        #
+        # BLAST RADIUS (per-TOOL, not per-SURFACE): a flagged tool is restricted
+        # INDIVIDUALLY — recorded-only, NO auth injection for that tool (fail closed) —
+        # while the rest of the surface stays live. This replaces the old rule where any
+        # ONE poisoned tool disabled auth for EVERY tool (which false-disabled the whole
+        # Birdeye surface over two FPs). The set is the single source of truth consulted by
+        # ``_may_inject_auth_for`` (the auth gate) and ``_effective_mode`` (live->recorded).
+        self._poisoned_tool_names: set[str] = {
+            name
+            for name, op in self._op_by_name.items()
+            if self._tool_by_name[name].get("x-poison-flag")
+            or sanitize_schema(success_schema(op), route_to_arg=False)[1]
+        }
+        # WHOLE-SURFACE quarantine (auth off for EVERY tool) stays reserved for a
+        # whole-SPEC compromise signal (from-docs / x-review / low-confidence, via
+        # ``spec_is_quarantined``) — OR the degenerate case where EVERY tool is
+        # individually poisoned, so nothing is safe to serve live and the per-tool and
+        # per-surface outcomes coincide. A PARTIAL poisoning (e.g. Birdeye: 2 of 88) no
+        # longer quarantines the surface; only the flagged tools are restricted.
+        all_tools_poisoned = bool(
+            self._op_by_name
+        ) and self._poisoned_tool_names == set(self._op_by_name)
+        quarantined = spec_is_quarantined(self.spec) or all_tools_poisoned
+        if self._poisoned_tool_names:
             logger.warning(
-                "surface quarantined: spec text tripped the anti-poisoning sanitizer "
-                "(auth injection disabled, recorded-mode only until reviewed)"
+                "per-tool quarantine: %d of %d tools tripped the anti-poisoning sanitizer "
+                "(auth injection disabled + recorded-only for those tools; the rest of the "
+                "surface stays live)",
+                len(self._poisoned_tool_names),
+                len(self._op_by_name),
             )
         self.anchor = anchor_for(
             base_url=base_url,
@@ -383,10 +404,19 @@ class AgentApiClient:
                 "tool set changed since comprehension — refusing to serve (possible tamper)"
             )
 
-    def _may_inject_auth_for(self, op: Operation) -> bool:
-        """Auth is injected for this op ONLY if the session carries it, the surface is a
-        pinned trust anchor, and the op's securityScheme keeps the secret in a header
-        (not a loggable query/path). Any 'no' fails closed to no-auth."""
+    def _may_inject_auth_for(self, tool_name: str) -> bool:
+        """Auth is injected for this tool ONLY if it is NOT per-tool quarantined, the
+        session carries it, the surface is a pinned trust anchor, and the op's
+        securityScheme keeps the secret in a header (not a loggable query/path). Any 'no'
+        fails closed to no-auth.
+
+        The per-tool poison gate is FIRST and unconditional: a flagged tool NEVER reaches
+        the live auth path, independent of anchor state. This is the fail-closed guarantee
+        for the narrowed (per-tool, not per-surface) blast radius — a poisoned tool cannot
+        get the customer's secret even though its clean siblings on the same surface do."""
+        if tool_name in self._poisoned_tool_names:
+            return False
+        op = self._op_by_name[tool_name]
         return (
             self._session_has_auth
             and self.anchor.may_inject_auth
@@ -403,7 +433,6 @@ class AgentApiClient:
                 f"tool '{tool_name}' requires authentication the current session "
                 f"cannot provide (schemes: {tool.get('auth_schemes')})"
             )
-        op = self._op_by_name[tool_name]
         # Fail closed: only pass the secret when the anchor + location allow it. Otherwise
         # auth is None and build_request proceeds in no-auth mode (never leaks the token).
         # ``inject_auth=False`` (recorded mode) skips injection entirely: recorded never
@@ -413,7 +442,7 @@ class AgentApiClient:
         # auth failures on every gated op (a bad first-run for a new user).
         auth = (
             self.session.auth_headers()
-            if (inject_auth and self._may_inject_auth_for(op))
+            if (inject_auth and self._may_inject_auth_for(tool_name))
             else None
         )
         req = build_request(
@@ -442,8 +471,11 @@ class AgentApiClient:
             return mode
         if self.anchor.state == "quarantined":
             return "recorded"
-        op = self._op_by_name[tool_name]
-        if self._session_has_auth and not self._may_inject_auth_for(op):
+        # Per-tool quarantine: a flagged tool is recorded-only regardless of the session —
+        # unconditional so even a no-auth session can't fire a poisoned tool live.
+        if tool_name in self._poisoned_tool_names:
+            return "recorded"
+        if self._session_has_auth and not self._may_inject_auth_for(tool_name):
             return "recorded"
         return mode
 
@@ -628,5 +660,5 @@ class AgentApiClient:
             surface_rev=self.surface_rev,
             corpus_path=self._corpus_path,
             tool=self._tool_by_name.get(tool_name),
-            auth_injected=bool(op is not None and self._may_inject_auth_for(op)),
+            auth_injected=bool(op is not None and self._may_inject_auth_for(tool_name)),
         )
