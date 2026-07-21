@@ -104,7 +104,22 @@ class ChainResolver:
 
 
 def _env_key(ref: CredentialRef) -> str:
-    """Canonical env var for a ref: ``GECKO_CRED_<SLOT>`` (upper, ``:`` -> ``_``)."""
+    """Canonical env var for a ref: ``GECKO_CRED_<SLOT>`` (upper, ``:``/``-`` -> ``_``).
+
+    ``-`` is normalized because a hyphenated slot (``gecko-identity``) otherwise yields
+    ``GECKO_CRED_GECKO-IDENTITY``, which POSIX shells cannot ``export`` — making the
+    documented headless fallback unusable for exactly the refs that need it most.
+    """
+    return "GECKO_CRED_" + ref.slot().upper().replace(":", "_").replace("-", "_")
+
+
+def _legacy_env_key(ref: CredentialRef) -> str:
+    """The pre-normalization name (hyphens intact), still honoured on read.
+
+    Only reachable when something sets it programmatically (``env``, a Docker
+    ``-e``, or an MCP client's ``env`` block), which is precisely why dropping it
+    silently would be a regression.
+    """
     return "GECKO_CRED_" + ref.slot().upper().replace(":", "_")
 
 
@@ -128,6 +143,11 @@ class EnvBackend:
         value = os.environ.get(_env_key(ref))
         if value:  # non-empty canonical wins
             return value
+        hyphenated = _legacy_env_key(ref)
+        if hyphenated != _env_key(ref):
+            value = os.environ.get(hyphenated)
+            if value:
+                return value
         legacy = self.legacy_names.get(ref.slot())
         if legacy:
             legacy_value = os.environ.get(legacy)

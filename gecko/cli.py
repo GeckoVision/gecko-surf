@@ -43,6 +43,7 @@ from .netguard import UnsafeUrlError, validate_public_url
 _SUBCOMMANDS = (
     "add",
     "login",
+    "connect",
     "keys",
     "serve",
     "test",
@@ -798,6 +799,8 @@ def _print_help() -> None:
     print("  rm <name>          remove an onboarded surface")
     print("  list               list onboarded surfaces")
     print("\nKeys:")
+    print("  login              enroll a hosted identity (key sealed, never shown)")
+    print("  connect <surface>  use a gated hosted surface — key from the keychain")
     print("  auth set|rm|list   hold your provider key in the OS keychain (BYOK)")
     print("  keys mint|enable|disable|list <account>  founder access to gated surfaces")
     print("\nDiagnose:")
@@ -858,6 +861,45 @@ def _cmd_login(argv: list[str]) -> int:
     except login.LoginError as exc:
         print(f"  ✗ {exc}", file=sys.stderr)
         return 2
+
+
+def _cmd_connect(argv: list[str]) -> int:
+    """`gecko connect <surface>` — serve a GATED hosted surface over stdio, with the
+    Gecko key read from the OS keychain instead of an MCP client config.
+
+    The point is that the client config holds a command, not a credential::
+
+        {"mcpServers": {"gecko-birdeye":
+            {"command": "gecko", "args": ["connect", "birdeye"]}}}
+
+    stdout IS the JSON-RPC channel once the bridge is running, so EVERY diagnostic here
+    goes to stderr — a stray print would corrupt the protocol stream.
+
+    Thin transport: parse args, hand off to ``connect.connect``.
+    """
+    from . import connect as connect_mod
+
+    p = argparse.ArgumentParser(
+        prog="gecko connect",
+        description="Connect to a gated hosted Gecko surface using the key sealed by "
+        "`gecko login` (never pasted into a config file).",
+    )
+    p.add_argument("surface", help="Hosted surface/mount name, e.g. 'birdeye'.")
+    p.add_argument(
+        "--host",
+        default=connect_mod.DEFAULT_HOST,
+        help=f"Hosted plane. Defaults to {connect_mod.DEFAULT_HOST}.",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        connect_mod.connect(args.surface, host=args.host)
+    except connect_mod.ConnectError as exc:
+        print(f"  ✗ {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:  # pragma: no cover - interactive
+        return 130
+    return 0
 
 
 def _keys_allowlist() -> Any:
@@ -1013,6 +1055,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_add(rest)
     if cmd == "login":
         return _cmd_login(rest)
+    if cmd == "connect":
+        return _cmd_connect(rest)
     if cmd == "keys":
         return _cmd_keys(rest)
     if cmd == "serve":
