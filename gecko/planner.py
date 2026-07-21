@@ -75,6 +75,10 @@ def plan_to_dict(plan: Plan) -> dict[str, Any]:
                 "path": s.path,
                 "consumes": list(s.consumes),
                 "supplies": list(s.supplies),
+                # additive (§12 plane-field precedent): the owning surface — ""
+                # single-surface, set on cross-API plans so an agent knows which
+                # mount each step belongs to.
+                "surface": s.surface,
             }
             for s in plan.steps
         ],
@@ -86,6 +90,7 @@ def plan_to_dict(plan: Plan) -> dict[str, Any]:
                 "provenance": e.provenance,
                 "basis": e.basis,
                 "confidence": e.confidence,
+                "source_surface": e.source_surface,
             }
             for e in plan.explain
         ],

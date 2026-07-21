@@ -11,10 +11,12 @@ Recorded mode only: $0, no live calls, no new corpus — a whole plan is falsifi
 offline (§6). Control-plane clean: records booleans, value-KINDS, and field names,
 never a raw threaded value or a response payload.
 
-Scope (§12 Phase 1): single-API, clean-name specs. Threading uses the real API
-param names the plan carries; a spec whose agent-facing keys were sanitized away
-from the real name (JSON:API ``filter[user]``) is out of this phase's scope and
-would surface as a not-well-formed step (an honest failure, not a silent pass).
+Scope: clean-name specs. Threading uses the real API param names the plan
+carries; a spec whose agent-facing keys were sanitized away from the real name
+(JSON:API ``filter[user]``) is out of scope and would surface as a
+not-well-formed step (an honest failure, not a silent pass). Cross-surface plans
+(§12 Phase 4) run through ``evaluate_cross_chain`` — one client per surface,
+same recorded-mode discipline, so a two-API plan is falsifiable offline too.
 """
 
 from __future__ import annotations
@@ -137,18 +139,48 @@ def evaluate_chain(
     iff every step is well-formed AND every threaded value was found and is
     value-kind-correct for its consuming param.
     """
+    # Single-surface wrapper over the general engine: every step (whatever its
+    # surface label says) resolves to this one client.
+    surfaces = {step.surface for step in plan.steps}
+    return evaluate_cross_chain({s: client for s in surfaces}, plan, seed_args)
+
+
+def evaluate_cross_chain(
+    clients: Mapping[str, AgentApiClient],
+    plan: Plan,
+    seed_args: Mapping[str, Any] | None = None,
+) -> ChainFccResult:
+    """The cross-surface chain-FCC engine (§12 Phase 4): like ``evaluate_chain``
+    but each ``PlanStep`` executes against the client of ITS OWN surface
+    (``clients[step.surface]``), so a two-API plan is falsifiable offline exactly
+    like a single-API one. Threading is surface-agnostic — a value produced on
+    surface A is threaded into surface B's consuming param by name, which is
+    precisely what a cross-API DECLARED join asserts is meaningful.
+
+    Invariant #3 holds: each step's recorded call goes through its own surface's
+    client/session; nothing is merged, no transport is shared. A step whose
+    surface has no client scores not-well-formed (honest, not skipped)."""
     seed = dict(seed_args or {})
-    op_by_opid = {op.operation_id: op for op in client.operations}
+
+    def op_for(step_surface: str, opid: str) -> Operation | None:
+        client = clients.get(step_surface)
+        if client is None:
+            return None
+        for op in client.operations:
+            if op.operation_id == opid:
+                return op
+        return None
 
     # Resolve each explain entry to its consumer op's declared param type once. The
-    # consumer is the plan step (other than the source) that consumes this param.
+    # consumer is the plan step (other than the source) that consumes this param —
+    # looked up on the CONSUMER's surface.
     threadings: dict[str, _Threading] = {}
     for e in plan.explain:
         consumer_type: str | None = None
         for step in plan.steps:
             if step.operation_id == e.source_op or e.param not in step.consumes:
                 continue
-            consumer_op = op_by_opid.get(step.operation_id)
+            consumer_op = op_for(step.surface, step.operation_id)
             if consumer_op is not None:
                 consumer_type = _param_type(consumer_op, e.param)
             break
@@ -168,7 +200,13 @@ def evaluate_chain(
 
     for step in plan.steps:
         opid = step.operation_id
-        op = op_by_opid.get(opid)
+        client = clients.get(step.surface)
+        if client is None:
+            step_results.append(
+                ChainStepResult(opid, False, f"no client for surface '{step.surface}'")
+            )
+            continue
+        op = op_for(step.surface, opid)
         if op is None:
             step_results.append(ChainStepResult(opid, False, "unknown operation"))
             continue
