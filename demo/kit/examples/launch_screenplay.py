@@ -43,7 +43,10 @@ client = AgentApiClient(
     session=Session(jwt="recorded-mode", api_token="recorded-mode"),
 )
 tools = client.list_tools()
-put(f"{GREEN}✓{RESET} {len(tools)} operations → {len(tools)} first-call-correct tools", 1.0)
+put(
+    f"{GREEN}✓{RESET} {len(tools)} operations → {len(tools)} first-call-correct tools",
+    1.0,
+)
 put("")
 out(f"{BOLD}User:{RESET} get live odds for a football fixture", 0.04, pause=0.8)
 hits = client.search("get live odds for a football fixture")
@@ -60,6 +63,8 @@ clear()
 out(f"{BOLD}ACT 2 · STAY SAFE (POISONED SPEC){RESET}", 0.03, pause=1.0)
 put("")
 out(f"{CYAN}$ gecko-redteam --defenses none{RESET}", 0.02, pause=0.3)
+
+
 def _scorecard_lines(text: str) -> list[str]:
     keep = ("exploited", "blocked", "money_trusted")
     return [ln.rstrip() for ln in text.splitlines() if any(k in ln for k in keep)]
@@ -100,4 +105,8 @@ for line in _tail_lines(test.stdout, 3):
     put(line, 0.5)
 put("")
 out(f"{BOLD}{CYAN}ANY API, AGENT-READY — FIRST CALL CORRECT{RESET}", 0.03, pause=0.5)
-out(f"{CYAN}uvx --from gecko-surf gecko https://api.example.com/openapi.json{RESET}", 0.03, pause=2.0)
+out(
+    f"{CYAN}uvx --from gecko-surf gecko https://api.example.com/openapi.json{RESET}",
+    0.03,
+    pause=2.0,
+)
