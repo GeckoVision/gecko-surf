@@ -288,22 +288,42 @@ def _surface_spec(value: Any) -> dict[str, Any] | None:
     return None
 
 
-def _registry_store(surfaces: list[tuple[str, Any]]) -> SurfaceStore:
+def _registry_store(
+    surfaces: list[tuple[str, Any]],
+    *,
+    exclude: Iterable[str] = frozenset(),
+) -> SurfaceStore:
     """Build the /registry/... SurfaceStore from every MCP-hosted surface, PLUS
     colosseum — which is registry-DISTRIBUTED (its console-entry runner fetches
     "colosseum" from here, see gecko/examples/colosseum.py) but deliberately not
     hosted as an MCP surface on this server (it's a BYOK console entry the operator
     runs themselves). Registry distribution != MCP hosting.
 
+    ``exclude`` drops names from the store entirely — the hosted server passes the GATED
+    (paid) set. The registry is the ANONYMOUS distribution plane: every route there is
+    keyless by design and it has no Gecko-key seam, so a gated surface sitting in the
+    store served its FULL OpenAPI spec to anyone at ``/registry/surfaces/{name}``
+    (measured: 71KB), entirely outside the mount's gate. Excluding it is the cleanest
+    mechanism because it fixes fetch, listing AND ``/registry/search`` at one point —
+    they all read ``store.names()`` — and it leaves the free/public distribution path
+    byte-identical. Marking it ``tier="premium"`` instead would still ADVERTISE the paid
+    name (and 402 rather than deny), which is the leak we are closing. The result is a
+    clean 404 ``unknown_surface``: identical to a name that was never registered, so the
+    registry gives an anonymous prober no oracle.
+
     The colosseum import is lazy and reads only packaged data (no network) — it just
     keeps that console-entry module out of this server's import graph until needed.
     """
     from gecko.examples.colosseum import load_spec as _load_colosseum_spec
 
+    # Case-insensitive, like the gate itself: folding can only ever exclude MORE.
+    hidden = {name.casefold() for name in exclude}
     docs = [
         RegistrySurface(name=name, spec=spec, tier="free")
         for name, value in surfaces
-        if (spec := _surface_spec(value)) is not None  # aggregate surfaces have no spec
+        if name.casefold() not in hidden
+        and (spec := _surface_spec(value))
+        is not None  # aggregate surfaces have no spec
     ]
     docs.append(
         RegistrySurface(name="colosseum", spec=_load_colosseum_spec(), tier="free")
@@ -333,7 +353,9 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     # `build_keystore_from_env()` wires a real Mongo-backed KeyStore when
     # MONGODB_URI + GECKO_OTP_FROM are set; it fails soft to None (issuance disabled,
     # 402-on-premium-never) rather than crashing the server.
-    registry_store = _registry_store(surfaces)
+    # GATED (paid) surfaces are excluded: the registry plane is anonymous by design, so
+    # leaving one in would serve its full OpenAPI spec outside the gate (see _registry_store).
+    registry_store = _registry_store(surfaces, exclude=gated or frozenset())
 
     # pay.sh catalog — the aggregate surface, mounted at /paysh/mcp ALONGSIDE the rest.
     # Built once from the live catalog; the served mode stays "recorded" (the surface

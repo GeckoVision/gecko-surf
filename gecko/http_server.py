@@ -784,6 +784,13 @@ def build_multi_surface_app(
     open. A name here that isn't served is simply inert. Fail-closed is preserved per
     surface: a gated mount with no usable resolver denies; ungated mounts are untouched.
 
+    A gated surface is gated at the **Mount**, not just at ``/mcp``: its discovery
+    siblings (``tools.md`` / ``llms.txt`` / ``SKILL.md`` / ``gecko.json`` /
+    ``.well-known/gecko.json``) carry the whole comprehension artifact, and gating only
+    ``/mcp`` served them in the clear. It is also withheld from the anonymous root index
+    and the ``.well-known`` manifests (a valid key still sees it — same gate decision).
+    An UNGATED mount is appended as the raw sub-app, with no wrapper object anywhere.
+
     ``key_registry`` (the Gecko-key registry, ``gecko.keyregistry``) supersedes the Privy-JWT
     resolver on the gate: when the gate is on and a registry is wired (explicit or via
     ``MONGODB_URI``), the per-surface mounts verify minted ``gecko_sk_…`` keys against it.
@@ -889,6 +896,10 @@ def build_multi_surface_app(
             )
 
     subs: list[tuple[str, Starlette]] = []
+    #: The mounts that actually carry a gate — i.e. the PAID surfaces, and only when the
+    #: gate is ON. Drives the Mount-level wrapping below AND what an anonymous caller is
+    #: told exists (index / .well-known). Empty ⇒ every route below is unchanged.
+    gated_mounts: set[str] = set()
     for name, spec in surfaces:
         if registry_routes and name == "registry":
             raise ValueError(
@@ -898,12 +909,10 @@ def build_multi_surface_app(
         # Per-surface gate selection. `surface_gate` is None when the gate is OFF; when it
         # is ON it is either the real verifier or the fail-closed deny-all one — so a
         # NAMED (paid) surface can never fail open, and an unnamed one is never closed.
-        mount_gate = (
-            surface_gate
-            if surface_gate is not None
-            and (gated_folded is None or name.casefold() in gated_folded)
-            else None
-        )
+        if surface_gate is not None and (
+            gated_folded is None or name.casefold() in gated_folded
+        ):
+            gated_mounts.add(name)
         subs.append(
             (
                 name,
@@ -915,7 +924,10 @@ def build_multi_surface_app(
                     allowed_origins=allowed_origins,
                     public_url=site,
                     enforce=hosted_enforce,
-                    gate=mount_gate,
+                    # NOT gated here: the gate goes around the whole Mount below, so it
+                    # covers the discovery siblings (tools.md / llms.txt / SKILL.md /
+                    # gecko.json) too — gating only `/mcp` served the ENTIRE comprehension
+                    # artifact of a paid surface in the clear (R1).
                 ),
             )
         )
@@ -937,21 +949,23 @@ def build_multi_surface_app(
     def _abs(path: str) -> str:
         return f"{public_url.rstrip('/')}{path}" if public_url else path
 
+    # Comprehended surfaces served on this host (NOT a public marketplace listing —
+    # each is a spec the operator chose to serve). Submissions are never added here.
+    surface_entries: list[dict[str, str]] = [
+        {
+            "name": name,
+            "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
+            if public_url
+            else f"/{name}/mcp",
+            "llms_txt": f"/{name}/llms.txt",
+        }
+        for name, _ in subs
+    ]
+
     index = {
         "name": "gecko",
         "description": "Comprehended API surfaces, served agent-native.",
-        # Comprehended surfaces served on this host (NOT a public marketplace listing —
-        # each is a spec the operator chose to serve). Submissions are never added here.
-        "surfaces": [
-            {
-                "name": name,
-                "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
-                if public_url
-                else f"/{name}/mcp",
-                "llms_txt": f"/{name}/llms.txt",
-            }
-            for name, _ in subs
-        ],
+        "surfaces": surface_entries,
         # The submit-your-API front doors — comprehend and return to the submitter only.
         "submit": {
             "http": _abs(COMPREHEND_PATH),
@@ -994,11 +1008,31 @@ def build_multi_surface_app(
         },
     }
 
+    # A gated (paid) surface is not ADVERTISED to anonymous callers: the root index and
+    # the host manifests used to name it, which both hands a scraper the paid catalog and
+    # drifts us toward the marketplace listing the thesis forbids. A caller holding a
+    # valid key still sees it (same gate decision as the mount — one source of truth), so
+    # discovery is not broken for the developers it was opened to. With no gated mount
+    # both dicts are the SAME object, so every public deploy is byte-identical.
+    _public_index = (
+        index
+        if not gated_mounts
+        else {
+            **index,
+            "surfaces": [e for e in surface_entries if e["name"] not in gated_mounts],
+        }
+    )
+
+    def _sees_gated(scope: Any) -> bool:
+        if not gated_mounts or surface_gate is None:
+            return True
+        return surface_gate.decide(_bearer_from_scope(scope)).allowed
+
     async def _healthz(_request: Any) -> Any:
         return PlainTextResponse("ok")
 
-    async def _index(_request: Any) -> Any:
-        return JSONResponse(index)
+    async def _index(request: Request) -> Any:
+        return JSONResponse(index if _sees_gated(request.scope) else _public_index)
 
     async def _mcp_root_redirect(_request: Any) -> Any:
         # /mcp is the conventional default path a real MCP client tries; it lives only
@@ -1008,13 +1042,19 @@ def build_multi_surface_app(
         # check (Pattern B): httpx/fetch follow by default, but the founder confirms it.
         return RedirectResponse(url=f"/{META_SURFACE_NAME}{MCP_PATH}", status_code=307)
 
-    async def _well_known_gecko(_request: Any) -> Any:
+    async def _well_known_gecko(request: Request) -> Any:
         # Host-level discovery — the SAME content _index returns (surfaces + submit door).
-        return JSONResponse(index)
+        return JSONResponse(index if _sees_gated(request.scope) else _public_index)
 
-    async def _well_known_x402(_request: Any) -> Any:
+    async def _well_known_x402(request: Request) -> Any:
         # Honest, control-plane-safe x402 stance: Gecko composes x402, custody none.
-        return JSONResponse(build_x402_manifest(surfaces, public_url))
+        # Gated surfaces are withheld from anonymous callers on the same rule as the index.
+        visible = (
+            surfaces
+            if _sees_gated(request.scope)
+            else [(n, s) for n, s in surfaces if n not in gated_mounts]
+        )
+        return JSONResponse(build_x402_manifest(visible, public_url))
 
     # Built once (static per host): both onboarding paths + the canonical doc links.
     _onboard_md = build_onboard_breadcrumb(public_url)
@@ -1163,7 +1203,19 @@ def build_multi_surface_app(
         Route(EVENTS_ONBOARD_PATH, endpoint=_events_onboard, methods=["POST"]),
     ]
     for name, sub in subs:
-        routes.append(Mount(f"/{name}", app=sub))
+        # Gate the WHOLE mount for a paid surface — `/mcp` and every discovery sibling
+        # (tools.md / llms.txt / SKILL.md / gecko.json / .well-known/gecko.json), which
+        # carry the full comprehension artifact. Denials stay the same clean 403 the
+        # `/mcp` edge already returned (one status, one reason vocabulary). An UNGATED
+        # mount is appended exactly as before — the raw sub-app, no wrapper object.
+        routes.append(
+            Mount(
+                f"/{name}",
+                app=sub
+                if name not in gated_mounts or surface_gate is None
+                else _GeckoKeyGateASGI(sub, surface_gate),
+            )
+        )
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))
     if registry_routes:
         routes.extend(registry_routes)
