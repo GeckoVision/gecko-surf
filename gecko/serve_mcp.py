@@ -12,7 +12,10 @@ No key ⇒ that surface is simply not served; the repo carries no key.
 
 One surface (``birdeye``) is a PAID third-party API, so it is gated to named developers
 holding a minted Gecko key — see :data:`GATED_SURFACES`. That gate applies to those names
-ONLY; every public/humanitarian mount stays keyless.
+ONLY; every public/humanitarian mount stays keyless. The host REFUSES TO BOOT if a
+declared-paid surface would be served with the gate off
+(:func:`assert_paid_surfaces_are_gated`), and a gated surface is kept out of the anonymous
+``/registry/...`` distribution store (its full OpenAPI is not a public artifact).
 
 Every host also exposes the 'submit your API' front doors (wired in by
 ``build_multi_surface_app``): ``POST /comprehend`` (human page backend, also directly
@@ -32,13 +35,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from .access import public_session, static_session, stub_session
 from .client import AgentApiClient
 from .enforce import EnforceMode, resolve_hosted_enforce
-from .http_server import resolve_gated_surfaces, serve_multi_http
+from .http_server import (
+    REQUIRE_GECKO_KEY_ENV,
+    resolve_gated_surfaces,
+    resolve_require_gecko_key,
+    serve_multi_http,
+)
 from .jito_surface import build_jito_surface
 from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
@@ -119,6 +128,56 @@ PUBLIC_URL = f"https://{PUBLIC_HOST}"
 # Add a future PAID surface here (and only here); `GECKO_GATED_SURFACES` (comma-separated)
 # overrides this set at deploy time without a code change.
 GATED_SURFACES = frozenset({"birdeye"})
+
+
+class GateStanceError(RuntimeError):
+    """Boot refusal: a DECLARED-PAID surface would be served with the Gecko-key gate OFF.
+
+    Never carries a token or a key — only surface names + the env var to fix.
+    """
+
+
+def assert_paid_surfaces_are_gated(
+    surfaces: list[tuple[str, Any]],
+    gated: Iterable[str] | None,
+    *,
+    require_key: bool | None = None,
+) -> None:
+    """Refuse to boot when a surface DECLARED paid is actually served while the gate is OFF.
+
+    Two independent env vars must both be right — ``GECKO_REQUIRE_KEY`` (the stance) and
+    ``GECKO_GATED_SURFACES``/:data:`GATED_SURFACES` (the scope) — and nothing asserted it:
+    with the stance unset, ``/birdeye/mcp`` answered 200 to anyone. Serving a PAID
+    third-party API openly is the marketplace/rail drift the thesis forbids, so this is
+    FATAL rather than a log line.
+
+    The scope is deliberately tight — it fires ONLY for a declared name that is ALSO in
+    the served list:
+
+    * a public-only deploy can never be blocked by it (the humanitarian mounts and the
+      keyless demos are the funnel; a paid-surface guard must not take them down);
+    * a declared name this host does not serve is NOT fatal — that stays the existing
+      inert-but-LOUD ERROR case in ``build_multi_surface_app`` (an operator may
+      forward-declare a future paid surface);
+    * ``gated is None`` (the library "gate every mount" default) declares nothing paid.
+
+    Matching is case-insensitive, exactly like the gate itself: folding can only ever
+    catch MORE, never fewer.
+    """
+    if gated is None or resolve_require_gecko_key(require_key):
+        return
+    served = {name.casefold(): name for name, _ in surfaces}
+    exposed = sorted(served[n.casefold()] for n in gated if n.casefold() in served)
+    if not exposed:
+        return
+    message = (
+        f"refusing to start: {exposed} declared PAID (gated) and served, but "
+        f"{REQUIRE_GECKO_KEY_ENV} is OFF — those mounts would answer anyone, with no "
+        f"Gecko key. Fix: set {REQUIRE_GECKO_KEY_ENV}=1 (and wire the key registry via "
+        "MONGODB_URI so minted gecko_sk_ keys verify), or stop serving them."
+    )
+    logger.critical("%s", message)
+    raise GateStanceError(message)
 
 
 def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
@@ -261,6 +320,13 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     # unless GECKO_ENFORCE dials it down (needs a redeploy).
     hosted_enforce = resolve_hosted_enforce()
     surfaces = _build_surfaces(hosted_enforce)
+    # Resolve the gate SCOPE once (env override -> the hosted default) and reuse it for
+    # every downstream decision, so the mounts, the registry store and this guard can
+    # never read a different set.
+    gated = resolve_gated_surfaces(default=GATED_SURFACES)
+    # BOOT GUARD (R2): a declared-PAID surface must never be served with the gate OFF.
+    # Deliberately BEFORE any network work below, so a misconfigured deploy dies fast.
+    assert_paid_surfaces_are_gated(surfaces, gated)
     # Registry store for the /registry/... HTTP surface, built from the SINGLE-SPEC
     # surfaces only (before pay.sh is appended) — the aggregate pay.sh catalog has no
     # single OpenAPI document, so it is not registry-distributed (see `_surface_spec`).
@@ -301,7 +367,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         background_tasks=[_paysh_worker],
         # Gate ONLY the paid surfaces (env can override; see GATED_SURFACES). Without
         # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.
-        gated_surfaces=resolve_gated_surfaces(default=GATED_SURFACES),
+        gated_surfaces=gated,
     )
 
 
