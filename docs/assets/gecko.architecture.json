@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Gecko — the API comprehension layer",
+    "subtitle": "control plane, never data plane",
+    "output": "architecture.html",
+    "viewBox": [1080, 560]
+  },
+  "components": [
+    {
+      "id": "spec",
+      "type": "external",
+      "label": "OpenAPI / docs",
+      "sublabel": "the surface only",
+      "pos": [40, 90],
+      "size": [130, 60]
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "Ingest",
+      "sublabel": "normalize ops + params",
+      "pos": [250, 90],
+      "size": [130, 60]
+    },
+    {
+      "id": "catalog",
+      "type": "database",
+      "label": "Catalog",
+      "sublabel": "intent → endpoint",
+      "pos": [460, 90],
+      "size": [130, 60]
+    },
+    {
+      "id": "validator",
+      "type": "cloud",
+      "label": "Validator",
+      "sublabel": "FCC + JSONL log",
+      "pos": [680, 90],
+      "size": [130, 60],
+      "tag": "moat seed"
+    },
+    {
+      "id": "agent",
+      "type": "frontend",
+      "label": "AI Agent",
+      "sublabel": "goal, no API docs",
+      "pos": [40, 300],
+      "size": [130, 60]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "Tools / MCP",
+      "sublabel": "auth hidden",
+      "pos": [460, 300],
+      "size": [130, 60],
+      "tag": "first-call-correct"
+    },
+    {
+      "id": "access",
+      "type": "security",
+      "label": "Access",
+      "sublabel": "session handshake",
+      "pos": [680, 300],
+      "size": [130, 60]
+    },
+    {
+      "id": "api",
+      "type": "external",
+      "label": "The Real API",
+      "sublabel": "data plane",
+      "pos": [910, 300],
+      "size": [130, 60]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Gecko control plane — surface + tool defs + correctness metadata",
+      "wraps": ["ingest", "catalog", "validator", "tools", "access"]
+    }
+  ],
+  "connections": [
+    {
+      "from": "spec",
+      "to": "ingest",
+      "label": "surface, never data",
+      "labelDy": -24
+    },
+    { "from": "ingest", "to": "catalog" },
+    {
+      "from": "catalog",
+      "to": "tools",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "tools",
+      "to": "validator",
+      "label": "replay",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDy": -48
+    },
+    {
+      "from": "agent",
+      "to": "tools",
+      "label": "intent",
+      "variant": "emphasis"
+    },
+    { "from": "tools", "to": "access" },
+    {
+      "from": "access",
+      "to": "api",
+      "label": "injects auth",
+      "variant": "security"
+    },
+    {
+      "from": "agent",
+      "to": "api",
+      "label": "calls the real API directly · data returns",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[105, 480], [975, 480]]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Control plane only",
+      "items": [
+        "Stores the surface, tool defs, correctness metadata",
+        "Never response payloads, user data, or secrets"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "One code path, two modes",
+      "items": [
+        "recorded — synthesized from schema, $0, offline",
+        "live — same path, real transport"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Correctness",
+      "items": [
+        "validator replays calls, logs outcomes (JSONL)",
+        "seeds the V2 correctness corpus"
+      ]
+    }
+  ]
+}

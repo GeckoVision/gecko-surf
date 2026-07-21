@@ -8,27 +8,18 @@
 [![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
 [![status](https://img.shields.io/badge/V1-live%20on%20one%20API-orange.svg)](#-status-honest)
 
-> **Coding agents already one-shot clean, documented APIs. They break on the painful
-> ones** — messy, paywalled, half-documented, always drifting. Today your options are:
-> dump the whole spec (your agent picks the wrong call and sends malformed requests)
-> or hand-write an MCP wrapper (tedious — and stale the next time the API changes).
+> **Agents one-shot clean APIs. They break on the painful ones** — messy, paywalled,
+> half-documented, always drifting. Dumping the spec fails; hand-writing an MCP wrapper
+> goes stale on the next API change.
 >
-> **Gecko reads the API and turns it into tools your agent calls right the _first_
-> time — no integration code.** Point an agent at an API — even one behind human-shaped
-> docs and a paywall — add it in one line, and it finds the right call, drives the
-> access/auth handshake, and calls the real API directly. Free and open source.
+> **Gecko turns an API into tools your agent calls right the first time — no integration
+> code.** Point, add in one line, call the real API directly. Free and open source.
 >
-> *Docs and endpoints are built for humans. Gecko translates them for agents.*
+> *Docs are built for humans. Gecko translates them for agents.*
 
 <p align="center">
   <img src="docs/assets/hero.gif" alt="One command: install gecko-surf, then comprehend any API into first-call-correct MCP tools" width="820">
 </p>
-
-Today a builder reads the docs, hand-writes a client, and **still can't tell if the
-agent is calling the API correctly.** Gecko removes that step: it ingests an API's
-*surface* (OpenAPI/docs), turns it into question-shaped, first-call-correct agent
-tools, drives the access/auth handshake, and lets the agent call the **real API
-directly** for data.
 
 ### Where Gecko sits — three verbs, three layers
 
@@ -38,112 +29,79 @@ directly** for data.
 | skills get **DISTRIBUTED** | marketplace / discovery | frames.ag, Bazaar |
 | **APIs get USED** | **comprehension / consumption** | **Gecko** |
 
-Gecko **composes on top of** x402 / MCP / pay.sh — it *consumes* a payment catalog
-as input. It is **not** a payment rail and **not** a marketplace. It is the layer that
-makes an API actually *usable* by an agent.
+We compose on x402 / MCP / pay.sh. We are **not** a payment rail or a marketplace.
 
 ---
 
 ## Try it in 10 seconds — one line, zero install
 
-Give your agent a **Gecko-comprehended surface** and watch it make first-call-correct
-calls — no `pip`, no spec, no key:
+No `pip`, no spec, no key — 18 first-call-correct tools on the TxODDS TxLINE World Cup
+API (two-token on-chain paywall). **Recorded demo** (`$0`, schema-synthesized); use your
+own TxLINE session for live data. Also live: **Jito** at `/jito/mcp`.
 
 ```bash
 claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline/mcp
 ```
 
-That connects your agent to the **TxODDS TxLINE** World Cup API — 18 question-shaped,
-first-call-correct tools over an API with a two-token on-chain paywall, served
-agent-native. It's a **recorded demo** (responses synthesized from schema, `$0`,
-offline — so you can explore the surface without a subscription); point it at your own
-TxLINE session for live data. Also live: **Jito** at `/jito/mcp`.
-
-**Not using Claude Code?** `claude mcp add` and `/plugin` are Claude-Code-only. Everywhere
-else — **Cursor** (`~/.cursor/mcp.json`), **VS Code**, or any MCP client — add the same
-endpoint to your `mcp.json`:
+**Cursor / VS Code / any MCP client** — same endpoint in `mcp.json`:
 
 ```jsonc
 { "mcpServers": { "gecko-txline": { "type": "http", "url": "https://mcp.geckovision.tech/txline/mcp" } } }
 ```
 
-The transport is **MCP Streamable HTTP** (protocol `2025-11-25`), not SSE. From the Python
-MCP SDK, connect with `mcp.client.streamable_http.streamablehttp_client(url)` (an
-`sse_client` will `400`).
-
-This is the fastest way to *see what Gecko does* before you bring your own API. When
-you're ready to make **your** API agent-usable, jump to
-[Make any API agent-usable](#make-any-api-agent-usable) below.
+Transport is **MCP Streamable HTTP** (`2025-11-25`), not SSE — use
+`streamablehttp_client`, not `sse_client`. Ready for your own API?
+→ [Make any API agent-usable](#make-any-api-agent-usable).
 
 ---
 
 ## ⚠️ Status (honest)
 
-V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
-comprehend → catalog → access (a two-token on-chain subscribe) → first-call-correct →
-real data. A **$0 recorded mode** runs the entire path offline with no subscription.
-**442 tests pass.**
-
-What is **not** proven: **consumer willingness-to-pay** — the actual decider for the
-business. That is discovery-interview work, not a demo claim. So: never read this repo
-as *"Gecko is a proven business."* What is real today is a **working comprehension
-path on one genuinely painful API**, and a clean, API-agnostic engine behind it.
+V1 is **live on mainnet** against real TxODDS: ingest → comprehend → catalog → access →
+correct call → real data. **$0 recorded mode** runs the same path offline. **442 tests
+pass.** Not proven: **consumer willingness-to-pay** — discovery work, not a demo claim.
+What's real: a working comprehension path on one painful API, and an API-agnostic engine.
 
 ---
 
 ## Watch it run — the 70-second launch demo
 
-<p align="center">
-  <img src="docs/assets/launch.gif" alt="Gecko launch demo — comprehend TxODDS into 8/8 first-call-correct tools + live odds; block a poisoned spec 8/8→0/8; gecko test writes 32/32 checks" width="820">
-</p>
+<div align="center">
 
-Three acts, **every number from a real run**:
+![Gecko 70s launch demo — 18 first-call-correct TxODDS tools; redteam blocks 8/8 poisoned attacks; gecko test 32/32 checks](docs/assets/launch.gif)
 
-- **Plug in** a paywalled API (TxODDS) → 18 ops comprehended, **8/8 first-call-correct**, live World Cup odds.
-- **Stay safe** → a poisoned spec that drains a naive agent **8/8** is blocked **0/8**, benign calls still served — caught in simulation, before any signature exists.
-- **Stay correct** → `gecko test` writes **32/32** first-call-correctness checks and emits them to CI.
+[MP4 version](docs/assets/launch.mp4)
+
+</div>
+
+Every number from a real run:
+
+- **Plug in** TxODDS → **18 first-call-correct tools**, recorded/$0 first call (live when subscribed).
+- **Stay safe** → poisoned-spec attacks that hit a naive agent **8/8** are blocked **0/8**.
+- **Stay correct** → `gecko test` writes **32/32** first-call-correctness checks for CI.
 
 ---
 
 ## Architecture
 
-Gecko is a **control plane**, not a data plane. It holds the API's *surface*, the
-generated tool defs, and *correctness metadata* — it **never** stores response
-payloads, user data, or secrets. That invariant is what lets it ingest any API
-unilaterally.
+**Control plane, never data plane.** Gecko holds the API *surface*, tool defs, and
+correctness metadata — never response payloads, user data, or secrets. That invariant
+is what lets it ingest any API unilaterally.
 
-```mermaid
-flowchart TD
-    A["AI agent<br/>(has a goal, no API docs)"] -->|"what can this API do for X?"| S
+<div align="center">
 
-    subgraph SC["Gecko — comprehension layer (control plane)"]
-        direction TB
-        ING[("ingest<br/>OpenAPI / docs — the *surface* only")]
-        CAT["catalog<br/>intent → endpoint"]
-        TOOL["tools<br/>question-shaped, first-call-correct<br/>(auth hidden)"]
-        ACC["access<br/>subscribe / session handshake"]
-        ING --> CAT --> TOOL
-        TOOL --> ACC
-    end
+![Gecko architecture — agent intent → ingest/catalog/tools/access control plane → agent calls the real API directly](docs/assets/architecture.png)
 
-    S --> TOOL
-    ACC -->|"injects auth"| CALL
-    A -->|"calls the real API directly"| CALL["the real API<br/>(data plane — Gecko never stores it)"]
-    CALL -->|"data"| A
-```
+[Interactive diagram](docs/assets/architecture.html) · [SVG](docs/assets/architecture.svg)
 
-1. **Ingest** the API surface (OpenAPI 3.x) → normalized operations + params (`$ref`
-   resolved, cycle/depth guarded). Never the response data.
-2. **Catalog** — a structured capability list (intent → endpoint). Lexical at this
-   scale; no vectors.
-3. **Comprehend** — each operation becomes a question-shaped tool def an agent picks
-   correctly with no API docs. Auth headers are hidden.
-4. **Access** — drive the access/subscription handshake; the seam is one function,
-   `Session.auth_headers()`.
-5. **Call** — the agent calls the real API directly; Gecko injects credentials and
-   stays out of the data path.
-6. **Validate** — replay calls, confirm first-call-correct, log outcomes (JSONL). That
-   log is the seed of the V2 **correctness corpus** — the compounding moat.
+</div>
+
+1. **Ingest** — OpenAPI 3.x → normalized ops/params (never response data).
+2. **Catalog** — intent → endpoint (lexical at this scale).
+3. **Tools** — question-shaped defs; auth headers hidden.
+4. **Access** — subscribe/session via one seam: `Session.auth_headers()`.
+5. **Call** — agent hits the real API; Gecko injects credentials, stays off the data path.
+6. **Validate** — replay, confirm first-call-correct, JSONL log → V2 correctness corpus seed.
 
 ---
 
@@ -165,10 +123,8 @@ flowchart TD
 ## The surface graph — intent → the right *chain* of calls
 
 Real questions rarely map to one endpoint. *"Get live odds updates"* needs a
-`fixtureId` the agent doesn't have — so the right answer is a **chain**:
-fetch the fixtures first, thread the id into the odds call. Gecko derives that
-chain **from the spec alone** — no call logs, no training data, no annotation —
-and hands it to the agent with the reasoning attached:
+`fixtureId` — so Gecko plans a **chain** from the spec alone (no call logs, no
+training data):
 
 ```
 agent intent: "get live odds updates"
@@ -180,36 +136,20 @@ explain:
   fixtureId ← FixtureId   [INFERRED · entity:fixture · high]
 ```
 
-- **Spec-derived.** Every multi-call system we know of plans over a graph that
-  is dataset-annotated, learned from call logs, or simply given. Gecko infers
-  the `feeds` graph unilaterally from the raw OpenAPI — the same zero-cold-start
-  move as the rest of the engine.
-- **Provenance on every edge.** `EXTRACTED` (parsed from the spec) vs
-  `INFERRED` (derived, with its basis + confidence shown). A poisoned spec can
-  at worst mint an auditable low-confidence edge — never a silent fact. Plans
-  are suggestions-with-provenance; your agent still makes every call itself.
-- **Measured, not asserted.** The chain-FCC harness executes whole plans in
-  recorded mode ($0, offline) and scores them end-to-end; the inference basis
-  passed a falsifiable gate before we built it (on the Stripe control it cut
-  false links **66,984 → 337**, −99.5%, while still finding every known chain
-  on a real paywalled API). See [docs/benchmarks.md](docs/benchmarks.md).
-- **On by default.** `search_capabilities` attaches the `plan` block whenever
-  the top match needs inputs your stated intent doesn't supply — and stays
-  byte-identical flat search when it doesn't.
-
-Cross-API chains (one query spanning two APIs, joined on genuine entity
-identity rather than name coincidence) are the frontier we're building next —
-the design is public in
-[`docs/specs/2026-07-19-surface-graph-correlations-design.md`](docs/specs/2026-07-19-surface-graph-correlations-design.md).
+**Spec-derived** with provenance on every edge (`EXTRACTED` vs `INFERRED` + confidence).
+Plans are suggestions — your agent still makes every call. Measured offline: Stripe
+control cut false links **66,984 → 337** (−99.5%) while finding every known chain on a
+paywalled API — see [docs/benchmarks.md](docs/benchmarks.md). On by default in
+`search_capabilities`. Cross-API chains are next:
+[design](docs/specs/2026-07-19-surface-graph-correlations-design.md).
 
 ---
 
 ## Make any API agent-usable
 
-Point it at an OpenAPI and your agent can call it — no client code, auth handled,
-first call correct. **Two ways in — by where your agent lives:**
+Point at an OpenAPI — no client code, auth handled, first call correct.
 
-**A · In Claude Code — install the plugin** (skills + commands + a live demo surface):
+**A · Claude Code — Marketplace plugin** (skills + live demo surface):
 
 ```
 /plugin marketplace add GeckoVision/gecko-surf
@@ -217,61 +157,43 @@ first call correct. **Two ways in — by where your agent lives:**
 /make-agent-ready https://api.example.com/openapi.json
 ```
 
-Installing wires the live `gecko-txline` demo surface (working tools, zero setup) **and**
-gives you the skills/commands: `/make-agent-ready` comprehends your API, serves it over
-MCP, and prints the one-click add string — plus `/setup-x402` and the anti-poisoning guard.
+Wires `gecko-txline` plus `/make-agent-ready`, `/setup-x402`, and anti-poisoning.
 
-**B · Anywhere else — install the CLI** (Cursor, VS Code, any agent framework, or a plain terminal):
+**B · Everywhere else — CLI** (Cursor, VS Code, any framework):
 
 ```bash
-# no-install, nothing to trust — a versioned package, run directly:
 uvx --from "gecko-surf[serve]" gecko <openapi-url>
-
-# or the one-line installer — but VERIFY it first (an agent should never blind-execute):
-python3 <(curl -fsSL https://raw.githubusercontent.com/GeckoVision/gecko-surf/main/scripts/verify_install.py)
-#   → checks the served script's SHA-256 + static-scans it; prints SAFE/UNSAFE
-curl -fsSL https://get.geckovision.tech/install.sh | bash    # only after it says SAFE
-gecko <openapi-url>
 ```
 
-> **Prove it's safe before you run it.** `verify_install.py` (stdlib-only, readable) confirms
-> the installer is **tamper-evident** (SHA-256 matches the value published in this repo),
-> **no-blind-execute** (the only pipe-to-shell is the official `uv` installer; everything
-> else pins a versioned GitHub release), and **pattern-clean** (no eval, no credential reads,
-> no exfil). Prefer the `uvx` line and there's nothing to verify at all.
+Prefer `uvx` (nothing to verify). Or prove the installer first with
+[`scripts/verify_install.py`](scripts/verify_install.py), then
+`curl -fsSL https://get.geckovision.tech/install.sh | bash`.
 
-`gecko <url>` prints the comprehension summary, the MCP URL, and a **one-click add** for
-each host — a **Cursor** or **VS Code** deeplink to click, or the raw **MCP URL** to point
-any framework at. Building your own app? Skip the server and embed the SDK (below).
+`gecko <url>` prints the MCP URL and one-click add links (Cursor / VS Code / raw).
+**Claude Code → Marketplace; everything else → CLI.** You don't need both.
 
-**Claude Code → the Marketplace; everything else → the CLI.** You don't need both.
-
-**Or embed the SDK** in your own app:
+**Or embed the SDK:**
 
 ```python
 from gecko import AgentApiClient, public_session
 
 client = AgentApiClient(spec, session=public_session())
 hit = client.search("what you want")[0]            # intent → right endpoint
-client.call(hit["name"], {...}, mode="recorded")   # correct call; "live" for real data
+client.call(hit["name"], {...}, mode="recorded")   # "live" for real data
 ```
 
-A complete forkable example: [`examples/_starter/`](examples/_starter/) — an app on
-*any* API in ~20 lines, runnable at $0. For a full agent (Telegram + an LLM tool-loop),
-see [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
+Forkable starter: [`examples/_starter/`](examples/_starter/) (~20 lines, $0). Full
+agent: [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
 
-### Fetch surfaces from the registry
+### Registry surfaces
 
-Surfaces can be served straight from the Gecko registry — fixes propagate as
-rev bumps, no package upgrade:
+```bash
+gecko serve --registry colosseum --auth-env COLOSSEUM_COPILOT_PAT
+```
 
-    gecko serve --registry colosseum --auth-env COLOSSEUM_COPILOT_PAT
-
-Free surfaces need no account. Premium surfaces take a Gecko key
-(`GECKO_API_KEY`), issued agent-natively: `POST /registry/keys {email}` →
-email OTP → `POST /registry/keys/verify` → `gk_live_...` (shown once; we
-store only a salted hash). Your PROVIDER key never travels to Gecko — the
-runner injects it locally and calls the provider directly.
+Free surfaces need no account. Premium: `GECKO_API_KEY` via
+`POST /registry/keys` → OTP → `gk_live_...` (shown once; we store a salted hash).
+Your provider key stays local — Gecko never sees it.
 
 ---
 
