@@ -28,7 +28,14 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
     monkeypatch.delenv("REFUGIOS_APIKEY", raising=False)
     surfaces = serve_mcp._build_surfaces(hosted_enforce="block")
     hosted_names = {name for name, _ in surfaces}
-    assert hosted_names == {"reportavnzla", "sosvenezuela", "txline", "jito", "jupiter"}
+    assert hosted_names == {
+        "reportavnzla",
+        "sosvenezuela",
+        "txline",
+        "birdeye",
+        "jito",
+        "jupiter",
+    }
 
     store = serve_mcp._registry_store(surfaces)
     store_names = set(store.names())

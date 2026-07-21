@@ -79,6 +79,17 @@ _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_opena
 # writes DIRECTLY to Jito with its own wallet.
 _TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
 
+# Birdeye (Solana/DeFi market data) — RECORDED for the same reason as TxLINE: it is a
+# PAID, key-gated API, so serving it live on a public endpoint would spend the key's quota
+# on anonymous traffic. Recorded means every response is synthesized from Birdeye's own
+# schema ($0, offline, no credential used or exposed) while all 89 ops stay visible and
+# first-call-correct — which is the point: an agent (e.g. the daily-news bot) can discover
+# and correctly form any Birdeye call, then run it live with the CALLER's own key.
+# Its 88-path spec is shipped in-image (NOT in the pip wheel — 559KB would bloat the
+# zero-friction npx/uvx install), matching the jito/txline hosted pattern.
+# Stub session so the fully auth-gated ops stay visible as tools (recorded never sends it).
+_BIRDEYE_SPEC = _ROOT / "examples" / "birdeye_demo" / "spec" / "birdeye_openapi.json"
+
 # Jupiter Swap — keyless + PUBLIC, so UNLIKE TxLINE/Jito we serve it LIVE: real swap
 # quotes from Jupiter's free lite-api host. No key, no cost, public data — a genuine
 # external-call demo (the agent gets real data, not a synthesized sample), which is why
@@ -103,6 +114,18 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             "txline",
             McpSurface(
                 AgentApiClient(str(_TXLINE_SPEC), session=stub_session()),
+                mode="recorded",
+                enforce=hosted_enforce,
+            ),
+        )
+    )
+    # Birdeye — RECORDED (paid/key-gated; see _BIRDEYE_SPEC). 89 first-call-correct tools
+    # an agent can discover and form correctly, then run live with its OWN key.
+    surfaces.append(
+        (
+            "birdeye",
+            McpSurface(
+                AgentApiClient(str(_BIRDEYE_SPEC), session=stub_session()),
                 mode="recorded",
                 enforce=hosted_enforce,
             ),
