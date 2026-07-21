@@ -57,9 +57,8 @@ not built.** Here is the loop, labeled honestly so you can see exactly where the
 
 Status: **steps 2, 3, and 5's regeneration are shipped primitives. The watcher
 (1), the operation-level diff (4), and the change report are on the roadmap.**
-We won't pretend the cron job exists. What exists is the architecture that makes it a
-small, contained addition rather than a rewrite — because comprehension is already a pure
-function of a content-addressed surface.
+The architecture already makes the watcher a small, contained addition rather than a
+rewrite — because comprehension is a pure function of a content-addressed surface.
 
 ## The corpus is your early-warning system
 
