@@ -348,6 +348,16 @@ def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) ->
         title = str((client.spec.get("info") or {}).get("title", ""))
         name = args.name or _slugify(title)
 
+    # Customer-confirmed DECLARED hints (`gecko graph confirm <name> ...`) join the
+    # spec's own x-gecko vocabulary — loaded at the serve edge (thin transport;
+    # the client stays pure) and applied lazily via graph invalidation.
+    try:
+        from .hints import load_confirmed
+
+        client.add_declared_hints(load_confirmed(name))
+    except Exception:  # noqa: BLE001 - a corrupt local hint file must not stop serve
+        pass
+
     mcp_url = _mcp_url(args.host, args.port, args.public_url)
 
     extra_hosts: list[str] = list(args.allow_host)
