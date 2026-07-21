@@ -359,13 +359,27 @@ def resolve_gated_surfaces(
     ``default`` (``serve_mcp.GATED_SURFACES``) so only the paid surfaces are gated there.
     An empty/whitespace env value is treated as unset (fall back to ``default``) — the
     safe direction, since the fallback can only ever gate MORE, never less.
+
+    **Fail closed on garbage.** A value that is non-empty but parses to ZERO names
+    (``","``, ``",,,"``) used to yield an empty set — i.e. the gate stayed ON while gating
+    NOTHING, silently leaving a PAID surface open. Such a value now falls back to
+    ``default`` and is logged at ERROR: the fallback can only ever gate more, and the
+    operator's mistake is visible instead of invisible.
     """
     if explicit is not None:
         return frozenset(explicit)
     raw = os.environ.get(GATED_SURFACES_ENV, "").strip()
     if not raw:
         return default
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+    names = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    if not names:
+        logger.error(
+            "%s=%r names no surface — falling back to the default gated set (fail closed)",
+            GATED_SURFACES_ENV,
+            raw,
+        )
+        return default
+    return names
 
 
 def _bearer_from_scope(scope: Any) -> str | None:
@@ -842,6 +856,37 @@ def build_multi_surface_app(
     # WHICH mounts that gate applies to. None = every mount (the pre-existing behavior);
     # the hosted server names the paid surfaces so the public funnel stays open.
     gated_names = resolve_gated_surfaces(gated_surfaces)
+    # Match case-INSENSITIVELY: mount names are lowercase by convention, and a casing slip
+    # in GECKO_GATED_SURFACES ("BIRDEYE") silently left the PAID mount open. Folding can
+    # only ever gate MORE surfaces, never fewer, so it is safe in the fail-closed direction.
+    gated_folded = None if gated_names is None else {n.casefold() for n in gated_names}
+
+    # A gated name this host does not serve is inert BY DESIGN (it lets an operator
+    # forward-declare a future paid surface) — but inert must never be SILENT: a typo
+    # ("birdye") is indistinguishable from a correct config on the wire, and the end state
+    # it produces (gate ON, every mount OPEN) is exactly the failure this gate exists to
+    # prevent. Loud at ERROR so the deploy log shows it; deliberately not fatal, so a typo
+    # cannot take the humanitarian/public mounts down with it.
+    if (
+        surface_gate is not None
+        and gated_names is not None
+        and gated_folded is not None
+    ):
+        served = {name.casefold() for name, _ in surfaces}
+        unserved = sorted(n for n in gated_names if n.casefold() not in served)
+        if unserved:
+            logger.error(
+                "gecko-key gate names surfaces this host does not serve: %s "
+                "(typo? they gate NOTHING) — served: %s",
+                unserved,
+                sorted(name for name, _ in surfaces),
+            )
+        if not (served & gated_folded):
+            logger.error(
+                "gecko-key gate is ON but gates NO served surface — every mount is OPEN. "
+                "Check %s.",
+                GATED_SURFACES_ENV,
+            )
 
     subs: list[tuple[str, Starlette]] = []
     for name, spec in surfaces:
@@ -855,7 +900,8 @@ def build_multi_surface_app(
         # NAMED (paid) surface can never fail open, and an unnamed one is never closed.
         mount_gate = (
             surface_gate
-            if surface_gate is not None and (gated_names is None or name in gated_names)
+            if surface_gate is not None
+            and (gated_folded is None or name.casefold() in gated_folded)
             else None
         )
         subs.append(
