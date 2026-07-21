@@ -72,9 +72,17 @@ _SECRET_NOUN = (
     r"recovery[- ]?phrase|mnemonic|api[ _-]?key|api[ _-]?secret|access[- ]?token|"
     r"refresh[- ]?token|password|passphrase|credentials?)"
 )
-# Fund nouns for routing directives — kept narrow ("funds"/"balance"/"money", not the
-# ubiquitous "token"/"asset") so peg-oracle prose about assets/tokens does not trip.
-_FUND_NOUN = r"(?:funds?|balance|money|payment|wallet|savings)"
+# VALUE nouns for the bare "verb + noun" routing directive — the words that ARE the moved
+# money ("transfer funds", "move the balance"). Kept narrow ("funds"/"balance"/"money"/
+# "savings", not the ubiquitous "token"/"asset") so peg-oracle prose about assets/tokens
+# does not trip. Deliberately EXCLUDES "wallet"/"payment"/"account": those are CONTAINER/
+# context words, not the moved value — you don't *transfer a wallet* — and they co-occur
+# with "transfer" throughout legitimate wallet-DATA prose ("Retrieve list transfer of the
+# wallet.", "transfer direction relative to the specified wallet", "the wallet's transfer
+# history"). Flagging on a bare verb+"wallet" wholesale-quarantines a benign read surface
+# (Birdeye). Those container words instead only sharpen the DIRECTIONAL alternative below,
+# where a real crypto ADDRESS — not the container word — is the actual routing target.
+_FUND_NOUN = r"(?:funds?|balance|money|savings)"
 # Crypto-address-shaped target (eth hex / base58) for "route to <addr>" directives.
 _ADDR = r"(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{26,})"
 
@@ -96,7 +104,12 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
     "fund_routing": re.compile(
         rf"(?:transfer|send|route|move|forward|withdraw|redirect|wire|deposit)\b"
         rf"[^.\n]{{0,40}}?\b{_FUND_NOUN}\b"
-        rf"|(?:transfer|route|send|forward|redirect|wire)\b[^.\n]{{0,25}}?\bto\b\s+{_ADDR}",
+        # Directional alternative: verb ... "to" ... <crypto ADDRESS>. The gap between "to"
+        # and the address allows intervening CONTAINER words ("to the wallet <addr>", "to
+        # the payment account <addr>") so narrowing the bare alternative above opens NO
+        # bypass — the address, not the container word, is what makes this fire.
+        rf"|(?:transfer|route|send|forward|redirect|wire)\b[^.\n]{{0,25}}?\bto\b"
+        rf"[^.\n]{{0,25}}?{_ADDR}",
         re.IGNORECASE,
     ),
 }
