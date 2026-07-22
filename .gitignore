@@ -32,8 +32,16 @@ docs/superpowers/
 # root project instructions only — the provider skill kit ships its own skills/CLAUDE.md
 /CLAUDE.md
 
-# Claude Code local config, agents, and skills (internal)
-.claude/
+# Claude Code local config, agents, and skills (internal).
+# Contents-not-directory (`.claude/*`, not `.claude/`) because git cannot re-include a
+# path whose PARENT directory is excluded — with `.claude/` the negations below would be
+# silently ignored. Each level must be re-included in turn.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+# Published deliberately: the JS-docs reader is the playbook `gecko/docs_reader/render.py`
+# implements, so it ships with the public repo instead of living on one laptop.
+!.claude/skills/read-js-docs/
 
 # MCP — real config carries a token; ship .mcp.json.example instead
 .mcp.json
