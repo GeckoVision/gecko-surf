@@ -160,9 +160,9 @@ def build_login_service_from_env(
 ) -> LoginService | None:
     """Wire the login service from env, or ``None`` when Privy OR the registry is unconfigured.
 
-    Both the server-side Privy client (``PRIVY_APP_ID`` + ``PRIVY_APP_SECRET``) and the key
-    registry (``MONGODB_URI``) must be present; otherwise the endpoints stay disabled (503)
-    rather than half-work. Reuses the two modules' own env builders.
+    Both the server-side Privy client (``PRIVY_APP_ID``) and the key registry
+    (``MONGODB_URI``) must be present; otherwise the endpoints stay disabled (503) rather
+    than half-work. Reuses the two modules' own env builders.
     """
     from .keyregistry import registry_from_env
 
