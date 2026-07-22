@@ -11,6 +11,8 @@ registry fake, no Mongo, no network.
 
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 from typing import Any
 
@@ -233,3 +235,60 @@ def test_a_grant_for_one_surface_does_not_open_another():
         resp = _init(client, GATED, key=key)
     assert resp.status_code == 403
     assert resp.json()["reason"] == "not_enabled"
+
+
+# --- birdeye live/recorded switch ------------------------------------------------
+
+
+def _birdeye_mode(monkeypatch, value: str | None) -> str:
+    from gecko import serve_mcp
+
+    if value is None:
+        monkeypatch.delenv("BIRDEYE_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("BIRDEYE_API_KEY", value)
+    monkeypatch.setenv("REFUGIOS_APIKEY", "")
+    from gecko.enforce import resolve_hosted_enforce
+
+    for name, surface in serve_mcp._build_surfaces(resolve_hosted_enforce()):
+        if name == "birdeye":
+            return str(surface.mode)
+    raise AssertionError("birdeye surface not built")
+
+
+def test_birdeye_stays_recorded_without_a_key(monkeypatch):
+    """Fail-SAFE, not fail-closed: no key must degrade to $0 recorded, never error and
+    never spend."""
+    assert _birdeye_mode(monkeypatch, None) == "recorded"
+
+
+def test_birdeye_stays_recorded_on_the_unset_sentinel(monkeypatch):
+    """push-ssm provisions `__unset__`; treating it as a real key would send the literal
+    string as X-API-KEY and bill nothing but fail every call."""
+    assert _birdeye_mode(monkeypatch, "__unset__") == "recorded"
+
+
+def test_birdeye_stays_recorded_on_a_blank_key(monkeypatch):
+    assert _birdeye_mode(monkeypatch, "   ") == "recorded"
+
+
+def test_birdeye_goes_live_with_a_real_key(monkeypatch):
+    assert _birdeye_mode(monkeypatch, "bd-real-key-value") == "live"
+
+
+def test_the_birdeye_key_never_reaches_a_tool_def(monkeypatch):
+    """Invariant #4: auth is invisible to the agent. A live upstream key must not be
+    discoverable in any tool definition the agent receives."""
+    from gecko import serve_mcp
+
+    secret = "bd-super-secret-key"
+    monkeypatch.setenv("BIRDEYE_API_KEY", secret)
+    monkeypatch.setenv("REFUGIOS_APIKEY", "")
+    from gecko.enforce import resolve_hosted_enforce
+
+    for name, surface in serve_mcp._build_surfaces(resolve_hosted_enforce()):
+        if name == "birdeye":
+            blob = json.dumps(surface.client.list_tools())
+            assert secret not in blob
+            return
+    raise AssertionError("birdeye surface not built")

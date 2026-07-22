@@ -451,6 +451,13 @@ Resources:
             # (hosted login disabled) and the task boots clean.
             - Name: PRIVY_APP_SECRET
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_APP_SECRET
+            # Birdeye upstream key (gecko/serve_mcp.py). A real value flips the
+            # `birdeye` surface from RECORDED ($0) to LIVE and SPENDS REAL QUOTA;
+            # __unset__ sentinel => the surface degrades to recorded and the task
+            # boots clean. Safe to enable only because `birdeye` is gated and access
+            # is granted per account, so anonymous traffic never reaches the mount.
+            - Name: BIRDEYE_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/BIRDEYE_API_KEY
           LogConfiguration:
             LogDriver: awslogs
             Options:
