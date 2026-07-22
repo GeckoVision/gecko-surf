@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.4.15 — 2026-07-22
+
+### Fixed
+- **`gecko connect` never exited when its client closed stdin**, leaking an orphaned
+  process on every MCP-client restart. Each transport runs a writer task that loops
+  over its write stream and its context manager will not exit while that task lives;
+  the bridge held both sinks open, so on stdin EOF the bridge returned but
+  `stdio_server.__aexit__` waited forever. Closing stdin is exactly how an MCP client
+  shuts a server down, so this fired on every restart. The bridge now closes both
+  sinks once forwarding ends.
+
+  Caught by a live smoke, not the suite: the original teardown test used in-memory
+  streams, which do not model a transport waiting on its writer, so nothing hung and
+  the test passed. Both new regression tests fail without the fix.
+
 ## 0.4.14 — 2026-07-22
 
 ### Security

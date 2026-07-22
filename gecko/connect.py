@@ -131,6 +131,17 @@ async def bridge(
         tg.start_soon(one_way, client_read, server_write, "client->server")
         tg.start_soon(one_way, server_read, client_write, "server->client")
 
+    # Both directions are finished, so close the sinks we were writing into. This is
+    # NOT tidiness — each transport runs a writer task that loops over its write
+    # stream, and its context manager will not exit while that task is alive. Holding
+    # these open hung the whole process on stdin EOF: the bridge returned, but
+    # `stdio_server.__aexit__` waited forever for a writer that could never end. An MCP
+    # client closes stdin to shut a server down, so every client restart leaked an
+    # orphaned `gecko connect`.
+    for sink in (server_write, client_write):
+        with anyio.CancelScope(shield=True):
+            await sink.aclose()
+
 
 def _flatten(exc: BaseException) -> list[BaseException]:
     """Task-group failures arrive as a nested ExceptionGroup; flatten to the leaves."""
