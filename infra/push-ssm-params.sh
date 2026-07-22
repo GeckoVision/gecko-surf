@@ -93,6 +93,19 @@ declare -A PARAMS=(
   # disabled (the /auth/login/* endpoints 503) and the task boots clean. Requires
   # MONGODB_URI (the key registry) to also be set for login to be enabled.
   [PRIVY_APP_SECRET]="PRIVY_APP_SECRET"
+
+  # Birdeye upstream API key (gecko/serve_mcp.py) — flips the `birdeye` surface from
+  # RECORDED ($0, schema-synthesized) to LIVE against public-api.birdeye.so, with the
+  # key injected at call time and never exposed in a tool def.
+  #
+  # SPENDS REAL QUOTA. Only push a real value when you intend live billing. Unset or
+  # sentinel => the surface degrades to recorded (fail-SAFE: an SSM slip cannot take
+  # the mount down, and cannot start spending on a key we do not have).
+  #
+  # Safe to enable ONLY because `birdeye` is in GATED_SURFACES and access is granted
+  # per account (`gecko keys grant <account> --surface birdeye`) — anonymous traffic
+  # can never reach the mount, so the quota is spent by named developers only.
+  [BIRDEYE_API_KEY]="BIRDEYE_API_KEY"
 )
 
 echo "==> Region:     $REGION"
@@ -150,6 +163,8 @@ declare -A REQUIRED_AT_BOOT=(
   # Server-only Privy secret: sentinel keeps the task booting with hosted login
   # DISABLED (endpoints 503) until the founder pushes a real value in SSM.
   [PRIVY_APP_SECRET]="__unset__"
+  # Sentinel keeps `birdeye` in RECORDED mode. Push a real key to go live.
+  [BIRDEYE_API_KEY]="__unset__"
 )
 
 SKIPPED=()

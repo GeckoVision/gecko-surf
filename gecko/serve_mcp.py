@@ -92,16 +92,25 @@ _REFUGIOS_SPEC = _ROOT / "examples" / "refugios_demo" / "spec" / "refugios_opena
 # writes DIRECTLY to Jito with its own wallet.
 _TXLINE_SPEC = _ROOT / "examples" / "txline_demo" / "spec" / "txline_openapi.yaml"
 
-# Birdeye (Solana/DeFi market data) — RECORDED for the same reason as TxLINE: it is a
-# PAID, key-gated API, so serving it live on a public endpoint would spend the key's quota
-# on anonymous traffic. Recorded means every response is synthesized from Birdeye's own
-# schema ($0, offline, no credential used or exposed) while all 89 ops stay visible and
-# first-call-correct — which is the point: an agent (e.g. the daily-news bot) can discover
-# and correctly form any Birdeye call, then run it live with the CALLER's own key.
+# Birdeye (Solana/DeFi market data) — a PAID, key-gated API, served in EITHER mode:
+#
+#   BIRDEYE_API_KEY set   -> LIVE against Birdeye, our key injected at call time.
+#   unset / `__unset__`   -> RECORDED ($0, synthesized from Birdeye's own schema).
+#
+# Live was only ever safe once TWO things were true, and both now are: the surface is in
+# GATED_SURFACES (so anonymous traffic cannot reach it at all) and access is granted PER
+# ACCOUNT (`gecko keys grant <account> --surface birdeye`), so the quota is spent only by
+# developers we named. Serving it live before that would have billed our key for anyone.
+#
+# Either way all 89 ops stay visible and first-call-correct, and the upstream key never
+# appears in a tool def (invariant #4) — the agent describes intent, we inject auth.
 # Its 88-path spec is shipped in-image (NOT in the pip wheel — 559KB would bloat the
 # zero-friction npx/uvx install), matching the jito/txline hosted pattern.
-# Stub session so the fully auth-gated ops stay visible as tools (recorded never sends it).
 _BIRDEYE_SPEC = _ROOT / "examples" / "birdeye_demo" / "spec" / "birdeye_openapi.json"
+#: Birdeye's own host (from the spec's `servers`). Only used when BIRDEYE_API_KEY is set.
+_BIRDEYE_BASE = "https://public-api.birdeye.so"
+#: The push-ssm sentinel for "declared but not filled in" — never treat it as a real key.
+_UNSET_SENTINEL = "__unset__"
 
 # Jupiter Swap — keyless + PUBLIC, so UNLIKE TxLINE/Jito we serve it LIVE: real swap
 # quotes from Jupiter's free lite-api host. No key, no cost, public data — a genuine
@@ -198,18 +207,38 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             ),
         )
     )
-    # Birdeye — RECORDED (paid/key-gated; see _BIRDEYE_SPEC). 89 first-call-correct tools
-    # an agent can discover and form correctly, then run live with its OWN key.
+    # Birdeye — paid/key-gated (see _BIRDEYE_SPEC). 89 first-call-correct tools.
+    #
+    # LIVE only when BIRDEYE_API_KEY is set, otherwise RECORDED ($0, schema-synthesized).
+    # Fail-SAFE, not fail-closed: a missing/sentinel key degrades to recorded rather than
+    # erroring, so an SSM slip can never take the surface down — and, more importantly,
+    # can never silently start spending on a key we do not have.
+    #
+    # Live mode spends real Birdeye quota on every call, and agents call far more often
+    # than humans do. Two things bound that: the Gecko-key gate (only accounts explicitly
+    # granted `birdeye` reach this mount at all) and the fact that the upstream key is
+    # injected at call time and never appears in a tool def (invariant #4).
+    birdeye_key = os.environ.get("BIRDEYE_API_KEY", "").strip()
+    birdeye_live = bool(birdeye_key) and birdeye_key != _UNSET_SENTINEL
     surfaces.append(
         (
             "birdeye",
             McpSurface(
-                AgentApiClient(str(_BIRDEYE_SPEC), session=stub_session()),
-                mode="recorded",
+                AgentApiClient(
+                    str(_BIRDEYE_SPEC),
+                    base_url=_BIRDEYE_BASE if birdeye_live else None,
+                    session=(
+                        static_session({"X-API-KEY": birdeye_key})
+                        if birdeye_live
+                        else stub_session()
+                    ),
+                ),
+                mode="live" if birdeye_live else "recorded",
                 enforce=hosted_enforce,
             ),
         )
     )
+    logger.info("birdeye surface mode=%s", "live" if birdeye_live else "recorded")
     # Jito — reads LIVE against mainnet, the two money-moving writes RECORDED
     # (catalog-only). Built via the shared boundary builder so serve_mcp and
     # serve_providers enforce the identical split; hosted enforce keeps the risk gate on.
