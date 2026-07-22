@@ -2,17 +2,41 @@
 
 ## Unreleased
 
-### Fixed
-- **Adoption telemetry counts adopters, not runs.** The install id is written
-  atomically (temp + rename, never a torn file) and reused forever; an unwritable
-  HOME degrades to a per-run id instead of crashing. The `gecko add` onboard ping is
-  now idempotent per install+surface (a local `~/.gecko/pinged/` marker, written only
-  after a ping actually left), so re-running `add` no longer re-counts. The ping URL
-  is resolved at call time, so a dev/test harness that redirects it can no longer
-  post into the production ingest. The test suite is structurally unable to post
-  telemetry (suite-wide transport kill-switch).
+## 0.4.14 — 2026-07-22
+
+### Security
+- **Self-service login granted ACCESS, not just identity.** `store_key` set
+  `enabled=True` unconditionally and `gecko login` mints through that same call, so any
+  address that passed the email OTP received a key the gate accepted — every gated
+  (paid) surface was reachable by anyone who could receive email. `keyauth.authorize`
+  already documented "not enabled BY THE FOUNDER ⇒ deny"; login silently made that
+  untrue. Login-minted keys now land `enabled=False`: login establishes identity,
+  access stays a deliberate founder act. Founder-run `gecko keys mint` still lands
+  enabled — that IS the grant.
+- **One key opened EVERY gated surface.** `KeyGate.decide` took no surface argument, so
+  "enabled" meant "may reach every paid API". Invisible with a single gated surface, but
+  adding a second would have silently handed every developer enabled for API #2 access
+  to API #1. The gate is now scoped per mount, and access requires two independent
+  switches: `enable/disable` (the account is live at all) AND `grant/revoke` (it may
+  reach THIS surface). Fail-closed throughout — a store that cannot express grants
+  denies rather than degrading to a bare enabled check, grants default-deny, and
+  `disable` still beats a surviving grant.
+
+  **Migration:** existing keys carry no grant and therefore reach nothing. Restore
+  access explicitly with `gecko keys grant <account> --surface <name>`.
 
 ### Added
+- **`gecko connect <surface>`** — use a gated hosted surface with the Gecko key held in
+  the OS keychain, so no secret is pasted into an MCP client config. It runs as the
+  client's stdio MCP server, resolves the key through the normal credential chain
+  (keychain → env), and bridges JSON-RPC frames verbatim to the hosted
+  Streamable-HTTP mount. The client config holds a command, not a credential:
+  `{"command": "gecko", "args": ["connect", "birdeye"]}`. Surface names are validated
+  as mount names (no path traversal) and `--host` goes through the SSRF guard, so a
+  bearer token can never be sent to loopback, a private range, or link-local.
+- **`gecko keys grant|revoke <account> --surface <name>`** and `gecko keys mint
+  --surface` (mint + grant in one act). `gecko keys list` now shows each account's
+  grants.
 - **`gecko serve` first-run ping** (`mode="serve"`) — the skill/plugin install
   channel (`/make-agent-ready` runs serve) becomes visible. Same envelope, same
   `GECKO_TELEMETRY=off` opt-out, same transparency line (on stderr — stdout may be
@@ -23,6 +47,25 @@
   all-time fcc > call is expected: fcc fires on every engine call outcome (demo,
   `gecko test`, recorded $0 flows included); `surf.call` only on MCP-surface
   invocations. The honest funnel queries are documented in `gecko/events.py`.
+
+### Fixed
+- **A rejected key hung the MCP client.** The transport's HTTP 403 escaped `gecko
+  connect` as a raw ExceptionGroup: the process died with no JSON-RPC response and the
+  client waited on `initialize`. Transport failures are now mapped to one redacted line
+  naming the status and the remedy (exit 2, stdout left byte-clean because it is the
+  protocol channel).
+- **The documented headless credential fallback was unusable.** Slot `gecko-identity`
+  produced `GECKO_CRED_GECKO-IDENTITY`, which no POSIX shell can `export`. `_env_key`
+  now normalizes `-` to `_`; the pre-normalization name is still honoured on read, so a
+  Docker `-e` or an MCP client `env` block that sets it does not regress.
+- **Adoption telemetry counts adopters, not runs.** The install id is written
+  atomically (temp + rename, never a torn file) and reused forever; an unwritable
+  HOME degrades to a per-run id instead of crashing. The `gecko add` onboard ping is
+  now idempotent per install+surface (a local `~/.gecko/pinged/` marker, written only
+  after a ping actually left), so re-running `add` no longer re-counts. The ping URL
+  is resolved at call time, so a dev/test harness that redirects it can no longer
+  post into the production ingest. The test suite is structurally unable to post
+  telemetry (suite-wide transport kill-switch).
 
 ## 0.4.13 — 2026-07-19
 
