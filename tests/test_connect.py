@@ -341,3 +341,71 @@ def test_nested_exception_groups_are_flattened() -> None:
         "outer", [BaseExceptionGroup("inner", [_HttpError(403)])]
     )
     assert "403" in str(connect.terminal_error(nested))
+
+
+# --- teardown: the sinks must close or the transports never exit -----------------
+
+
+def test_bridge_closes_both_sinks_so_the_transports_can_exit() -> None:
+    """The regression. Each MCP transport runs a writer task that loops over its write
+    stream; its context manager will not exit while that task lives. The bridge held
+    both sinks open, so on stdin EOF the bridge returned but `stdio_server.__aexit__`
+    waited forever — and since a client closes stdin to shut a server down, every
+    client restart leaked an orphaned `gecko connect` process.
+
+    The original teardown test passed because in-memory streams do not model that
+    dependency: nothing was waiting on the sink, so nothing hung.
+    """
+
+    def go() -> tuple[bool, bool]:
+        async def main() -> tuple[bool, bool]:
+            client_in_send, client_read = _streams()
+            client_write, _co = _streams()
+            _sis, server_read = _streams()
+            server_write, _so = _streams()
+            await client_in_send.aclose()
+            await connect.bridge(client_read, client_write, server_read, server_write)
+
+            async def is_closed(stream: Any) -> bool:
+                try:
+                    await stream.send("probe")
+                except anyio.ClosedResourceError:
+                    return True
+                return False
+
+            return await is_closed(client_write), await is_closed(server_write)
+
+        return anyio.run(main)
+
+    client_closed, server_closed = go()
+    assert client_closed, "client_write left open — stdio_server would never exit"
+    assert server_closed, "server_write left open — the http transport would never exit"
+
+
+def test_a_transport_that_waits_on_its_writer_still_shuts_down() -> None:
+    """Models the real dependency end-to-end: a fake transport whose teardown blocks
+    until its write stream closes. Hangs (and fails) if the bridge stops closing sinks."""
+
+    def go() -> None:
+        async def main() -> None:
+            client_in_send, client_read = _streams()
+            client_write, client_write_reader = _streams()
+            _sis, server_read = _streams()
+            server_write, _so = _streams()
+            await client_in_send.aclose()
+
+            async def transport_writer() -> None:
+                # Exactly what stdio_server's writer does: drain until the sink closes.
+                async for _item in client_write_reader:
+                    pass
+
+            with anyio.fail_after(5):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(transport_writer)
+                    await connect.bridge(
+                        client_read, client_write, server_read, server_write
+                    )
+
+        anyio.run(main)
+
+    go()  # a TimeoutError here means the leak is back
