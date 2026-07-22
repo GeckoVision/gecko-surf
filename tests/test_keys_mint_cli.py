@@ -105,7 +105,8 @@ def test_cli_minted_key_opens_the_gated_surface_end_to_end(registry, capsys):
 
     from gecko.http_server import build_multi_surface_app
 
-    main(["keys", "mint", ACCOUNT])
+    # --surface is what actually authorizes: a bare mint yields a key that opens nothing.
+    main(["keys", "mint", ACCOUNT, "--surface", "birdeye"])
     key = _minted_key(capsys.readouterr().out)
 
     spec = str(Path(__file__).resolve().parent / "fixtures" / "pegana_openapi.json")

@@ -134,8 +134,17 @@ class LoginService:
             raise LoginServiceError("could not establish identity", status=502)
         key = mint_key()
         # Store the HASH only; the plaintext key is returned once and never persisted/logged.
+        #
+        # enabled=False is the whole point of self-service login: anyone who can pass an
+        # email OTP gets an IDENTITY, never access. Access to a gated/paid surface is a
+        # separate, deliberate founder act (`gecko keys enable` + `gecko keys grant`).
+        # Minting these enabled would make every gated surface reachable by anyone with
+        # an email address.
         self.registry.store_key(
-            key_hash=hash_key(key), account_id=account_id, label=self.label
+            key_hash=hash_key(key),
+            account_id=account_id,
+            label=self.label,
+            enabled=False,
         )
         return key
 

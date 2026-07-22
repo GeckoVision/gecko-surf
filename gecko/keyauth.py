@@ -24,11 +24,15 @@ id / email, same class as the plaintext ``identity.json``), never the token.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "AccountResolver",
@@ -37,8 +41,11 @@ __all__ = [
     "FileAllowlist",
     "KeyAuthError",
     "KeyGate",
+    "SurfaceGrants",
+    "SurfaceScopedAllowlist",
     "authorize",
     "deny_all_resolver",
+    "scope_gate",
 ]
 
 #: Why a decision landed. Carries the account (never the token) so a 403 can name the
@@ -88,6 +95,56 @@ class Allowlist(Protocol):
     def is_enabled(self, account: str) -> bool:
         """Is this account id enabled? Default-deny: unknown ⇒ ``False``."""
         ...
+
+
+@runtime_checkable
+class SurfaceGrants(Protocol):
+    """WHICH gated surfaces an account may reach — the founder's per-surface grant.
+
+    Separate from :class:`Allowlist` on purpose. ``is_enabled`` answers "is this account
+    live at all" (one switch, revokes everything); ``may_access`` answers "may it reach
+    THIS paid surface". Without the split, enabling a developer for a future API #2
+    silently hands them API #1 as well.
+    """
+
+    def may_access(self, account: str, surface: str) -> bool:
+        """Has the founder granted ``account`` this surface? Default-deny."""
+        ...
+
+
+@dataclass(frozen=True)
+class SurfaceScopedAllowlist:
+    """An :class:`Allowlist` view for ONE gated surface: enabled **and** granted it.
+
+    Fail-closed twice over. An account that is not enabled is denied without consulting
+    grants; and an inner store that cannot express grants at all denies every gated
+    surface rather than silently degrading to a bare ``is_enabled`` check — a store
+    swapped in without grant support must lock the paid doors, not open them.
+    """
+
+    inner: Allowlist
+    surface: str
+
+    def is_enabled(self, account: str) -> bool:
+        if not self.inner.is_enabled(account):
+            return False
+        if not isinstance(self.inner, SurfaceGrants):
+            # Names the surface + store type only — never an account or a token.
+            logger.warning(
+                "allowlist %s cannot express per-surface grants; denying %r",
+                type(self.inner).__name__,
+                self.surface,
+            )
+            return False
+        return self.inner.may_access(account, self.surface)
+
+
+def scope_gate(gate: KeyGate, surface: str) -> KeyGate:
+    """The same gate, narrowed to one surface. Used per mount at the transport edge."""
+    return KeyGate(
+        resolve_account=gate.resolve_account,
+        allowlist=SurfaceScopedAllowlist(gate.allowlist, surface),
+    )
 
 
 def deny_all_resolver(_token: str) -> None:
@@ -174,22 +231,50 @@ class FileAllowlist:
     def _file(self) -> Path:
         return self.path if self.path is not None else _default_allowlist_path()
 
-    def _read(self) -> set[str]:
+    def _load(self) -> dict[str, object]:
         target = self._file()
         if not target.exists():
-            return set()
+            return {}
         try:
             data = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             # Name the path only — the file holds no secret, but stay consistent.
             raise KeyAuthError(f"could not read allowlist at {target}") from exc
-        accounts = data.get("accounts") if isinstance(data, dict) else None
+        return data if isinstance(data, dict) else {}
+
+    def _read(self) -> set[str]:
+        accounts = self._load().get("accounts")
         return {str(a) for a in accounts} if isinstance(accounts, list) else set()
 
-    def _write(self, accounts: set[str]) -> None:
+    def _read_grants(self) -> dict[str, set[str]]:
+        """``{account: {surface, ...}}`` — non-secret ids and mount names only."""
+        raw = self._load().get("grants")
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, set[str]] = {}
+        for account, surfaces in raw.items():
+            if isinstance(surfaces, list):
+                out[str(account)] = {str(s) for s in surfaces}
+        return out
+
+    def _write(
+        self, accounts: set[str], grants: dict[str, set[str]] | None = None
+    ) -> None:
         target = self._file()
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"accounts": sorted(accounts)}, indent=2) + "\n"
+        # Read-modify-write: enable/disable must never drop the grant map, and
+        # grant/revoke must never drop the enabled set.
+        keep = self._read_grants() if grants is None else grants
+        payload = (
+            json.dumps(
+                {
+                    "accounts": sorted(accounts),
+                    "grants": {a: sorted(s) for a, s in sorted(keep.items()) if s},
+                },
+                indent=2,
+            )
+            + "\n"
+        )
         target.write_text(payload, encoding="utf-8")
         # Non-secret, but keep it owner-only for tidiness/consistency with the config dir.
         try:
@@ -199,6 +284,38 @@ class FileAllowlist:
 
     def is_enabled(self, account: str) -> bool:
         return bool(account) and account in self._read()
+
+    def may_access(self, account: str, surface: str) -> bool:
+        """Default-deny: no grant record ⇒ no gated surface, however enabled."""
+        if not account or not surface:
+            return False
+        return surface in self._read_grants().get(account, set())
+
+    def grant(self, account: str, surface: str) -> bool:
+        """Grant ``surface`` to ``account``; ``True`` if newly added (idempotent)."""
+        account = _require_account(account)
+        surface = _require_surface(surface)
+        grants = self._read_grants()
+        held = grants.setdefault(account, set())
+        if surface in held:
+            return False
+        held.add(surface)
+        self._write(self._read(), grants)
+        return True
+
+    def revoke(self, account: str, surface: str) -> bool:
+        """Revoke ``surface`` from ``account``; ``True`` if it had been granted."""
+        account = _require_account(account)
+        surface = _require_surface(surface)
+        grants = self._read_grants()
+        if surface not in grants.get(account, set()):
+            return False
+        grants[account].discard(surface)
+        self._write(self._read(), grants)
+        return True
+
+    def grants_for(self, account: str) -> list[str]:
+        return sorted(self._read_grants().get(account, set()))
 
     def enable(self, account: str) -> bool:
         """Enable ``account``; returns ``True`` if it was newly added (idempotent)."""
@@ -223,6 +340,16 @@ class FileAllowlist:
     def accounts(self) -> list[str]:
         """The enabled account ids, sorted — **never** any token."""
         return sorted(self._read())
+
+
+def _require_surface(surface: str) -> str:
+    """A grant names a mount, so it must look like one — never a path or a URL."""
+    surface = (surface or "").strip()
+    if not surface or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", surface):
+        raise KeyAuthError(
+            f"invalid surface name {surface!r} — expected a mount name like 'birdeye'"
+        )
+    return surface
 
 
 def _require_account(account: str) -> str:

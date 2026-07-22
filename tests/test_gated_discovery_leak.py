@@ -77,7 +77,14 @@ def _clean_env(monkeypatch):
 def _registry_with_key() -> tuple[InMemoryKeyRegistry, str]:
     registry = InMemoryKeyRegistry()
     key = mint_key()
-    registry.store_key(key_hash=hash_key(key), account_id=ACCOUNT, label="co-founder")
+    registry.store_key(
+        key_hash=hash_key(key),
+        account_id=ACCOUNT,
+        label="co-founder",
+        surfaces=[
+            PAID
+        ],  # enabled is not enough: the account must be granted THIS surface
+    )
     return registry, key
 
 

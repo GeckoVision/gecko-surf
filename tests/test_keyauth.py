@@ -180,7 +180,7 @@ def test_file_allowlist_lists_accounts_never_tokens(tmp_path):
     assert store.accounts() == ["dev-a", "dev-b"]  # sorted, ids only
     # The token never reaches the file by construction — the store only sees accounts.
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk == {"accounts": ["dev-a", "dev-b"]}
+    assert on_disk == {"accounts": ["dev-a", "dev-b"], "grants": {}}
     assert TOKEN not in path.read_text(encoding="utf-8")
 
 

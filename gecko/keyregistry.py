@@ -91,8 +91,29 @@ class KeyRegistry(Protocol):
     ``account_for`` is the read the gate needs; the rest support key minting + founder ops.
     """
 
-    def store_key(self, *, key_hash: str, account_id: str, label: str) -> None:
-        """Persist a freshly minted key's HASH → account, ``enabled=True``, stamped ``created``."""
+    def store_key(
+        self,
+        *,
+        key_hash: str,
+        account_id: str,
+        label: str,
+        enabled: bool = True,
+        surfaces: list[str] | None = None,
+    ) -> None:
+        """Persist a freshly minted key's HASH → account, stamped ``created``.
+
+        ``enabled`` is a parameter because the two mint paths differ in trust: a
+        founder-run ``gecko keys mint`` IS the grant (enabled), while a self-service
+        ``gecko login`` establishes identity only and must land disabled.
+        """
+        ...
+
+    def set_account_surfaces(self, account_id: str, surfaces: list[str]) -> int:
+        """Replace the granted surfaces on every key for ``account_id``; count changed."""
+        ...
+
+    def surfaces_for_account(self, account_id: str) -> list[str]:
+        """Granted surface names for ``account_id`` (sorted) — never a key."""
         ...
 
     def account_for(self, key_hash: str) -> str | None:
@@ -118,13 +139,43 @@ class InMemoryKeyRegistry:
     _by_hash: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
     _clock: Callable[[], float] = time.time
 
-    def store_key(self, *, key_hash: str, account_id: str, label: str) -> None:
+    def store_key(
+        self,
+        *,
+        key_hash: str,
+        account_id: str,
+        label: str,
+        enabled: bool = True,
+        surfaces: list[str] | None = None,
+    ) -> None:
         self._by_hash[key_hash] = {
             "account_id": account_id,
             "created": self._clock(),
-            "enabled": True,
+            "enabled": enabled,
             "label": label,
+            "surfaces": sorted(set(surfaces or [])),
         }
+
+    def set_account_surfaces(self, account_id: str, surfaces: list[str]) -> int:
+        wanted = sorted(set(surfaces))
+        changed = 0
+        for record in self._by_hash.values():
+            if (
+                record.get("account_id") == account_id
+                and record.get("surfaces") != wanted
+            ):
+                record["surfaces"] = wanted
+                changed += 1
+        return changed
+
+    def surfaces_for_account(self, account_id: str) -> list[str]:
+        out: set[str] = set()
+        for record in self._by_hash.values():
+            if record.get("account_id") == account_id and record.get("enabled"):
+                held = record.get("surfaces")
+                if isinstance(held, list):
+                    out.update(str(s) for s in held)
+        return sorted(out)
 
     def account_for(self, key_hash: str) -> str | None:
         record = self._by_hash.get(key_hash)
@@ -165,16 +216,39 @@ class MongoKeyRegistry:
     collection: Any
     _clock: Callable[[], float] = time.time
 
-    def store_key(self, *, key_hash: str, account_id: str, label: str) -> None:
+    def store_key(
+        self,
+        *,
+        key_hash: str,
+        account_id: str,
+        label: str,
+        enabled: bool = True,
+        surfaces: list[str] | None = None,
+    ) -> None:
         self.collection.insert_one(
             {
                 "_id": key_hash,
                 "account_id": account_id,
                 "created": self._clock(),
-                "enabled": True,
+                "enabled": enabled,
                 "label": label,
+                "surfaces": sorted(set(surfaces or [])),
             }
         )
+
+    def set_account_surfaces(self, account_id: str, surfaces: list[str]) -> int:
+        result = self.collection.update_many(
+            {"account_id": account_id}, {"$set": {"surfaces": sorted(set(surfaces))}}
+        )
+        return int(getattr(result, "modified_count", 0))
+
+    def surfaces_for_account(self, account_id: str) -> list[str]:
+        out: set[str] = set()
+        for doc in self.collection.find({"account_id": account_id, "enabled": True}):
+            held = doc.get("surfaces") if isinstance(doc, dict) else None
+            if isinstance(held, list):
+                out.update(str(s) for s in held)
+        return sorted(out)
 
     def account_for(self, key_hash: str) -> str | None:
         doc = self.collection.find_one({"_id": key_hash, "enabled": True})
@@ -242,6 +316,39 @@ class RegistryAllowlist:
             # store state to the caller. Never names the account or any key.
             logger.warning("gecko key registry allowlist lookup failed (redacted)")
             return False
+
+    def may_access(self, account: str, surface: str) -> bool:
+        """Has the founder granted ``account`` this gated surface? Default-deny.
+
+        Fail-closed on a store error, exactly like :meth:`is_enabled` — an unreachable
+        registry must lock the paid door, never open it.
+        """
+        if not account or not surface:
+            return False
+        try:
+            return surface in set(self.registry.surfaces_for_account(account))
+        except Exception:  # noqa: BLE001 - a store error must fail closed
+            logger.warning("gecko key registry grant lookup failed (redacted)")
+            return False
+
+    def grant(self, account: str, surface: str) -> bool:
+        """Grant ``surface`` to ``account``; ``True`` if anything changed (idempotent)."""
+        account = _require_account(account)
+        held = set(self.registry.surfaces_for_account(account))
+        if surface in held:
+            return False
+        return self.registry.set_account_surfaces(account, sorted(held | {surface})) > 0
+
+    def revoke(self, account: str, surface: str) -> bool:
+        """Revoke ``surface`` from ``account``; ``True`` if it had been granted."""
+        account = _require_account(account)
+        held = set(self.registry.surfaces_for_account(account))
+        if surface not in held:
+            return False
+        return self.registry.set_account_surfaces(account, sorted(held - {surface})) > 0
+
+    def grants_for(self, account: str) -> list[str]:
+        return self.registry.surfaces_for_account(_require_account(account))
 
     def enable(self, account: str) -> bool:
         """Re-enable every key for ``account``; ``True`` if anything changed."""
