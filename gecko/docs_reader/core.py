@@ -15,9 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..netguard import Resolver, safe_get
+from ..netguard import Resolver, UnsafeUrlError, safe_get
 from .emit import build_draft_openapi
 from .html import page_from_html
+from .markdown import page_from_markdown
 from .models import CandidateOp
 from .parser import detect_uuid_auth, parse_page
 from .render import RenderError, Renderer, default_renderer
@@ -45,6 +46,9 @@ class DocsDraft:
     #: True when the operations came from a BROWSER-RENDERED page rather than a static
     #: fetch. Still untrusted input — this records provenance for a reviewer, not trust.
     rendered: bool = False
+    #: True when the operations came from the ``.md`` twin (authored markdown) rather
+    #: than HTML. Provenance for a reviewer; markdown is untrusted like any doc source.
+    from_md: bool = False
 
 
 def count_review_flags(draft: dict[str, Any]) -> tuple[int, int]:
@@ -82,6 +86,16 @@ def _fetch(source: str, *, resolver: Resolver | None = None) -> str:
     return Path(source).read_text(encoding="utf-8")
 
 
+def _md_sibling(url: str) -> str:
+    """The ``.md`` twin of a docs URL: append ``.md`` to the path, preserving any query
+    string. ``/api`` -> ``/api.md``; ``/api/`` -> ``/api.md``; a query is kept."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit(parts._replace(path=f"{path}.md"))
+
+
 def _title_for(explicit: str | None, page_url: str, first_heading: str) -> str:
     if explicit:
         return explicit
@@ -110,21 +124,42 @@ def from_docs(
     * ``False`` — never render (hermetic tests, air-gapped runs)
     * a callable — an injected renderer (Pattern B: the fallback is falsifiable offline)
     """
+    is_url = source.startswith(("http://", "https://"))
+    rendered = False
+    from_md = False
+    warnings: list[str] = []
+
     text = _fetch(source, resolver=resolver)
-    page = page_from_html(source, text)
+    # A ``.md`` URL is markdown, not HTML — parse it as such (Stripe/Mintlify serve a
+    # ``.md`` twin of every page). Otherwise parse HTML.
+    if source.endswith(".md"):
+        page = page_from_markdown(source, text)
+        from_md = True
+    else:
+        page = page_from_html(source, text)
     ops = parse_page(page)
+
+    # Cheap high-signal fallback BEFORE the browser: try the ``<url>.md`` twin. Authored
+    # markdown beats a scraped/hydrated DOM and costs one GET, no browser. Only when the
+    # static parse recovered almost nothing and we are not already on a ``.md`` URL.
+    if len(ops) < _RENDER_BELOW_OPS and is_url and not source.endswith(".md"):
+        md_url = _md_sibling(source)
+        try:
+            md_text = _fetch(md_url, resolver=resolver)
+            md_page = page_from_markdown(md_url, md_text)
+            md_ops = parse_page(md_page)
+            if len(md_ops) > len(ops):
+                page, ops, from_md = md_page, md_ops, True
+        except (OSError, UnsafeUrlError) as exc:
+            # No ``.md`` twin (404), or an unsafe/invalid sibling URL — fall through to
+            # the render path; record why so a 0-op answer stays explainable.
+            warnings.append(f".md twin unavailable: {type(exc).__name__}")
 
     # JS-hydrated docs return a shell to a stdlib fetch, so the parser finds nothing.
     # Retry through a real browser — decided on RECOVERED OPS rather than a guess about
     # the HTML, because "did we actually learn anything" is the question that matters.
     # Never for a local path (nothing to hydrate) and never when no renderer exists.
-    rendered = False
-    warnings: list[str] = []
-    if (
-        len(ops) < _RENDER_BELOW_OPS
-        and source.startswith(("http://", "https://"))
-        and render is not False
-    ):
+    if len(ops) < _RENDER_BELOW_OPS and is_url and not from_md and render is not False:
         renderer: Renderer | None = (
             default_renderer() if render is None or render is True else render
         )
@@ -157,4 +192,5 @@ def from_docs(
         title=doc_title,
         warnings=warnings,
         rendered=rendered,
+        from_md=from_md,
     )
