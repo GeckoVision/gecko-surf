@@ -221,6 +221,68 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
     return out
 
 
+def _request_body_params(op: Operation) -> list[Param]:
+    """REQUIRED, id-shaped scalar leaves of the JSON request body, as synthetic
+    ``location="body"`` params (§ roadmap V2.1 — body-carried join keys).
+
+    Modelled as params so a body join key becomes a plannable input exactly like a
+    path/query one: the same INFERRED feeds rules (id-shape, genericity, entity) then
+    apply, and ``_param_id`` keys on ``location`` so a body ``orderId`` never collides
+    with a query ``orderId``.
+
+    Deliberately conservative — the request body is attacker-controllable input, so we
+    surface the *smallest* set that can actually block a first call:
+
+    * REQUIRED only — an optional body field never blocks the call, so it is never a
+      chain-critical target (mirrors ``_required_inputs`` on path/query).
+    * id-shaped scalars only (``_ID_TYPES``) — a bool/enum body field cannot be a join
+      key, so it can never mint one however it is named.
+    * cycle- and depth-guarded, like ``_response_leaves``.
+
+    A nested required object contributes its own required scalar leaves; ``required`` is
+    read per object level, so a field required inside an optional parent is not treated
+    as required overall (the parent can be omitted).
+    """
+    body = op.request_body or {}
+    schema = ((body.get("content") or {}).get("application/json") or {}).get(
+        "schema"
+    ) or {}
+    out: list[Param] = []
+    seen_names: set[str] = set()
+
+    def walk(node: object, depth: int, seen: frozenset[int]) -> None:
+        if depth > _MAX_LEAF_DEPTH or not isinstance(node, dict) or id(node) in seen:
+            return
+        seen = seen | {id(node)}
+        required = {r for r in (node.get("required") or []) if isinstance(r, str)}
+        for name, sub in (node.get("properties") or {}).items():
+            if not isinstance(sub, dict):
+                continue
+            t = sub.get("type") or ("object" if sub.get("properties") else "?")
+            norm_t = "number" if t == "integer" else t
+            if name in required and norm_t in _ID_TYPES and name not in seen_names:
+                out.append(Param(name=name, location="body", required=True, schema=sub))
+                seen_names.add(name)
+            # only descend into a REQUIRED nested object — an optional parent can be
+            # omitted whole, so its leaves never block the call.
+            if name in required:
+                walk(sub, depth + 1, seen)
+        walk(node.get("items") or {}, depth + 1, seen)
+        for k in ("allOf",):
+            for sub in node.get(k, []) or []:
+                walk(sub, depth + 1, seen)
+
+    walk(schema, 0, frozenset())
+    return out
+
+
+def _consumer_params(op: Operation) -> list[Param]:
+    """Every input this op consumes that the planner may source: the declared
+    path/query/header params plus required body join keys. One list so the phase-1
+    node build and both phase-2 feeds loops treat body keys identically to params."""
+    return list(op.parameters) + _request_body_params(op)
+
+
 # --- node id builders (deterministic, unique) -----------------------------------
 def _ns(surface_id: str) -> str:
     """The node-id namespace prefix for a surface. "" keeps legacy single-API ids
@@ -319,7 +381,7 @@ class SurfaceGraph:
                 continue
             pn = self._by_id[e.dst]
             loc, _, flag = pn.detail.partition("|")
-            if flag == "req" and loc in ("path", "query"):
+            if flag == "req" and loc in ("path", "query", "body"):
                 out.append(pn)
         return out
 
@@ -506,7 +568,7 @@ def build_graph(
             add_node(Node("resource", rid, noun))
             edges.append(Edge("on", op_node_id, rid, "EXTRACTED"))
 
-        for p in op.parameters:
+        for p in _consumer_params(op):
             pid = f"{ns}{_param_id(_op_id(op), p)}"
             flag = "req" if p.required else "opt"
             add_node(
@@ -545,7 +607,7 @@ def build_graph(
     if declared_producers:
         for op in operations:
             oid = op.operation_id
-            for p in op.parameters:
+            for p in _consumer_params(op):
                 if _is_auth_param(p):
                     continue
                 d_ent = decl.get(_norm(p.name))
@@ -569,7 +631,7 @@ def build_graph(
     for op in operations:
         oid = op.operation_id
         rnoun = _resource_noun(op)
-        for p in op.parameters:
+        for p in _consumer_params(op):
             if _is_auth_param(p):
                 continue  # never infer a supplier for an auth header (invariant #4)
             n = _norm(p.name)

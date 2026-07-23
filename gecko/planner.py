@@ -41,18 +41,29 @@ def _identifying_tokens(param_name: str) -> set[str]:
 
 
 def satisfiable_inputs(query: str, op: Operation) -> frozenset[str]:
-    """Which of ``op``'s REQUIRED path/query inputs the stated intent already supplies.
+    """Which of ``op``'s REQUIRED inputs the stated intent already supplies.
 
     Deterministic and lexical: an input is satisfiable iff the query references its
     identifying token(s). This is the discriminator for whether a chain is needed — an
     UNsatisfied required input is exactly what the planner sources from a supplier op.
-    Auth params (header/cookie) are never inputs the agent supplies (invariant #4), so
-    only path/query params are considered.
+
+    Covers path/query params AND required body join keys (roadmap V2.1): the graph now
+    plans over body keys, so satisfiability must match — otherwise a body key the intent
+    already names would be treated as unsatisfied and trigger a needless supplier chain.
+    Auth params (header/cookie) are never agent-supplied inputs (invariant #4), so they
+    are excluded via the body/param source itself (body keys carry no auth; auth params
+    are skipped below).
     """
+    from .graph import _request_body_params
+
     q = _tokens(query)
     sat: set[str] = set()
-    for p in op.parameters:
-        if not p.required or p.location not in ("path", "query"):
+    # path/query params, plus required body join keys (location == "body")
+    candidates = [
+        p for p in op.parameters if p.location in ("path", "query")
+    ] + _request_body_params(op)
+    for p in candidates:
+        if not p.required:
             continue
         if _identifying_tokens(p.name) & q:
             sat.add(p.name)
