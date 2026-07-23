@@ -22,9 +22,47 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
+from .login import HeaderPost, _default_post
 from .privy_login import PRIVY_BASE_URL
+
+#: Privy's passwordless endpoints. NOT in the public API reference (which covers only
+#: wallets/policies/intents/key-quorums) — they are the endpoints the browser SDK calls,
+#: and they work server-side with just the public app id. Verified empirically:
+#: init -> 200 {"success": true}; authenticate -> 200 {user:{id, linked_accounts:[...]}}
+#: and 422 {"code": "invalid_credentials"} on a bad code.
+_INIT_PATH = "/api/v1/passwordless/init"
+_AUTH_PATH = "/api/v1/passwordless/authenticate"
+
+
+def _identity_from_payload(body: Any) -> PrivyIdentity:
+    """Pull ``(subject, email)`` out of an authenticate response.
+
+    ``user.id`` is the stable ``did:privy:…`` subject; the email comes from the first
+    ``linked_accounts`` entry of ``type == "email"``. Missing/!dict payloads raise rather
+    than yielding a blank identity, because a blank subject AND blank email would make
+    ``account_id()`` return ``None`` and mint a key against nobody.
+    """
+    if not isinstance(body, dict):
+        raise PrivyServerError("privy returned an unexpected payload")
+    user = body.get("user")
+    if not isinstance(user, dict):
+        raise PrivyServerError("privy returned no user")
+    subject = str(user.get("id") or "").strip()
+    email = None
+    accounts = user.get("linked_accounts")
+    if isinstance(accounts, list):
+        for entry in accounts:
+            if isinstance(entry, dict) and entry.get("type") == "email":
+                address = str(entry.get("address") or "").strip()
+                if address:
+                    email = address
+                    break
+    if not subject and not email:
+        raise PrivyServerError("privy returned no usable identity")
+    return PrivyIdentity(subject=subject, email=email)
+
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +137,55 @@ class HttpPrivyServerClient:
     app_secret: str
     base_url: str = PRIVY_BASE_URL
 
+    #: Injected transport seam (Pattern B): ``(url, headers, payload) -> (status, body)``.
+    #: Defaults to the SSRF-guarded urllib poster; a test swaps in a fake and never
+    #: touches the network.
+    post: HeaderPost = _default_post
+
+    def _headers(self) -> dict[str, str]:
+        # Only the PUBLIC app id is required by these endpoints — the same header the
+        # browser SDK sends. app_secret is held for other server APIs (wallets/users) and
+        # is deliberately NOT sent here; a secret should not travel further than it must.
+        return {"privy-app-id": self.app_id, "Content-Type": "application/json"}
+
     def start(self, email: str) -> str:
-        raise PrivyServerError(
-            "server-side Privy OTP is not wired yet (live-integration TODO); "
-            "confirm the Privy server passwordless endpoints and implement HttpPrivyServerClient"
+        """Ask Privy to email a one-time code; return the handle ``verify`` needs.
+
+        The handle IS the email, because Privy's authenticate takes ``{email, code}`` and
+        has no server-issued login id. That also keeps this client STATELESS, which
+        matters: the hosted service runs multiple ECS tasks, so a handle stashed on the
+        instance would only resolve on whichever task happened to serve ``start``.
+        """
+        address = (email or "").strip()
+        if not address:
+            raise PrivyServerError("an email address is required")
+        status, _body = self.post(
+            f"{self.base_url.rstrip('/')}{_INIT_PATH}",
+            {"email": address},
+            headers=self._headers(),
         )
+        if not 200 <= status < 300:
+            # Status only — a provider body can echo the address or our payload.
+            raise PrivyServerError(f"privy init returned {status}")
+        return address
 
     def verify(self, login_id: str, code: str) -> PrivyIdentity:
-        raise PrivyServerError(
-            "server-side Privy OTP is not wired yet (live-integration TODO); "
-            "confirm the Privy server passwordless endpoints and implement HttpPrivyServerClient"
+        """Exchange ``{email, code}`` for the verified identity.
+
+        A wrong/expired code is a 422 ``invalid_credentials``; every non-2xx becomes the
+        same redacted error, so the response can't be used to tell "wrong code" from
+        "unknown email". The returned tokens are DELIBERATELY dropped: we need identity
+        only, and holding a Privy access/refresh token would be custody of a credential
+        we have no use for (invariant #1).
+        """
+        status, body = self.post(
+            f"{self.base_url.rstrip('/')}{_AUTH_PATH}",
+            {"email": (login_id or "").strip(), "code": (code or "").strip()},
+            headers=self._headers(),
         )
+        if not 200 <= status < 300:
+            raise PrivyServerError(f"privy authenticate returned {status}")
+        return _identity_from_payload(body)
 
 
 def privy_server_from_env(
@@ -117,15 +193,17 @@ def privy_server_from_env(
 ) -> PrivyServerClient | None:
     """Build the server OTP client from env, or ``None`` when Privy is not configured.
 
-    Requires BOTH ``PRIVY_APP_ID`` and the server-only ``PRIVY_APP_SECRET``. Returning ``None``
-    when either is unset/sentinel lets the login endpoints stay disabled (503) rather than
-    guess. The secret is never logged.
+    Requires ``PRIVY_APP_ID`` only: the passwordless endpoints authenticate with the
+    PUBLIC app id, exactly as the browser SDK does. ``PRIVY_APP_SECRET`` is carried when
+    present (other server APIs need it) but is NOT required to enable login and is never
+    sent on the OTP calls — gating login behind a secret this flow does not use would
+    disable it for no security gain. Neither value is ever logged.
     """
     source = os.environ if env is None else env
     app_id = (source.get("PRIVY_APP_ID") or "").strip()
     app_secret = (source.get("PRIVY_APP_SECRET") or "").strip()
     if not app_id or app_id == "__unset__":
         return None
-    if not app_secret or app_secret == "__unset__":
-        return None
+    if app_secret == "__unset__":
+        app_secret = ""
     return HttpPrivyServerClient(app_id=app_id, app_secret=app_secret)
