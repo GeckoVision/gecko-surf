@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.4.17 — 2026-07-23
+
+### Fixed
+- **`gecko login` no longer crashes (and loses the key) when the OS keychain refuses the
+  seal.** A macOS keychain that is present but blocks the write (an unsigned frozen
+  binary → `errSecInteractionNotAllowed` -25244, a locked keychain, a non-interactive
+  session) raised `keyring.errors.KeyringError`, which is not an `OSError`, so it escaped
+  every caller's `except` and tracebacked the CLI *after* the key had been minted
+  server-side (and returned exactly once). `KeyringBackend.store` now maps it to a
+  redacted `CredentialError`, and `run_login` degrades: it shows the key ONCE with the
+  `export GECKO_CRED_GECKO_IDENTITY=<key>` fallback `gecko connect` reads, instead of
+  losing a valid key.
+
+### Added
+- **`.md` twin fetch in `gecko from-docs`** — when a docs page recovers almost nothing,
+  the `<url>.md` twin (Stripe/Mintlify authored markdown) is tried before the browser
+  render: cheaper and higher-signal than a scraped DOM.
+
 ## 0.4.15 — 2026-07-22
 
 ### Fixed
