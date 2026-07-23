@@ -239,13 +239,39 @@ class KeyringBackend:
             )
         return mod
 
+    @staticmethod
+    def _keyring_error_types() -> tuple[type[BaseException], ...]:
+        """The keyring exception types to map to CredentialError — resolved lazily so a
+        machine without ``keyring`` installed never imports it. Empty tuple if absent."""
+        try:
+            from keyring.errors import KeyringError
+
+            return (KeyringError,)
+        except Exception:  # noqa: BLE001 - no keyring => nothing keyring-specific to catch
+            return ()
+
     def store(self, ref: CredentialRef, secret: str) -> None:
         """Write ``secret`` to the keychain under ``gecko:<slot>``; require a
         usable keychain first. The secret is passed straight to the OS store and
-        is never logged or echoed."""
+        is never logged or echoed.
+
+        A keychain that is *present* but *refuses the write* (macOS
+        ``errSecInteractionNotAllowed`` -25244 from an unsigned frozen binary, a locked
+        keychain, or a non-interactive session) raises a :class:`keyring.errors.KeyringError`.
+        That is NOT an ``OSError``, so it used to escape every caller's ``except`` and
+        crash the CLI mid-login — after the token had already been minted. We map it to a
+        redacted :class:`CredentialError` so callers degrade (env fallback / clear message)
+        instead of a traceback. The error carries only the OS status, never the secret."""
         mod = self._require()
-        mod.set_password(_service(ref.slot()), _KEYRING_USER, secret)
-        self._index_add(ref.slot())
+        try:
+            mod.set_password(_service(ref.slot()), _KEYRING_USER, secret)
+            self._index_add(ref.slot())
+        except self._keyring_error_types() as exc:
+            raise CredentialError(
+                f"the OS keychain refused the write ({type(exc).__name__}). On macOS this "
+                "is often an unsigned binary or a locked keychain; use the env fallback "
+                f"instead: export {_env_key(ref)}=<value>"
+            ) from None
 
     def delete(self, ref: CredentialRef) -> bool:
         """Delete the keychain entry; idempotent. Returns whether one existed."""

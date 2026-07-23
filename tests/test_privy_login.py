@@ -191,13 +191,14 @@ def test_unexpected_200_shape_raises_and_seals_nothing(tmp_path, body):
     assert not (tmp_path / "identity.json").exists()
 
 
-def test_no_keychain_reports_failure_without_leaking(tmp_path, capsys):
-    # store returns False (no keychain) → LoginError, and the token never hits disk/stdout.
-    with pytest.raises(LoginError, match="no OS keychain"):
-        _run(_ok_script(), home=tmp_path, store=lambda r, s: False)
-    out = capsys.readouterr()
-    assert _TOKEN not in (out.out + out.err)
-    assert not (tmp_path / "identity.json").exists()
+def test_no_keychain_degrades_to_env_fallback_without_losing_the_key(tmp_path, capsys):
+    # store returns False (keychain cannot seal) → login still SUCCEEDS and shows the
+    # already-minted key ONCE with the env fallback, rather than crash-and-lose-it.
+    rc, _ = _run(_ok_script(), home=tmp_path, store=lambda r, s: False)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert _TOKEN in out  # shown once (the key would otherwise be lost)
+    assert f"GECKO_CRED_GECKO_IDENTITY={_TOKEN}" in out
 
 
 # --- leak suite: the token/secret never surfaces in an exception or printed output -----
