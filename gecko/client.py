@@ -307,6 +307,12 @@ class AgentApiClient:
         suggestion-with-provenance; the agent still makes every call itself (Gecko never
         becomes the data plane). Returns a control-plane-safe dict (no auth, no payloads).
         """
+        # A quarantined tool must not emit a steering plan. `call`/`prepare` already
+        # refuse a poisoned tool; the plan block is an agent-facing advisory that could
+        # walk the agent INTO the poisoned op (or use it as a chain step), so it is
+        # gated on the same per-tool quarantine — fail-closed, no plan.
+        if tool_name in self._poisoned_tool_names:
+            return None
         op = self._op_by_name.get(tool_name)
         if op is None:
             return None

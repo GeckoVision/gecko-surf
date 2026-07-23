@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .ingest import Operation, Param
+from .sanitize import key_is_dangerous
 
 # --- single source of truth for the graph's Literal types (CLAUDE.md) -----------
 Provenance = Literal["EXTRACTED", "DECLARED", "INFERRED"]
@@ -260,7 +261,17 @@ def _request_body_params(op: Operation) -> list[Param]:
                 continue
             t = sub.get("type") or ("object" if sub.get("properties") else "?")
             norm_t = "number" if t == "integer" else t
-            if name in required and norm_t in _ID_TYPES and name not in seen_names:
+            if (
+                name in required
+                and norm_t in _ID_TYPES
+                and name not in seen_names
+                # Defense-in-depth: a body property NAME is attacker-controllable and
+                # would ride into the plan block. An instruction-shaped or absurdly long
+                # name is dropped here so it never becomes a plannable node — the same
+                # treatment sanitize_schema gives a dangerous key in the tool def. The
+                # plan projection also fails closed on such a name (belt and braces).
+                and not key_is_dangerous(name)
+            ):
                 out.append(Param(name=name, location="body", required=True, schema=sub))
                 seen_names.add(name)
             # only descend into a REQUIRED nested object — an optional parent can be
