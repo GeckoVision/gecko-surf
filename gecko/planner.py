@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from .catalog import _tokens
+from .sanitize import key_is_dangerous
 from .graph import Plan, SurfaceGraph, _entity_of
 from .graph import plan as graph_plan
 from .ingest import Operation
@@ -41,18 +42,29 @@ def _identifying_tokens(param_name: str) -> set[str]:
 
 
 def satisfiable_inputs(query: str, op: Operation) -> frozenset[str]:
-    """Which of ``op``'s REQUIRED path/query inputs the stated intent already supplies.
+    """Which of ``op``'s REQUIRED inputs the stated intent already supplies.
 
     Deterministic and lexical: an input is satisfiable iff the query references its
     identifying token(s). This is the discriminator for whether a chain is needed — an
     UNsatisfied required input is exactly what the planner sources from a supplier op.
-    Auth params (header/cookie) are never inputs the agent supplies (invariant #4), so
-    only path/query params are considered.
+
+    Covers path/query params AND required body join keys (roadmap V2.1): the graph now
+    plans over body keys, so satisfiability must match — otherwise a body key the intent
+    already names would be treated as unsatisfied and trigger a needless supplier chain.
+    Auth params (header/cookie) are never agent-supplied inputs (invariant #4), so they
+    are excluded via the body/param source itself (body keys carry no auth; auth params
+    are skipped below).
     """
+    from .graph import _request_body_params
+
     q = _tokens(query)
     sat: set[str] = set()
-    for p in op.parameters:
-        if not p.required or p.location not in ("path", "query"):
+    # path/query params, plus required body join keys (location == "body")
+    candidates = [
+        p for p in op.parameters if p.location in ("path", "query")
+    ] + _request_body_params(op)
+    for p in candidates:
+        if not p.required:
             continue
         if _identifying_tokens(p.name) & q:
             sat.add(p.name)
@@ -111,4 +123,31 @@ def plan_for_query(
     p = graph_plan(graph, op, satisfiable_inputs(query, op), max_ops=max_ops)
     if p is None or len(p.steps) <= 1:
         return None
+    if _plan_has_dangerous_name(p):
+        # Fail-CLOSED. The plan block is agent-facing advisory TEXT, but the graph is
+        # built over raw (un-sanitized) operations, so a poisoned spec can put an
+        # injection string in a param/field NAME (esp. a request-body property, where
+        # arbitrary names are cheap — roadmap V2.1). The tool def drops such a name via
+        # sanitize_schema; the plan must not smuggle it back in. A plan carrying an
+        # instruction-shaped or over-long name is suppressed WHOLE rather than emitted
+        # with the name scrubbed out (a partial plan is incoherent, and suppression is
+        # the safe default for a best-effort advisory channel). Covers every location,
+        # so this closes the pre-existing path/query channel too, not only body keys.
+        return None
     return plan_to_dict(p)
+
+
+def _plan_has_dangerous_name(plan: Plan) -> bool:
+    """True if any spec-derived NAME the plan would surface to the agent trips the
+    injection sanitizer (or is absurdly long). Names come from an attacker-controllable
+    spec, so an instruction-shaped one must never reach the agent-facing plan block."""
+    for s in plan.steps:
+        for name in (*s.consumes, *s.supplies):
+            if key_is_dangerous(name):
+                return True
+    for e in plan.explain:
+        if any(
+            key_is_dangerous(n) for n in (e.param, e.source_field, e.source_op, e.basis)
+        ):
+            return True
+    return False
