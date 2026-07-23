@@ -18,10 +18,13 @@ Every side effect is an injected seam so the whole flow is falsifiable offline: 
 provider (HTTP), ``prompt`` (OTP entry), ``store`` (keychain), ``home`` (config dir). The
 real wiring lives in ``cli._cmd_login``.
 
-Security: the token is a secret — it is sealed, never printed, never written to a file,
-never logged. Redact-before-raise: a wrong code, a token, or a raw provider response body
-must never appear in an exception message or on stdout/stderr. The OTP is a one-time code
-(not a durable secret) but is likewise never persisted.
+Security: the token is a secret — it is sealed, never written to a file, never logged, and
+never in an exception. It is printed to stdout in exactly ONE case: when the keychain seal
+fails (not installed / locked / unsigned frozen binary), we show it ONCE with the env-var
+fallback instruction rather than lose a valid, already-minted key — the same one-time
+display `gecko keys mint` uses. Redact-before-raise otherwise: a wrong code, a token, or a
+raw provider response body must never appear in an exception message. The OTP is a one-time
+code (not a durable secret) but is likewise never persisted.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from .credentials import CredentialRef
+from .credentials import _env_key
 from .netguard import UnsafeUrlError, validate_public_url
 
 #: The keychain slot the hosted-identity token seals into (sibling of a provider key).
@@ -197,10 +201,23 @@ def run_login(
         IDENTITY_REF, result.token
     )  # seal the secret; never printed or written to a file
     if not sealed:
-        raise LoginError(
-            "logged in, but no OS keychain is available to seal the identity token "
-            "(install it: pip install 'gecko-surf[credentials]')"
+        # Login SUCCEEDED — the key was minted server-side and returned once. The
+        # keychain could not seal it (not installed, locked, or an unsigned frozen
+        # binary that macOS blocks with errSecInteractionNotAllowed). Crashing here
+        # would LOSE a valid key (it is returned exactly once); re-login just mints
+        # another dangling record. So we degrade to the documented env fallback: show
+        # the key ONCE with the exact export line `gecko connect` reads. This is a
+        # deliberate one-time display on the user's own terminal, not a log.
+        _write_identity(home, result.identity)
+        print(
+            f"  ✓ logged in as {email}, but the OS keychain could not seal the token.\n"
+            "  Your identity key (shown ONCE — copy it now, it is never stored):\n\n"
+            f"      {result.token}\n\n"
+            "  Use it without a keychain by exporting it (or set it in your MCP client's\n"
+            "  env block), and `gecko connect` will read it:\n\n"
+            f"      export {_env_key(IDENTITY_REF)}={result.token}\n"
         )
+        return 0
     path = _write_identity(home, result.identity)
     print(f"  ✓ logged in as {email} — identity token sealed in the OS keychain")
     print(f"  ✓ non-secret identity recorded at {path}")
