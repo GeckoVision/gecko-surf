@@ -482,3 +482,51 @@ def test_a_backend_that_raises_on_read_falls_through_to_the_next() -> None:
         assert chain.resolve(ref) == "gecko_sk_fromenv"  # fell through, no crash
     finally:
         _os.environ.pop("GECKO_CRED_GECKO_IDENTITY", None)
+
+
+def test_keychain_selftest_reports_a_refused_write_honestly() -> None:
+    """doctor's `available()` check lied: it's True for a keychain that then refuses every
+    write (an unsigned frozen macOS binary → -25244). The round-trip selftest must catch
+    that and surface the real reason, not a false 'available'."""
+    from gecko.credentials import KeyringBackend
+
+    class _RefusingKeyring:
+        def get_keyring(self):
+            return object()  # non-null -> available() True
+
+        def get_password(self, *a):
+            return None
+
+        def set_password(self, *a):
+            from keyring.errors import PasswordSetError
+
+            raise PasswordSetError("(-25244, 'errSecInteractionNotAllowed')")
+
+    works, detail = KeyringBackend(module=_RefusingKeyring()).selftest()
+    assert works is False
+    assert "write refused" in detail
+    assert "25244" in detail  # the real OS code, for debugging
+
+
+def test_keychain_selftest_passes_a_working_round_trip() -> None:
+    from gecko.credentials import KeyringBackend
+
+    class _WorkingKeyring:
+        def __init__(self):
+            self._store = {}
+
+        def get_keyring(self):
+            return object()
+
+        def set_password(self, service, user, secret):
+            self._store[(service, user)] = secret
+
+        def get_password(self, service, user):
+            return self._store.get((service, user))
+
+        def delete_password(self, service, user):
+            self._store.pop((service, user), None)
+
+    works, detail = KeyringBackend(module=_WorkingKeyring()).selftest()
+    assert works is True
+    assert "ok" in detail

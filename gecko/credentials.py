@@ -273,6 +273,38 @@ class KeyringBackend:
         except Exception:  # noqa: BLE001 - no keyring => nothing keyring-specific to catch
             return ()
 
+    def selftest(self) -> tuple[bool, str]:
+        """Actually WRITE→READ→DELETE a probe value, returning ``(works, detail)``.
+
+        ``available()`` only proves a keychain *backend* is present — it returns True for a
+        keychain that then REFUSES every write (an unsigned frozen macOS binary →
+        errSecInteractionNotAllowed -25244). This round-trip is the only honest check of
+        whether the store actually works, and it surfaces the real OS error when it
+        doesn't. The probe uses a dedicated slot and never touches a real credential; it is
+        cleaned up whether the read succeeds or not."""
+        if not self.available():
+            return False, "no keychain backend available"
+        probe = CredentialRef(api="gecko-selftest")
+        token = "gecko-keychain-probe"
+        mod = self._keyring()
+        try:
+            mod.set_password(_service(probe.slot()), _KEYRING_USER, token)
+        except Exception as exc:  # noqa: BLE001 - report the real reason, don't crash
+            return False, f"write refused: {type(exc).__name__}: {exc}"
+        try:
+            got = mod.get_password(_service(probe.slot()), _KEYRING_USER)
+        except Exception as exc:  # noqa: BLE001
+            got = None
+            detail = f"read refused: {type(exc).__name__}: {exc}"
+        else:
+            detail = "round-trip ok" if got == token else "read back a different value"
+        finally:
+            try:
+                mod.delete_password(_service(probe.slot()), _KEYRING_USER)
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+        return (got == token), detail
+
     def store(self, ref: CredentialRef, secret: str) -> None:
         """Write ``secret`` to the keychain under ``gecko:<slot>``; require a
         usable keychain first. The secret is passed straight to the OS store and
