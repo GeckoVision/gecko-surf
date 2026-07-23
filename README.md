@@ -42,6 +42,7 @@
 - [Environment variables](#environment-variables)
 - [Development](#development)
 - [FAQ](#faq)
+- [Contributing](#contributing)
 - [Team](#team)
 - [License](#license)
 
@@ -223,7 +224,9 @@ default in `search_capabilities`.
 **Chains cross APIs too.** Two surfaces never merge into one graph; they join only on a
 `DECLARED` entity the provider vouches for, so a name collision can't invent a link
 between unrelated APIs —
-[design](docs/specs/2026-07-19-surface-graph-correlations-design.md).
+[design](docs/specs/2026-07-19-surface-graph-correlations-design.md). What's next
+(body-carried join keys, semantic tiebreak, live validation) is in the
+[correlation roadmap](docs/specs/2026-07-22-correlation-roadmap.md).
 
 ---
 
@@ -530,6 +533,21 @@ own MCP server, if you have one, stays intact — we aggregate, we don't replace
 → [docs.geckovision.tech](https://docs.geckovision.tech)
 
 </details>
+
+---
+
+## Contributing
+
+The engine is open because distribution is the point. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the mandatory gate
+(`ruff` · `mypy` · `pytest` · `$0` demo), and the architectural ground rules — the
+control-plane invariant, auth-injection, untrusted-spec handling, and no-SSRF are
+enforced in review, not just style.
+
+**Skills welcome.** `skills/` is the `gecko-surf` Claude Code plugin marketplace
+(`use-any-api`, `read-js-docs`, `anti-poisoning`, `api-agent-ready`, `x402-payai-setup`).
+Adding one is a `SKILL.md` plus a line in the plugin manifest — the contributing guide has
+the details, including the rule that a skill points at engine code rather than restating it.
 
 ---
 
