@@ -409,3 +409,34 @@ def test_a_transport_that_waits_on_its_writer_still_shuts_down() -> None:
         anyio.run(main)
 
     go()  # a TimeoutError here means the leak is back
+
+
+# --- diagnostics: a connection failure must be debuggable, not opaque -------------
+
+
+def test_terminal_error_surfaces_the_real_connection_reason() -> None:
+    """The bug it fixes: "could not reach the hosted surface (ConnectError)" told a user
+    NOTHING. The httpx message ("Name or service not known", a cert error) is the detail
+    that distinguishes a wrong host from a TLS intercept from a firewall — and it carries
+    no secret."""
+
+    class _ConnError(Exception):
+        pass
+
+    err = connect.terminal_error(
+        BaseExceptionGroup("tg", [_ConnError("[Errno -2] Name or service not known")])
+    )
+    msg = str(err)
+    assert "could not reach" in msg
+    assert "Name or service not known" in msg  # the actionable detail
+
+
+def test_a_surfaced_reason_never_leaks_a_key() -> None:
+    class _Err(Exception):
+        pass
+
+    err = connect.terminal_error(
+        BaseExceptionGroup("tg", [_Err(f"connecting with {KEY} failed")])
+    )
+    assert KEY not in str(err)
+    assert "gecko_sk_<redacted>" in str(err)

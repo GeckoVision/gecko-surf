@@ -25,6 +25,7 @@ transport. It is never logged, never placed in an error, and never written to di
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 from . import credentials
@@ -38,6 +39,9 @@ DEFAULT_HOST = "https://mcp.geckovision.tech"
 #: A mount name, not a path. Anchored and punctuation-free so a crafted argument
 #: (``../admin``, ``a/b``, a scheme) can never escape its mount or retarget the URL.
 _SURFACE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+#: Redaction for any Gecko key that could appear in a surfaced error message.
+_SK_RE = re.compile(r"gecko_sk_[A-Za-z0-9]+")
 
 
 class ConnectError(Exception):
@@ -172,8 +176,21 @@ def terminal_error(exc: BaseException) -> ConnectError:
             )
         if isinstance(status, int):
             return ConnectError(f"the hosted surface returned HTTP {status}.")
-    names = ", ".join(sorted({type(leaf).__name__ for leaf in leaves}))
-    return ConnectError(f"could not reach the hosted surface ({names}).")
+    # Connection-level failure (DNS, TLS, timeout, refused). The httpx message names the
+    # REAL reason ("Name or service not known", a cert error, "Connection refused") — the
+    # detail needed to tell a wrong host from a TLS intercept from a firewall. It carries
+    # no secret (the key lives in a header httpx never echoes here), but scrub any
+    # gecko_sk_ token defensively and cap length before surfacing.
+    detail = "; ".join(_reason(leaf) for leaf in leaves if _reason(leaf))
+    suffix = f" — {detail}" if detail else ""
+    return ConnectError(f"could not reach the hosted surface{suffix}.")
+
+
+def _reason(leaf: BaseException) -> str:
+    """A redacted, capped one-line reason for a connection error: ``Type: message``."""
+    message = _SK_RE.sub("gecko_sk_<redacted>", str(leaf)).strip()
+    name = type(leaf).__name__
+    return f"{name}: {message}" if message else name
 
 
 async def serve_connect(url: str, headers: dict[str, str]) -> None:
@@ -201,6 +218,10 @@ def connect(
     import anyio
 
     url = surface_url(surface, host=host)
+    # Announce the target on STDERR (stdout is the JSON-RPC channel). Not a secret — it's
+    # the public mount URL — and it answers "which host is it hitting?" at a glance, which
+    # is the first question when a connection fails.
+    print(f"gecko connect → {url}", file=sys.stderr, flush=True)
     headers = auth_headers(resolve_key(resolver))
     try:
         anyio.run(serve_connect, url, headers)

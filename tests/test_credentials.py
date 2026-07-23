@@ -455,3 +455,30 @@ def test_env_visible_names_excludes_backend_pin(
     names = env_visible_names()
     assert "GECKO_CRED_TXODDS" in names
     assert "GECKO_CRED_BACKEND" not in names
+
+
+def test_a_backend_that_raises_on_read_falls_through_to_the_next() -> None:
+    """The connect-blocking bug: a present-but-broken keychain (macOS -25244) whose
+    read RAISES must be treated as a MISS so the chain falls through to the env var —
+    not crash `gecko connect` before it can use GECKO_CRED_GECKO_IDENTITY."""
+    import os as _os
+
+    from gecko.credentials import ChainResolver, CredentialRef, EnvBackend
+
+    ref = CredentialRef(api="gecko-identity")
+
+    class _BrokenBackend:
+        name = "keyring"
+
+        def available(self) -> bool:
+            return True
+
+        def get(self, ref):
+            raise RuntimeError("(-25244) keychain interaction not allowed")
+
+    _os.environ["GECKO_CRED_GECKO_IDENTITY"] = "gecko_sk_fromenv"
+    try:
+        chain = ChainResolver(backends=[_BrokenBackend(), EnvBackend()])
+        assert chain.resolve(ref) == "gecko_sk_fromenv"  # fell through, no crash
+    finally:
+        _os.environ.pop("GECKO_CRED_GECKO_IDENTITY", None)
