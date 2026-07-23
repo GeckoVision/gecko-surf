@@ -208,6 +208,49 @@ async def serve_connect(url: str, headers: dict[str, str]) -> None:
             await bridge(client_read, client_write, server_read, server_write)
 
 
+async def _probe(url: str, headers: dict[str, str]) -> tuple[str, str, int]:
+    """One-shot: connect as a real MCP client, ``initialize`` + ``list_tools``, return
+    ``(server_name, server_version, tool_count)``. This exercises the exact path a bridged
+    client would — key, reach, TLS, auth, handshake — but ends instead of serving, so it is
+    runnable from a plain terminal. Raises on any failure (mapped by the caller)."""
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+
+    async with streamablehttp_client(url, headers=headers) as (r, w, _get):
+        async with ClientSession(r, w) as session:
+            info = await session.initialize()
+            tools = await session.list_tools()
+            return (
+                info.serverInfo.name,
+                info.serverInfo.version,
+                len(tools.tools),
+            )
+
+
+def probe(
+    surface: str,
+    *,
+    host: str = DEFAULT_HOST,
+    resolver: ChainResolver | None = None,
+) -> tuple[str, str, int]:
+    """Self-test the full connect path and RETURN (server, version, tool_count).
+
+    Unlike :func:`connect` (a stdio server that waits for a client), this does one real
+    initialize + list_tools and exits — so ``gecko connect <surface> --probe`` gives a
+    yes/no answer from a terminal, no MCP client needed. Raises :class:`ConnectError` on
+    any failure, mapped from the transport by :func:`terminal_error`."""
+    import anyio
+
+    url = surface_url(surface, host=host)
+    headers = auth_headers(resolve_key(resolver))
+    try:
+        return anyio.run(_probe, url, headers)
+    except (KeyboardInterrupt, SystemExit, ConnectError):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - mapped to a redacted ConnectError
+        raise terminal_error(exc) from None
+
+
 def connect(
     surface: str,
     *,
@@ -223,6 +266,17 @@ def connect(
     # is the first question when a connection fails.
     print(f"gecko connect → {url}", file=sys.stderr, flush=True)
     headers = auth_headers(resolve_key(resolver))
+    # This is an MCP *server*: it now waits for a client on stdin. Run by hand it looks
+    # hung — say so, and point at --probe for a terminal self-test. (Stderr only; stdout
+    # is the protocol channel the moment a client attaches.)
+    print(
+        "  key resolved; serving over stdio — waiting for an MCP client. "
+        "This is normal.\n"
+        "  To test from a terminal instead, run:  gecko connect "
+        f"{surface} --probe",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         anyio.run(serve_connect, url, headers)
     except (KeyboardInterrupt, SystemExit):

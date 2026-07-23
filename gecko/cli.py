@@ -901,7 +901,27 @@ def _cmd_connect(argv: list[str]) -> int:
         default=connect_mod.DEFAULT_HOST,
         help=f"Hosted plane. Defaults to {connect_mod.DEFAULT_HOST}.",
     )
+    p.add_argument(
+        "--probe",
+        action="store_true",
+        help="Self-test: connect, list tools, print the result, and EXIT (does not serve). "
+        "Use this to verify from a terminal — plain `connect` is a server that waits for "
+        "an MCP client, so it looks 'stuck' when run by hand.",
+    )
     args = p.parse_args(argv)
+
+    if args.probe:
+        try:
+            name, version, count = connect_mod.probe(args.surface, host=args.host)
+        except connect_mod.ConnectError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"  ✓ connected to {name} {version} — {count} tools. "
+            f"The key resolved, the host was reached, and auth passed.",
+            file=sys.stderr,
+        )
+        return 0
 
     try:
         connect_mod.connect(args.surface, host=args.host)

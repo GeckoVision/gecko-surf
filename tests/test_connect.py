@@ -440,3 +440,36 @@ def test_a_surfaced_reason_never_leaks_a_key() -> None:
     )
     assert KEY not in str(err)
     assert "gecko_sk_<redacted>" in str(err)
+
+
+# --- --probe self-test: verify the path from a terminal, no MCP client -----------
+
+
+def test_probe_fails_fast_without_a_key_no_network() -> None:
+    """`--probe` must surface a missing-key error before any network — a resolver miss
+    maps to the same ConnectError as `connect`, so the terminal self-test explains itself
+    instead of hanging or a stack trace."""
+
+    class _NoKey:
+        def resolve(self, ref):
+            raise CredentialError("no credential")
+
+    with pytest.raises(connect.ConnectError, match="no Gecko key sealed"):
+        connect.probe("birdeye", resolver=_NoKey())  # type: ignore[arg-type]
+
+
+def test_probe_rejects_a_bad_surface_before_touching_the_network() -> None:
+    with pytest.raises(connect.ConnectError, match="invalid surface name"):
+        connect.probe("../admin", resolver=_FakeResolver(KEY))  # type: ignore[arg-type]
+
+
+def test_cli_probe_flag_is_wired_and_prints_to_stderr(capsys) -> None:
+    """`gecko connect <bad> --probe` uses the probe path and reports on stderr (stdout is
+    the protocol channel), exit 2 on failure — never hangs like bare serve."""
+    from gecko import cli
+
+    code = cli.main(["connect", "../admin", "--probe"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "invalid surface name" in captured.err
