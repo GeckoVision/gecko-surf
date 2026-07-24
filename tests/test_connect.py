@@ -409,3 +409,67 @@ def test_a_transport_that_waits_on_its_writer_still_shuts_down() -> None:
         anyio.run(main)
 
     go()  # a TimeoutError here means the leak is back
+
+
+# --- diagnostics: a connection failure must be debuggable, not opaque -------------
+
+
+def test_terminal_error_surfaces_the_real_connection_reason() -> None:
+    """The bug it fixes: "could not reach the hosted surface (ConnectError)" told a user
+    NOTHING. The httpx message ("Name or service not known", a cert error) is the detail
+    that distinguishes a wrong host from a TLS intercept from a firewall — and it carries
+    no secret."""
+
+    class _ConnError(Exception):
+        pass
+
+    err = connect.terminal_error(
+        BaseExceptionGroup("tg", [_ConnError("[Errno -2] Name or service not known")])
+    )
+    msg = str(err)
+    assert "could not reach" in msg
+    assert "Name or service not known" in msg  # the actionable detail
+
+
+def test_a_surfaced_reason_never_leaks_a_key() -> None:
+    class _Err(Exception):
+        pass
+
+    err = connect.terminal_error(
+        BaseExceptionGroup("tg", [_Err(f"connecting with {KEY} failed")])
+    )
+    assert KEY not in str(err)
+    assert "gecko_sk_<redacted>" in str(err)
+
+
+# --- --probe self-test: verify the path from a terminal, no MCP client -----------
+
+
+def test_probe_fails_fast_without_a_key_no_network() -> None:
+    """`--probe` must surface a missing-key error before any network — a resolver miss
+    maps to the same ConnectError as `connect`, so the terminal self-test explains itself
+    instead of hanging or a stack trace."""
+
+    class _NoKey:
+        def resolve(self, ref):
+            raise CredentialError("no credential")
+
+    with pytest.raises(connect.ConnectError, match="no Gecko key sealed"):
+        connect.probe("birdeye", resolver=_NoKey())  # type: ignore[arg-type]
+
+
+def test_probe_rejects_a_bad_surface_before_touching_the_network() -> None:
+    with pytest.raises(connect.ConnectError, match="invalid surface name"):
+        connect.probe("../admin", resolver=_FakeResolver(KEY))  # type: ignore[arg-type]
+
+
+def test_cli_probe_flag_is_wired_and_prints_to_stderr(capsys) -> None:
+    """`gecko connect <bad> --probe` uses the probe path and reports on stderr (stdout is
+    the protocol channel), exit 2 on failure — never hangs like bare serve."""
+    from gecko import cli
+
+    code = cli.main(["connect", "../admin", "--probe"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "invalid surface name" in captured.err

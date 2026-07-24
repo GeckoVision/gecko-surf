@@ -719,15 +719,25 @@ def _cmd_doctor(argv: list[str]) -> int:
     except Exception as exc:
         print(f"  ✗ engine         {str(exc)}")
 
-    # 3. OS keychain
+    # 3. OS keychain — a real write→read→delete round-trip, not just "backend present".
+    #    `available()` is True even for a keychain that refuses every write (an unsigned
+    #    frozen macOS binary → errSecInteractionNotAllowed -25244), so only the round-trip
+    #    tells the truth about whether `gecko login`/`connect` can actually seal a key.
     try:
-        backend = credentials.KeyringBackend()
-        if backend.available():
-            print("  ✓ keychain       available")
+        works, detail = credentials.KeyringBackend().selftest()
+        if works:
+            print("  ✓ keychain       works (write→read→delete ok)")
         else:
-            print("  ✗ keychain       not available (keys fall back to env vars)")
-    except Exception:
-        print("  ✗ keychain       not available")
+            print(f"  ✗ keychain       {detail}")
+            print(
+                "                   → the OS keychain is present but unusable here. On "
+                "macOS this is\n                     typically an UNSIGNED binary "
+                "(the npx/uvx frozen build). Try the\n                     Python install "
+                "(`pipx install gecko-surf`) whose keychain access is\n                     "
+                "signed, or run `gecko` from a signed build."
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ✗ keychain       probe failed: {type(exc).__name__}")
 
     # 4. Claude Code CLI
     if shutil.which("claude"):
@@ -891,7 +901,27 @@ def _cmd_connect(argv: list[str]) -> int:
         default=connect_mod.DEFAULT_HOST,
         help=f"Hosted plane. Defaults to {connect_mod.DEFAULT_HOST}.",
     )
+    p.add_argument(
+        "--probe",
+        action="store_true",
+        help="Self-test: connect, list tools, print the result, and EXIT (does not serve). "
+        "Use this to verify from a terminal — plain `connect` is a server that waits for "
+        "an MCP client, so it looks 'stuck' when run by hand.",
+    )
     args = p.parse_args(argv)
+
+    if args.probe:
+        try:
+            name, version, count = connect_mod.probe(args.surface, host=args.host)
+        except connect_mod.ConnectError as exc:
+            print(f"  ✗ {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"  ✓ connected to {name} {version} — {count} tools. "
+            f"The key resolved, the host was reached, and auth passed.",
+            file=sys.stderr,
+        )
+        return 0
 
     try:
         connect_mod.connect(args.surface, host=args.host)
