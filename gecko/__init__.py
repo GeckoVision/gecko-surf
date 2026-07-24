@@ -39,9 +39,12 @@ except PackageNotFoundError:  # running from a checkout with no install
 from .access import NoAuthSession, ResolvedSession, Session, public_session
 from .client import AgentApiClient
 from .mcp_server import McpSurface
+from .surface import SafetyVerdict, Surface
 
 __all__ = [
     "AgentApiClient",
+    "Surface",
+    "SafetyVerdict",
     "McpSurface",
     "Session",
     "NoAuthSession",
