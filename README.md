@@ -1,4 +1,4 @@
-# gecko-surf — make any API agent-usable without integration code
+# gecko-surf — project the Agent Surface for any API
 
 <!-- mcp-name: tech.geckovision/surf -->
 
@@ -9,18 +9,33 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg)](LICENSE)
 [![tests](https://img.shields.io/badge/tests-1630%20passing-2E7D32.svg)](#development)
 
-> **Agents one-shot clean APIs. They break on the painful ones** — messy, paywalled,
-> half-documented, always drifting. Dumping the spec fails; hand-writing an MCP wrapper
-> goes stale on the next API change.
+> **An OpenAPI tells an agent what endpoints *exist*. MCP tells it how to *invoke* one.
+> Neither tells it which calls, in what order, from what data — so the agent guesses, and
+> on a painful API it guesses wrong.**
 >
-> **Gecko turns an API into tools your agent calls right the first time — no integration
-> code.** Point, add in one line, call the real API directly. Free and open source.
+> **Gecko derives the missing layer: the Agent Surface** — the deterministic,
+> provenance-carrying, safety-checked *call graph* your agent traverses to get the call
+> right the first time. Point it at an API; it projects a surface built *for agents*, not
+> a Swagger rewritten for them. Free and open source.
 >
-> *Docs are built for humans. Gecko translates them for agents.*
+> *We don't hand you an OpenAPI. Unless you don't have one — then we generate one, and the
+> surface above it.*
 
 <p align="center">
-  <img src="docs/assets/hero.gif" alt="One command: install gecko-surf, then comprehend any API into first-call-correct MCP tools" width="820">
+  <img src="docs/assets/hero.gif" alt="One command: install gecko-surf, then project the Agent Surface — a deterministic call graph — for any API" width="820">
 </p>
+
+### Three layers — Gecko is the one nobody else fills
+
+| Layer | Answers | Format |
+|---|---|---|
+| **Shape** | *what endpoints & fields exist* | OpenAPI, GraphQL |
+| **Transport** | *how to invoke one tool* | MCP |
+| **Surface** ← Gecko | *given intent: which chain of calls, in what order, at what confidence, from what basis — and is it safe* | **the Agent Surface** |
+
+Shape and transport are probabilistic *at the moment of use*. The Surface is the
+deterministic answer, so the model doesn't have to guess. Gecko **composes on** OpenAPI
+(input) and MCP (transport) — it never replaces them.
 
 ---
 
@@ -257,15 +272,21 @@ Prefer `uvx` (nothing to verify). Or prove the installer first with
 `gecko <url>` prints the MCP URL and one-click add links (Cursor / VS Code / raw).
 **Claude Code → Marketplace; everything else → CLI.** You don't need both.
 
-**Or embed the SDK:**
+**Or embed the SDK — derive the Surface, then read it:**
 
 ```python
-from gecko import AgentApiClient, public_session
+from gecko import Surface, public_session
 
-client = AgentApiClient(spec, session=public_session())
-hit = client.search("what you want")[0]            # intent → right endpoint
-client.call(hit["name"], {...}, mode="recorded")   # "live" for real data
+surface = Surface.from_spec(spec, session=public_session())
+
+surface.graph                       # the call graph: nodes + provenance-tagged edges
+surface.plan("get live odds")       # the deterministic chain for an intent (+ explain)
+surface.safety.clean                # anti-poisoning verdict (untrusted-spec defense)
+surface.project("llms.txt")         # one artifact, N projections (gecko.json, SKILL.md, …)
 ```
+
+Still want the call layer? `Surface.client` is the `AgentApiClient` —
+`search / list_tools / prepare / call`.
 
 Forkable starter: [`examples/_starter/`](examples/_starter/) (~20 lines, $0). Full
 agent: [`examples/sos_vzla_bot/`](examples/sos_vzla_bot/).
