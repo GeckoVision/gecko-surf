@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+## 0.4.18 — 2026-07-24
+
+### Added
+- **The Agent Surface, named.** A new `Surface` value object (`gecko.surface`) composes the
+  shipped engine — the deterministic call graph + provenance, the question-shaped tools, the
+  anti-poisoning `SafetyVerdict`, and the `llms.txt`/`gecko.json`/`SKILL.md` projections —
+  behind one handle (`.graph`, `.plan(intent)`, `.tools()`, `.safety`, `.project(kind)`).
+  Behavior-preserving: it holds an `AgentApiClient` and delegates. `Surface`/`SafetyVerdict`
+  exported from the package. The README leads with the three-layer frame: shape (OpenAPI) →
+  transport (MCP) → **surface** (Gecko), composing on both, never replacing them.
+- **Render the Surface as an SVG call graph — "graphviz for APIs".** `Surface.render_svg()`
+  and `gecko graph svg <spec>`: operations as nodes, `feeds` edges as arrows colored by
+  provenance (emerald DECLARED, amber INFERRED). Deterministic, self-contained (pure stdlib,
+  no graphviz binary), control-plane clean (structure only). In-degree layered layout,
+  width bounded.
+- **`gecko connect <surface> --probe`** — a one-shot self-test that connects, lists tools,
+  prints the result, and exits (so `connect` is verifiable from a terminal instead of a
+  server that silently waits for an MCP client).
+
+### Changed
+- **A `gecko login` account is the verified email, not the `did:privy:…` subject.** Grants
+  are now against a human-readable id (`gecko keys grant you@example.com --surface X`)
+  instead of an opaque subject that silently mismatched the login key. Not retroactive:
+  keys already minted against a subject stay bound to it (re-login to rebind).
+
+### Fixed
+- **A broken keychain read no longer blocks the env fallback.** `ChainResolver.resolve`
+  treated a backend that *raised* (a present-but-broken macOS keychain, -25244) as fatal,
+  crashing `gecko connect` before it could use `GECKO_CRED_GECKO_IDENTITY` — the MCP client
+  reported the crash as "couldn't connect", indistinguishable from a host problem. A raising
+  backend is now a miss (fall through), while a deliberate `CredentialError` still
+  propagates. `connect` errors now surface the real reason (DNS/TLS/refused) and the target
+  URL; `gecko doctor` does a real keychain write→read→delete round-trip instead of a
+  misleading "available".
+
 ## 0.4.17 — 2026-07-23
 
 ### Fixed
