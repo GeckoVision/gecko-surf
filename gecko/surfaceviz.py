@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from html import escape
+from typing import Any
 
 from .graph import SurfaceGraph
 
@@ -134,6 +135,43 @@ def _op_label(graph: SurfaceGraph, op_id: str) -> str:
     return op_id
 
 
+def graph_data(graph: SurfaceGraph) -> dict[str, Any]:
+    """The Surface's call graph as a plain structured dict — the DATA twin of the SVG.
+
+    Same source as :func:`render_svg` (the plan-eligible op→op ``feeds`` edges), just the
+    other projection: operations as nodes, each edge carrying its join key, provenance, and
+    confidence. Deterministic (sorted), control-plane clean (structure only). This is the
+    "GraphRAG for APIs" structure — feed it to a tool, diff it across spec versions, or read
+    it directly."""
+    edges = _op_edges(graph, high_only=True)
+    op_ids = sorted({n.name for n in graph.nodes if n.kind == "operation"})
+    operations = []
+    for oid in op_ids:
+        label = _op_label(graph, oid)
+        method, _, path = label.partition(" ")
+        operations.append(
+            {
+                "id": oid,
+                "method": method if path else "",
+                "path": path or label,
+            }
+        )
+    return {
+        "operations": operations,
+        "edges": [
+            {
+                "from": e.src,
+                "to": e.dst,
+                "key": e.key,  # the join key that flows (a field/param name)
+                "provenance": e.provenance,  # DECLARED (vouched) | INFERRED (derived)
+                "confidence": e.confidence,
+            }
+            for e in edges
+        ],
+        "summary": {"operations": len(operations), "edges": len(edges)},
+    }
+
+
 def render_svg(graph: SurfaceGraph, *, title: str = "Agent Surface") -> str:
     """The Surface as an SVG call graph. Deterministic, self-contained, control-plane clean."""
     ops = sorted({n.name for n in graph.nodes if n.kind == "operation"})
@@ -240,4 +278,4 @@ def render_svg(graph: SurfaceGraph, *, title: str = "Agent Surface") -> str:
     return "\n".join(out)
 
 
-__all__ = ["render_svg"]
+__all__ = ["graph_data", "render_svg"]

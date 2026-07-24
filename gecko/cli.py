@@ -437,17 +437,30 @@ def _cmd_graph(argv: list[str]) -> int:
         "-o", "--out", default=None, help="Write to a file (default: stdout)."
     )
 
+    p_json = sub.add_parser(
+        "json",
+        help="Print the surface's call graph as structured JSON (nodes + edges).",
+    )
+    p_json.add_argument("spec", help="An OpenAPI URL, path, or docs URL.")
+    p_json.add_argument(
+        "-o", "--out", default=None, help="Write to a file (default: stdout)."
+    )
+
     args = p.parse_args(argv)
-    if args.action == "svg":
+    if args.action in ("svg", "json"):
         from .access import public_session
         from .surface import Surface
 
-        svg = Surface.from_spec(args.spec, session=public_session()).render_svg()
-        if args.out:
-            Path(args.out).write_text(svg, encoding="utf-8")
-            print(f"Wrote {args.out} ({len(svg)} bytes).")
+        surface = Surface.from_spec(args.spec, session=public_session())
+        if args.action == "svg":
+            text = surface.render_svg()
         else:
-            print(svg)
+            text = json.dumps(surface.graph_data(), indent=2)
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+            print(f"Wrote {args.out} ({len(text)} bytes).")
+        else:
+            print(text)
         return 0
     if args.action == "confirm":
         try:

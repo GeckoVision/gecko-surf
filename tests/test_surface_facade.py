@@ -184,3 +184,42 @@ def test_render_svg_reports_dropped_edges_never_silent() -> None:
         assert "not drawn" in svg  # honest caption
     finally:
         surfaceviz._MAX_EDGES = original
+
+
+# --- the structure (data twin of the SVG) ----------------------------------------
+
+
+def test_graph_data_is_deterministic_and_structured() -> None:
+    s = _surface()
+    a = s.graph_data()
+    b = s.graph_data()
+    assert a == b
+    assert set(a) == {"operations", "edges", "summary"}
+    assert a["summary"]["operations"] == len(a["operations"])
+    assert a["summary"]["edges"] == len(a["edges"])
+
+
+def test_graph_data_edges_carry_provenance_and_key() -> None:
+    s = _surface()
+    edges = s.graph_data()["edges"]
+    assert edges, "txline should have plan-eligible feeds edges"
+    e = edges[0]
+    assert set(e) == {"from", "to", "key", "provenance", "confidence"}
+    assert e["provenance"] in ("DECLARED", "INFERRED")
+
+
+def test_graph_data_and_svg_share_one_source() -> None:
+    """The structure and the image are two projections of the SAME call graph — their edge
+    counts must agree (one artifact, N shapes)."""
+    from gecko.surfaceviz import _op_edges
+
+    s = _surface()
+    assert len(s.graph_data()["edges"]) == len(_op_edges(s.graph, high_only=True))
+
+
+def test_graph_data_is_control_plane_clean() -> None:
+    import json
+
+    s = _surface()
+    blob = json.dumps(s.graph_data())
+    assert "Bearer" not in blob and "Authorization" not in blob
