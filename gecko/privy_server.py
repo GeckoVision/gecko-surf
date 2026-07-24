@@ -93,11 +93,20 @@ class PrivyIdentity:
     email: str | None = None
 
     def account_id(self) -> str | None:
-        """The stable account id: the Privy subject, else the verified email, else ``None``."""
-        if self.subject and self.subject.strip():
-            return self.subject
+        """The stable account id: the **verified email** when present, else the Privy
+        subject, else ``None``.
+
+        Email is preferred so a login account is a HUMAN-READABLE id a founder can grant
+        against directly — ``gecko keys grant leticia@example.com --surface birdeye`` —
+        instead of an opaque ``did:privy:…`` subject. The email here is the verified
+        ``linked_accounts`` email Privy returns on authenticate (ownership-checked), so it
+        is a stable, non-secret identity, and one email maps to one Privy identity. The
+        subject remains the fallback for a login method that carries no email (a future
+        SMS/passkey provider), so the id is never empty."""
         if self.email and self.email.strip():
             return self.email
+        if self.subject and self.subject.strip():
+            return self.subject
         return None
 
 

@@ -56,12 +56,14 @@ def test_start_then_verify_mints_and_stores_key():
     assert login_id and privy.started == ["dev@example.com"]
 
     key = svc.verify(login_id, CODE, IP)
-    # The minted key maps to the Privy subject — but lands DISABLED, so the resolver
-    # (which is enable-gated) refuses it until the founder enables the account.
-    assert registry._by_hash[hash_key(key)]["account_id"] == SUBJECT
+    # The minted key maps to the verified EMAIL (preferred over the did:privy subject so
+    # a founder grants a human-readable id) — but lands DISABLED, so the enable-gated
+    # resolver refuses it until the founder enables the account.
+    account = "dev@example.com"
+    assert registry._by_hash[hash_key(key)]["account_id"] == account
     assert GeckoKeyResolver(registry)(key) is None
-    registry.set_account_enabled(SUBJECT, True)
-    assert GeckoKeyResolver(registry)(key) == SUBJECT
+    registry.set_account_enabled(account, True)
+    assert GeckoKeyResolver(registry)(key) == account
     # Only the HASH is stored — never the plaintext key.
     assert hash_key(key) in registry._by_hash
     assert key not in repr(registry._by_hash)

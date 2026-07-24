@@ -122,7 +122,9 @@ def test_verify_returns_the_subject_and_email() -> None:
     assert body == {"email": EMAIL, "code": CODE}
     assert identity.subject == SUBJECT
     assert identity.email == EMAIL
-    assert identity.account_id() == SUBJECT  # subject wins over email
+    assert (
+        identity.account_id() == EMAIL
+    )  # verified email wins over the did:privy subject
 
 
 def test_verify_picks_the_email_account_not_the_wallet() -> None:
@@ -217,3 +219,19 @@ def test_the_unset_sentinel_secret_does_not_disable_login() -> None:
 @pytest.mark.parametrize("app_id", ["", "   ", "__unset__"])
 def test_no_app_id_keeps_login_disabled(app_id: str) -> None:
     assert privy_server_from_env({"PRIVY_APP_ID": app_id}) is None
+
+
+def test_the_verified_email_is_preferred_over_the_did_privy_subject() -> None:
+    """The founder-facing win: a login account is a HUMAN-READABLE email, so
+    `gecko keys grant leticia@example.com --surface birdeye` works — not an opaque
+    did:privy: string. The subject stays the fallback when no email is present."""
+    from gecko.privy_server import PrivyIdentity
+
+    both = PrivyIdentity(subject="did:privy:abc123", email="leticia@example.com")
+    assert both.account_id() == "leticia@example.com"
+
+    subject_only = PrivyIdentity(subject="did:privy:abc123", email=None)
+    assert subject_only.account_id() == "did:privy:abc123"  # fallback, never empty
+
+    email_only = PrivyIdentity(subject="", email="leticia@example.com")
+    assert email_only.account_id() == "leticia@example.com"
