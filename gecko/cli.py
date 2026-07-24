@@ -429,7 +429,26 @@ def _cmd_graph(argv: list[str]) -> int:
     p_rm.add_argument("surface")
     p_rm.add_argument("name")
 
+    p_svg = sub.add_parser(
+        "svg", help="Render the surface as an SVG call graph (graphviz for APIs)."
+    )
+    p_svg.add_argument("spec", help="An OpenAPI URL, path, or docs URL.")
+    p_svg.add_argument(
+        "-o", "--out", default=None, help="Write to a file (default: stdout)."
+    )
+
     args = p.parse_args(argv)
+    if args.action == "svg":
+        from .access import public_session
+        from .surface import Surface
+
+        svg = Surface.from_spec(args.spec, session=public_session()).render_svg()
+        if args.out:
+            Path(args.out).write_text(svg, encoding="utf-8")
+            print(f"Wrote {args.out} ({len(svg)} bytes).")
+        else:
+            print(svg)
+        return 0
     if args.action == "confirm":
         try:
             record = hints.confirm_entity(

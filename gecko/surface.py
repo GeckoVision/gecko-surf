@@ -188,5 +188,15 @@ class Surface:
             )
         return arts[kind]
 
+    # -- the visual (graphviz for APIs) ------------------------------------------
+    def render_svg(self, *, title: str | None = None) -> str:
+        """The Surface as an SVG call graph — operations as nodes, feeds as arrows colored
+        by provenance. Deterministic, self-contained, control-plane clean (structure only,
+        no payloads). The shareable picture of the derived surface."""
+        from .surfaceviz import render_svg
+
+        label = title or f"Agent Surface — {self.surface_id or 'api'}"
+        return render_svg(self.graph, title=label)
+
 
 __all__ = ["Projection", "SafetyVerdict", "Surface"]
