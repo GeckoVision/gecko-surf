@@ -140,3 +140,47 @@ def test_project_unknown_kind_raises() -> None:
     s = _surface()
     with pytest.raises(KeyError, match="unknown projection"):
         s.project("nope.txt")  # type: ignore[arg-type]
+
+
+# --- the visual (graphviz for APIs) ----------------------------------------------
+
+
+def test_render_svg_is_deterministic_and_valid() -> None:
+    s = _surface()
+    a = s.render_svg()
+    b = s.render_svg()
+    assert a == b  # same graph -> byte-identical SVG (matches the determinism thesis)
+    assert a.startswith("<svg") and a.rstrip().endswith("</svg>")
+
+
+def test_render_svg_shows_provenance_and_arrows() -> None:
+    s = _surface()
+    svg = s.render_svg()
+    # the trust ladder is visible: at least one provenance color + a legend + arrowheads
+    assert "#10b981" in svg or "#f59e0b" in svg
+    assert "DECLARED" in svg and "INFERRED" in svg
+    assert "marker-end" in svg
+
+
+def test_render_svg_is_control_plane_clean() -> None:
+    """The picture draws STRUCTURE (op ids, join keys, provenance) — never a value or
+    secret. A response-payload value must not appear in the SVG."""
+    s = _surface()
+    svg = s.render_svg()
+    # no auth header, no bearer token shapes leak into the drawing
+    assert "Bearer" not in svg and "Authorization" not in svg
+
+
+def test_render_svg_reports_dropped_edges_never_silent() -> None:
+    """If the edge cap trims the graph, the caption must say so (no silent truncation)."""
+    from gecko import surfaceviz
+
+    s = _surface()
+    # force a tiny cap so txline's edges overflow it
+    original = surfaceviz._MAX_EDGES
+    try:
+        surfaceviz._MAX_EDGES = 3
+        svg = surfaceviz.render_svg(s.graph, title="t")
+        assert "not drawn" in svg  # honest caption
+    finally:
+        surfaceviz._MAX_EDGES = original

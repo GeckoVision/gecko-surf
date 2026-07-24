@@ -236,6 +236,20 @@ offline: Stripe control cut false links **66,984 → 337** (−99.5%) while find
 known chain on a paywalled API — see [docs/benchmarks.md](docs/benchmarks.md). On by
 default in `search_capabilities`.
 
+**See it — graphviz for APIs.** `gecko graph svg <spec>` renders the Surface: operations as
+nodes, `feeds` edges as arrows colored by provenance (emerald = `DECLARED`, amber =
+`INFERRED`). Deterministic, self-contained, structure-only (no payloads). This is a real
+render of the TxLINE surface:
+
+<p align="center">
+  <img src="docs/assets/surface-txline.svg" alt="The TxLINE Agent Surface: operations as nodes, feeds edges as provenance-colored arrows — the deterministic call graph an agent traverses" width="820">
+</p>
+
+```python
+from gecko import Surface
+Surface.from_spec("https://api.example.com/openapi.json").render_svg()  # -> SVG string
+```
+
 **Chains cross APIs too.** Two surfaces never merge into one graph; they join only on a
 `DECLARED` entity the provider vouches for, so a name collision can't invent a link
 between unrelated APIs —
