@@ -17,6 +17,16 @@ When in doubt about which layer a helper belongs to, read the diagram and match
 the existing package boundaries; do not introduce a new top-level package
 without discussing it first.
 
+## Local setup
+
+Copy `.env.example` to `.env` and fill in your local values before running the
+dev server. The `.env` file is gitignored and never committed.
+
+## Constants
+
+Each module exposes a `VERSION` constant typed as `Final[tuple[int, ...]]`
+(major, minor, patch). Bump it in the same PR as the change it describes.
+
 ## Tests
 
 Run `pytest -q` before pushing. CI runs the same on PRs.

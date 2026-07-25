@@ -91,9 +91,15 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|earlier|above)\s+"
         r"(?:instructions?|prompts?|context)"
         r"|disregard\s+(?:the\s+|all\s+|any\s+)?(?:previous|prior|above|system)"
-        r"|forget\s+(?:everything|all|your|the)\b"
+        # "forget" needs an instructions/context OBJECT — a bare "forget the legacy
+        # Makefile" is benign dev prose, not an injection.
+        r"|forget\s+(?:all\s+|the\s+)?(?:previous|prior|above)\s+"
+        r"(?:instructions?|prompts?|context)"
         r"|(?:new|updated)\s+instructions?\s*:"
-        r"|you\s+are\s+now\b"
+        # "you are now" needs a role/mode OBJECT (a/an/the/in <role>, or a DAN-style
+        # jailbreak word) — "you are now on the main branch" is benign dev prose.
+        r"|you\s+are\s+now\s+(?:a\b|an\b|the\b|in\b|dan\b|unrestricted\b|"
+        r"jailbroken\b|free\b)"
         r"|system\s+prompt\b",
         re.IGNORECASE,
     ),
@@ -136,43 +142,90 @@ _ADHERE = (
     r"to the letter|verbatim|in full|exactly|precisely)"
 )
 
+# "Follow/do it literally" verbs — a follow-signal that treats rendered content as an
+# authoritative instruction only fires when aimed at a RENDERED artifact (see shape (c)).
+_FOLLOW_VERB = r"(?:follow|perform|execute|obey|apply|carry out|do|comply with)"
+
 # _FOLLOW_RENDERED fires on an instruction to consume un-reviewed rendered content AS an
-# instruction. Three shapes, any of which is the "follow the picture" tell:
+# instruction. Every shape is BOUND to a rendered-artifact noun — a standalone "follow …
+# exactly" with no image noun ("follow the release checklist exactly") is benign dev prose
+# and must NOT fire. Three shapes:
 _FOLLOW_RENDERED: re.Pattern[str] = re.compile(
-    # (a) read/OCR <image> ... <adhere literally>
-    rf"{_RENDER_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.]{{0,200}}?\b{_ADHERE}\b"
+    # (a) read/OCR <image> ... <adhere literally>. The verb→noun gap allows dots so a
+    # dotted filename ("read docs/build-spec.png in full") still resolves the noun.
+    rf"{_RENDER_VERB}\b[^\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.]{{0,200}}?\b{_ADHERE}\b"
     # (b) the diagram/image is declared authoritative / the single source of truth
     rf"|\b{_RENDERED_NOUN}\b[^.\n]{{0,80}}?"
     rf"\b(?:authoritative|source of truth|single source)\b"
-    # (c) follow/perform the extracted/rendered content <adhere literally>
-    rf"|\b(?:follow|perform|execute|obey|apply|carry out)\b[^.\n]{{0,60}}?\b{_ADHERE}\b",
+    # (c) follow/perform the RENDERED artifact <adhere literally>. The rendered noun is
+    # REQUIRED here: "follow the OCR'd diagram exactly" fires; "follow the release
+    # checklist exactly" does not.
+    rf"|\b{_FOLLOW_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.\n]{{0,60}}?\b{_ADHERE}\b",
     re.IGNORECASE,
 )
 
-# _EXFIL_TARGET fires on an exfil/secret container tell: the `.env` file, or the covert
-# "encode bytes as numbers" shape used to smuggle a secret past secret scanners (no
-# secret scanner treats a list of integers as a credential).
+# Read/exfil action verbs (with light inflection) — the exfil TARGET must be their OBJECT,
+# not a bare mention. A `.env` in "copy `.env.example` to `.env`" or a `Final[tuple[int,
+# ...]]` type annotation carries no read/emit verb, so neither is a standalone tell.
+_EXFIL_VERB_ACTION = (
+    r"(?:read|open|cat|load|encode|dump|emit|exfiltrate|serialize|serialise|"
+    r"write|derive|output|construct|produce)(?:s|d|ed|ing)?"
+)
+# The canonical secret file / env container (coverage: dotenv, "environment file").
+_ENV_TARGET = r"(?:\.env\b|\benvironment file\b|\bdotenv\b)"
+# Numeric byte-dump container — encoding secret bytes as integers/codepoints to slip past
+# secret scanners (no scanner treats a list of integers as a credential). A bare container
+# word is NOT a tell; it must be tied to a read/emit action (below).
+_NUM_CONTAINER = (
+    r"(?:byte[\s-]?values?|byte[\s-]?stream|(?:ascii\s+)?code[\s-]?points?|"
+    r"ord\s*\(\s*c|(?:tuple|list|array|sequence)\s*\[\s*int|"
+    r"(?:tuple|list|array|sequence)s?\s+of\s+"
+    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?))"
+)
+
+# _EXFIL_TARGET fires on an exfil/secret container tell where the container is the OBJECT
+# of a read/emit action: reading the `.env`, or emitting file/secret bytes as the covert
+# numeric container. Bare `.env` / `tuple[int, ...]` / "byte values" no longer fire alone.
 _EXFIL_TARGET: re.Pattern[str] = re.compile(
-    # the canonical secret file
-    r"\.env\b"
-    # emit-as `tuple[int, ...]` / list[int] — the numeric byte-dump container
-    r"|\b(?:tuple|list|array|sequence)\s*\[\s*int"
-    # "tuple/list of integers/bytes/codepoints"
-    r"|\b(?:tuple|list|array|sequence)s?\s+of\s+(?:int(?:eger)?s?|bytes?|char(?:acter)?s?)"
-    # ASCII codepoint(s)
-    r"|\b(?:ascii\s+)?code[\s-]?points?\b"
-    # byte stream of the file
-    r"|\bbyte[\s-]?stream\b"
-    # ord(c) per char
-    r"|\bord\s*\(\s*c\b"
-    # "byte values" as an emitted/derived quantity (the covert per-byte encoding)
-    r"|\bbyte\s+values?\b",
+    # (1) a read/exfil verb whose OBJECT is the .env / dotenv file
+    rf"{_EXFIL_VERB_ACTION}\b[^.\n]{{0,40}}?{_ENV_TARGET}"
+    # (2) the numeric byte-dump container tied to a read/emit action, either order:
+    #     "emit ... tuple of integers" / "byte values derived per …"
+    rf"|{_EXFIL_VERB_ACTION}\b[^.\n]{{0,40}}?{_NUM_CONTAINER}"
+    rf"|{_NUM_CONTAINER}[^.\n]{{0,40}}?{_EXFIL_VERB_ACTION}\b",
     re.IGNORECASE,
 )
+
+# Proximity window (chars): the follow-signal and the exfil target must co-occur in the
+# same procedural block. A follow-signal in a "Style" section and a `.env` read in a
+# "Setup" section are unrelated and must NOT combine into a false quarantine.
+_L1_PROXIMITY = 300
 
 # Basis names surfaced when BOTH detectors fire (the poison basis for a convention file).
 FOLLOW_RENDERED_SIGNAL = "follow_rendered_instructions"
 EXFIL_TARGET_SIGNAL = "exfil_encoded_target"
+
+
+def _spans_within(
+    a: list[tuple[int, int]], b: list[tuple[int, int]], window: int
+) -> bool:
+    """True if any span in ``a`` lies within ``window`` chars of any span in ``b``.
+
+    Distance is the gap between the nearest edges (0 when the spans overlap), so a
+    follow-signal and an exfil target count as "the same block" only when they are
+    physically close — not merely both present somewhere in the document.
+    """
+    for a_start, a_end in a:
+        for b_start, b_end in b:
+            if b_start >= a_end:
+                gap = b_start - a_end
+            elif a_start >= b_end:
+                gap = a_start - b_end
+            else:
+                gap = 0
+            if gap <= window:
+                return True
+    return False
 
 
 def scan_convention_text(text: str) -> list[str]:
@@ -183,11 +236,12 @@ def scan_convention_text(text: str) -> list[str]:
     * The existing ``scan_text`` engine runs unchanged — a blunt "ignore previous
       instructions" in a doc still trips on its own.
     * The image-borne combination: name BOTH ``FOLLOW_RENDERED_SIGNAL`` and
-      ``EXFIL_TARGET_SIGNAL`` ONLY when ``_FOLLOW_RENDERED`` AND ``_EXFIL_TARGET``
-      both fire. One signal alone is a benign-doc false positive and adds nothing —
-      a real convention file may legitimately say "follow the diagram", and a real
-      Python repo may type a constant as ``tuple[int, ...]``. Firing only on the
-      combination is the FP discipline.
+      ``EXFIL_TARGET_SIGNAL`` ONLY when a ``_FOLLOW_RENDERED`` match and an
+      ``_EXFIL_TARGET`` match co-occur within ``_L1_PROXIMITY`` chars of each other
+      (the same procedural block). Requiring proximity — not two independent
+      whole-document searches — is the FP discipline: a benign "follow the diagram"
+      in a Style section and a benign "load config from `.env`" in a Setup section
+      are unrelated and must not combine into a quarantine.
 
     Deliberately does NOT call ``looks_like_address_value``: a bare wallet address in
     convention prose is DATA, not a routing directive, and must not quarantine (protects
@@ -197,7 +251,13 @@ def scan_convention_text(text: str) -> list[str]:
         return []
     basis = scan_text(text)  # independent engine; scan_text folds internally
     folded = _fold(text)
-    if _FOLLOW_RENDERED.search(folded) and _EXFIL_TARGET.search(folded):
+    follow_spans = [m.span() for m in _FOLLOW_RENDERED.finditer(folded)]
+    exfil_spans = [m.span() for m in _EXFIL_TARGET.finditer(folded)]
+    if (
+        follow_spans
+        and exfil_spans
+        and _spans_within(follow_spans, exfil_spans, _L1_PROXIMITY)
+    ):
         basis.append(FOLLOW_RENDERED_SIGNAL)
         basis.append(EXFIL_TARGET_SIGNAL)
     return basis
