@@ -91,9 +91,18 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|earlier|above)\s+"
         r"(?:instructions?|prompts?|context)"
         r"|disregard\s+(?:the\s+|all\s+|any\s+)?(?:previous|prior|above|system)"
-        r"|forget\s+(?:everything|all|your|the)\b"
+        # "forget" fires when a directional-context word (previous/prior/above/earlier)
+        # OR an instruction-ish object (instructions/prompts/context/rules/told/said)
+        # sits within a short window — "Forget all your instructions", "Forget
+        # everything above", "forget the previous instructions". A bare "Forget the
+        # legacy Makefile" has NEITHER nearby → benign dev prose, stays clean.
+        r"|forget\b[^.\n]{0,30}?\b(?:previous|prior|above|earlier|"
+        r"instructions?|prompts?|context|rules?|told|said)\b"
         r"|(?:new|updated)\s+instructions?\s*:"
-        r"|you\s+are\s+now\b"
+        # "you are now" needs a role/mode OBJECT (a/an/the/in <role>, or a DAN-style
+        # jailbreak word) — "you are now on the main branch" is benign dev prose.
+        r"|you\s+are\s+now\s+(?:a\b|an\b|the\b|in\b|dan\b|unrestricted\b|"
+        r"jailbroken\b|free\b)"
         r"|system\s+prompt\b",
         re.IGNORECASE,
     ),
@@ -113,6 +122,171 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
 }
+
+# --- L1: convention/doc-text scan for image-borne injection (GhostCommit) ------------
+# The delivery vector is a clean-looking convention file (AGENTS.md) that (a) tells the
+# agent to read/OCR an image and FOLLOW its rendered instructions literally, and (b)
+# mandates emitting a numeric constant derived byte-by-byte (the exfil container). The
+# dangerous procedure lives in the IMAGE, not this text — so scan_text alone MISSES it.
+# Two NARROW detectors, used ONLY in combination (the FP discipline): each is coverage-
+# only, and either one alone is a benign-doc false positive that must NOT quarantine.
+
+# Words for "look at a rendered artifact".
+_RENDER_VERB = r"(?:ocr|read|open|render|scan|extract|view|inspect|load)"
+# Rendered-artifact nouns (an image or an external file whose content is un-reviewed).
+# Every alternative is a rendered-artifact WORD or image-format token, matched with word
+# boundaries (`\b…\b` at the call sites) so it only resolves as a STANDALONE token — a
+# bare `.png` that is merely an incidental path reference (no render verb, no adhere
+# adverb, no source-of-truth claim near it) never constitutes a follow-signal on its own.
+_RENDERED_NOUN = (
+    r"(?:png|jpe?g|gif|bmp|webp|tiff?|image|diagram|picture|figure|screenshot|"
+    r"graphic|photo|chart)"
+)
+# "Adhere to it literally" adverbs — the tell that the rendered content is treated as an
+# authoritative instruction, not a reference.
+_ADHERE = (
+    r"(?:byte[\s-]?for[\s-]?byte|word[\s-]?for[\s-]?word|line[\s-]?by[\s-]?line|"
+    r"to the letter|verbatim|in full|exactly|precisely)"
+)
+
+# "Follow/do it literally" verbs — a follow-signal that treats rendered content as an
+# authoritative instruction only fires when aimed at a RENDERED artifact (see shape (c)).
+_FOLLOW_VERB = r"(?:follow|perform|execute|obey|apply|carry out|do|comply with)"
+
+# _FOLLOW_RENDERED fires on an instruction to consume un-reviewed rendered content AS an
+# instruction. Every shape is BOUND to a rendered-artifact noun — a standalone "follow …
+# exactly" with no image noun ("follow the release checklist exactly") is benign dev prose
+# and must NOT fire. Three shapes:
+_FOLLOW_RENDERED: re.Pattern[str] = re.compile(
+    # (a) read/OCR <image> ... <adhere literally>. The verb→noun gap allows dots so a
+    # dotted filename ("read docs/build-spec.png in full") still resolves the noun.
+    rf"{_RENDER_VERB}\b[^\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.]{{0,200}}?\b{_ADHERE}\b"
+    # (b) the diagram/image is declared authoritative / the single source of truth
+    rf"|\b{_RENDERED_NOUN}\b[^.\n]{{0,80}}?"
+    rf"\b(?:authoritative|source of truth|single source)\b"
+    # (c) follow/perform the RENDERED artifact <adhere literally>. The rendered noun is
+    # REQUIRED here: "follow the OCR'd diagram exactly" fires; "follow the release
+    # checklist exactly" does not.
+    rf"|\b{_FOLLOW_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.\n]{{0,60}}?\b{_ADHERE}\b"
+    # (d) a RENDER verb consuming a rendered artifact directly — "OCR build.png", "read
+    # the diagram" — with NO adhere adverb required, because consuming un-reviewed
+    # rendered content AS the source IS the tell. The rendered noun is still REQUIRED, so
+    # "Read the local `.env` file" (a config file, not a rendered artifact) does NOT fire.
+    # The gap allows dots so a dotted image filename ("OCR build.png") resolves the noun.
+    # Coverage-only: this quarantines a doc only in COMBINATION with a numeric exfil tell
+    # inside the proximity window — a lone "read the diagram" is a benign false trigger.
+    rf"|{_RENDER_VERB}\b[^\n]{{0,40}}?\b{_RENDERED_NOUN}\b",
+    re.IGNORECASE,
+)
+
+# Emit/encode action verbs (with light inflection) — the numeric container must be the
+# OBJECT of one of these. Kept broad (read/dump/load included) because a numeric byte-dump
+# next to ANY of these is the covert tell; a bare `Final[tuple[int, ...]]` annotation with
+# no adjacent action verb is a legitimate type and does not fire.
+_EXFIL_VERB_ACTION = (
+    r"(?:read|open|cat|load|encode|dump|emit|exfiltrate|serialize|serialise|"
+    r"write|derive|output|construct|produce)(?:s|d|ed|ing)?"
+)
+# Numeric / encoded byte-dump container — encoding a secret's CONTENTS as integers, ASCII
+# codepoints, or a comma-separated decimal series to slip past secret scanners (no scanner
+# treats a list of integers as a credential). THIS is the required GhostCommit tell. A bare
+# container word is NOT enough; it must be tied to an emit/derive action (below).
+_NUM_CONTAINER = (
+    r"(?:byte[\s-]?values?|byte[\s-]?stream|(?:ascii\s+)?code[\s-]?points?|"
+    r"ord\s*\(\s*c|(?:tuple|list|array|sequence)\s*\[\s*int|"
+    r"(?:tuple|list|array|sequence)s?\s+of\s+"
+    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?)|"
+    r"comma[\s-]?separated\s+(?:decimal|integer|numeric|number)s?"
+    r"(?:\s+numbers?)?(?:\s+(?:series|sequence|list|values?))?|"
+    r"decimal\s+(?:number\s+)?series)"
+)
+
+# _EXFIL_TARGET fires ONLY on the numeric/encoded byte-dump container as the OBJECT of an
+# emit/derive action — the GhostCommit "encode a secret's CONTENTS as a numeric literal"
+# step. Redesign (Critical #1): a bare `.env` / "load .env" / "read the environment file"
+# is NO LONGER sufficient — proximity of file access + diagram-reading is normal onboarding,
+# not malice. The `.env` may CORROBORATE in prose but the numeric-encode tell is REQUIRED.
+#
+# NAMED RESIDUAL (plan-disclosed, do NOT re-widen): a reworded exfil that DROPS the numeric
+# tell ("serialize the environment file" with no numeric container) now MISSES here.
+# Narrowing the false positive on benign onboarding is worth this; downstream containment
+# is the auth-host pin + recorded-mode scrub, not this scan.
+_EXFIL_TARGET: re.Pattern[str] = re.compile(
+    # (forward) emit/derive action → numeric container. The gap tolerates dots so a
+    # dotted token between them ("emit the .env contents as a tuple of ints") still binds
+    # — the attacker naming the `.env` between the verb and the encoding must not evade.
+    rf"{_EXFIL_VERB_ACTION}\b[^\n]{{0,40}}?{_NUM_CONTAINER}"
+    # (reverse) numeric container → emit/derive action ("byte values derived per …").
+    rf"|{_NUM_CONTAINER}[^.\n]{{0,40}}?{_EXFIL_VERB_ACTION}\b",
+    re.IGNORECASE,
+)
+
+# Proximity window (chars): the follow-signal and the exfil target must co-occur in the
+# same procedural block. A follow-signal in a "Style" section and a `.env` read in a
+# "Setup" section are unrelated and must NOT combine into a false quarantine.
+_L1_PROXIMITY = 300
+
+# Basis names surfaced when BOTH detectors fire (the poison basis for a convention file).
+FOLLOW_RENDERED_SIGNAL = "follow_rendered_instructions"
+EXFIL_TARGET_SIGNAL = "exfil_encoded_target"
+
+
+def _spans_within(
+    a: list[tuple[int, int]], b: list[tuple[int, int]], window: int
+) -> bool:
+    """True if any span in ``a`` lies within ``window`` chars of any span in ``b``.
+
+    Distance is the gap between the nearest edges (0 when the spans overlap), so a
+    follow-signal and an exfil target count as "the same block" only when they are
+    physically close — not merely both present somewhere in the document.
+    """
+    for a_start, a_end in a:
+        for b_start, b_end in b:
+            if b_start >= a_end:
+                gap = b_start - a_end
+            elif a_start >= b_end:
+                gap = a_start - b_end
+            else:
+                gap = 0
+            if gap <= window:
+                return True
+    return False
+
+
+def scan_convention_text(text: str) -> list[str]:
+    """Return a poison basis for an untrusted convention/doc file (L1).
+
+    Two independent contributions:
+
+    * The existing ``scan_text`` engine runs unchanged — a blunt "ignore previous
+      instructions" in a doc still trips on its own.
+    * The image-borne combination: name BOTH ``FOLLOW_RENDERED_SIGNAL`` and
+      ``EXFIL_TARGET_SIGNAL`` ONLY when a ``_FOLLOW_RENDERED`` match and an
+      ``_EXFIL_TARGET`` match co-occur within ``_L1_PROXIMITY`` chars of each other
+      (the same procedural block). Requiring proximity — not two independent
+      whole-document searches — is the FP discipline: a benign "follow the diagram"
+      in a Style section and a benign "load config from `.env`" in a Setup section
+      are unrelated and must not combine into a quarantine.
+
+    Deliberately does NOT call ``looks_like_address_value``: a bare wallet address in
+    convention prose is DATA, not a routing directive, and must not quarantine (protects
+    the base58 false-positive fix). Empty list == clean.
+    """
+    if not text:
+        return []
+    basis = scan_text(text)  # independent engine; scan_text folds internally
+    folded = _fold(text)
+    follow_spans = [m.span() for m in _FOLLOW_RENDERED.finditer(folded)]
+    exfil_spans = [m.span() for m in _EXFIL_TARGET.finditer(folded)]
+    if (
+        follow_spans
+        and exfil_spans
+        and _spans_within(follow_spans, exfil_spans, _L1_PROXIMITY)
+    ):
+        basis.append(FOLLOW_RENDERED_SIGNAL)
+        basis.append(EXFIL_TARGET_SIGNAL)
+    return basis
+
 
 # --- secret-looking VALUE detection (for default / example / enum scrubbing) ---------
 
