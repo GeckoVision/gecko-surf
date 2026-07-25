@@ -82,6 +82,21 @@ dense = [
 fcc = [
     "anthropic>=0.40",
 ]
+# Skill Guard L2 deep metadata (gecko.imagescan.extract_pillow_metadata): Pillow reads
+# EXIF/XMP/IPTC/ICC beyond the stdlib PNG/JPEG chunk walk. OPTIONAL — absent => that
+# function returns [] and the stdlib L2 path is unchanged. No new BASE dependency.
+imagescan = [
+    "Pillow>=10.0",
+]
+# Skill Guard L3 OCR (gecko.imagescan.ocr_text): read a payload rendered as visible
+# PIXELS (the flagship GhostCommit attack) via pytesseract + the tesseract binary.
+# OPTIONAL and lazy-imported — absent => ocr_text returns "" and only L1/L2 run. The
+# tesseract SYSTEM binary is a separate install (apt/brew); the extra pulls only the
+# Python bindings. No new BASE dependency.
+ocr = [
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -108,6 +123,8 @@ python_version = "3.11"
 # The serve transport (mcp/starlette/uvicorn), the sosbot example (anthropic/telegram),
 # and the non-CI red-team LLM lane (gecko.redteam.llm) are OPTIONAL. Keep mypy clean
 # whether or not they are present — the engine itself stays dep-light.
+# PIL/pytesseract are the OPTIONAL Skill Guard image extras ([imagescan] / [ocr]),
+# lazy-imported inside gecko.imagescan; keep mypy clean whether or not they resolve.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*"]
 ignore_missing_imports = true
