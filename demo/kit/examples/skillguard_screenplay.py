@@ -86,19 +86,23 @@ def main() -> None:
     out("")
     out("Days later a vision-capable agent opens it, reads .env,")
     out("and writes your keys into code as a tuple of integers.")
-    out(f"{YELLOW}  Your secret, exfiltrated as numbers. No scanner blinks.{RESET}",
-        pause=2.2)
+    out(
+        f"{YELLOW}  Your secret, exfiltrated as numbers. No scanner blinks.{RESET}",
+        pause=2.2,
+    )
 
     # --- Scene 2 — Gecko treats every image as untrusted input --------------
     clear()
-    out(f"{BOLD}Gecko runs every channel of an image through one engine{RESET}",
-        pause=0.5)
+    out(
+        f"{BOLD}Gecko runs every channel of an image through one engine{RESET}",
+        pause=0.5,
+    )
     out("")
-    scan("scan-doc", d / "AGENTS.md")            # the delivery file (text)
-    scan("scan-image", d / "build-spec.png")     # rendered pixels via OCR
+    scan("scan-doc", d / "AGENTS.md")  # the delivery file (text)
+    scan("scan-image", d / "build-spec.png")  # rendered pixels via OCR
     if (d / "payload.png").exists():
-        scan("scan-image", d / "payload.png")    # base64 in metadata -> decoded
-    scan("scan-image", d / "architecture.png")   # a real clean diagram -> no alarm
+        scan("scan-image", d / "payload.png")  # base64 in metadata -> decoded
+    scan("scan-image", d / "architecture.png")  # a real clean diagram -> no alarm
 
     # --- Close — the lesson + the line --------------------------------------
     clear()
@@ -109,8 +113,10 @@ def main() -> None:
     out("decoded base64 — hits the same rule engine, and a poisoned")
     out(f"tool is {RED}quarantined fail-closed{RESET}: it simply loses its keys.")
     out("")
-    out(f"{YELLOW}We let your agent safely USE an API others can only block.{RESET}",
-        pause=1.6)
+    out(
+        f"{YELLOW}We let your agent safely USE an API others can only block.{RESET}",
+        pause=1.6,
+    )
     out("")
     out(f"{BOLD}ANY API, AGENT-READY — FIRST CALL CORRECT{RESET}", pause=0.4)
     out(f"{CYAN}npx @geckovision/gecko{RESET}", pause=2.0)
