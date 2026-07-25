@@ -1,11 +1,19 @@
-"""Skill Guard L2 — deterministic image metadata / trailing-byte scan.
+"""Skill Guard L2 + L3 — deterministic image metadata / trailing-byte / OCR scan.
 
 An image is an untrusted channel: the GhostCommit attack (arXiv:2603.03637)
-hides a coding-agent directive where a secret scanner won't look. L2 extracts
-the *text-carrying* channels of an image with **stdlib only** — no Pillow, no
-OCR (those are L3/PR3) — and runs them through Gecko's EXISTING injection engine
-(``sanitize.scan_text`` + ``sanitize.looks_like_secret_value``). Any hit
-quarantines through the same fail-closed seam as a poisoned spec.
+hides a coding-agent directive where a secret scanner won't look. **L2** extracts
+the *text-carrying* channels of an image with **stdlib only** (PNG tEXt/iTXt/zTXt,
+JPEG COM/APPn, trailing bytes) — and, when the ``[imagescan]`` Pillow extra is
+present, the deep EXIF/XMP/IPTC/ICC metadata. **L3** OCRs the *rendered pixels*
+when the ``[ocr]`` extra (pytesseract + the tesseract binary) is present. Every
+recovered channel runs through Gecko's EXISTING injection engine
+(``sanitize.scan_text`` / ``sanitize.scan_convention_text`` +
+``sanitize.looks_like_secret_value``). Any hit quarantines through the same
+fail-closed seam as a poisoned spec.
+
+Graceful degradation: both extras are OPTIONAL and lazy-imported. With neither
+installed (the base install), :func:`ocr_text` returns ``""`` and
+:func:`extract_pillow_metadata` returns ``[]`` — nothing changes, nothing raises.
 
 Honesty ledger (what this module really does):
 
@@ -13,14 +21,18 @@ Honesty ledger (what this module really does):
     -----------------------------------------|----------------------------------
     Extract PNG tEXt/iTXt/zTXt + JPEG        | "Steganography analysis" / LSB
       COM/APPn text; scan trailing bytes     |   pixel decode
+    OCR rendered text → the EXISTING scanner | That we *decode* hidden pixel
+      (L3)                                   |   payloads
     Name the channel + rule that fired       | Any ML confidence % ("99.2%")
     Reuse the sanitize engine unchanged      | "First tool to detect this"
 
-Named residual: L2 CANNOT see a payload rendered as *visible pixels* — that is
-the flagship GhostCommit attack, and it carries NO metadata and NO trailing
-bytes (``build_spec_payload.png`` proves it). Reading rendered pixels is L3/OCR.
-With no OCR extra installed, the L1 convention-text scan still catches the
-delivery file. This module is a strong deterministic link, not the whole chain.
+Named residual: without the OCR extra, L2 CANNOT see a payload rendered as
+*visible pixels* — the flagship GhostCommit attack carries NO metadata and NO
+trailing bytes (``build_spec_payload.png`` proves it). But even with OCR absent,
+the L1 convention-text scan (``sanitize.scan_convention_text``) still catches the
+delivery file. base64/numeric-encoded payloads *inside* OCR'd text remain a named
+residual; the auth-host pin + recorded-mode scrub are the real containment. This
+module is a strong deterministic link, not the whole chain.
 
 Control plane (invariant #1): the verdict carries channel names, rule names, and
 byte-counts — never the extracted payload text and never a decoded secret value.
@@ -33,11 +45,12 @@ base58 false-positive fix). ``wallet_addr_exif.png`` verdicts ``clean``.
 
 from __future__ import annotations
 
+import io
 import struct
 import zlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from gecko import sanitize
 
@@ -266,7 +279,101 @@ def _fmt_size(n: int) -> str:
     return f"{n / 1024:.1f}KB"
 
 
+# --- L3: OCR the rendered pixels (opt-in [ocr] extra) --------------------------------
+
+
+def ocr_text(data: bytes) -> str:
+    """Recover the text rendered as *visible pixels* in an image (L3).
+
+    Graceful-degradation contract: if ``pytesseract``/``PIL`` is not installed OR the
+    tesseract binary is absent (or the bytes are not a decodable image), return ``""``
+    — this function NEVER raises. So the base install, and any environment without the
+    ``[ocr]`` extra, are completely unaffected. Only when the extra is present does this
+    read the pixels; the recovered text is then scanned by the SAME injection engine.
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        return ""
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            recovered = pytesseract.image_to_string(img)
+    except (OSError, ValueError, pytesseract.TesseractError):
+        # OSError covers TesseractNotFoundError (binary absent) and PIL's
+        # UnidentifiedImageError / truncated-image OSError; TesseractError covers a
+        # runtime tesseract failure. OCR is best-effort — any failure degrades to "".
+        return ""
+    return recovered or ""
+
+
+# --- L2 deep metadata via Pillow (opt-in [imagescan] extra) --------------------------
+
+
+def _collect_exif_ifd(ifd: Any, prefix: str, channels: list[TextChannel]) -> None:
+    """Append each text-valued EXIF tag in one IFD as a channel (tag name label)."""
+    from PIL import ExifTags
+
+    for tag_id, value in ifd.items():
+        if isinstance(value, bytes):
+            value = value.decode("latin-1", "replace")
+        if isinstance(value, str) and value:
+            name = ExifTags.TAGS.get(tag_id, hex(tag_id))
+            channels.append(TextChannel(f"exif:{name}", value))
+
+
+def extract_pillow_metadata(data: bytes) -> list[TextChannel]:
+    """Deep image metadata via Pillow: EXIF (base + Exif IFD), XMP / ``info`` strings,
+    IPTC, ICC. Returns ``[]`` when Pillow is absent (base install unaffected) and never
+    raises. Kept OUT of :func:`extract_text_channels` (which stays stdlib-only) — merged
+    into :func:`scan_image`'s channel set — so a plain install's L2 behaviour is identical
+    with or without the ``[imagescan]`` extra.
+    """
+    try:
+        from PIL import ExifTags, Image
+    except ImportError:
+        return []
+    channels: list[TextChannel] = []
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            exif = img.getexif()
+            _collect_exif_ifd(exif, "exif", channels)
+            try:
+                sub = exif.get_ifd(ExifTags.IFD.Exif)
+            except (KeyError, ValueError):
+                sub = {}
+            _collect_exif_ifd(sub, "exif", channels)
+            # info carries XMP, comments, IPTC as strings. Only str values are scanned:
+            # raw ICC/EXIF byte blobs are binary noise (EXIF is already read above), so
+            # decoding them adds nothing but false channels.
+            for key, value in getattr(img, "info", {}).items():
+                if isinstance(value, str) and value:
+                    channels.append(TextChannel(f"pillow:info:{key}", value))
+    except (OSError, ValueError):
+        # Not a Pillow-decodable image / truncated — degrade to whatever was collected.
+        return channels
+    return channels
+
+
 # --- verdict -------------------------------------------------------------------------
+
+
+def _ocr_hits(text: str) -> list[str]:
+    """Injection basis for OCR-recovered rendered text, on the ``ocr`` channel.
+
+    The rendered pixels ARE an untrusted instruction doc (the GhostCommit derivation
+    rule lives in the image, not the delivery file), so they run through
+    ``sanitize.scan_convention_text`` — the SAME engine as an ingested convention file,
+    which catches the follow-rendered + numeric-encode-exfil COMBINATION that plain
+    ``scan_text`` misses. NEVER ``looks_like_address_value`` (the base58 FP guard extends
+    to OCR text). Capped at ``_MAX_SCAN_TEXT`` like every other channel — OCR of a large
+    image can return a lot of text, and the fold-heavy scanner would OOM on it otherwise.
+    """
+    text = text[:_MAX_SCAN_TEXT]
+    basis = [f"ocr → {rule}" for rule in sanitize.scan_convention_text(text)]
+    if sanitize.looks_like_secret_value(text):
+        basis.append("ocr → secret_value")
+    return basis
 
 
 def _channel_hits(channel: str, text: str) -> list[str]:
@@ -283,18 +390,28 @@ def _channel_hits(channel: str, text: str) -> list[str]:
     return basis
 
 
-def scan_image(data: bytes) -> ImageScanVerdict:
-    """Deterministic verdict for one image (L2).
+def scan_image(
+    data: bytes, *, ocr: Callable[[bytes], str] | None = None
+) -> ImageScanVerdict:
+    """Deterministic verdict for one image (L2 + L3).
 
-    Every extracted metadata channel and the trailing-byte payload is run through
-    ``sanitize.scan_text`` + ``sanitize.looks_like_secret_value``. ANY hit →
-    ``poison`` (basis names the channel + rule). A structural anomaly with no hit
-    → ``review``. Otherwise ``clean``.
+    Every extracted channel — stdlib metadata (:func:`extract_text_channels`), the
+    trailing-byte payload, Pillow deep metadata (:func:`extract_pillow_metadata`, when
+    the ``[imagescan]`` extra is present), and the OCR'd rendered pixels (``ocr``, when
+    the ``[ocr]`` extra is present) — is run through the sanitize engine. ANY hit →
+    ``poison`` (basis names the channel + rule). A structural anomaly with no hit →
+    ``review``. Otherwise ``clean``.
 
-    ``looks_like_address_value`` is deliberately never invoked: a bare wallet
-    address in metadata is data, not a routing directive (base58 FP guard).
+    The OCR seam is INJECTABLE: pass ``ocr=`` a callable for offline, tesseract-free
+    tests of the OCR-text → verdict wiring; it defaults to the real :func:`ocr_text`
+    (which returns ``""`` — a no-op — when the extra/binary is absent).
+
+    ``looks_like_address_value`` is deliberately never invoked: a bare wallet address in
+    metadata or OCR text is data, not a routing directive (base58 FP guard).
     """
-    channels = extract_text_channels(data)
+    ocr_fn = ocr if ocr is not None else ocr_text
+    channels = list(extract_text_channels(data))
+    channels.extend(extract_pillow_metadata(data))
     trailer = find_trailing_bytes(data)
     anomalies = structural_anomalies(data)
 
@@ -310,6 +427,13 @@ def scan_image(data: bytes) -> ImageScanVerdict:
         label = f"png:trailing-bytes({_fmt_size(len(trailer))})"
         scan_text = trailer[:_MAX_SCAN_TEXT].decode("latin-1", "replace")
         hits.extend(_channel_hits(label, scan_text))
+
+    # L3: OCR the rendered pixels. In the base install / this env (no tesseract) the
+    # default ocr_fn returns "" here, so this is a no-op and the L2 verdict stands.
+    recovered = ocr_fn(data)
+    if recovered:
+        scanned += 1
+        hits.extend(_ocr_hits(recovered))
 
     if hits:
         return ImageScanVerdict("poison", tuple(hits), scanned)
