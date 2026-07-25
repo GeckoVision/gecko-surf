@@ -149,15 +149,17 @@ def spec_is_quarantined(spec: Any) -> bool:
     A ``from-docs`` surface is poisoned-until-proven — the parser guessed, so no auth may
     be injected until a human clears it. Detection walks the spec for the honesty markers
     the docs_reader emits (``x-review`` / low ``x-draft-confidence`` / the generator
-    stamp) plus the sanitizer's ``x-poison-flag``. Enforced by the client / registry —
-    NOT bolted into docs_reader.emit (invariant: the engine decides trust, not the input).
+    stamp) plus the sanitizer's ``x-poison-flag`` and Skill Guard's document-level
+    ``x-poison`` basis (injection found in a convention file or an embedded image during
+    ``from-docs``). Enforced by the client / registry — NOT bolted into docs_reader.emit
+    (invariant: the engine decides trust, not the input).
     """
     if not isinstance(spec, dict):
         return False
     info = spec.get("info")
     if isinstance(info, dict) and info.get("x-generated-by") == _DRAFT_MARKER:
         return True
-    if _walk_has_flag(spec, frozenset({"x-review", "x-poison-flag"})):
+    if _walk_has_flag(spec, frozenset({"x-review", "x-poison-flag", "x-poison"})):
         return True
     return _walk_low_confidence(spec)
 

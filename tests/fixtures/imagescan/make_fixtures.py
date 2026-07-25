@@ -87,6 +87,19 @@ def assemble_png(
     return body + trailer
 
 
+def decompression_bomb_png(width: int = 60000, height: int = 60000) -> bytes:
+    """A tiny (~68-byte) but valid-header PNG that DECLARES enormous dimensions.
+
+    The IHDR claims ``width × height`` pixels while the IDAT holds a single pixel, so
+    a decoder that trusts the header (Pillow) raises ``DecompressionBombError`` — a bare
+    ``Exception`` subclass — on open. Written with stdlib only (no Pillow needed to CRAFT
+    the attack); Pillow is only needed to be VICTIM of it. Not committed as a fixture:
+    it is assembled on demand so the attack vector is explicit in the test.
+    """
+    idat = _chunk(b"IDAT", zlib.compress(b"\x00\x80\x80\x80", 9))
+    return PNG_SIGNATURE + _ihdr(width, height) + idat + _chunk(b"IEND", b"")
+
+
 def main() -> None:
     here = Path(__file__).parent
     (here / "poison_exif.png").write_bytes(
