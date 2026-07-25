@@ -188,6 +188,14 @@ class Surface:
             )
         return arts[kind]
 
+    # -- the structure (the data twin of the SVG) --------------------------------
+    def graph_data(self) -> dict[str, Any]:
+        """The call graph as a structured dict — operations + provenance-tagged op→op edges.
+        Same source as :meth:`render_svg`, the other projection (data, not image)."""
+        from .surfaceviz import graph_data
+
+        return graph_data(self.graph)
+
     # -- the visual (graphviz for APIs) ------------------------------------------
     def render_svg(self, *, title: str | None = None) -> str:
         """The Surface as an SVG call graph — operations as nodes, feeds as arrows colored
