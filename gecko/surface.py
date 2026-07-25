@@ -196,6 +196,19 @@ class Surface:
 
         return graph_data(self.graph)
 
+    # -- the cross-API correlation (the provenance-carrying confidence) ----------
+    def correlate(self, other: Surface) -> Any:
+        """Correlate this Surface's outputs to ``other``'s inputs — a ranked,
+        provenance-carrying set of "A.output <-> B.input" links, each with a basis
+        (the *why*) and whether it is plan-eligible now or a quarantined candidate.
+
+        Cross-API links are DECLARED-only for plan-eligibility (§13.6); a bare
+        name/signature match across the API boundary is a candidate a human confirms.
+        Returns a :class:`~gecko.correlate.CorrelationResult`."""
+        from .correlate import correlate_surfaces
+
+        return correlate_surfaces(self, other)
+
     # -- the visual (graphviz for APIs) ------------------------------------------
     def render_svg(self, *, title: str | None = None) -> str:
         """The Surface as an SVG call graph — operations as nodes, feeds as arrows colored
