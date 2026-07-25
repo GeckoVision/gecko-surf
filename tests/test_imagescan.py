@@ -92,7 +92,10 @@ def test_build_spec_payload_is_clean_at_l2():
     channels = imagescan.extract_text_channels(data)
     for ch in channels:
         assert not sanitize.scan_text(ch.text)
-    assert imagescan.scan_image(data).tier == "clean"
+    # Force the no-OCR path so this stays deterministic whether or not tesseract is
+    # installed: L2 (metadata/trailing-bytes) alone misses the rendered-pixel payload.
+    # (With OCR present the same image verdicts POISON — see test_real_ocr_of_build_spec.)
+    assert imagescan.scan_image(data, ocr=lambda _d: "").tier == "clean"
 
 
 # --- extractor unit tests ------------------------------------------------------------
@@ -307,11 +310,13 @@ def test_ocr_text_returns_empty_when_tesseract_absent_graceful_degradation():
     optional, delivery still caught' is test-backed. Asserts both facts; L1 internals are
     covered in test_convention_scan.py, not re-tested here."""
     data = _read("build_spec_payload.png")
-    # Real OCR path, tesseract absent in this env → "" (never raises).
+    # Real OCR path, tesseract absent in this env → "" (never raises). Only assertable
+    # when the binary is genuinely absent; harmless (skipped) when it is present.
     if shutil.which("tesseract") is None:
         assert imagescan.ocr_text(data) == ""
-    # L2 alone misses the rendered-pixel payload → clean.
-    assert imagescan.scan_image(data).tier == "clean"
+    # The graceful-degradation contract: with OCR yielding nothing, L2 alone misses the
+    # rendered-pixel payload → clean. Force no-OCR so this holds regardless of tesseract.
+    assert imagescan.scan_image(data, ocr=lambda _d: "").tier == "clean"
     # L1 already quarantines the delivery convention file.
     assert sanitize.scan_convention_text(_read_text("agents_delivery.md")) != []
 
