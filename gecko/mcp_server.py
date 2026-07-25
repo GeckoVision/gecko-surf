@@ -227,6 +227,66 @@ class McpSurface:
 
         return search_docs(self.client, intent)
 
+    def surface_graph_data(self) -> dict[str, Any]:
+        """The client's full deterministic call graph as structure-only data — the DATA
+        twin of the SVG: operations + provenance-tagged op->op ``feeds`` edges, each with
+        join key + provenance + confidence. Control-plane clean (invariant #1): op ids,
+        method/path, join-key names, provenance, confidence — never a payload or secret.
+
+        Getattr-guarded: a duck-typed client (catalog aggregator, test fake) that carries
+        no ``surface_graph`` gets a safe empty graph instead of a raise."""
+        from .surfaceviz import graph_data
+
+        graph = getattr(self.client, "surface_graph", None)
+        if graph is None:
+            return {
+                "operations": [],
+                "edges": [],
+                "summary": {"operations": 0, "edges": 0},
+            }
+        return graph_data(graph)
+
+    def surface_graph(self, op: str | None = None) -> dict[str, Any]:
+        """The agent-facing, SCOPED view of the deterministic call graph — the first-class
+        "give me the graph" door (hidden: callable by name, not enumerated in list_tools).
+
+        Bounded on purpose (token budget / the O(1)-at-scale advantage — a whole-graph edge
+        dump on a dense API like Stripe is ~337 edges):
+
+        - ``op`` given -> the NEIGHBORS of that op only (edges where it is the ``from`` or
+          the ``to`` — its suppliers + consumers) plus the ordered supplier ``plan`` for it
+          (reused from ``client.plan_for``).
+        - ``op`` omitted -> a SUMMARY projection: the operation list + the ``summary`` counts,
+          but NOT the full edge list. The drop is named honestly in the payload."""
+        data = self.surface_graph_data()
+        if not op:
+            return {
+                "operations": data["operations"],
+                # Honest drop: the full edge list is withheld to bound tokens; ask per-op.
+                "edges": "call get_surface_graph(op=…) for an op's edges",
+                "summary": data["summary"],
+            }
+        neighbors = [
+            e for e in data["edges"] if e.get("from") == op or e.get("to") == op
+        ]
+        result: dict[str, Any] = {
+            "op": op,
+            "edges": neighbors,
+            "summary": {
+                "operations": data["summary"]["operations"],
+                "edges": len(neighbors),
+            },
+        }
+        # The ordered supplier chain for this op. An empty intent leaves nothing
+        # satisfiable from the query, so plan_for returns the FULL supplier plan (not
+        # None). Getattr-guarded for duck-typed clients that carry no planner.
+        plan_for = getattr(self.client, "plan_for", None)
+        if callable(plan_for):
+            plan = plan_for("", op)
+            if plan is not None:
+                result["plan"] = plan
+        return result
+
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
         (→ treat as allow) if scoring itself raised — a scoring bug must never break the
@@ -333,6 +393,14 @@ class McpSurface:
         # in the package (docsearch), never reaching an upstream call.
         if name == "query_docs":
             return self.query_docs(arguments.get("intent", ""))
+
+        # The first-class "give me the graph" door: the deterministic call graph, SCOPED
+        # (an op's neighbors + plan, or a summary) to bound tokens. Sibling of
+        # get_capability/query_docs — dispatched by name, resolved in the package, never
+        # reaching an upstream call; NOT enumerated in list_tools (projection stays
+        # byte-identical).
+        if name == "get_surface_graph":
+            return self.surface_graph(arguments.get("op"))
 
         # Per-op mode override: a tool named in ``recorded_ops`` stays RECORDED even on a
         # live surface — the catalog-not-the-relay boundary for money-moving writes (Jito
