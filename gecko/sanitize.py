@@ -114,6 +114,95 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
     ),
 }
 
+# --- L1: convention/doc-text scan for image-borne injection (GhostCommit) ------------
+# The delivery vector is a clean-looking convention file (AGENTS.md) that (a) tells the
+# agent to read/OCR an image and FOLLOW its rendered instructions literally, and (b)
+# mandates emitting a numeric constant derived byte-by-byte (the exfil container). The
+# dangerous procedure lives in the IMAGE, not this text — so scan_text alone MISSES it.
+# Two NARROW detectors, used ONLY in combination (the FP discipline): each is coverage-
+# only, and either one alone is a benign-doc false positive that must NOT quarantine.
+
+# Words for "look at a rendered artifact".
+_RENDER_VERB = r"(?:ocr|read|open|render|scan|extract|view|inspect|load)"
+# Rendered-artifact nouns (an image or an external file whose content is un-reviewed).
+_RENDERED_NOUN = (
+    r"(?:png|jpe?g|gif|bmp|webp|tiff?|image|diagram|picture|figure|screenshot|"
+    r"graphic|photo)"
+)
+# "Adhere to it literally" adverbs — the tell that the rendered content is treated as an
+# authoritative instruction, not a reference.
+_ADHERE = (
+    r"(?:byte[\s-]?for[\s-]?byte|word[\s-]?for[\s-]?word|line[\s-]?by[\s-]?line|"
+    r"to the letter|verbatim|in full|exactly|precisely)"
+)
+
+# _FOLLOW_RENDERED fires on an instruction to consume un-reviewed rendered content AS an
+# instruction. Three shapes, any of which is the "follow the picture" tell:
+_FOLLOW_RENDERED: re.Pattern[str] = re.compile(
+    # (a) read/OCR <image> ... <adhere literally>
+    rf"{_RENDER_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.]{{0,200}}?\b{_ADHERE}\b"
+    # (b) the diagram/image is declared authoritative / the single source of truth
+    rf"|\b{_RENDERED_NOUN}\b[^.\n]{{0,80}}?"
+    rf"\b(?:authoritative|source of truth|single source)\b"
+    # (c) follow/perform the extracted/rendered content <adhere literally>
+    rf"|\b(?:follow|perform|execute|obey|apply|carry out)\b[^.\n]{{0,60}}?\b{_ADHERE}\b",
+    re.IGNORECASE,
+)
+
+# _EXFIL_TARGET fires on an exfil/secret container tell: the `.env` file, or the covert
+# "encode bytes as numbers" shape used to smuggle a secret past secret scanners (no
+# secret scanner treats a list of integers as a credential).
+_EXFIL_TARGET: re.Pattern[str] = re.compile(
+    # the canonical secret file
+    r"\.env\b"
+    # emit-as `tuple[int, ...]` / list[int] — the numeric byte-dump container
+    r"|\b(?:tuple|list|array|sequence)\s*\[\s*int"
+    # "tuple/list of integers/bytes/codepoints"
+    r"|\b(?:tuple|list|array|sequence)s?\s+of\s+(?:int(?:eger)?s?|bytes?|char(?:acter)?s?)"
+    # ASCII codepoint(s)
+    r"|\b(?:ascii\s+)?code[\s-]?points?\b"
+    # byte stream of the file
+    r"|\bbyte[\s-]?stream\b"
+    # ord(c) per char
+    r"|\bord\s*\(\s*c\b"
+    # "byte values" as an emitted/derived quantity (the covert per-byte encoding)
+    r"|\bbyte\s+values?\b",
+    re.IGNORECASE,
+)
+
+# Basis names surfaced when BOTH detectors fire (the poison basis for a convention file).
+FOLLOW_RENDERED_SIGNAL = "follow_rendered_instructions"
+EXFIL_TARGET_SIGNAL = "exfil_encoded_target"
+
+
+def scan_convention_text(text: str) -> list[str]:
+    """Return a poison basis for an untrusted convention/doc file (L1).
+
+    Two independent contributions:
+
+    * The existing ``scan_text`` engine runs unchanged — a blunt "ignore previous
+      instructions" in a doc still trips on its own.
+    * The image-borne combination: name BOTH ``FOLLOW_RENDERED_SIGNAL`` and
+      ``EXFIL_TARGET_SIGNAL`` ONLY when ``_FOLLOW_RENDERED`` AND ``_EXFIL_TARGET``
+      both fire. One signal alone is a benign-doc false positive and adds nothing —
+      a real convention file may legitimately say "follow the diagram", and a real
+      Python repo may type a constant as ``tuple[int, ...]``. Firing only on the
+      combination is the FP discipline.
+
+    Deliberately does NOT call ``looks_like_address_value``: a bare wallet address in
+    convention prose is DATA, not a routing directive, and must not quarantine (protects
+    the base58 false-positive fix). Empty list == clean.
+    """
+    if not text:
+        return []
+    basis = scan_text(text)  # independent engine; scan_text folds internally
+    folded = _fold(text)
+    if _FOLLOW_RENDERED.search(folded) and _EXFIL_TARGET.search(folded):
+        basis.append(FOLLOW_RENDERED_SIGNAL)
+        basis.append(EXFIL_TARGET_SIGNAL)
+    return basis
+
+
 # --- secret-looking VALUE detection (for default / example / enum scrubbing) ---------
 
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
