@@ -50,6 +50,16 @@ ImageTier = Literal["clean", "review", "poison"]
 # it and record a structural anomaly instead of risking an OOM.
 _INFLATE_CAP = 1 << 20  # 1 MiB
 
+# Cap on the text actually handed to the injection/secret scanner. sanitize.scan_text
+# folds the WHOLE string (NFKC normalize + confusable translate = several transient
+# copies) before it matches, so an *uncompressed* multi-gigabyte channel — a trailing
+# payload or a huge tEXt/iTXt body, none bounded by _INFLATE_CAP — would OOM. Injection
+# and secret signatures are short (well under sanitize's per-field MAX_TEXT_LEN), so
+# truncating the SCANNED text opens no bypass. The structural-anomaly path still measures
+# the FULL byte-count (see structural_anomalies / scan_image), so a huge trailer is still
+# surfaced with its true size — this cap shrinks what we SCAN, never what we REPORT.
+_MAX_SCAN_TEXT = 16 * sanitize.MAX_TEXT_LEN  # ~9.4 KiB — orders above any signature
+
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 # Anomaly names (control-plane safe — names only, never payload).
@@ -124,7 +134,13 @@ def _png_text(data: bytes) -> tuple[list[TextChannel], list[str]]:
     for ctype, body in _iter_png_chunks(data):
         if ctype == b"tEXt":
             _, _, text = body.partition(b"\x00")
-            channels.append(TextChannel("png:tEXt", text.decode("latin-1", "replace")))
+            # tEXt is uncompressed and bounded only by file size — cap the BYTES
+            # before decoding so a gigabyte body never materializes as a str.
+            channels.append(
+                TextChannel(
+                    "png:tEXt", text[:_MAX_SCAN_TEXT].decode("latin-1", "replace")
+                )
+            )
         elif ctype == b"zTXt":
             _keyword, _, rest = body.partition(b"\x00")
             comp = rest[1:]  # skip the 1-byte compression method
@@ -157,7 +173,8 @@ def _itxt_text(body: bytes) -> str | None:
     _translated, _, text_bytes = rest.partition(b"\x00")
     if compression_flag == 1:
         return _inflate_capped(text_bytes)
-    return text_bytes.decode("utf-8", "replace")
+    # Uncompressed iTXt is bounded only by file size — cap bytes before decoding.
+    return text_bytes[:_MAX_SCAN_TEXT].decode("utf-8", "replace")
 
 
 # --- JPEG parsing --------------------------------------------------------------------
@@ -254,7 +271,12 @@ def _fmt_size(n: int) -> str:
 
 def _channel_hits(channel: str, text: str) -> list[str]:
     """Injection/secret basis strings for one channel's text. Reuses the
-    sanitize engine unchanged; NEVER calls ``looks_like_address_value``."""
+    sanitize engine unchanged; NEVER calls ``looks_like_address_value``.
+
+    Belt-and-suspenders cap: even if a caller hands oversized text, we truncate
+    before the fold-heavy scanner. Head-of-buffer truncation preserves detection
+    because signatures are short (see ``_MAX_SCAN_TEXT``)."""
+    text = text[:_MAX_SCAN_TEXT]
     basis = [f"{channel} → {rule}" for rule in sanitize.scan_text(text)]
     if sanitize.looks_like_secret_value(text):
         basis.append(f"{channel} → secret_value")
@@ -283,8 +305,11 @@ def scan_image(data: bytes) -> ImageScanVerdict:
 
     if trailer is not None:
         scanned += 1
+        # Label carries the TRUE trailer size (anomaly signal preserved); only the
+        # bytes we DECODE + SCAN are capped, so a 2 GB trailer never becomes a str.
         label = f"png:trailing-bytes({_fmt_size(len(trailer))})"
-        hits.extend(_channel_hits(label, trailer.decode("latin-1", "replace")))
+        scan_text = trailer[:_MAX_SCAN_TEXT].decode("latin-1", "replace")
+        hits.extend(_channel_hits(label, scan_text))
 
     if hits:
         return ImageScanVerdict("poison", tuple(hits), scanned)
