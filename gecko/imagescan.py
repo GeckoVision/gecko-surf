@@ -52,7 +52,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gecko import sanitize
+from gecko import encdetect, sanitize
 
 # Verdict tiers. No canonical image-tier Literal exists elsewhere (risk.py's
 # ``Tier`` is governance-scoped), so this module is the single source of truth.
@@ -429,6 +429,23 @@ def _channel_hits(channel: str, text: str) -> list[str]:
     return basis
 
 
+def _decode_hits(channel: str, text: str) -> list[str]:
+    """Encoding-aware basis strings for one channel's text (Skill Guard enhancement a).
+
+    Decode base64/hex/rot13 blobs in the channel text and rescan the DECODED plaintext
+    with the sanitize engine (``encdetect.decode_and_rescan``). A hit is **poison**: we
+    have DECODED and found real malice (unlike the LSB presence-detector). The basis names
+    ``channel(encoding) → rule`` (e.g. ``png:tEXt(base64) → exfil_encoded_target``) —
+    encoding + channel + rule NAMES only, NEVER the decoded payload (control plane). The
+    decode path NEVER calls ``looks_like_address_value`` (base58 FP guard), and a benign
+    encoded blob decodes to a benign string and contributes nothing (semantic, not
+    presence)."""
+    return [
+        f"{channel}({encoding}) → {rule}"
+        for encoding, rule in encdetect.decode_and_rescan(text)
+    ]
+
+
 def scan_image(
     data: bytes, *, ocr: Callable[[bytes], str] | None = None
 ) -> ImageScanVerdict:
@@ -463,6 +480,9 @@ def scan_image(
     hits: list[str] = []
     for ch in channels:
         hits.extend(_channel_hits(ch.channel, ch.text))
+        # Enhancement (a): decode base64/hex/rot13 blobs in the channel and rescan the
+        # plaintext — catches an injection/exfil directive hidden under an encoding.
+        hits.extend(_decode_hits(ch.channel, ch.text))
 
     if trailer is not None:
         scanned += 1
@@ -471,6 +491,7 @@ def scan_image(
         label = f"png:trailing-bytes({_fmt_size(len(trailer))})"
         scan_text = trailer[:_MAX_SCAN_TEXT].decode("latin-1", "replace")
         hits.extend(_channel_hits(label, scan_text))
+        hits.extend(_decode_hits(label, scan_text))
 
     # L3: OCR the rendered pixels. In the base install / this env (no tesseract) the
     # default ocr_fn returns "" here, so this is a no-op and the L2 verdict stands.
@@ -478,6 +499,9 @@ def scan_image(
     if recovered:
         scanned += 1
         hits.extend(_ocr_hits(recovered))
+        # The rendered pixels are the GhostCommit delivery channel; an encoded payload
+        # there (base64/hex/rot13) is decoded + rescanned like any other channel.
+        hits.extend(_decode_hits("ocr", recovered))
 
     if hits:
         return ImageScanVerdict("poison", tuple(hits), scanned)
