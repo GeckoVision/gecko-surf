@@ -11,6 +11,7 @@ draft is derived and returned, the source text is discarded.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from .markdown import page_from_markdown
 from .models import CandidateOp
 from .parser import detect_uuid_auth, parse_page
 from .render import RenderError, Renderer, default_renderer
+from .scan import scan_doc_page
 
 #: Below this many recovered operations we assume the page never hydrated and retry with
 #: a rendered fetch. A real single-endpoint page recovers 1-2 ops; a JS-only shell
@@ -78,6 +80,31 @@ def count_review_flags(draft: dict[str, Any]) -> tuple[int, int]:
     return notes, low
 
 
+def _apply_skill_guard(
+    draft: dict[str, Any],
+    page_text: str,
+    *,
+    image_ocr: Callable[[bytes], str] | None,
+) -> None:
+    """Scan the untrusted page (L1 text + inline images) and stamp the basis on ``draft``.
+
+    A poison verdict adds a document-level ``info['x-poison']`` (channel/rule names only)
+    — recognized by :func:`gecko.surfaces.spec_is_quarantined`, so the surface quarantines
+    with a VISIBLE reason on top of the from-docs generator stamp. A review verdict (a
+    structural image anomaly, no injection hit) adds an ``x-review`` note. A clean page
+    gets neither marker, so existing review-flag behaviour is unchanged (invariant: the
+    engine decides trust — this only records WHY, never bypasses the quarantine seam).
+    """
+    verdict = scan_doc_page(page_text, image_ocr=image_ocr)
+    info = draft.setdefault("info", {})
+    if verdict.poison_basis:
+        info["x-poison"] = list(verdict.poison_basis)
+    if verdict.review_basis:
+        info["x-review"] = "Skill Guard image review: " + "; ".join(
+            verdict.review_basis
+        )
+
+
 def _fetch(source: str, *, resolver: Resolver | None = None) -> str:
     """Return the doc text. http(s) is SSRF-validated + capped; a path is dev-only."""
     if source.startswith(("http://", "https://")):
@@ -110,6 +137,7 @@ def from_docs(
     title: str | None = None,
     resolver: Resolver | None = None,
     render: Renderer | bool | None = None,
+    image_ocr: Callable[[bytes], str] | None = None,
 ) -> DocsDraft:
     """Recover a draft OpenAPI from a doc page (URL or local HTML path).
 
@@ -123,6 +151,11 @@ def from_docs(
       browser simply means no fallback, never an error)
     * ``False`` — never render (hermetic tests, air-gapped runs)
     * a callable — an injected renderer (Pattern B: the fallback is falsifiable offline)
+
+    Skill Guard runs on the recovered page text + inline images (:mod:`.scan`): an
+    injection-bearing convention file or an instruction-carrying ``data:`` image marks the
+    born-quarantined draft with a visible basis (``info['x-poison']`` / an ``x-review``
+    note). ``image_ocr`` is the injectable OCR seam for offline tests of the L3 path.
     """
     is_url = source.startswith(("http://", "https://"))
     rendered = False
@@ -130,6 +163,9 @@ def from_docs(
     warnings: list[str] = []
 
     text = _fetch(source, resolver=resolver)
+    # The text that actually produced the recovered ops — scanned by Skill Guard below.
+    # Kept in lock-step with ``page`` as the md-twin / render fallbacks replace the source.
+    page_text = text
     # A ``.md`` URL is markdown, not HTML — parse it as such (Stripe/Mintlify serve a
     # ``.md`` twin of every page). Otherwise parse HTML.
     if source.endswith(".md"):
@@ -149,7 +185,7 @@ def from_docs(
             md_page = page_from_markdown(md_url, md_text)
             md_ops = parse_page(md_page)
             if len(md_ops) > len(ops):
-                page, ops, from_md = md_page, md_ops, True
+                page, ops, from_md, page_text = md_page, md_ops, True, md_text
         except (OSError, UnsafeUrlError) as exc:
             # No ``.md`` twin (404), or an unsafe/invalid sibling URL — fall through to
             # the render path; record why so a 0-op answer stays explainable.
@@ -166,6 +202,7 @@ def from_docs(
         if renderer is not None:
             try:
                 text = renderer(source)
+                page_text = text
                 page = page_from_html(source, text)
                 ops = parse_page(page)
                 rendered = True
@@ -181,6 +218,7 @@ def from_docs(
     draft = build_draft_openapi(
         ops, title=doc_title, source_urls=[source], uuid_auth=uuid_auth
     )
+    _apply_skill_guard(draft, page_text, image_ocr=image_ocr)
     notes, low = count_review_flags(draft)
     return DocsDraft(
         draft=draft,
