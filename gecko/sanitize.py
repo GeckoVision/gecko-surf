@@ -91,10 +91,13 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|earlier|above)\s+"
         r"(?:instructions?|prompts?|context)"
         r"|disregard\s+(?:the\s+|all\s+|any\s+)?(?:previous|prior|above|system)"
-        # "forget" needs an instructions/context OBJECT — a bare "forget the legacy
-        # Makefile" is benign dev prose, not an injection.
-        r"|forget\s+(?:all\s+|the\s+)?(?:previous|prior|above)\s+"
-        r"(?:instructions?|prompts?|context)"
+        # "forget" fires when a directional-context word (previous/prior/above/earlier)
+        # OR an instruction-ish object (instructions/prompts/context/rules/told/said)
+        # sits within a short window — "Forget all your instructions", "Forget
+        # everything above", "forget the previous instructions". A bare "Forget the
+        # legacy Makefile" has NEITHER nearby → benign dev prose, stays clean.
+        r"|forget\b[^.\n]{0,30}?\b(?:previous|prior|above|earlier|"
+        r"instructions?|prompts?|context|rules?|told|said)\b"
         r"|(?:new|updated)\s+instructions?\s*:"
         # "you are now" needs a role/mode OBJECT (a/an/the/in <role>, or a DAN-style
         # jailbreak word) — "you are now on the main branch" is benign dev prose.
@@ -131,9 +134,13 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
 # Words for "look at a rendered artifact".
 _RENDER_VERB = r"(?:ocr|read|open|render|scan|extract|view|inspect|load)"
 # Rendered-artifact nouns (an image or an external file whose content is un-reviewed).
+# Every alternative is a rendered-artifact WORD or image-format token, matched with word
+# boundaries (`\b…\b` at the call sites) so it only resolves as a STANDALONE token — a
+# bare `.png` that is merely an incidental path reference (no render verb, no adhere
+# adverb, no source-of-truth claim near it) never constitutes a follow-signal on its own.
 _RENDERED_NOUN = (
     r"(?:png|jpe?g|gif|bmp|webp|tiff?|image|diagram|picture|figure|screenshot|"
-    r"graphic|photo)"
+    r"graphic|photo|chart)"
 )
 # "Adhere to it literally" adverbs — the tell that the rendered content is treated as an
 # authoritative instruction, not a reference.
@@ -160,38 +167,56 @@ _FOLLOW_RENDERED: re.Pattern[str] = re.compile(
     # (c) follow/perform the RENDERED artifact <adhere literally>. The rendered noun is
     # REQUIRED here: "follow the OCR'd diagram exactly" fires; "follow the release
     # checklist exactly" does not.
-    rf"|\b{_FOLLOW_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.\n]{{0,60}}?\b{_ADHERE}\b",
+    rf"|\b{_FOLLOW_VERB}\b[^.\n]{{0,60}}?\b{_RENDERED_NOUN}\b[^.\n]{{0,60}}?\b{_ADHERE}\b"
+    # (d) a RENDER verb consuming a rendered artifact directly — "OCR build.png", "read
+    # the diagram" — with NO adhere adverb required, because consuming un-reviewed
+    # rendered content AS the source IS the tell. The rendered noun is still REQUIRED, so
+    # "Read the local `.env` file" (a config file, not a rendered artifact) does NOT fire.
+    # The gap allows dots so a dotted image filename ("OCR build.png") resolves the noun.
+    # Coverage-only: this quarantines a doc only in COMBINATION with a numeric exfil tell
+    # inside the proximity window — a lone "read the diagram" is a benign false trigger.
+    rf"|{_RENDER_VERB}\b[^\n]{{0,40}}?\b{_RENDERED_NOUN}\b",
     re.IGNORECASE,
 )
 
-# Read/exfil action verbs (with light inflection) — the exfil TARGET must be their OBJECT,
-# not a bare mention. A `.env` in "copy `.env.example` to `.env`" or a `Final[tuple[int,
-# ...]]` type annotation carries no read/emit verb, so neither is a standalone tell.
+# Emit/encode action verbs (with light inflection) — the numeric container must be the
+# OBJECT of one of these. Kept broad (read/dump/load included) because a numeric byte-dump
+# next to ANY of these is the covert tell; a bare `Final[tuple[int, ...]]` annotation with
+# no adjacent action verb is a legitimate type and does not fire.
 _EXFIL_VERB_ACTION = (
     r"(?:read|open|cat|load|encode|dump|emit|exfiltrate|serialize|serialise|"
     r"write|derive|output|construct|produce)(?:s|d|ed|ing)?"
 )
-# The canonical secret file / env container (coverage: dotenv, "environment file").
-_ENV_TARGET = r"(?:\.env\b|\benvironment file\b|\bdotenv\b)"
-# Numeric byte-dump container — encoding secret bytes as integers/codepoints to slip past
-# secret scanners (no scanner treats a list of integers as a credential). A bare container
-# word is NOT a tell; it must be tied to a read/emit action (below).
+# Numeric / encoded byte-dump container — encoding a secret's CONTENTS as integers, ASCII
+# codepoints, or a comma-separated decimal series to slip past secret scanners (no scanner
+# treats a list of integers as a credential). THIS is the required GhostCommit tell. A bare
+# container word is NOT enough; it must be tied to an emit/derive action (below).
 _NUM_CONTAINER = (
     r"(?:byte[\s-]?values?|byte[\s-]?stream|(?:ascii\s+)?code[\s-]?points?|"
     r"ord\s*\(\s*c|(?:tuple|list|array|sequence)\s*\[\s*int|"
     r"(?:tuple|list|array|sequence)s?\s+of\s+"
-    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?))"
+    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?)|"
+    r"comma[\s-]?separated\s+(?:decimal|integer|numeric|number)s?"
+    r"(?:\s+numbers?)?(?:\s+(?:series|sequence|list|values?))?|"
+    r"decimal\s+(?:number\s+)?series)"
 )
 
-# _EXFIL_TARGET fires on an exfil/secret container tell where the container is the OBJECT
-# of a read/emit action: reading the `.env`, or emitting file/secret bytes as the covert
-# numeric container. Bare `.env` / `tuple[int, ...]` / "byte values" no longer fire alone.
+# _EXFIL_TARGET fires ONLY on the numeric/encoded byte-dump container as the OBJECT of an
+# emit/derive action — the GhostCommit "encode a secret's CONTENTS as a numeric literal"
+# step. Redesign (Critical #1): a bare `.env` / "load .env" / "read the environment file"
+# is NO LONGER sufficient — proximity of file access + diagram-reading is normal onboarding,
+# not malice. The `.env` may CORROBORATE in prose but the numeric-encode tell is REQUIRED.
+#
+# NAMED RESIDUAL (plan-disclosed, do NOT re-widen): a reworded exfil that DROPS the numeric
+# tell ("serialize the environment file" with no numeric container) now MISSES here.
+# Narrowing the false positive on benign onboarding is worth this; downstream containment
+# is the auth-host pin + recorded-mode scrub, not this scan.
 _EXFIL_TARGET: re.Pattern[str] = re.compile(
-    # (1) a read/exfil verb whose OBJECT is the .env / dotenv file
-    rf"{_EXFIL_VERB_ACTION}\b[^.\n]{{0,40}}?{_ENV_TARGET}"
-    # (2) the numeric byte-dump container tied to a read/emit action, either order:
-    #     "emit ... tuple of integers" / "byte values derived per …"
-    rf"|{_EXFIL_VERB_ACTION}\b[^.\n]{{0,40}}?{_NUM_CONTAINER}"
+    # (forward) emit/derive action → numeric container. The gap tolerates dots so a
+    # dotted token between them ("emit the .env contents as a tuple of ints") still binds
+    # — the attacker naming the `.env` between the verb and the encoding must not evade.
+    rf"{_EXFIL_VERB_ACTION}\b[^\n]{{0,40}}?{_NUM_CONTAINER}"
+    # (reverse) numeric container → emit/derive action ("byte values derived per …").
     rf"|{_NUM_CONTAINER}[^.\n]{{0,40}}?{_EXFIL_VERB_ACTION}\b",
     re.IGNORECASE,
 )
