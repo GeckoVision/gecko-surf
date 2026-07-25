@@ -337,6 +337,44 @@ def test_real_ocr_of_build_spec_is_poison():
     assert imagescan.scan_image(data).tier == "poison"
 
 
+# --- decompression-bomb: the REAL Pillow path, fail-closed --------------------------
+
+
+def test_decompression_bomb_png_scan_image_does_not_raise_and_is_review():
+    """SECURITY REGRESSION (real Pillow path, not injected): a ~68-byte PNG declaring
+    60000×60000 pixels makes Pillow raise ``DecompressionBombError`` (a bare Exception
+    subclass, so it slipped the old ``(OSError, ValueError)`` catch and crashed
+    comprehension). ``scan_image`` must NOT raise and must fail CLOSED — a scan error on
+    attacker bytes is an anomaly (``review``), never clean-by-crash."""
+    pytest.importorskip("PIL")  # the crash only exists when Pillow can decode headers
+    bomb = make_fixtures.decompression_bomb_png()
+    assert len(bomb) < 128  # tiny file, enormous declared dimensions
+
+    verdict = imagescan.scan_image(bomb)  # must not raise
+
+    assert verdict.tier == "review"
+    assert any("scan-error" in b for b in verdict.basis)
+
+
+def test_legit_large_valid_image_still_scans_clean():
+    """Guard the constraint: a genuinely large but VALID image (full pixel data, below
+    the bomb threshold) still decodes and verdicts ``clean`` — only genuine parser
+    failures degrade to the scan-error review basis, never a legitimately large image."""
+    Image = pytest.importorskip("PIL.Image")
+    buf = io.BytesIO()
+    Image.new("RGB", (2000, 2000), "white").save(buf, format="PNG")
+
+    assert imagescan.scan_image(buf.getvalue()).tier == "clean"
+
+
+def test_decompression_bomb_pillow_metadata_returns_empty_never_raises():
+    """The helper's contract holds on the bomb: ``extract_pillow_metadata`` degrades to
+    ``[]`` (never raises) even though the internal decode is refused."""
+    pytest.importorskip("PIL")
+    bomb = make_fixtures.decompression_bomb_png()
+    assert imagescan.extract_pillow_metadata(bomb) == []
+
+
 # --- L2 deep metadata via Pillow ([imagescan] extra) ---------------------------------
 
 

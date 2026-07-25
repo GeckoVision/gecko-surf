@@ -77,6 +77,13 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 # Anomaly names (control-plane safe — names only, never payload).
 _ANOMALY_OVERSIZED = "png:oversized-metadata"
+# A crafted image the decoder REFUSES (huge declared dimensions in a tiny file →
+# Pillow DecompressionBombError, or otherwise undecodable image-signatured bytes).
+# Bytes that break the scanner are the attack signal, so this is a fail-closed
+# anomaly (→ review), never silently "clean". Named, never the payload.
+_ANOMALY_SCAN_ERROR = "scan-error"
+
+_JPEG_SIGNATURE = b"\xff\xd8"
 
 
 @dataclass(frozen=True)
@@ -299,10 +306,14 @@ def ocr_text(data: bytes) -> str:
     try:
         with Image.open(io.BytesIO(data)) as img:
             recovered = pytesseract.image_to_string(img)
-    except (OSError, ValueError, pytesseract.TesseractError):
-        # OSError covers TesseractNotFoundError (binary absent) and PIL's
-        # UnidentifiedImageError / truncated-image OSError; TesseractError covers a
-        # runtime tesseract failure. OCR is best-effort — any failure degrades to "".
+    except Exception:
+        # This function's contract is "never raises, return '' on failure". A broad
+        # catch is correct for an untrusted-input parser: OSError covers
+        # TesseractNotFoundError and PIL's UnidentifiedImageError / truncated-image
+        # OSError, ValueError covers bad modes, TesseractError a runtime failure — but
+        # Pillow also raises DecompressionBombError (a bare Exception subclass) on a
+        # crafted huge-dimension image, and that MUST NOT crash comprehension. OCR is
+        # best-effort; any failure degrades to "" (fail-closed is enforced upstream).
         return ""
     return recovered or ""
 
@@ -322,17 +333,29 @@ def _collect_exif_ifd(ifd: Any, prefix: str, channels: list[TextChannel]) -> Non
             channels.append(TextChannel(f"exif:{name}", value))
 
 
-def extract_pillow_metadata(data: bytes) -> list[TextChannel]:
-    """Deep image metadata via Pillow: EXIF (base + Exif IFD), XMP / ``info`` strings,
-    IPTC, ICC. Returns ``[]`` when Pillow is absent (base install unaffected) and never
-    raises. Kept OUT of :func:`extract_text_channels` (which stays stdlib-only) — merged
-    into :func:`scan_image`'s channel set — so a plain install's L2 behaviour is identical
-    with or without the ``[imagescan]`` extra.
+def _looks_like_image(data: bytes) -> bool:
+    """True when ``data`` carries a PNG/JPEG signature — i.e. it *claims* to be an
+    image. Only signatured-but-undecodable bytes count as a scan-error anomaly; random
+    non-image bytes are simply not an image (no anomaly)."""
+    return data.startswith(_PNG_SIGNATURE) or data.startswith(_JPEG_SIGNATURE)
+
+
+def _pillow_metadata(data: bytes) -> tuple[list[TextChannel], str | None]:
+    """Deep Pillow metadata channels + an optional scan-error anomaly, in ONE decode.
+
+    Returns ``(channels, None)`` normally. Returns ``(channels, _ANOMALY_SCAN_ERROR)``
+    when Pillow is present but REFUSES to open image-signatured bytes — a crafted
+    decompression bomb (huge declared dimensions in a tiny file → Pillow raises
+    ``DecompressionBombError``, a bare :class:`Exception` subclass) or otherwise
+    undecodable PNG/JPEG. That failure on attacker bytes is the attack signal, so it is
+    surfaced as a fail-closed anomaly (→ ``review``) rather than being swallowed into a
+    false ``clean``. Pillow absent → ``([], None)`` (base install unaffected; it cannot
+    decode images at all, so it neither sees nor crashes on the bomb). Never raises.
     """
     try:
         from PIL import ExifTags, Image
     except ImportError:
-        return []
+        return [], None
     channels: list[TextChannel] = []
     try:
         with Image.open(io.BytesIO(data)) as img:
@@ -349,9 +372,25 @@ def extract_pillow_metadata(data: bytes) -> list[TextChannel]:
             for key, value in getattr(img, "info", {}).items():
                 if isinstance(value, str) and value:
                     channels.append(TextChannel(f"pillow:info:{key}", value))
-    except (OSError, ValueError):
-        # Not a Pillow-decodable image / truncated — degrade to whatever was collected.
-        return channels
+    except Exception:
+        # Broad by contract: this never raises. OSError/ValueError cover a non-decodable
+        # or truncated image, but Pillow also raises DecompressionBombError (a bare
+        # Exception subclass) on a crafted huge-dimension image — catching only
+        # (OSError, ValueError) let it propagate and crash comprehension. Image-signatured
+        # bytes the decoder refuses are an anomaly (fail-closed); genuinely non-image bytes
+        # are not (they just aren't an image). Degrade to whatever channels were collected.
+        return channels, (_ANOMALY_SCAN_ERROR if _looks_like_image(data) else None)
+    return channels, None
+
+
+def extract_pillow_metadata(data: bytes) -> list[TextChannel]:
+    """Deep image metadata via Pillow: EXIF (base + Exif IFD), XMP / ``info`` strings,
+    IPTC, ICC. Returns ``[]`` when Pillow is absent (base install unaffected) and never
+    raises. Kept OUT of :func:`extract_text_channels` (which stays stdlib-only) — merged
+    into :func:`scan_image`'s channel set — so a plain install's L2 behaviour is identical
+    with or without the ``[imagescan]`` extra. Thin wrapper over :func:`_pillow_metadata`
+    that drops the scan-error signal (which :func:`scan_image` consumes as an anomaly)."""
+    channels, _scan_error = _pillow_metadata(data)
     return channels
 
 
@@ -411,9 +450,14 @@ def scan_image(
     """
     ocr_fn = ocr if ocr is not None else ocr_text
     channels = list(extract_text_channels(data))
-    channels.extend(extract_pillow_metadata(data))
+    pillow_channels, scan_error = _pillow_metadata(data)
+    channels.extend(pillow_channels)
     trailer = find_trailing_bytes(data)
     anomalies = structural_anomalies(data)
+    # A decoder that REFUSES attacker bytes (e.g. a decompression bomb) is itself an
+    # anomaly — surface it as review, never let a scan failure pass as clean.
+    if scan_error is not None:
+        anomalies.append(scan_error)
 
     scanned = len(channels)
     hits: list[str] = []

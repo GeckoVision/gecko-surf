@@ -104,11 +104,19 @@ def scan_doc_page(
 
     # Embedded images: decode inline data: URIs and run the image scanner (L2 + L3).
     for data in _iter_data_images(text):
-        verdict = (
-            scan_image(data, ocr=image_ocr)
-            if image_ocr is not None
-            else scan_image(data)
-        )
+        try:
+            verdict = (
+                scan_image(data, ocr=image_ocr)
+                if image_ocr is not None
+                else scan_image(data)
+            )
+        except Exception:
+            # scan_image is contracted never to raise, but an untrusted-input scanner
+            # must fail CLOSED: a scan that BREAKS on attacker bytes (e.g. a residual
+            # decoder crash) is an anomaly, not a pass. Flag the page for human review
+            # instead of silently continuing to a clean verdict. Name only, no payload.
+            review.append("image:scan-error")
+            continue
         if verdict.tier == "poison":
             poison.extend(f"image:{b}" for b in verdict.basis)
         elif verdict.tier == "review":
