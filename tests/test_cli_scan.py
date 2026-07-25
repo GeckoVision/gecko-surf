@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gecko import cli
+from gecko import cli, imagescan
 
 _FIX = Path(__file__).resolve().parent / "fixtures" / "imagescan"
 
@@ -71,12 +71,14 @@ def test_scan_image_clean_arch_exit_zero(capsys) -> None:
     assert "CLEAN" in out
 
 
-def test_scan_image_build_spec_clean_at_L2_without_ocr(capsys) -> None:
+def test_scan_image_build_spec_clean_at_L2_without_ocr(capsys, monkeypatch) -> None:
     # The flagship GhostCommit payload is rendered as VISIBLE PIXELS — no metadata,
-    # no trailing bytes. On the base/no-tesseract path L2 sees nothing, so this is
-    # CLEAN and exits 0. WITH the `[ocr]` extra installed, L3 OCRs the pixels and
-    # this same image verdicts POISON (basis `ocr → follow+exfil`) — documenting
-    # that OCR is what closes this specific case.
+    # no trailing bytes. On the base/no-OCR path L2 sees nothing, so this is CLEAN
+    # and exits 0. WITH the `[ocr]` extra installed, L3 OCRs the pixels and this same
+    # image verdicts POISON (basis `ocr → follow+exfil`) — documenting that OCR is
+    # what closes this specific case. Force the no-OCR path (stub `ocr_text` → "") so
+    # the assertion is deterministic whether or not tesseract is installed here.
+    monkeypatch.setattr(imagescan, "ocr_text", lambda _d: "")
     rc = cli.main(["scan-image", str(_FIX / "build_spec_payload.png")])
     out = capsys.readouterr().out
     assert rc == 0
