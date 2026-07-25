@@ -302,13 +302,14 @@ def _declared_split(
 ) -> tuple[dict[str, str], set[str]]:
     """``(name -> entity merged vocab, customer-confirmed names)`` — both normalized.
 
-    The graph carries the MERGED declared vocabulary but loses provenance; the
-    provider (untrusted spec x-gecko) vs. customer (injected confirmations) split is
-    reconstructed here so guardrail 3/4 can gate on it. Customer wins on conflict,
-    matching the client's own merge order."""
-    client = surface.client
+    Both come straight off the graph: ``graph.declared`` is the MERGED
+    (provider∪customer) vocab, ``graph.confirmed`` is the CUSTOMER-vouched subset.
+    Reading ``confirmed`` here (rather than reconstructing it from
+    ``client._declared_hints``) makes the graph the ONE provenance source both the
+    correlation engine and the compose planner share — so guardrail 3/4 can never
+    disagree between the report and the executable plan."""
     merged = dict(surface.graph.declared)  # already normalized name -> entity
-    customer = {_norm(k) for k in client._declared_hints}
+    customer = {name for name, _ in surface.graph.confirmed}
     return merged, {n for n in merged if n in customer}
 
 

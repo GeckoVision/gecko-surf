@@ -237,6 +237,35 @@ def test_provider_declared_only_is_candidate() -> None:
     assert "provider-declared-unconfirmed" in link.basis.signals
 
 
+# --- SECURITY (Graph P2 BLOCKING): plan_eligible is the SOLE plan gate -----------
+def test_cross_plan_refuses_provider_only_declared() -> None:
+    """The blocking finding: correlate gates a provider-only x-gecko declaration to
+    ``plan_eligible=False`` (a candidate), but ``cross_plan`` read the MERGED
+    ``graph.declared`` with provenance stripped, so a malicious provider
+    self-declaration minted an EXECUTABLE cross-API chain. cross_plan must refuse it
+    — an untrusted provider can't unilaterally mint a cross-system plan. Provider-only
+    = x-gecko marker present, NO customer confirmation (declared_hints)."""
+    a = _surface(_producer_spec(declared=True), "resolver")  # provider x-gecko only
+    b = _surface(_consumer_spec(declared=True), "prices")  # provider x-gecko only
+    ws = Workspace(graphs=(a.graph, b.graph))
+    assert cross_plan(ws, "prices", "getPrice", set()) is None
+
+
+def test_confirmed_subset_is_customer_only_not_provider() -> None:
+    """``graph.confirmed`` is the trusted CUSTOMER-confirmed subset — populated ONLY
+    from injected ``declared_hints``, never from provider x-gecko. It is the ONE
+    provenance source both correlate and compose read (no per-engine reconstruction)."""
+    # provider x-gecko present, but NO customer confirm -> declared has it, confirmed empty
+    provider_only = _surface(_producer_spec(declared=True), "resolver").graph
+    assert ("tokenid", "solanatokenmint") in provider_only.declared
+    assert provider_only.confirmed == ()
+    # a customer confirmation -> present in confirmed (the trusted subset)
+    confirmed = _surface(
+        _producer_spec(declared=False), "resolver", hints=_CONFIRMED
+    ).graph
+    assert ("tokenid", "solanatokenmint") in confirmed.confirmed
+
+
 # --- control-plane: the scorer input cannot carry a payload ---------------------
 _FORBIDDEN = (
     "value",

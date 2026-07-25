@@ -335,6 +335,15 @@ class SurfaceGraph:
     # (normalized_name, entity) pairs — carried on the graph so compose() can
     # join across surfaces on entity identity without re-reading any spec.
     declared: tuple[tuple[str, str], ...] = ()
+    # the CUSTOMER-CONFIRMED subset of ``declared`` — the (normalized_name, entity)
+    # pairs whose source is the workspace confirm store (injected declared_hints),
+    # NOT provider-authored x-gecko. This is the TRUSTED subset: only a customer
+    # vouch may drive an executable cross-surface plan (compose.cross_plan) or a
+    # plan-eligible cross-API correlation (§13.6 guardrail 3/4). ``declared`` stays
+    # the merged provider∪customer vocab (untrusted); ``confirmed`` is what a human
+    # actually stood behind. Empty when no customer hints were injected -> compose
+    # refuses every cross-join (fail-closed: nothing is customer-vouched).
+    confirmed: tuple[tuple[str, str], ...] = ()
     # indices (not serialized) — kept out of the content hash on purpose.
     _by_id: dict[str, Node] = field(default_factory=dict, compare=False, repr=False)
 
@@ -347,6 +356,7 @@ class SurfaceGraph:
         payload = {
             "surface_id": self.surface_id,
             "declared": sorted(list(pair) for pair in self.declared),
+            "confirmed": sorted(list(pair) for pair in self.confirmed),
             "nodes": sorted(
                 ([n.kind, n.id, n.name, n.owner, n.detail, n.sig] for n in self.nodes),
             ),
@@ -536,6 +546,7 @@ def build_graph(
     *,
     surface_id: str = "",
     declared: Mapping[str, str] | None = None,
+    confirmed: Mapping[str, str] | None = None,
 ) -> SurfaceGraph:
     """Deterministic surface graph: operation/param/field/resource nodes + EXTRACTED
     produces/consumes/on edges + DECLARED feeds edges (explicit entity hints, the
@@ -545,12 +556,25 @@ def build_graph(
     ``declared`` maps a param/field NAME to an entity (from x-gecko hints or a
     customer confirmation); two names declared to the same entity join with
     provenance DECLARED even when their names differ — the only cross-API-grade
-    basis (§13.6). Hint names/entities are matched on normalized form."""
+    basis (§13.6). Hint names/entities are matched on normalized form.
+
+    ``confirmed`` is the CUSTOMER-vouched subset of ``declared`` (the workspace
+    confirm store / injected ``declared_hints``, NEVER provider x-gecko). It is
+    carried onto the graph as the trusted provenance source both correlate and
+    compose read: only a confirmed entity may drive an executable cross-surface
+    plan. Omitted -> empty -> compose refuses all cross-joins (fail-closed)."""
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     ns = _ns(surface_id)
     # normalized declared vocabulary: name -> entity (both sides normalized).
     decl = {_norm(k): _norm(v) for k, v in (declared or {}).items() if k and v}
+    # the customer-confirmed subset — same normalization; only names that are also
+    # in ``decl`` (a confirmation without a matching declared name is inert).
+    conf = {
+        _norm(k): _norm(v)
+        for k, v in (confirmed or {}).items()
+        if k and v and _norm(k) in decl
+    }
 
     def add_node(node: Node) -> None:
         nodes.setdefault(node.id, node)
@@ -730,5 +754,6 @@ def build_graph(
         edges=tuple(uniq_edges),
         surface_id=surface_id,
         declared=tuple(sorted(decl.items())),
+        confirmed=tuple(sorted(conf.items())),
         _by_id=by_id,
     )
