@@ -124,12 +124,14 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 # --- L1: convention/doc-text scan for image-borne injection (GhostCommit) ------------
-# The delivery vector is a clean-looking convention file (AGENTS.md) that (a) tells the
-# agent to read/OCR an image and FOLLOW its rendered instructions literally, and (b)
-# mandates emitting a numeric constant derived byte-by-byte (the exfil container). The
-# dangerous procedure lives in the IMAGE, not this text — so scan_text alone MISSES it.
-# Two NARROW detectors, used ONLY in combination (the FP discipline): each is coverage-
-# only, and either one alone is a benign-doc false positive that must NOT quarantine.
+# The delivery vector is a clean-looking convention file (AGENTS.md) that tells the agent
+# to read/OCR an image and follow its rendered instructions, and the IMAGE carries the
+# exfil procedure (read `.env`, encode its bytes as a numeric literal). The core tell is
+# the exfil SIGNATURE — a SECRET-SOURCE whose CONTENTS are numeric-ENCODED — which is
+# inherently malicious ON ITS OWN. It fires whether the payload arrives as convention prose
+# OR as the raw OCR'd text of the image (which points at no other artifact and so carries
+# NO follow-rendered signal). ``_FOLLOW_RENDERED`` remains an OPTIONAL corroborator for the
+# delivery-file shape, but is NEVER a gate — requiring it was the OCR-miss this fixes.
 
 # Words for "look at a rendered artifact".
 _RENDER_VERB = r"(?:ocr|read|open|render|scan|extract|view|inspect|load)"
@@ -179,54 +181,105 @@ _FOLLOW_RENDERED: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
-# Emit/encode action verbs (with light inflection) — the numeric container must be the
-# OBJECT of one of these. Kept broad (read/dump/load included) because a numeric byte-dump
-# next to ANY of these is the covert tell; a bare `Final[tuple[int, ...]]` annotation with
-# no adjacent action verb is a legitimate type and does not fire.
-_EXFIL_VERB_ACTION = (
-    r"(?:read|open|cat|load|encode|dump|emit|exfiltrate|serialize|serialise|"
-    r"write|derive|output|construct|produce)(?:s|d|ed|ing)?"
-)
-# Numeric / encoded byte-dump container — encoding a secret's CONTENTS as integers, ASCII
-# codepoints, or a comma-separated decimal series to slip past secret scanners (no scanner
-# treats a list of integers as a credential). THIS is the required GhostCommit tell. A bare
-# container word is NOT enough; it must be tied to an emit/derive action (below).
-_NUM_CONTAINER = (
-    r"(?:byte[\s-]?values?|byte[\s-]?stream|(?:ascii\s+)?code[\s-]?points?|"
-    r"ord\s*\(\s*c|(?:tuple|list|array|sequence)\s*\[\s*int|"
-    r"(?:tuple|list|array|sequence)s?\s+of\s+"
-    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?)|"
-    r"comma[\s-]?separated\s+(?:decimal|integer|numeric|number)s?"
-    r"(?:\s+numbers?)?(?:\s+(?:series|sequence|list|values?))?|"
-    r"decimal\s+(?:number\s+)?series)"
-)
+# --- the exfil signature: a SECRET-SOURCE whose CONTENTS are numeric-ENCODED ------------
+# REDESIGN (unified diagnosis). The old detector required _FOLLOW_RENDERED AND a numeric
+# container that fired on a container ALONE. That was BOTH too broad (benign OCR/dataviz/ML
+# prose — "read the image … construct a list[int] … render the chart" — tripped both) and
+# too narrow (the REAL OCR'd GhostCommit payload carries the exfil PROCEDURE directly, with
+# NO follow-rendered signal, so requiring follow-rendered MISSED it). The fix: the tell is
+# "encode a SECRET's CONTENTS as a numeric literal" — inherently malicious ON ITS OWN, and
+# it is a SECRET-SOURCE token bound to a numeric-ENCODE tell within _L1_PROXIMITY. That
+# catches the OCR'd image payload (`.env` + ord(c)/codepoints, no follow-rendered) and the
+# delivery file (`environment` + byte values) while leaving numeric-container-but-no-secret
+# dataviz/OCR docs CLEAN. _FOLLOW_RENDERED is now an optional corroborator, never a gate.
 
-# _EXFIL_TARGET fires ONLY on the numeric/encoded byte-dump container as the OBJECT of an
-# emit/derive action — the GhostCommit "encode a secret's CONTENTS as a numeric literal"
-# step. Redesign (Critical #1): a bare `.env` / "load .env" / "read the environment file"
-# is NO LONGER sufficient — proximity of file access + diagram-reading is normal onboarding,
-# not malice. The `.env` may CORROBORATE in prose but the numeric-encode tell is REQUIRED.
-#
-# NAMED RESIDUAL (plan-disclosed, do NOT re-widen): a reworded exfil that DROPS the numeric
-# tell ("serialize the environment file" with no numeric container) now MISSES here.
-# Narrowing the false positive on benign onboarding is worth this; downstream containment
-# is the auth-host pin + recorded-mode scrub, not this scan.
-_EXFIL_TARGET: re.Pattern[str] = re.compile(
-    # (forward) emit/derive action → numeric container. The gap tolerates dots so a
-    # dotted token between them ("emit the .env contents as a tuple of ints") still binds
-    # — the attacker naming the `.env` between the verb and the encoding must not evade.
-    rf"{_EXFIL_VERB_ACTION}\b[^\n]{{0,40}}?{_NUM_CONTAINER}"
-    # (reverse) numeric container → emit/derive action ("byte values derived per …").
-    rf"|{_NUM_CONTAINER}[^.\n]{{0,40}}?{_EXFIL_VERB_ACTION}\b",
+# Secret-SOURCE: a credential/secret, or a secrets-bearing FILE whose contents an exfil step
+# encodes. Deliberately NOT bare "token"/"key" (ubiquitous in API prose) — those forms are
+# QUALIFIED (access/refresh/api/private…). Bare "environment" IS included: the GhostCommit
+# delivery file says "if your environment does not render … byte values derived …" and that
+# is its only secret-source token. It only ever contributes to a verdict when a numeric-
+# ENCODE tell sits within the window — benign "production environment" prose never does.
+_SECRET_SOURCE: re.Pattern[str] = re.compile(
+    r"\.env\b"
+    r"|\bdotenv\b"
+    r"|\benv(?:ironment)?[\s_-]?(?:file|vars?|variables?)\b"
+    r"|\benvironment\b"
+    r"|\bapi[\s_-]?keys?\b|\bapi[\s_-]?secrets?\b"
+    r"|\b(?:access|refresh|auth|bearer|session)[\s_-]?tokens?\b"
+    r"|\bprivate[\s-]?keys?\b|\bsecret[\s-]?keys?\b|\bsigning[\s-]?keys?\b"
+    r"|\bseed[\s-]?phrase\b|\bmnemonic\b|\brecovery[\s-]?phrase\b"
+    r"|\bcredentials?\b|\bpassphrase\b|\bpassword\b|\bsecrets?\b",
     re.IGNORECASE,
 )
 
-# Proximity window (chars): the follow-signal and the exfil target must co-occur in the
-# same procedural block. A follow-signal in a "Style" section and a `.env` read in a
-# "Setup" section are unrelated and must NOT combine into a false quarantine.
+# Numeric-ENCODE of contents — two forms.
+# (A) STRONG, inherently content-encoding: ord(c), (ASCII) codepoints, byte VALUES, and a
+#     byte STREAM rendered as numbers. Each, on its own, means "turn chars/bytes into
+#     numbers"; no benign numeric return type reads like this. (Still gated by an outer
+#     secret-source, so "raw byte values from the wire" with no secret stays CLEAN.)
+_NUM_ENCODE_STRONG = (
+    r"ord\s*\(\s*c"
+    r"|(?:ascii\s+)?code[\s-]?points?"
+    r"|byte[\s-]?values?"
+    r"|byte[\s-]?stream[^\n]{0,40}?(?:int(?:eger)?s?|numbers?|ord|code[\s-]?points?|decimal)"
+)
+# (B) A GENERIC numeric container (tuple[int], tuple/list/array/sequence of ints, a comma-
+#     separated decimal series) is a benign TYPE on its own — a bare `Final[tuple[int, ...]]`
+#     annotation, "emit the build number as a tuple of ints", "a tuple of ints for the rate
+#     limit" are all legitimate. It counts as an exfil tell ONLY when it is the ENCODING OF a
+#     secret/contents OBJECT: (verb → object → as/into/to → container) or (container of
+#     object). THIS binding — not mere co-occurrence of a secret word and a numeric type — is
+#     what keeps `.env` + `Final[tuple[int, ...]]` in a benign convention file CLEAN.
+_GENERIC_CONTAINER = (
+    r"(?:tuple|list|array|sequence)\s*\[\s*int"
+    r"|(?:tuple|list|array|sequence)s?\s+of\s+"
+    r"(?:int(?:eger)?s?|bytes?|char(?:acter)?s?|code[\s-]?points?|numbers?)"
+    r"|comma[\s-]?separated\s+(?:decimal|integer|numeric|number)s?"
+    r"(?:\s+(?:series|sequence|list|values?))?"
+    r"|decimal\s+(?:number\s+)?series"
+)
+# The object being encoded must be a secret/file or its literal CONTENTS (contents /
+# characters / bytes) — NOT "the build number" or "for the rate limit".
+_ENCODED_OBJECT = (
+    r"(?:its?\s+|the\s+|each\s+|every\s+|entire\s+)*(?:file\s+)?contents?"
+    r"|(?:its?\s+|the\s+|each\s+|every\s+)*char(?:acter)?s?"
+    r"|(?:its?\s+|the\s+|each\s+|every\s+)*bytes?"
+    r"|\.env\b|\bdotenv\b|environment\s+(?:file|vars?|variables?)"
+    r"|secrets?|credentials?|api[\s_-]?keys?|private[\s-]?keys?|password"
+)
+_ENCODE_ACTION = (
+    r"(?:encode|emit|serialize|serialise|dump|exfiltrate|output|write|derive|"
+    r"produce|convert|render|read|load|compute)(?:s|d|ed|ing)?"
+)
+_NUM_ENCODE_BOUND = (
+    rf"{_ENCODE_ACTION}\b[^\n]{{0,30}}?(?:{_ENCODED_OBJECT})"
+    rf"[^\n]{{0,25}}?\b(?:as|into|to)\b[^\n]{{0,20}}?(?:{_GENERIC_CONTAINER})"
+    rf"|(?:{_GENERIC_CONTAINER})[^\n]{{0,20}}?\bof\b[^\n]{{0,15}}?(?:{_ENCODED_OBJECT})"
+)
+
+# _EXFIL_TARGET matches a numeric-ENCODE tell (STRONG content-encode OR a container BOUND to
+# a secret/contents object). It is NO LONGER the whole signature: the poison verdict also
+# requires a _SECRET_SOURCE within _L1_PROXIMITY (see _exfil_signature_spans). A STRONG tell
+# with no nearby secret (dataviz "ascii codepoints" for ASCII-art) therefore stays CLEAN.
+#
+# NAMED RESIDUAL (plan-disclosed, do NOT re-widen to recover): a reworded exfil that DROPS
+# the numeric tell entirely ("serialize the environment file" / a base64/otherwise-encoded
+# payload) MISSES here. Narrowing the benign-onboarding FP is worth it; downstream
+# containment is the auth-host pin + recorded-mode scrub, not this scan.
+_EXFIL_TARGET: re.Pattern[str] = re.compile(
+    rf"(?:{_NUM_ENCODE_STRONG})|(?:{_NUM_ENCODE_BOUND})",
+    re.IGNORECASE,
+)
+
+# Proximity window (chars): the secret-source and the numeric-encode tell must co-occur in
+# the same procedural block. A `.env` mention in a "Setup" section and a genuine numeric
+# encode in an unrelated "Versioning" section must NOT combine into a false quarantine.
 _L1_PROXIMITY = 300
 
-# Basis names surfaced when BOTH detectors fire (the poison basis for a convention file).
+# Basis names. EXFIL_TARGET_SIGNAL is the exfil-signature verdict (secret-source +
+# numeric-encode). FOLLOW_RENDERED_SIGNAL is now an OPTIONAL corroborator appended only when
+# the doc also tells the agent to consume a rendered artifact as an instruction — never a
+# gate: the exfil signature poisons on its own (that is what catches the OCR'd payload).
 FOLLOW_RENDERED_SIGNAL = "follow_rendered_instructions"
 EXFIL_TARGET_SIGNAL = "exfil_encoded_target"
 
@@ -253,6 +306,26 @@ def _spans_within(
     return False
 
 
+def _exfil_signature_fires(folded: str) -> bool:
+    """True if the exfil signature is present: a numeric-ENCODE tell (``_EXFIL_TARGET``)
+    that sits within ``_L1_PROXIMITY`` chars of a ``_SECRET_SOURCE`` token — i.e. a
+    secret's CONTENTS being encoded as a numeric literal, the GhostCommit tell.
+
+    Requiring the secret-source is what keeps benign dataviz/OCR/ML prose CLEAN: a numeric
+    container ("construct a list[int]", "a tuple of ints for each channel", even "encode
+    each pixel as ascii codepoints") with NO nearby secret is not an exfil. Requiring the
+    numeric-ENCODE is what keeps benign onboarding CLEAN: a bare `.env` read next to a
+    diagram is normal setup, not exfil. Both, in the same block, is the signature.
+    """
+    secret_spans = [m.span() for m in _SECRET_SOURCE.finditer(folded)]
+    if not secret_spans:
+        return False
+    exfil_spans = [m.span() for m in _EXFIL_TARGET.finditer(folded)]
+    if not exfil_spans:
+        return False
+    return _spans_within(exfil_spans, secret_spans, _L1_PROXIMITY)
+
+
 def scan_convention_text(text: str) -> list[str]:
     """Return a poison basis for an untrusted convention/doc file (L1).
 
@@ -260,13 +333,14 @@ def scan_convention_text(text: str) -> list[str]:
 
     * The existing ``scan_text`` engine runs unchanged — a blunt "ignore previous
       instructions" in a doc still trips on its own.
-    * The image-borne combination: name BOTH ``FOLLOW_RENDERED_SIGNAL`` and
-      ``EXFIL_TARGET_SIGNAL`` ONLY when a ``_FOLLOW_RENDERED`` match and an
-      ``_EXFIL_TARGET`` match co-occur within ``_L1_PROXIMITY`` chars of each other
-      (the same procedural block). Requiring proximity — not two independent
-      whole-document searches — is the FP discipline: a benign "follow the diagram"
-      in a Style section and a benign "load config from `.env`" in a Setup section
-      are unrelated and must not combine into a quarantine.
+    * The exfil signature: append ``EXFIL_TARGET_SIGNAL`` whenever a secret-source token
+      and a numeric-ENCODE-of-contents tell co-occur within ``_L1_PROXIMITY`` chars
+      (``_exfil_signature_fires``). This is inherently malicious ON ITS OWN and does NOT
+      require a ``_FOLLOW_RENDERED`` signal — that is precisely what catches the OCR'd
+      GhostCommit image payload, whose text IS the procedure ("compute ord(c) … emit the
+      integers as a tuple") and points at no other artifact. ``FOLLOW_RENDERED_SIGNAL`` is
+      appended only as an OPTIONAL corroborator when the doc also treats a rendered artifact
+      as an instruction (the delivery-file shape) — never a gate.
 
     Deliberately does NOT call ``looks_like_address_value``: a bare wallet address in
     convention prose is DATA, not a routing directive, and must not quarantine (protects
@@ -276,15 +350,13 @@ def scan_convention_text(text: str) -> list[str]:
         return []
     basis = scan_text(text)  # independent engine; scan_text folds internally
     folded = _fold(text)
-    follow_spans = [m.span() for m in _FOLLOW_RENDERED.finditer(folded)]
-    exfil_spans = [m.span() for m in _EXFIL_TARGET.finditer(folded)]
-    if (
-        follow_spans
-        and exfil_spans
-        and _spans_within(follow_spans, exfil_spans, _L1_PROXIMITY)
-    ):
-        basis.append(FOLLOW_RENDERED_SIGNAL)
+    if _exfil_signature_fires(folded):
         basis.append(EXFIL_TARGET_SIGNAL)
+        # Optional corroborator — never a gate. Surfaced when the same doc also tells the
+        # agent to consume a rendered artifact as an instruction (the AGENTS.md delivery
+        # shape); absent for a bare OCR'd payload, which still poisons on the exfil signal.
+        if _FOLLOW_RENDERED.search(folded):
+            basis.append(FOLLOW_RENDERED_SIGNAL)
     return basis
 
 

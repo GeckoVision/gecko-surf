@@ -145,13 +145,22 @@ metadata; `pytesseract`/tesseract behind `[ocr]` for L3. No new **base** depende
 **Files:** `gecko/docs_reader/markdown.py` (`page_from_markdown`); `gecko/surfaces.py`; Test
 `tests/test_from_docs_imagescan.py`.
 
-- [ ] **5.1** In `page_from_markdown`: run L1 on the page text; for embedded images, scan
-  `data:` URIs inline (zero network) and same-origin `![](url)` images **only under the
-  existing SSRF guard** (`netguard.validate_public_url`). A poison verdict marks the
-  born-quarantined draft with the basis; `review` adds an `x-review` note.
-- [ ] **5.2** End-to-end: a from-docs page mirroring the PoC (a convention pointing at
-  `build_spec_payload.png` as a `data:` URI) comprehends to a **quarantined** surface, basis
-  names L1 and/or L3. A clean page comprehends normally.
+- [x] **5.1** Wired in `from_docs` (`gecko/docs_reader/core.py`) via a new
+  `gecko/docs_reader/scan.py`: L1 (`sanitize.scan_convention_text`) runs on the recovered
+  page text; embedded `data:image` URIs are decoded (pre-decode size cap) and scanned with
+  `imagescan.scan_image` (L2 + injectable L3 OCR). A poison verdict stamps document-level
+  `info['x-poison']` (basis = channel/rule names only); a review verdict adds an
+  `x-review` note. `spec_is_quarantined` (`gecko/surfaces.py`) now recognizes `x-poison`.
+  **RESIDUAL — remote images are NOT fetched:** only inline `data:` URIs are scanned (zero
+  network, no SSRF surface). `netguard.safe_get` is text-oriented (returns decoded `str`),
+  so scanning a binary remote image needs a new bytes-fetch path — deferred as network+
+  decode risk on the comprehension path for marginal PoC value (the flagship PoC inlines
+  the image). Any future remote fetch MUST go through `netguard.validate_public_url` with a
+  byte cap and swallow fetch errors. Locked by `test_remote_image_url_is_not_fetched`.
+- [x] **5.2** End-to-end (`tests/test_from_docs_imagescan.py`): the real `agents_delivery.md`
+  → quarantined, basis names both L1 signals; a `data:`-URI image with injected OCR →
+  quarantined (`image:ocr → …`); a `data:` image with a `tEXt`-chunk injection →
+  quarantined with NO OCR; a clean page + clean image → comprehends normally, no basis.
 
 ## Phase 6 — Demo surface (for Video 1) + honesty doc/memory
 

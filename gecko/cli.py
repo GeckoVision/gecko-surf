@@ -49,6 +49,8 @@ _SUBCOMMANDS = (
     "test",
     "inspect",
     "from-docs",
+    "scan-image",
+    "scan-doc",
     "auth",
     "graph",
     "rm",
@@ -388,6 +390,106 @@ def _cmd_from_docs(argv: list[str]) -> int:
         print(f"\nwrote draft OpenAPI -> {args.out}")
 
     return 0
+
+
+#: Skill Guard exit-code convention (shared by scan-image / scan-doc): a POISON
+#: verdict exits non-zero so the command is CI/pipe-usable; CLEAN and REVIEW both
+#: exit 0 (REVIEW is a soft "a human should look", not a hard block).
+_SCAN_POISON_EXIT = 2
+
+
+def _print_scan_verdict(
+    tier: str, basis: tuple[str, ...], *, channels_scanned: int | None = None
+) -> None:
+    """Print one Skill Guard verdict, demo-legibly (Video 1 shows this).
+
+    Presentation only — the tiering and the basis are computed in the package. The
+    header names the tier; the basis lines name WHY (channel + rule, never the
+    payload). ``basis`` is already control-plane safe (name-only) by construction.
+    """
+    headers = {
+        "poison": "POISON — quarantined (fail-closed: recorded-only until a human clears)",
+        "review": "REVIEW — flagged, a human should look",
+        "clean": "CLEAN — no injection or exfil signal found",
+    }
+    print(headers.get(tier, tier.upper()))
+    if channels_scanned is not None:
+        print(f"  channels scanned: {channels_scanned}")
+    if basis:
+        print("  basis:")
+        for reason in basis:
+            print(f"    - {reason}")
+    else:
+        print("  basis: (none)")
+
+
+def _cmd_scan_image(argv: list[str]) -> int:
+    """`gecko scan-image <path>` — scan one image for an image-borne injection.
+
+    Thin transport: read the file bytes, hand them to ``imagescan.scan_image``
+    (L2 stdlib metadata/trailing-bytes always; L3 OCR + Pillow deep metadata only
+    when those extras are present), print the verdict. Non-zero exit on POISON.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko scan-image",
+        description="Scan an image for an image-borne injection (Skill Guard). L2 "
+        "(stdlib metadata + trailing bytes) always runs; the [ocr] and [imagescan] "
+        "extras add rendered-pixel OCR + deep metadata when installed. Exits "
+        f"{_SCAN_POISON_EXIT} on POISON, 0 on CLEAN/REVIEW.",
+    )
+    p.add_argument("path", help="Path to a PNG/JPEG image file.")
+    args = p.parse_args(argv)
+
+    from . import imagescan
+
+    try:
+        data = Path(args.path).read_bytes()
+    except OSError as exc:
+        print(f"Could not read image: {exc}", file=sys.stderr)
+        return _SCAN_POISON_EXIT
+
+    verdict = imagescan.scan_image(data)
+    print(f"Gecko scan-image — {args.path}\n" + "=" * 56)
+    _print_scan_verdict(
+        verdict.tier, verdict.basis, channels_scanned=verdict.channels_scanned
+    )
+    return _SCAN_POISON_EXIT if verdict.tier == "poison" else 0
+
+
+def _cmd_scan_doc(argv: list[str]) -> int:
+    """`gecko scan-doc <path>` — scan one untrusted doc/convention page.
+
+    Thin transport: read the text file, hand it to ``docs_reader.scan.scan_doc_page``
+    (L1 convention-text tells + any inline ``data:`` image scanned as L2/L3), print
+    the verdict. Non-zero exit on POISON.
+    """
+    p = argparse.ArgumentParser(
+        prog="gecko scan-doc",
+        description="Scan an untrusted convention/doc page for a follow-rendered + "
+        "exfil delivery (Skill Guard L1) and any inline data: image (L2/L3). Exits "
+        f"{_SCAN_POISON_EXIT} on POISON, 0 on CLEAN/REVIEW.",
+    )
+    p.add_argument("path", help="Path to a text/markdown doc file.")
+    args = p.parse_args(argv)
+
+    from .docs_reader.scan import scan_doc_page
+
+    try:
+        text = Path(args.path).read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"Could not read doc: {exc}", file=sys.stderr)
+        return _SCAN_POISON_EXIT
+
+    verdict = scan_doc_page(text)
+    tier = (
+        "poison"
+        if verdict.poison_basis
+        else ("review" if verdict.review_basis else "clean")
+    )
+    basis = verdict.poison_basis or verdict.review_basis
+    print(f"Gecko scan-doc — {args.path}\n" + "=" * 56)
+    _print_scan_verdict(tier, basis)
+    return _SCAN_POISON_EXIT if tier == "poison" else 0
 
 
 def _cmd_graph(argv: list[str]) -> int:
@@ -853,6 +955,10 @@ def _print_help() -> None:
     print("  serve <spec>       serve a comprehended spec to agents (MCP)")
     print("  from-docs <src>    recover a draft OpenAPI from a doc page")
     print("  test  <spec>       first-call-correctness checks")
+    print(
+        "  scan-image <path>  scan an image for an image-borne injection (Skill Guard)"
+    )
+    print("  scan-doc <path>    scan an untrusted doc/convention page (Skill Guard)")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -1198,6 +1304,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_inspect(rest)
     if cmd == "from-docs":
         return _cmd_from_docs(rest)
+    if cmd == "scan-image":
+        return _cmd_scan_image(rest)
+    if cmd == "scan-doc":
+        return _cmd_scan_doc(rest)
     if cmd == "auth":
         return _cmd_auth(rest)
     if cmd == "graph":
