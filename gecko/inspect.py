@@ -62,6 +62,40 @@ class InspectionReport:
     score: int  # 0-100 overall
     dimensions: list[DimensionResult]
     summary: str
+    #: Content hash of the inspected spec (``surfaces.surface_rev``) — lets a stored
+    #: report be diffed against a later one to catch drift. Defaults empty for callers
+    #: that build a report without a spec on hand (kept back-compat with positional use).
+    surface_rev: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable form so a report can be persisted and diffed (``report_diff``).
+
+        Control-plane only: structure, scores, and finding metadata — never a payload,
+        value, or secret."""
+        return {
+            "api": self.api,
+            "grade": self.grade,
+            "score": self.score,
+            "surface_rev": self.surface_rev,
+            "summary": self.summary,
+            "dimensions": [
+                {
+                    "name": d.name,
+                    "score": d.score,
+                    "findings": [
+                        {
+                            "dimension": f.dimension,
+                            "severity": f.severity,
+                            "location": f.location,
+                            "message": f.message,
+                            "fix": f.fix,
+                        }
+                        for f in d.findings
+                    ],
+                }
+                for d in self.dimensions
+            ],
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -279,7 +313,7 @@ def inspect(spec: dict[str, Any], *, api: str) -> InspectionReport:
         f"{api}: agent-readiness {grade} ({overall}/100) — "
         f"{n_block} blocking, {n_warn} warnings"
     )
-    return InspectionReport(api, grade, overall, dims, summary)
+    return InspectionReport(api, grade, overall, dims, summary, client.surface_rev)
 
 
 def has_blocking(report: InspectionReport) -> bool:

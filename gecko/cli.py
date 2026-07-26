@@ -37,6 +37,7 @@ from . import (
 )
 from .access import public_session, stub_session
 from .client import AgentApiClient
+from .ingest import load_spec
 from .modes import coerce_mode
 from .netguard import UnsafeUrlError, validate_public_url
 
@@ -48,6 +49,7 @@ _SUBCOMMANDS = (
     "serve",
     "test",
     "inspect",
+    "report",
     "from-docs",
     "scan-image",
     "scan-doc",
@@ -284,6 +286,71 @@ def _cmd_inspect(argv: list[str]) -> int:
             file=sys.stderr,
         )
     return 1 if (below or inspect_mod.has_blocking(report)) else 0
+
+
+def _cmd_report(argv: list[str]) -> int:
+    """`gecko report <spec>` — the Agent-Readiness Scorecard (offline, $0).
+
+    Thin transport over :mod:`gecko.report`. Without `--since`, write the self-contained
+    HTML scorecard (plus a sidecar JSON for later diffs). With `--since <prior.json>`,
+    print the drift delta (score change + broken/resolved call-paths).
+    """
+    from . import inspect as inspect_mod
+    from . import report as report_mod
+
+    p = argparse.ArgumentParser(
+        prog="gecko report",
+        description="Build a self-contained agent-readiness scorecard (HTML) for an API.",
+    )
+    p.add_argument(
+        "spec",
+        help="An API domain, OpenAPI URL, docs URL, or local path — Gecko finds the spec.",
+    )
+    p.add_argument(
+        "-o",
+        "--out",
+        default=None,
+        help="Write the HTML here (default: <api>.scorecard.html).",
+    )
+    p.add_argument(
+        "--intent",
+        action="append",
+        default=None,
+        help="A plain-English intent to script the Playground (repeatable).",
+    )
+    p.add_argument(
+        "--since",
+        default=None,
+        help="A prior scorecard JSON — print the drift delta instead of writing HTML.",
+    )
+    args = p.parse_args(argv)
+    if _reject_unsafe(args.spec, "report"):
+        return 2
+    # Load once, directly — mirrors `gecko graph` (load_spec handles both a local
+    # yaml/json path and an SSRF-validated URL). The engine does the work.
+    try:
+        spec = load_spec(args.spec)
+    except (UnsafeUrlError, OSError, ValueError) as exc:
+        print(f"  ✗ could not read spec at {args.spec}: {exc}", file=sys.stderr)
+        return 2
+
+    name = onboard.safe_name(args.spec)
+    if args.since:
+        old = json.loads(Path(args.since).read_text(encoding="utf-8"))
+        new = inspect_mod.inspect(spec, api=name).to_dict()
+        print(report_mod.render_diff(report_mod.report_diff(old, new)))
+        return 0
+
+    html = report_mod.build_scorecard(spec, intents=args.intent)
+    out = Path(args.out) if args.out else Path(f"{name}.scorecard.html")
+    out.write_text(html, encoding="utf-8")
+    sidecar = out.with_suffix(".json")
+    sidecar.write_text(
+        json.dumps(inspect_mod.inspect(spec, api=name).to_dict(), indent=2),
+        encoding="utf-8",
+    )
+    print(f"  → wrote {out} ({len(html)} bytes) and {sidecar}")
+    return 0
 
 
 def _cmd_test(argv: list[str]) -> int:
@@ -1364,6 +1431,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_test(rest)
     if cmd == "inspect":
         return _cmd_inspect(rest)
+    if cmd == "report":
+        return _cmd_report(rest)
     if cmd == "from-docs":
         return _cmd_from_docs(rest)
     if cmd == "scan-image":
