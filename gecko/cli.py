@@ -54,6 +54,7 @@ _SUBCOMMANDS = (
     "auth",
     "graph",
     "correlate",
+    "index",
     "rm",
     "list",
     "doctor",
@@ -627,6 +628,38 @@ def _cmd_correlate(argv: list[str]) -> int:
     a = Surface.from_spec(args.spec_a, session=public_session(), surface_id=args.id_a)
     b = Surface.from_spec(args.spec_b, session=public_session(), surface_id=args.id_b)
     print(json.dumps(a.correlate(b).to_dict(), indent=2))
+    return 0
+
+
+def _cmd_index(argv: list[str]) -> int:
+    """`gecko index <specA> <specB> [...]` — the multi-provider value-domain index.
+
+    Thin transport, like `gecko correlate`: build a Surface per spec, then report the
+    deterministic ``entity -> {producers, consumers}`` map + the cross-provider joins as
+    JSON. A cross-provider join is plan-eligible ONLY when both sides are customer-
+    confirmed (§13.6); a provider-only declaration is a quarantined candidate. No vectors:
+    the index is a strict lookup by DECLARED entity. This is a report — non-zero exit is
+    not used.
+    """
+    from .access import public_session
+    from .surface import Surface
+    from .vindex import value_domain_index
+
+    p = argparse.ArgumentParser(
+        prog="gecko index",
+        description="Report the value-domain index across N surfaces, with provenance.",
+    )
+    p.add_argument("specs", nargs="+", help="Two+ OpenAPI URLs, paths, or docs URLs.")
+    args = p.parse_args(argv)
+    if len(args.specs) < 2:
+        print("index: need at least two specs to correlate.", file=sys.stderr)
+        return 2
+
+    surfaces = [
+        Surface.from_spec(spec, session=public_session(), surface_id=f"s{i}")
+        for i, spec in enumerate(args.specs)
+    ]
+    print(json.dumps(value_domain_index(surfaces).to_dict(), indent=2))
     return 0
 
 
@@ -1343,6 +1376,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_graph(rest)
     if cmd == "correlate":
         return _cmd_correlate(rest)
+    if cmd == "index":
+        return _cmd_index(rest)
     if cmd == "rm":
         return _cmd_rm(rest)
     if cmd == "list":

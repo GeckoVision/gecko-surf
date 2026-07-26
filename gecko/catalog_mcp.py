@@ -27,7 +27,8 @@ from typing import Any
 from .caller import CallError
 from .mcp_server import _SEARCH_TOOL, to_lightweight_ref
 from .modes import CallMode
-from .paysh_catalog import CatalogRegistry
+from .paysh_catalog import CatalogRegistry, ProviderSurface
+from .surfaces import SurfaceError, safe_surface_id
 
 # How many providers a cross-catalog search returns. Small: the agent wants the few most
 # relevant providers, not a marketplace dump.
@@ -100,6 +101,54 @@ class CatalogMcpSurface:
         if ps is None:
             raise CallError(f"unknown tool: {name!r}")
         return ps.client.get_tool(name)
+
+    # -- resolve (§13 Phase 3.2 — the context7 resolve-library-id analogue) -------
+    def enumerate_providers(self) -> list[str]:
+        """The fqns of the providers registered in THIS workspace's registry (sorted).
+
+        Scoped to what the operator provisioned — NEVER a hosted/global public catalog.
+        The `surfaces.py` non-goal holds: exposing a global ``ids()`` would make us a
+        marketplace; this only enumerates the workspace's own connected providers, the
+        enumerate half of the resolve step."""
+        return sorted(ps.entry.fqn for ps in self.registry.providers())
+
+    def resolve_provider(self, name: str) -> ProviderSurface | None:
+        """Resolve a provider by human name to its comprehended surface, or None.
+
+        Deterministic, no fuzzy guessing: an exact fqn, then an exact tool slug, then a
+        unique slug match against the tool name / fqn / title. An unknown or AMBIGUOUS
+        name returns None (never a marketplace dump). Resolution is scoped to the
+        workspace registry — the context7 ``resolve-library-id`` analogue, but over the
+        providers this workspace connected, not a global index."""
+        if not name or not name.strip():
+            return None
+        exact = self.registry.get(name) or self.registry.by_tool(name)
+        if exact is not None:
+            return exact
+        try:
+            slug = safe_surface_id(name)
+        except SurfaceError:
+            return None
+        by_slug = self.registry.by_tool(slug)
+        if by_slug is not None:
+            return by_slug
+        matches = [
+            ps
+            for ps in self.registry.providers()
+            if slug in (safe_surface_id(ps.entry.fqn), safe_surface_id(ps.entry.title))
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    # -- the value-domain index over every connected provider (§13 Phase 3.3) -----
+    def value_domain_index(self) -> Any:
+        """The ``entity -> {producers, consumers}`` index across every connected
+        provider — the cross-provider "what correlates with X" lookup. Deterministic,
+        control-plane only. Returns a :class:`~gecko.vindex.ValueDomainIndex`."""
+        from .surface import Surface
+        from .vindex import value_domain_index
+
+        surfaces = [Surface.of(ps.client) for ps in self.registry.providers()]
+        return value_domain_index(surfaces)
 
     def call_tool(
         self, name: str, arguments: dict[str, Any], session_id: str | None = None
