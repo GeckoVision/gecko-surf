@@ -139,16 +139,66 @@ class CatalogMcpSurface:
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def _surfaces(self) -> list[Any]:
+        """Wrap every connected provider client that carries a call graph as a Surface.
+
+        Getattr-guarded (guardrail for duck-typed clients): a registry client with no
+        ``surface_graph`` — a test fake, a not-yet-comprehended stub — is skipped rather
+        than raised on, so the aggregator degrades gracefully instead of crashing the
+        whole cross-provider query for one odd provider."""
+        from .surface import Surface
+
+        return [
+            Surface.of(ps.client)
+            for ps in self.registry.providers()
+            if getattr(ps.client, "surface_graph", None) is not None
+        ]
+
     # -- the value-domain index over every connected provider (§13 Phase 3.3) -----
     def value_domain_index(self) -> Any:
         """The ``entity -> {producers, consumers}`` index across every connected
         provider — the cross-provider "what correlates with X" lookup. Deterministic,
         control-plane only. Returns a :class:`~gecko.vindex.ValueDomainIndex`."""
-        from .surface import Surface
         from .vindex import value_domain_index
 
-        surfaces = [Surface.of(ps.client) for ps in self.registry.providers()]
-        return value_domain_index(surfaces)
+        return value_domain_index(self._surfaces())
+
+    # -- the aggregator correlation tools (§13 Phase 2b / Phase 4) -----------------
+    def correlate_surfaces(self, a: str, b: str) -> dict[str, Any]:
+        """Correlate two named/resolved providers in THIS workspace — which of A's
+        outputs feed B's inputs, each with a provenance-carrying basis and whether it is
+        plan-eligible now or a quarantined candidate.
+
+        Resolves both names through :meth:`resolve_provider` (deterministic, no fuzzy
+        guessing) and delegates to the shared Phase-2 ``correlate.correlate_surfaces`` —
+        the SAME confirmed-gate scorer as everywhere else, so a provider-only declaration
+        can never reach a plan-eligible cross-API join through this door. Returns the
+        control-plane-clean ``CorrelationResult.to_dict()`` (structure only, never a
+        payload). Raises :class:`~gecko.caller.CallError` on an unknown/ambiguous name."""
+        from .correlate import correlate_surfaces as _correlate
+        from .surface import Surface
+
+        ra = self.resolve_provider(a)
+        rb = self.resolve_provider(b)
+        unresolved = [n for n, r in ((a, ra), (b, rb)) if r is None]
+        if unresolved:
+            raise CallError(f"unknown or ambiguous provider(s): {unresolved!r}")
+        assert ra is not None and rb is not None  # narrowed by the guard above
+        return _correlate(Surface.of(ra.client), Surface.of(rb.client)).to_dict()
+
+    def find_correlations(self, entity: str) -> dict[str, Any]:
+        """The cross-provider query — "what correlates with ``entity`` across every
+        connected provider." Groups the producers/consumers of the DECLARED value-domain
+        entity and reports each cross-provider join tagged plan-eligible vs candidate via
+        the SHARED Phase-2 scorer. Control-plane clean: names + entity + provenance only,
+        never a response value."""
+        idx = self.value_domain_index()
+        group = idx.group(entity)
+        return {
+            "entity": entity,
+            "group": group.to_dict() if group is not None else None,
+            "cross_joins": [j.to_dict() for j in idx.find_correlations(entity)],
+        }
 
     def call_tool(
         self, name: str, arguments: dict[str, Any], session_id: str | None = None
@@ -161,6 +211,18 @@ class CatalogMcpSurface:
             return self.search_capabilities(str(args.get("query", "")))
         if name == "get_capability":
             return self.get_capability(str(args.get("name", "")))
+        # The cross-provider correlation doors (hidden: callable by name, NOT enumerated
+        # in list_tools — the projection stays byte-identical). Siblings of get_capability:
+        # dispatched by name, resolved in the package (correlate/vindex), control-plane
+        # only, and never reaching an upstream call.
+        if name == "correlate_surfaces":
+            return self.correlate_surfaces(
+                str(args.get("a", "")), str(args.get("b", ""))
+            )
+        if name == "find_correlations":
+            return self.find_correlations(str(args.get("entity", "")))
+        if name == "value_domain_index":
+            return self.value_domain_index().to_dict()
         ps = self.registry.by_tool(name)
         if ps is None:
             raise CallError(f"unknown tool: {name!r}")
