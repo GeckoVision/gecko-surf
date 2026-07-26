@@ -81,12 +81,31 @@ def market_spec(*, with_hints: bool = True) -> dict[str, Any]:
     }
 
 
+#: Market-side entity vocabulary as a CUSTOMER confirmation (§12) — what
+#: `gecko graph confirm market fixture_ref fixture` persists. A cross-API plan now
+#: requires BOTH sides CUSTOMER-confirmed: a provider x-gecko marker alone (the
+#: `with_hints` arg on market_spec) is DECLARED-but-untrusted and no longer drives
+#: an executable chain. Enforcing that only in correlate (the report) while
+#: compose.cross_plan read the merged `declared` was the Graph-P2 BLOCKING hole —
+#: a malicious provider self-declaration minted an EXECUTABLE cross-API chain. The
+#: planner now gates on `graph.confirmed`; see
+#: tests/test_correlate.test_cross_plan_refuses_provider_only_declared for the proof.
+MARKET_HINTS = {"fixture_ref": "fixture"}
+
+
 def _txline_client() -> AgentApiClient:
     return AgentApiClient(str(TXLINE), surface_id="txline", declared_hints=TXLINE_HINTS)
 
 
-def _market_client(**kw) -> AgentApiClient:
-    return AgentApiClient(market_spec(**kw), surface_id="market")
+def _market_client(*, confirmed: bool = False, **kw: Any) -> AgentApiClient:
+    """The market surface. ``confirmed`` injects the customer confirmation that a
+    cross-API plan now requires — provider x-gecko (``market_spec(with_hints=...)``)
+    alone is no longer sufficient to drive an executable chain."""
+    return AgentApiClient(
+        market_spec(**kw),
+        surface_id="market",
+        declared_hints=MARKET_HINTS if confirmed else {},
+    )
 
 
 def _workspace(tx: AgentApiClient, mk: AgentApiClient) -> Workspace:
@@ -106,8 +125,10 @@ def test_workspace_rejects_unnamespaced_and_duplicate_graphs() -> None:
 # --- the cross plan --------------------------------------------------------------
 def test_cross_plan_two_api_intent() -> None:
     """The §12 Phase 4 shape: TxLINE supplies the fixture id, the market surface
-    consumes it via a DECLARED synonym join."""
-    tx, mk = _txline_client(), _market_client()
+    consumes it via a DECLARED synonym join. BOTH sides customer-confirmed — that
+    is now the requirement for an executable cross chain (provider x-gecko alone is
+    a candidate, not plan-eligible)."""
+    tx, mk = _txline_client(), _market_client(confirmed=True)
     p = cross_plan(_workspace(tx, mk), "market", "openMarket", set())
     assert p is not None
     assert [s.surface for s in p.steps] == ["txline", "market"]
@@ -129,10 +150,11 @@ def test_cross_plan_is_declared_only() -> None:
 
 
 def test_cross_plan_needs_both_sides_declared() -> None:
-    """Market declares, but TxLINE has no confirmed vocabulary -> None: a
-    one-sided declaration is not an entity identity."""
+    """Market is customer-confirmed, but TxLINE has no confirmed vocabulary -> None:
+    a one-sided confirmation is not an entity identity — the SUPPLIER side must be
+    customer-vouched too (its provider x-gecko / inferred field does not count)."""
     tx = AgentApiClient(str(TXLINE), surface_id="txline")  # no declared_hints
-    mk = _market_client()
+    mk = _market_client(confirmed=True)
     assert cross_plan(_workspace(tx, mk), "market", "openMarket", set()) is None
 
 
@@ -157,8 +179,9 @@ def test_satisfied_intent_yields_trivial_intent_plan() -> None:
 def test_two_api_chain_first_plan_correct_offline() -> None:
     """THE Step-5 gate (§12): the composed two-API plan executes end-to-end in
     recorded mode — TxLINE's synthesized FixtureId threads into the market op's
-    fixture_ref and lands kind-correct. First-plan-correct, offline, $0."""
-    tx, mk = _txline_client(), _market_client()
+    fixture_ref and lands kind-correct. First-plan-correct, offline, $0. Both sides
+    customer-confirmed (the executable-chain requirement)."""
+    tx, mk = _txline_client(), _market_client(confirmed=True)
     p = cross_plan(_workspace(tx, mk), "market", "openMarket", set())
     assert p is not None
     result = evaluate_cross_chain({"txline": tx, "market": mk}, p)
@@ -170,7 +193,7 @@ def test_two_api_chain_first_plan_correct_offline() -> None:
 
 
 def test_cross_chain_missing_client_is_honest_failure() -> None:
-    tx, mk = _txline_client(), _market_client()
+    tx, mk = _txline_client(), _market_client(confirmed=True)
     p = cross_plan(_workspace(tx, mk), "market", "openMarket", set())
     assert p is not None
     result = evaluate_cross_chain({"market": mk}, p)  # txline client absent

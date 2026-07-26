@@ -66,15 +66,21 @@ class Workspace:
         return None
 
 
-def _declared_field_producers(
+def _confirmed_field_producers(
     graph: SurfaceGraph, entity: str
 ) -> list[tuple[str, str]]:
     """(producer_op_id, field_name) for id-shaped response fields this graph's
-    DECLARED vocabulary maps to ``entity`` — deterministic order."""
-    decl = dict(graph.declared)
+    CUSTOMER-CONFIRMED vocabulary maps to ``entity`` — deterministic order.
+
+    Reads ``graph.confirmed``, NOT ``graph.declared``: a producing field whose
+    entity is only provider-x-gecko-declared (present in ``declared`` but not
+    ``confirmed``) is NOT a plannable cross-API supplier. An untrusted provider
+    self-declaration must never mint an executable cross-surface chain (§13.6
+    guardrail 3/4) — the same honest refusal correlate reports as a candidate."""
+    conf = dict(graph.confirmed)
     out: list[tuple[str, str]] = []
     for node in graph.nodes:
-        if node.kind != "field" or decl.get(_norm(node.name)) != entity:
+        if node.kind != "field" or conf.get(_norm(node.name)) != entity:
             continue
         raw_type = node.sig.split("|", 1)[0] if node.sig else ""
         if raw_type not in _ID_SIG_TYPES:
@@ -129,20 +135,27 @@ def cross_plan(
     if target.opnode(intent_op_id) not in target._by_id:
         return None
 
-    decl_target = dict(target.declared)
+    # Gate on the CUSTOMER-CONFIRMED vocab, not the merged (provider∪customer)
+    # ``declared``: the consuming param's entity must be customer-vouched on the
+    # target surface, and the producing field's entity customer-vouched on its own
+    # surface. A provider-only x-gecko declaration (in ``declared`` but not
+    # ``confirmed``) resolves to no entity here -> None, the same honest refusal as
+    # an unmatched input. This makes ``plan_eligible`` the sole plan gate EVERYWHERE
+    # (§13.6 guardrail 3/4): an untrusted provider cannot mint an executable chain.
+    conf_target = dict(target.confirmed)
     cross_steps: list[PlanStep] = []
     cross_explain: list[ExplainEntry] = []
     supplied: set[str] = set()
 
     for pn in sorted(_unsatisfied(target, intent_op_id, sat), key=lambda n: n.name):
-        entity = decl_target.get(_norm(pn.name))
+        entity = conf_target.get(_norm(pn.name))
         if not entity:
-            continue  # not declared on the consuming side -> not cross-sourceable
+            continue  # not customer-confirmed on the consuming side -> not sourceable
         resolved = False
         for other in sorted(workspace.graphs, key=lambda g: g.surface_id):
             if other.surface_id == surface_id or resolved:
                 continue
-            for src_op, field_name in _declared_field_producers(other, entity):
+            for src_op, field_name in _confirmed_field_producers(other, entity):
                 # the supplier must resolve within its OWN surface (its own
                 # ladder, its own genericity stats) — never a dangling step.
                 sub = intra_plan(other, src_op, sat, max_ops=_MAX_SUB_OPS)

@@ -53,6 +53,7 @@ _SUBCOMMANDS = (
     "scan-doc",
     "auth",
     "graph",
+    "correlate",
     "rm",
     "list",
     "doctor",
@@ -598,6 +599,34 @@ def _cmd_graph(argv: list[str]) -> int:
         )
         return 0
     p.print_help()
+    return 0
+
+
+def _cmd_correlate(argv: list[str]) -> int:
+    """`gecko correlate <specA> <specB>` — the cross-API correlation report.
+
+    Thin transport, like `gecko graph json`: build two Surfaces, call
+    ``Surface.correlate``, print the provenance-carrying result as JSON. Cross-API
+    links are DECLARED-only for plan-eligibility (§13.6); a bare name/signature
+    match across the boundary is a quarantined candidate a human confirms. This is a
+    report — non-zero exit is not used.
+    """
+    from .access import public_session
+    from .surface import Surface
+
+    p = argparse.ArgumentParser(
+        prog="gecko correlate",
+        description="Report which of A's outputs correlate to B's inputs, with provenance.",
+    )
+    p.add_argument("spec_a", help="An OpenAPI URL, path, or docs URL (surface A).")
+    p.add_argument("spec_b", help="An OpenAPI URL, path, or docs URL (surface B).")
+    p.add_argument("--id-a", default="A", help="Surface id label for A (default: A).")
+    p.add_argument("--id-b", default="B", help="Surface id label for B (default: B).")
+    args = p.parse_args(argv)
+
+    a = Surface.from_spec(args.spec_a, session=public_session(), surface_id=args.id_a)
+    b = Surface.from_spec(args.spec_b, session=public_session(), surface_id=args.id_b)
+    print(json.dumps(a.correlate(b).to_dict(), indent=2))
     return 0
 
 
@@ -1312,6 +1341,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_auth(rest)
     if cmd == "graph":
         return _cmd_graph(rest)
+    if cmd == "correlate":
+        return _cmd_correlate(rest)
     if cmd == "rm":
         return _cmd_rm(rest)
     if cmd == "list":

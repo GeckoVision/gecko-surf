@@ -291,8 +291,16 @@ class AgentApiClient:
             # §14), with injected customer confirmations winning on conflict — a
             # customer's local correction outranks the shipped hint (§13.2).
             declared = {**declared_entity_hints(self.spec), **self._declared_hints}
+            # ``confirmed`` is the CUSTOMER-vouched subset ONLY — the injected
+            # confirmations, never the provider's own x-gecko. Carried onto the
+            # graph so compose/correlate share one trusted provenance source: only
+            # a confirmed entity may drive an executable cross-surface plan (the
+            # §13.6 guardrail, now enforced in the planner, not just the report).
             self._surface_graph = build_graph(
-                self.operations, surface_id=self.surface_id, declared=declared
+                self.operations,
+                surface_id=self.surface_id,
+                declared=declared,
+                confirmed=self._declared_hints,
             )
         return self._surface_graph
 
