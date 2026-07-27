@@ -32,7 +32,7 @@ import math
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from .ingest import Operation, Param
 from .sanitize import key_is_dangerous
@@ -136,6 +136,52 @@ class ExplainEntry:
 class Plan:
     steps: tuple[PlanStep, ...]
     explain: tuple[ExplainEntry, ...]
+
+
+# --- provenance classification: the CLAIMED entry point (single source of truth) ---
+# gecko.docs_reader stamps this on ``info`` when it recovers a draft OpenAPI from a human
+# page; the per-op keys are its confidence/review annotations. Either marks an op as a
+# claim an untrusted docs source made — provenance CLAIMED — until reality answers.
+_DOCS_DRAFT_MARKER = "gecko.docs_reader"
+_DRAFT_OP_KEYS = ("x-draft-confidence", "x-review")
+
+
+def op_provenance(spec: Mapping[str, Any], operation_id: str) -> Provenance:
+    """Classify one op's provenance from its spec markers: CLAIMED if it was recovered
+    from an untrusted docs source (a from-docs draft), else EXTRACTED. Pure/surface-only
+    — reads only the draft markers, never a schema value.
+
+    This lives here (not in the verify driver) because CLAIMED is the canonical top of
+    the trust ladder (§13.2) and its value has a single home. It is a SEPARATE axis from
+    the ``VerifyVerdict`` a replay later attaches: a CLAIMED op keeps its provenance and
+    gains a verdict; an EXTRACTED op keeps EXTRACTED and gains a verdict just the same.
+    """
+    if not isinstance(spec, Mapping):
+        return "EXTRACTED"
+    info = spec.get("info")
+    if isinstance(info, Mapping) and info.get("x-generated-by") == _DOCS_DRAFT_MARKER:
+        return "CLAIMED"
+    item = _operation_item(spec, operation_id)
+    if item is not None and any(k in item for k in _DRAFT_OP_KEYS):
+        return "CLAIMED"
+    return "EXTRACTED"
+
+
+def _operation_item(
+    spec: Mapping[str, Any], operation_id: str
+) -> Mapping[str, Any] | None:
+    """The raw path-item operation object for ``operation_id``, or None — read ONLY for
+    its draft markers (provenance), never a schema value."""
+    paths = spec.get("paths")
+    if not isinstance(paths, Mapping):
+        return None
+    for path_item in paths.values():
+        if not isinstance(path_item, Mapping):
+            continue
+        for op in path_item.values():
+            if isinstance(op, Mapping) and op.get("operationId") == operation_id:
+                return op
+    return None
 
 
 # --- name / entity helpers (ported from the v3 probe) ---------------------------
