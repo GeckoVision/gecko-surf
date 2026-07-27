@@ -38,10 +38,15 @@ from .ingest import Operation, Param
 from .sanitize import key_is_dangerous
 
 # --- single source of truth for the graph's Literal types (CLAUDE.md) -----------
-Provenance = Literal["EXTRACTED", "DECLARED", "INFERRED"]
+# CLAIMED = an op asserted by an untrusted docs source (Context7 / from-docs) that has
+# NOT yet been checked against the live API. It is the entry point to the VAS verified-
+# against-reality tier: a CLAIMED op is lifted to a VerifyVerdict once reality answers.
+Provenance = Literal["EXTRACTED", "DECLARED", "INFERRED", "CLAIMED"]
 Confidence = Literal["high", "low"]
 NodeKind = Literal["operation", "param", "field", "resource"]
 EdgeKind = Literal["consumes", "produces", "on", "feeds"]
+# the verified-against-reality verdict a replay lifts onto a CLAIMED op (VAS-1).
+VerifyStatus = Literal["VERIFIED", "REFUTED", "UNVERIFIED"]
 
 _MAX_LEAF_DEPTH = 6  # bound the response-schema walk (ingest already resolved $refs)
 _ID_TYPES = ("number", "string")  # a flow key must be id-shaped; drops bool/enum links
@@ -61,6 +66,26 @@ _PROV_RANK = {"DECLARED": 0, "INFERRED": 1}
 
 # --- graph model (typed dataclasses; no bare dicts as contracts) -----------------
 @dataclass(frozen=True)
+class VerifyVerdict:
+    """Whether a CLAIMED op was confirmed against the live API — the VAS verified-
+    against-reality tier (VAS-1).
+
+    Control-plane clean (invariant #1): it carries only the verdict STATUS, the string
+    BASIS that earned it (e.g. ``replay:200``, ``replay:404``,
+    ``contract-mismatch:missing tokenId``, ``no-access:recorded-only``), and a boolean
+    shape marker. ``shape_ok`` is a DERIVED flag — "did the reply's shape match the
+    contract" — never the shape, a response value, or a secret. There is deliberately no
+    field a response body could be assigned to.
+    """
+
+    status: VerifyStatus
+    basis: tuple[str, ...]
+    shape_ok: bool = (
+        False  # non-payload marker: shape confirmed, never the shape itself
+    )
+
+
+@dataclass(frozen=True)
 class Node:
     kind: NodeKind
     id: str  # deterministic, unique (namespaced by surface_id when set)
@@ -68,6 +93,10 @@ class Node:
     owner: str = ""  # operation_id for param+field+operation nodes; "" for resource
     detail: str = ""  # param: "{location}|{req|opt}"; field: parent object; op: path
     sig: str = ""  # §13.1 value-domain signature (param/field): type|fmt|pat8|enum8
+    # VAS-1: the verified-against-reality verdict once a CLAIMED op is replayed. Default
+    # None (unverified op == unchanged); excluded from serialize() on purpose — the
+    # content hash addresses the derived SHAPE, not a drift-dependent replay result.
+    verify: VerifyVerdict | None = None
 
 
 @dataclass(frozen=True)
