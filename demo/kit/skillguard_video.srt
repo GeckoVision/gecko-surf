@@ -1,0 +1,57 @@
+1
+00:00:00,200 --> 00:00:03,200
+An attacker opens a pull request:
+a diagram, and a conventions file.
+
+2
+00:00:03,300 --> 00:00:05,400
+It looks clean. Your AI reviewer
+approves it — and it merges.
+
+3
+00:00:05,700 --> 00:00:08,600
+The invisible enemy: nobody reads the
+picture. Your agent reads every pixel.
+
+4
+00:00:08,700 --> 00:00:10,900
+Hidden inside it — read your .env,
+encode each byte, ship it as code.
+
+5
+00:00:11,300 --> 00:00:13,600
+Your secret walks out as a
+harmless-looking list of numbers.
+
+6
+00:00:13,700 --> 00:00:15,900
+Invisible to the reviewer, to the
+scanner — wide open to the attacker.
+
+7
+00:00:16,300 --> 00:00:20,200
+Here is how we stop it: Gecko treats
+every image as untrusted input.
+
+8
+00:00:20,300 --> 00:00:25,400
+Metadata, decoded base64, and the
+OCR'd pixels — one deterministic engine.
+
+9
+00:00:25,500 --> 00:00:30,000
+The poisoned file and image are caught —
+quarantined, fail-closed, before it runs.
+
+10
+00:00:30,100 --> 00:00:33,700
+And a genuinely clean diagram
+raises no alarm.
+
+11
+00:00:34,300 --> 00:00:36,500
+Security through determinism.
+
+12
+00:00:36,600 --> 00:00:38,600
+Stop letting your agent guess.

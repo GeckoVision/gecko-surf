@@ -1,0 +1,58 @@
+1
+00:00:00,200 --> 00:00:03,200
+You've wired your fifth, tenth,
+twentieth API into your agent.
+
+2
+00:00:03,300 --> 00:00:05,900
+Each one works alone — but your
+agent can't chain them together.
+
+3
+00:00:06,100 --> 00:00:09,000
+TokenData returns a tokenId. Market News
+needs one. No schema says they're the same.
+
+4
+00:00:09,100 --> 00:00:11,900
+So Gecko derives the join: both declare
+the value-domain solana-token-mint.
+
+5
+00:00:12,100 --> 00:00:14,600
+It's a candidate, not a guess —
+declared, with provenance on every edge.
+
+6
+00:00:14,700 --> 00:00:17,000
+A human vouches once, and it
+becomes plan-eligible.
+
+7
+00:00:17,600 --> 00:00:22,000
+gecko correlate finds the link across
+two APIs — and tells you why.
+
+8
+00:00:22,100 --> 00:00:27,000
+gecko index groups every field by
+value-domain, across all your providers.
+
+9
+00:00:27,100 --> 00:00:32,000
+Confirmed, the agent chains them — resolve
+the token, get its news — first plan correct.
+
+10
+00:00:32,100 --> 00:00:34,700
+Derived, with the why.
+No fuzzy guessing, no silent auto-join.
+
+11
+00:00:35,200 --> 00:00:37,400
+One deterministic surface
+across every API you use.
+
+12
+00:00:37,500 --> 00:00:39,000
+Stop letting your agent guess.
