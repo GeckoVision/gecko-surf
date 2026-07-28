@@ -50,6 +50,7 @@ deterministic answer, so the model doesn't have to guess. Gecko **composes on** 
 - [The surface graph](#the-surface-graph)
 - [Make any API agent-usable](#make-any-api-agent-usable)
   - [Registry surfaces](#registry-surfaces)
+  - [Alongside Context7](#alongside-context7)
 - [Develop offline](#develop-offline)
 - [Going live](#going-live)
 - [What's in this repo](#whats-in-this-repo)
@@ -314,6 +315,14 @@ gecko serve --registry colosseum --auth-env COLOSSEUM_COPILOT_PAT
 Free surfaces need no account. Premium: `GECKO_API_KEY` via
 `POST /registry/keys` → OTP → `gk_live_...` (shown once; we store a salted hash).
 Your provider key stays local — Gecko never sees it.
+
+### Alongside Context7
+
+Context7 tells the agent *what* to call; Gecko proves it's *right* before the call fires and
+chains the calls Context7-fed agents get wrong. Register both MCP servers side by side — the
+copy-pasteable `mcp.json` and the `gecko verify-docs` note are in
+[docs/context7-integration.md](docs/context7-integration.md). We compose Context7 as a docs
+input; we don't replace it.
 
 ---
 

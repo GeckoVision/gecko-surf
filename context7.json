@@ -1,0 +1,20 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "gecko-surf",
+  "description": "Project the Agent Surface for any API — a deterministic, provenance-carrying, safety-checked call graph an agent traverses to get the call right the first time. Ingest an OpenAPI (or recover one from docs), get first-call-correct MCP tools, chain the calls agents get wrong, and verify doc claims against the live API before they fire. Apache-2.0.",
+  "folders": [
+    "docs"
+  ],
+  "excludeFolders": [
+    "private",
+    "tests",
+    ".venv",
+    "node_modules"
+  ],
+  "rules": [
+    "gecko-surf is the API comprehension layer for agents: it derives the Agent Surface (a deterministic call graph) above an OpenAPI, never a payment rail or a marketplace.",
+    "Gecko is the control plane, never the data plane — it stores the API surface and correctness metadata, never response payloads, user data, or secrets.",
+    "Onboard any API with `gecko add <api>`; serve one over MCP with `gecko <openapi-url>`; verify doc claims against reality with `gecko verify-docs <spec>`.",
+    "Gecko composes on top of OpenAPI (input) and MCP (transport) and Context7 (a docs input) — it does not replace them."
+  ]
+}
