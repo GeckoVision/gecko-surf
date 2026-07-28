@@ -38,7 +38,7 @@ from . import (
 from .access import public_session, stub_session
 from .client import AgentApiClient
 from .ingest import load_spec
-from .modes import coerce_mode
+from .modes import CallMode, coerce_mode
 from .netguard import UnsafeUrlError, validate_public_url
 
 _SUBCOMMANDS = (
@@ -50,6 +50,7 @@ _SUBCOMMANDS = (
     "test",
     "inspect",
     "report",
+    "verify-docs",
     "from-docs",
     "scan-image",
     "scan-doc",
@@ -350,6 +351,50 @@ def _cmd_report(argv: list[str]) -> int:
         encoding="utf-8",
     )
     print(f"  → wrote {out} ({len(html)} bytes) and {sidecar}")
+    return 0
+
+
+def _cmd_verify_docs(argv: list[str]) -> int:
+    """`gecko verify-docs <spec> [--live]` — check ops against reality (VAS-2).
+
+    Thin transport over :mod:`gecko.verify`: build the surface, verify every op, print the
+    control-plane JSON report ({op_id: {status, basis, provenance}} + counts). Default
+    recorded (offline, $0 — every op honestly UNVERIFIED); ``--live`` opts into real calls
+    (2xx VERIFIES, a 404 on a doc-claimed endpoint REFUTES).
+    """
+    from . import verify as verify_mod
+
+    p = argparse.ArgumentParser(
+        prog="gecko verify-docs",
+        description="Verify a surface's operations against the real API and report verdicts.",
+    )
+    p.add_argument(
+        "spec",
+        help="An API domain, OpenAPI URL, docs URL, or local path — Gecko finds the spec.",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Opt into real upstream calls (default: recorded, offline, $0).",
+    )
+    p.add_argument(
+        "--base-url",
+        default=None,
+        help="Pin the live target host (needed when a local spec's server can't be trusted).",
+    )
+    args = p.parse_args(argv)
+    if _reject_unsafe(args.spec, "verify-docs"):
+        return 2
+    try:
+        spec = load_spec(args.spec)
+    except (UnsafeUrlError, OSError, ValueError) as exc:
+        print(f"  ✗ could not read spec at {args.spec}: {exc}", file=sys.stderr)
+        return 2
+
+    mode: CallMode = "live" if args.live else "recorded"
+    client = AgentApiClient(spec, base_url=args.base_url, session=stub_session())
+    report = verify_mod.verify_docs(client, mode=mode)
+    print(json.dumps(report, indent=2))
     return 0
 
 
@@ -1433,6 +1478,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_inspect(rest)
     if cmd == "report":
         return _cmd_report(rest)
+    if cmd == "verify-docs":
+        return _cmd_verify_docs(rest)
     if cmd == "from-docs":
         return _cmd_from_docs(rest)
     if cmd == "scan-image":
