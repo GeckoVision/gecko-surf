@@ -405,7 +405,13 @@ def _cmd_verify_docs(argv: list[str]) -> int:
         return 2
 
     mode: CallMode = "live" if args.live else "recorded"
-    client = AgentApiClient(spec, base_url=args.base_url, session=stub_session())
+    # A LIVE verify against a keyless/public API must use the no-auth adapter: stub_session
+    # reports has_auth=True, which makes keyless reads on an un-pinned local spec degrade
+    # live -> recorded (they can never VERIFY). public_session injects nothing, so keyless
+    # reads fire and auth-gated ops it cannot satisfy are honestly hidden. Recorded never
+    # hits the wire, so the stub (byte-identical legacy behaviour) is fine there.
+    session = public_session() if mode == "live" else stub_session()
+    client = AgentApiClient(spec, base_url=args.base_url, session=session)
     report = verify_mod.verify_docs(client, mode=mode)
     print(json.dumps(report, indent=2))
     return 0
