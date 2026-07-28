@@ -28,7 +28,10 @@ recorded call is read for its STATUS only, never copied out).
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import corpus
@@ -42,7 +45,7 @@ if TYPE_CHECKING:
 
 # op_provenance (the claimed-until-checked classifier) lives in graph.py — its home so the
 # provenance ladder has a single source of truth; re-exported here as the verify surface.
-__all__ = ["op_provenance", "verify_docs"]
+__all__ = ["load_observed_corpus", "op_provenance", "verify_docs"]
 
 _STATUS_TO_SUMMARY: dict[VerifyStatus, str] = {
     "VERIFIED": "verified",
@@ -95,19 +98,52 @@ def _replay_outcome(
     )
 
 
+def load_observed_corpus(path: str | Path) -> dict[str, corpus.CallOutcome]:
+    """Load a pre-captured observed-outcome corpus (JSONL) into an ``op_id -> CallOutcome``
+    map — the offline replay seam for the verify demo (Pattern B).
+
+    These are REAL statuses that came off the wire in a prior ``--live`` capture, replayed
+    here so the demo can falsify offline before any live smoke — they are NEVER synthesized
+    (the honesty gate in ``verdict_from_replay`` still only trusts ``source == "observed"``,
+    which this fixture legitimately carries because a live capture derived it). Each row is
+    rehydrated through ``corpus.outcome_from_record``, which fails closed on any
+    non-allowlisted key, so a payload or secret cannot ride in through the fixture."""
+    outcomes: dict[str, corpus.CallOutcome] = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        outcome = corpus.outcome_from_record(json.loads(line))
+        outcomes[outcome.operation_id] = outcome
+    return outcomes
+
+
 def verify_docs(
-    client: AgentApiClient, *, mode: CallMode = "recorded"
+    client: AgentApiClient,
+    *,
+    mode: CallMode = "recorded",
+    outcomes: Mapping[str, corpus.CallOutcome] | None = None,
 ) -> dict[str, Any]:
     """Verify every operation on the surface against reality and attach the verdicts.
 
-    For each usable tool: replay it (``_replay_outcome``), lift the outcome with VAS-1's
-    ``verdict_from_replay``, attach the ``VerifyVerdict`` to the op's graph node
-    (``Node.verify`` — a separate axis; provenance is left untouched), and record a
-    control-plane-safe entry ``{status, basis, provenance}`` in the report.
+    For each usable tool: obtain an outcome, lift it with VAS-1's ``verdict_from_replay``,
+    attach the ``VerifyVerdict`` to the op's graph node (``Node.verify`` — a separate axis;
+    provenance is left untouched), and record a control-plane-safe entry ``{status, basis,
+    provenance}`` in the report.
+
+    The outcome comes from one of two sources, and NEITHER weakens the honesty gate:
+
+    * ``outcomes`` (opt-in): a pre-captured ``op_id -> CallOutcome`` map — a REAL prior run
+      replayed offline (``gecko.verify.load_observed_corpus``). An op present in the map uses
+      its observed outcome; any op absent falls back to a fresh replay. This is the
+      offline-falsifiable path (Pattern B): the demo REFUTES a fabricated endpoint with no
+      network, because the observed 404 already happened.
+    * fresh replay (default): ``_replay_outcome`` runs the op through the shipped call path
+      in ``mode``. Recorded (default) → every op UNVERIFIED (no wire evidence); live → real
+      VERIFIED / REFUTED.
 
     Returns ``{"mode", "report": {op_id: {...}}, "summary": {verified, refuted,
-    unverified}}``. Recorded mode (default) → every op UNVERIFIED (no wire evidence);
-    live mode → real VERIFIED / REFUTED. Never returns a payload, value, or secret.
+    unverified}}``. Never returns a payload, value, or secret.
     """
     graph = client.surface_graph
     report: dict[str, dict[str, Any]] = {}
@@ -118,7 +154,10 @@ def verify_docs(
         if op is None:  # a synthetic tool with no backing operation — nothing to verify
             continue
         op_id = op.operation_id
-        outcome = _replay_outcome(client, tool, mode)
+        captured = outcomes.get(op_id) if outcomes is not None else None
+        outcome = (
+            captured if captured is not None else _replay_outcome(client, tool, mode)
+        )
         verdict = verdict_from_replay(outcome)
 
         # Attach the verdict to the op node. Node is frozen because its identity (the
