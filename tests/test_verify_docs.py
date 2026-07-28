@@ -156,6 +156,43 @@ def test_live_200_verifies_and_404_refutes() -> None:
     _no_payload_leaked(result)
 
 
+def test_live_never_fires_a_mutating_method() -> None:
+    """Do-no-harm: under ``--live`` a POST op must NOT reach the wire — the verify probe
+    downgrades any non-GET/HEAD method to recorded so it can never mutate a live provider.
+    The op still gets a verdict (honestly UNVERIFIED — no wire evidence)."""
+    spec: dict[str, Any] = {
+        "openapi": "3.0.0",
+        "info": {"title": "Mutating API", "version": "1"},
+        "servers": [{"url": "https://api.example.com"}],
+        "paths": {
+            "/subscribe": {
+                "post": {
+                    "operationId": "subscribe",
+                    "summary": "Create a subscription (mutating — must never fire on a probe).",
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    fired: list[str] = []
+
+    def transport(req: PreparedRequest) -> tuple[int, Any]:
+        fired.append(req.url)
+        return 200, {"ok": True}
+
+    client = AgentApiClient(
+        spec,
+        base_url="https://api.example.com",
+        session=NoAuthSession(),
+        live_transport=transport,
+    )
+
+    result = verify.verify_docs(client, mode="live")
+
+    assert fired == []  # the POST never reached the wire
+    assert result["report"]["subscribe"]["status"] == "UNVERIFIED"
+
+
 def test_verdict_attaches_to_the_op_node() -> None:
     def transport(req: PreparedRequest) -> tuple[int, Any]:
         return 200, {"balance": 42}

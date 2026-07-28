@@ -53,6 +53,13 @@ _STATUS_TO_SUMMARY: dict[VerifyStatus, str] = {
     "UNVERIFIED": "unverified",
 }
 
+# Do-no-harm: a docs-verification probe must never MUTATE a live provider. Only
+# idempotent-safe reads may reach the wire; a mutating method (POST/PUT/PATCH/DELETE) is
+# forced to recorded even under ``--live`` — it stays honestly UNVERIFIED (no wire evidence)
+# rather than firing a state-changing call the provider never consented to. This is a
+# tightening, not a relaxation: it can only REMOVE a live call, never add one.
+_LIVE_SAFE_METHODS = frozenset({"GET", "HEAD"})
+
 
 def _replay_outcome(
     client: AgentApiClient, tool: dict[str, Any], mode: CallMode
@@ -71,6 +78,12 @@ def _replay_outcome(
     invoke = tool.get("_invoke")
     if not isinstance(invoke, dict):
         invoke = {"method": op.method, "path": op.path}
+
+    # Do-no-harm on the verify path: never let a mutating method reach a live provider.
+    # Downgrade live -> recorded for anything but a safe read, so the probe observes the
+    # method without ever changing provider state (see ``_LIVE_SAFE_METHODS``).
+    if mode == "live" and op.method.upper() not in _LIVE_SAFE_METHODS:
+        mode = "recorded"
 
     status: int | None = None
     exc: CallError | None = None

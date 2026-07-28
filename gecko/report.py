@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from html import escape
 from typing import Any, get_args
 
-from .access import stub_session
+from .access import public_session, stub_session
 from .client import AgentApiClient, ToolNotFound
 from .corpus import CallOutcome
 from .graph import Provenance, VerifyStatus, op_provenance
@@ -360,7 +360,12 @@ def build_scorecard(
     api = str((spec_dict.get("info") or {}).get("title") or "API")
 
     report = inspect(spec_dict, api=api)
-    client = AgentApiClient(spec_dict, base_url=base_url, session=stub_session())
+    # A LIVE verify against a keyless API needs the no-auth adapter, or every keyless read
+    # degrades live -> recorded and can never VERIFY (stub_session reports has_auth=True).
+    # Recorded verify (and no-verify) keep the stub so the rendered HTML stays byte-identical
+    # to the legacy scorecard for the backward-compat tests.
+    session = public_session() if (verify and verify_mode == "live") else stub_session()
+    client = AgentApiClient(spec_dict, base_url=base_url, session=session)
     graph = client.surface_graph
     svg = render_svg(graph, title=f"Agent Surface — {escape(api)}")
     gdata = graph_data(graph)
