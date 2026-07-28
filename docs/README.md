@@ -15,6 +15,7 @@ Install: `pip install gecko-surf` · CLI: `gecko <openapi-url>` · SDK: `from ge
 | [How it works](how-it-works.md) | The five-stage comprehension pipeline. |
 | [Stay correct](stay-correct.md) | What happens when the upstream API changes. |
 | [FAQ & data governance](faq.md) | BYOK, control-plane-only, SSRF, vs OpenAPI→MCP generators. |
+| [Run alongside Context7](context7-integration.md) | Parallel-MCP config + `verify-docs`; publishing gecko-surf as a Context7 library. |
 
 ## Where we are
 V1 — the comprehension path — is **live**: ingest → first-call-correct tools → access →
