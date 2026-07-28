@@ -259,6 +259,21 @@ def to_record(outcome: CallOutcome) -> dict[str, Any]:
     return record_dict
 
 
+def outcome_from_record(record: Mapping[str, Any]) -> CallOutcome:
+    """Rehydrate a persisted JSONL record back into a ``CallOutcome`` — the read side of
+    ``to_record``, and the offline-replay seam for a pre-captured corpus.
+
+    Fails CLOSED the same way the writer does: any key not on the §1 allowlist (the shape a
+    leaked body or filled URL would take) is rejected before construction, so a payload can
+    never ride in through a fixture (invariant #1). Missing a required field is an equally
+    hard error — a truncated record is never silently defaulted."""
+    assert_allowlisted(record)
+    missing = ALLOWED_KEYS - set(record)
+    if missing:
+        raise CorpusError(f"record missing required key(s): {sorted(missing)}")
+    return CallOutcome(**{key: record[key] for key in ALLOWED_KEYS})
+
+
 def synthetic_sibling(path: str | Path) -> Path:
     """The segregated file for ``synthetic`` outcomes, co-located with the corpus
     (``<dir>/synthetic.jsonl``).
