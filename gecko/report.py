@@ -19,11 +19,13 @@ real response value.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from html import escape
 from typing import Any, get_args
 
 from .access import stub_session
 from .client import AgentApiClient, ToolNotFound
+from .corpus import CallOutcome
 from .graph import Provenance, VerifyStatus, op_provenance
 from .ingest import load_spec
 from .inspect import InspectionReport, inspect
@@ -336,6 +338,7 @@ def build_scorecard(
     base_url: str | None = None,
     verify: bool = False,
     verify_mode: CallMode = "recorded",
+    verify_outcomes: Mapping[str, CallOutcome] | None = None,
 ) -> str:
     """Build the full self-contained HTML scorecard for ``spec``.
 
@@ -345,9 +348,14 @@ def build_scorecard(
     ``verify`` (opt-in) runs :func:`gecko.verify.verify_docs` first — replaying every op
     against reality (recorded by default, ``verify_mode="live"`` for real calls) — and
     renders the verify-verdict section (provenance + verified/refuted badges). When
-    ``verify`` is False
-    the output is byte-identical to the plain scorecard (backward-compatible).
-    """
+    ``verify`` is False the output is byte-identical to the plain scorecard
+    (backward-compatible).
+
+    ``verify_outcomes`` (opt-in) injects a pre-captured ``op_id -> CallOutcome`` map — a
+    prior ``--live`` run replayed offline (Pattern B). It lets the flagship demo render the
+    red REFUTED badge for a doc-fabricated endpoint with NO network call, honestly: the
+    verdict traces to a status that really came off the wire (see
+    :func:`gecko.verify.load_observed_corpus`)."""
     spec_dict = load_spec(spec) if isinstance(spec, str) else spec
     api = str((spec_dict.get("info") or {}).get("title") or "API")
 
@@ -363,7 +371,7 @@ def build_scorecard(
     # default so the section string is "" and the body stays byte-identical to today.
     verify_html = ""
     if verify:
-        verify_docs(client, mode=verify_mode)
+        verify_docs(client, mode=verify_mode, outcomes=verify_outcomes)
         verify_html = _render_verify(client)
 
     body = "".join(
