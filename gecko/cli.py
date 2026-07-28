@@ -324,6 +324,16 @@ def _cmd_report(argv: list[str]) -> int:
         default=None,
         help="A prior scorecard JSON — print the drift delta instead of writing HTML.",
     )
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help="Check each op against reality and render the verify-verdict badges.",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="With --verify, opt into real upstream calls (default: recorded, $0).",
+    )
     args = p.parse_args(argv)
     if _reject_unsafe(args.spec, "report"):
         return 2
@@ -342,7 +352,10 @@ def _cmd_report(argv: list[str]) -> int:
         print(report_mod.render_diff(report_mod.report_diff(old, new)))
         return 0
 
-    html = report_mod.build_scorecard(spec, intents=args.intent)
+    verify_mode: CallMode = "live" if args.live else "recorded"
+    html = report_mod.build_scorecard(
+        spec, intents=args.intent, verify=args.verify, verify_mode=verify_mode
+    )
     out = Path(args.out) if args.out else Path(f"{name}.scorecard.html")
     out.write_text(html, encoding="utf-8")
     sidecar = out.with_suffix(".json")

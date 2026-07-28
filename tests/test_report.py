@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from gecko import report
+from gecko.client import AgentApiClient
+from gecko.graph import VerifyVerdict
 from gecko.inspect import inspect
 from gecko.ingest import load_spec
 
@@ -90,6 +92,54 @@ def test_to_dict_includes_surface_rev() -> None:
     d = inspect(spec, api="txline").to_dict()
     assert d["surface_rev"]  # non-empty content hash
     assert isinstance(d["dimensions"], list)
+
+
+def test_verify_recorded_renders_unverified_and_summary(html: str) -> None:
+    verified = report.build_scorecard(FIXTURE, verify=True)
+    # recorded mode never overclaims — every op is honestly UNVERIFIED
+    assert "UNVERIFIED" in verified
+    assert "Verified against reality" in verified
+    # the one-line summary in the "checked against reality" voice
+    assert "unverified" in verified.lower()
+    # a badge section the default report does not carry
+    assert 'class="verdicts"' in verified
+    # still control-plane clean — no payload/secret leaks in the verify section
+    lowered = verified.lower()
+    for leak in ("authorization", "bearer ", "x-api-key", "secret", "password"):
+        assert leak not in lowered
+
+
+def test_verify_off_is_byte_identical(html: str) -> None:
+    # backward-compat: without --verify the report is unchanged vs today's build
+    assert report.build_scorecard(FIXTURE, verify=False) == html
+    assert "Verified against reality" not in html
+    assert 'class="verdicts"' not in html
+
+
+def test_injected_refuted_verdict_renders_red_badge() -> None:
+    # The flagship demo frame — a doc claim the API refuted. Prove it renders offline.
+    client = AgentApiClient(load_spec(FIXTURE))
+    graph = client.surface_graph
+    op_id = sorted(op.operation_id for op in client.operations)[0]
+    node = graph._by_id[graph.opnode(op_id)]
+    object.__setattr__(
+        node, "verify", VerifyVerdict(status="REFUTED", basis=("replay:404",))
+    )
+    section = report._render_verify(client)
+    assert "REFUTED" in section
+    assert "v-refuted" in section  # the strong-red badge class
+    assert "replay:404" in section  # the basis that earned the verdict
+
+
+def test_cli_report_verify_writes_html(tmp_path: Path) -> None:
+    from gecko.cli import main
+
+    out = tmp_path / "scorecard.html"
+    rc = main(["report", FIXTURE, "--verify", "-o", str(out)])
+    assert rc == 0
+    html = out.read_text(encoding="utf-8")
+    assert "Verified against reality" in html
+    assert "UNVERIFIED" in html
 
 
 def test_cli_report_writes_html(tmp_path: Path) -> None:

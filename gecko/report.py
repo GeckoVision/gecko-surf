@@ -20,14 +20,17 @@ real response value.
 from __future__ import annotations
 
 from html import escape
-from typing import Any
+from typing import Any, get_args
 
 from .access import stub_session
 from .client import AgentApiClient, ToolNotFound
+from .graph import Provenance, VerifyStatus, op_provenance
 from .ingest import load_spec
 from .inspect import InspectionReport, inspect
+from .modes import CallMode
 from .sample import example_from_schema
 from .surfaceviz import graph_data, render_svg
+from .verify import verify_docs
 
 __all__ = ["build_scorecard", "report_diff", "render_diff"]
 
@@ -46,6 +49,18 @@ _GRADE_COLOR: dict[str, str] = {
     "F": "#dc2626",
 }
 _MAX_INTENTS = 3
+
+# Verify verdict → (badge label, css class). REFUTED is the one strong-red accent —
+# the flagship demo frame (a doc claim the live API refuted). UNVERIFIED is muted amber:
+# recorded mode never overclaims (VAS honesty rule — no wire evidence, no VERIFIED).
+_VERDICT_BADGE: dict[VerifyStatus, tuple[str, str]] = {
+    "VERIFIED": ("VERIFIED", "v-verified"),
+    "REFUTED": ("REFUTED", "v-refuted"),
+    "UNVERIFIED": ("UNVERIFIED", "v-unverified"),
+}
+# Provenance → css class for the chip, derived from the canonical Literal so the
+# vocabulary (incl. the untrusted-docs tier a verdict resolves) has one home in graph.py.
+_PROV_CLASS: dict[str, str] = {p: f"prov-{p.lower()}" for p in get_args(Provenance)}
 
 
 # --------------------------------------------------------------------------- #
@@ -253,6 +268,65 @@ def _render_correlation(gdata: dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Verified-against-reality — the claimed / verified / refuted verdict tier (VAS-3)
+# --------------------------------------------------------------------------- #
+def _render_verify(client: AgentApiClient) -> str:
+    """Render the per-op provenance + verify-verdict section from the surface graph.
+
+    Reads each op's ``VerifyVerdict`` off its graph node (attached by
+    :func:`gecko.verify.verify_docs`) and its provenance off :func:`op_provenance` — two
+    SEPARATE axes. An op with no attached verdict is honestly UNVERIFIED (not checked).
+    Control-plane clean: badge = status + basis strings + a provenance category only,
+    never a response value. Deterministic — ops are sorted by operation id.
+    """
+    graph = client.surface_graph
+    counts = {"VERIFIED": 0, "REFUTED": 0, "UNVERIFIED": 0}
+    rows: list[str] = []
+    for op in sorted(client.operations, key=lambda o: o.operation_id):
+        op_id = op.operation_id
+        node = graph._by_id.get(graph.opnode(op_id))
+        verdict = node.verify if node is not None else None
+        status: VerifyStatus = verdict.status if verdict is not None else "UNVERIFIED"
+        counts[status] += 1
+        label, badge_cls = _VERDICT_BADGE[status]
+        prov = op_provenance(client.spec, op_id)
+        prov_cls = _PROV_CLASS.get(prov, "prov-extracted")
+
+        basis_html = ""
+        if verdict is not None and verdict.basis:
+            basis_html = (
+                '<div class="v-basis">checked against reality: '
+                f"{escape(' · '.join(verdict.basis))}</div>"
+            )
+        rows.append(
+            '<li class="vrow">'
+            '<div class="v-head">'
+            f'<span class="vbadge {badge_cls}">{label}</span>'
+            f'<span class="prov {prov_cls}">{escape(prov)}</span>'
+            f'<code class="v-op"><span class="method">{escape(op.method)}</span> '
+            f"{escape(op.path)}</code>"
+            "</div>"
+            f"{basis_html}"
+            "</li>"
+        )
+
+    summary = (
+        f"{counts['VERIFIED']} verified · {counts['REFUTED']} refuted · "
+        f"{counts['UNVERIFIED']} unverified"
+    )
+    return (
+        '<section class="card verify">'
+        "<h2>Verified against reality</h2>"
+        '<p class="lede">Stop guessing which doc claims are real. Gecko replayed each '
+        "call against the live API and lifted the outcome into a verdict — "
+        f'<strong>{summary}</strong>. A red <span class="vbadge v-refuted '
+        'inline">REFUTED</span> is a claim the API does not serve.</p>'
+        f'<ul class="verdicts">{"".join(rows)}</ul>'
+        "</section>"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Public entrypoint
 # --------------------------------------------------------------------------- #
 def build_scorecard(
@@ -260,11 +334,19 @@ def build_scorecard(
     *,
     intents: list[str] | None = None,
     base_url: str | None = None,
+    verify: bool = False,
+    verify_mode: CallMode = "recorded",
 ) -> str:
     """Build the full self-contained HTML scorecard for ``spec``.
 
     Deterministic (same input → byte-stable output) and control-plane clean. ``intents``
     scripts the Playground; when omitted, a few are auto-picked from the surface's tools.
+
+    ``verify`` (opt-in) runs :func:`gecko.verify.verify_docs` first — replaying every op
+    against reality (recorded by default, ``verify_mode="live"`` for real calls) — and
+    renders the verify-verdict section (provenance + verified/refuted badges). When
+    ``verify`` is False
+    the output is byte-identical to the plain scorecard (backward-compatible).
     """
     spec_dict = load_spec(spec) if isinstance(spec, str) else spec
     api = str((spec_dict.get("info") or {}).get("title") or "API")
@@ -277,10 +359,18 @@ def build_scorecard(
 
     play_intents = intents if intents else _auto_intents(client)
 
+    # Opt-in verification: mutate the graph nodes with verdicts, then render them. Off by
+    # default so the section string is "" and the body stays byte-identical to today.
+    verify_html = ""
+    if verify:
+        verify_docs(client, mode=verify_mode)
+        verify_html = _render_verify(client)
+
     body = "".join(
         (
             _render_header(report),
             _render_dimensions(report),
+            verify_html,
             _render_graph(svg),
             _render_findings(report),
             _render_playground(client, play_intents),
@@ -430,6 +520,23 @@ h2 {{ font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(
   border-radius:6px; padding:1px 7px; font-weight:700; font-size:11px;
   text-transform:uppercase; letter-spacing:.04em; }}
 .teaser {{ background:linear-gradient(180deg,#ffffff,#fafaff); }}
+.verdicts {{ list-style:none; margin:0; padding:0; }}
+.vrow {{ padding:12px 0; border-top:1px solid var(--line); }}
+.vrow:first-child {{ border-top:none; }}
+.v-head {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
+.vbadge {{ display:inline-block; font-size:11px; font-weight:800; letter-spacing:.05em;
+  border-radius:6px; padding:2px 9px; text-transform:uppercase; flex:none; }}
+.vbadge.inline {{ padding:1px 6px; font-size:10.5px; vertical-align:middle; }}
+.v-verified {{ background:#e7f7ef; color:#0e9f6e; border:1px solid #b7e6cf; }}
+.v-refuted {{ background:#dc2626; color:#ffffff; border:1px solid #b91c1c; }}
+.v-unverified {{ background:#fdf6ec; color:#b45309; border:1px solid #f3dcb8; }}
+.prov {{ display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.05em;
+  border-radius:6px; padding:2px 8px; text-transform:uppercase; flex:none;
+  background:var(--track); color:var(--muted); border:1px solid var(--line); }}
+.prov-claimed {{ background:#eef2ff; color:var(--accent); border-color:#e0e7ff; }}
+.v-op {{ font-family:var(--mono); font-size:12.5px; color:var(--ink); }}
+.v-basis {{ font-family:var(--mono); font-size:12px; color:var(--muted);
+  margin:6px 0 0 2px; }}
 .foot {{ text-align:center; color:var(--muted); font-size:12.5px; margin-top:26px; }}
 .foot code {{ font-family:var(--mono); }}
 </style></head>
