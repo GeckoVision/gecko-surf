@@ -55,6 +55,17 @@ class Operation:
     # observed traffic). Correlation evidence: a field that ships a real example
     # self-describes its value domain. Empty when the spec declares no property example.
     field_examples: dict[str, Any] = field(default_factory=dict)
+    # Slice 2 (§13.5): the request-body + 2xx-response schema properties decomposed into
+    # typed ``Param`` units — the producer/consumer surface for cross-API MUTATE chains.
+    # ``body_fields`` (``location="body"``) are correlation TARGETS ("create X referencing
+    # Y's id"); ``response_fields`` (``location="response"``) are the PRODUCER side (which
+    # fields a call EMITS). Each carries the canonical SPEC example (handling the OpenAPI
+    # ``examples`` map/list, not only inline ``example``), which enriches the value-domain
+    # signature. Additive + control-plane: the example is spec metadata, NEVER a response
+    # value; the raw ``request_body``/``responses`` dicts are preserved untouched. Deduped
+    # by name (document order, first wins). Empty when the spec declares no such schema.
+    body_fields: list[Param] = field(default_factory=list)
+    response_fields: list[Param] = field(default_factory=list)
 
 
 def load_spec(src: str) -> dict[str, Any]:
@@ -203,6 +214,86 @@ def _collect_field_examples(schemas: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _decompose_fields(schemas: list[dict[str, Any]], location: str) -> list[Param]:
+    """Walk schema properties (bounded/cycle-guarded) into typed ``Param`` fields — the
+    slice-2 producer/consumer decomposition. One field per property NAME (document order,
+    first wins), carrying the property's own schema, its local ``required`` flag, and its
+    canonical SPEC example (``example`` OR the ``examples`` map/list). Surface metadata
+    only — the example is spec-authored, never a response value (invariant #1)."""
+    out: list[Param] = []
+    seen: set[str] = set()
+
+    def walk(node: Any, depth: int, node_seen: frozenset[int]) -> None:
+        if (
+            depth > _MAX_EXAMPLE_DEPTH
+            or not isinstance(node, dict)
+            or id(node) in node_seen
+        ):
+            return
+        node_seen = node_seen | {id(node)}
+        required = {r for r in (node.get("required") or []) if isinstance(r, str)}
+        for name, sub in (node.get("properties") or {}).items():
+            if not isinstance(sub, dict) or not isinstance(name, str):
+                continue
+            if name not in seen:
+                out.append(
+                    Param(
+                        name=name,
+                        location=location,
+                        required=name in required,
+                        schema=sub,
+                        description=str(sub.get("description") or ""),
+                        example=_schema_example(sub),
+                    )
+                )
+                seen.add(name)
+            walk(sub, depth + 1, node_seen)
+        walk(node.get("items") or {}, depth + 1, node_seen)
+        for key in ("allOf", "oneOf", "anyOf"):
+            for sub in node.get(key) or []:
+                walk(sub, depth + 1, node_seen)
+
+    for schema in schemas:
+        walk(schema, 0, frozenset())
+    return out
+
+
+def _body_schemas(request_body: Any) -> list[dict[str, Any]]:
+    """The request body's JSON schema(s) — prefer ``application/json``, else the first
+    media type. Empty when there is no request body / no schema."""
+    if not isinstance(request_body, dict):
+        return []
+    content = request_body.get("content")
+    if not isinstance(content, dict):
+        return []
+    media = content.get("application/json") or next(iter(content.values()), None)
+    if isinstance(media, dict) and isinstance(media.get("schema"), dict):
+        return [media["schema"]]
+    return []
+
+
+def _response_schemas(responses: Any) -> list[dict[str, Any]]:
+    """The 2xx response JSON schemas — the PRODUCER surface. Error (4xx/5xx) bodies are
+    excluded on purpose: a value a later call consumes comes from a success response, not
+    an error envelope."""
+    if not isinstance(responses, dict):
+        return []
+    schemas: list[dict[str, Any]] = []
+    for status, resp in responses.items():
+        code = str(status)
+        if not (code.startswith("2") or code == "default"):
+            continue
+        if not isinstance(resp, dict):
+            continue
+        content = resp.get("content")
+        if not isinstance(content, dict):
+            continue
+        media = content.get("application/json") or next(iter(content.values()), None)
+        if isinstance(media, dict) and isinstance(media.get("schema"), dict):
+            schemas.append(media["schema"])
+    return schemas
+
+
 def extract_operations(spec: dict[str, Any]) -> list[Operation]:
     """Flatten ``paths`` into a normalized list of operations with refs resolved.
 
@@ -252,6 +343,10 @@ def extract_operations(spec: dict[str, Any]) -> list[Operation]:
                     responses=responses,
                     security=op.get("security", global_security),
                     field_examples=_collect_field_examples(_json_schemas(op_resolved)),
+                    body_fields=_decompose_fields(_body_schemas(request_body), "body"),
+                    response_fields=_decompose_fields(
+                        _response_schemas(responses), "response"
+                    ),
                 )
             )
     return operations

@@ -1,0 +1,41 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "pool oracle", "version": "1" },
+  "x-gecko": { "entities": { "poolAddress": "solana-pool" } },
+  "paths": {
+    "/pools/{poolId}": {
+      "get": {
+        "operationId": "getPool",
+        "summary": "Read a liquidity pool's on-chain state",
+        "parameters": [
+          {
+            "name": "poolId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "pool state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "poolAddress": {
+                      "type": "string",
+                      "description": "the pool's base58 address",
+                      "examples": ["7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"]
+                    },
+                    "tvl": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

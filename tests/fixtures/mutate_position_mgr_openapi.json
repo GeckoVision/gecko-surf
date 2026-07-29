@@ -1,0 +1,45 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "position manager", "version": "1" },
+  "x-gecko": { "entities": { "poolAddress": "solana-pool" } },
+  "paths": {
+    "/positions": {
+      "post": {
+        "operationId": "openPosition",
+        "summary": "Open a position in a pool (mutate)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["poolAddress", "amount"],
+                "properties": {
+                  "poolAddress": {
+                    "type": "string",
+                    "description": "the base58 pool address to open a position in",
+                    "examples": ["So11111111111111111111111111111111111111112"]
+                  },
+                  "amount": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "position opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "positionId": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

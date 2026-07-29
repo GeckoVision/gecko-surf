@@ -1,0 +1,77 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "body/response decomposition fixture", "version": "1" },
+  "paths": {
+    "/widgets": {
+      "post": {
+        "operationId": "createWidget",
+        "summary": "Create a widget referencing a mint",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["mint", "count", "meta"],
+                "properties": {
+                  "mint": {
+                    "type": "string",
+                    "description": "the token mint this widget references",
+                    "examples": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+                  },
+                  "count": { "type": "integer", "example": 3 },
+                  "label": { "type": "string" },
+                  "meta": {
+                    "type": "object",
+                    "required": ["nested"],
+                    "properties": {
+                      "nested": { "type": "string", "example": "x" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "widgetId": { "type": "string", "example": "w_1" },
+                    "mint": {
+                      "type": "string",
+                      "examples": ["So11111111111111111111111111111111111111112"]
+                    },
+                    "ok": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "error": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Liveness probe with no body and no response schema",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}
