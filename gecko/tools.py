@@ -71,6 +71,12 @@ def _input_schema(op: Operation) -> dict[str, Any]:
         schema = dict(p.schema) if isinstance(p.schema, dict) else {}
         if p.description and "description" not in schema:
             schema["description"] = p.description
+        # Carry the canonical example (from the param OR its schema) onto the agent-facing
+        # schema so example synthesis (verify-docs --live, the validator) uses the SPEC's
+        # real value instead of a placeholder that false-404s a path/query op. Still
+        # sanitized downstream (sanitize_schema scrubs a poisoned example/default).
+        if p.example is not None and "example" not in schema:
+            schema["example"] = p.example
         key = keymap[p.name]
         props[key] = schema
         if p.required:

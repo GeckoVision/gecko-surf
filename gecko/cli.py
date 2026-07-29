@@ -58,6 +58,7 @@ _SUBCOMMANDS = (
     "graph",
     "correlate",
     "index",
+    "metrics",
     "rm",
     "list",
     "doctor",
@@ -794,6 +795,139 @@ def _cmd_index(argv: list[str]) -> int:
     return 0
 
 
+def _parse_kv(pairs: list[str]) -> dict[str, str]:
+    """``NAME=ENTITY`` CLI pairs -> a dict. Skips malformed entries (no ``=``)."""
+    out: dict[str, str] = {}
+    for pair in pairs:
+        if "=" in pair:
+            name, _, entity = pair.partition("=")
+            if name and entity:
+                out[name] = entity
+    return out
+
+
+def _cmd_metrics(argv: list[str]) -> int:
+    """`gecko metrics <spec>` — the Agent-Surface Report: comprehension, measured.
+
+    Thin transport over ``gecko.metrics.compute_metrics``: prints the three
+    provenance-labeled numbers (context-compression, surface-readiness, correlation).
+    ``--peer`` adds another spec to count cross-provider joins against; ``--confirm
+    NAME=ENTITY`` injects a customer-CONFIRMED value-domain hint (the join-plan
+    gate). Honesty is law — every number is measured/derived, never fabricated.
+    """
+    from . import metrics as metricsmod
+    from .access import public_session
+    from .surface import Surface
+
+    p = argparse.ArgumentParser(
+        prog="gecko metrics",
+        description="Measure comprehension: compression, readiness, correlation.",
+    )
+    p.add_argument("spec", help="An OpenAPI URL, path, or docs URL.")
+    p.add_argument("--id", default=None, help="Surface id label (default: from host).")
+    p.add_argument(
+        "--peer",
+        action="append",
+        default=[],
+        help="A peer spec to count cross-provider joins against (repeatable).",
+    )
+    p.add_argument(
+        "--peer-id",
+        action="append",
+        default=[],
+        help="Surface id for the matching --peer (repeatable, positional).",
+    )
+    p.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        metavar="NAME=ENTITY",
+        help="Inject a customer-CONFIRMED value-domain hint for the primary surface.",
+    )
+    p.add_argument(
+        "--peer-confirm",
+        action="append",
+        default=[],
+        metavar="NAME=ENTITY",
+        help="Inject a customer-CONFIRMED value-domain hint for EVERY peer surface.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit the report as JSON.")
+    args = p.parse_args(argv)
+
+    spec = load_spec(args.spec)
+    raw_source = None
+    if not args.spec.startswith(("http://", "https://")):
+        try:
+            raw_source = Path(args.spec).read_text(encoding="utf-8")
+        except OSError:
+            raw_source = None
+
+    peer_confirm = _parse_kv(args.peer_confirm)
+    peers = []
+    for i, peer_spec in enumerate(args.peer):
+        pid = args.peer_id[i] if i < len(args.peer_id) else f"peer{i}"
+        peers.append(
+            Surface.of(
+                AgentApiClient(
+                    peer_spec,
+                    session=public_session(),
+                    surface_id=pid,
+                    declared_hints=peer_confirm or None,
+                )
+            )
+        )
+
+    m = metricsmod.compute_metrics(
+        spec,
+        raw_source=raw_source,
+        surface_id=args.id,
+        declared_hints=_parse_kv(args.confirm) or None,
+        peers=peers,
+    )
+    if args.json:
+        print(json.dumps(m.to_dict(), indent=2))
+        return 0
+    _print_metrics(m)
+    return 0
+
+
+def _print_metrics(m: Any) -> None:
+    """Human-readable Agent-Surface Report — every number labeled by provenance."""
+    c, r, x = m.compression, m.readiness, m.correlation
+    print(f"Agent-Surface Report — {m.surface_id}  ({m.total_ops} operations)")
+    print("")
+    print("  context-compression (bytes measured, tokens estimated)")
+    print(f"    raw OpenAPI:     {c.raw_bytes:>9,} B  (~{c.raw_tokens_est:,} tok est)")
+    print(
+        f"    agent surface:   {c.surface_bytes:>9,} B  (~{c.surface_tokens_est:,} tok est)"
+    )
+    print(f"    reduction:       {c.reduction_pct:>8}%  ({c.token_estimate})")
+    print("")
+    print("  surface-readiness (recorded, NOT live-verified)")
+    print(
+        f"    well-formed:     {r.well_formed_tools}/{r.total_ops} tools  "
+        f"({r.readiness_pct}%)   quarantined: {r.quarantined_tools}"
+    )
+    print("")
+    print("  correlation (DECLARED value-domain; cross-joins CONFIRMED-only)")
+    print(
+        f"    declared entities:  {x.declared_entities}"
+        + (f"  {list(x.entities)}" if x.entities else "")
+    )
+    print(f"    id-shaped join fields: {x.id_shaped_join_fields}")
+    print(
+        f"    self-declared domains: {x.self_declared_domains}"
+        + (f"  {list(x.domains)}" if x.domains else "")
+        + "  (corroborator only)"
+    )
+    if m.peers:
+        print(
+            f"    cross-provider joins vs {list(m.peers)}: "
+            f"{x.cross_joins_plan_eligible} plan-eligible (confirmed), "
+            f"{x.cross_joins_candidate} candidate (quarantined)"
+        )
+
+
 def _cmd_auth(argv: list[str]) -> int:
     """`gecko auth set|rm|list` — thin transport over ``credentials`` (keychain).
 
@@ -1513,6 +1647,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_correlate(rest)
     if cmd == "index":
         return _cmd_index(rest)
+    if cmd == "metrics":
+        return _cmd_metrics(rest)
     if cmd == "rm":
         return _cmd_rm(rest)
     if cmd == "list":

@@ -1,0 +1,71 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Examples Fixture API", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.examples.test" }],
+  "paths": {
+    "/tokens/{mint}": {
+      "get": {
+        "operationId": "get_token",
+        "summary": "Get a token by mint",
+        "parameters": [
+          {
+            "name": "mint",
+            "in": "path",
+            "required": true,
+            "description": "SPL mint address (base58).",
+            "schema": { "type": "string" },
+            "example": "So11111111111111111111111111111111111111112"
+          },
+          {
+            "name": "cluster",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "mainnet-beta"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token card",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mint": {
+                      "type": "string",
+                      "example": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                    },
+                    "symbol": { "type": "string" },
+                    "decimals": { "type": "integer", "example": 6 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Liveness with no examples anywhere",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "status": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
