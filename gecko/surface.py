@@ -32,7 +32,9 @@ it never replaces them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Literal
 
 from .agentnative import build_artifacts
@@ -60,6 +62,14 @@ class SafetyVerdict:
 
     total_tools: int
     quarantined: tuple[str, ...]  # tool names withheld from credentialed calls
+    #: quarantined tool name -> the sanitizer's ALREADY-computed reason (neutral detection
+    #: categories like ``"fund_routing, secret_exfil"``, NEVER the stripped instruction
+    #: text). Additive + defaults empty so existing consumers of ``quarantined`` are
+    #: unaffected; a name absent here was quarantined for a schema/response reason whose
+    #: description was clean, and downstream falls back to a generic "quarantined". Excluded
+    #: from equality/hash (``compare=False``): it is a pure function of ``quarantined``, so
+    #: it adds no identity and keeps the verdict hashable.
+    reasons: Mapping[str, str] = field(default_factory=dict, compare=False)
 
     @property
     def clean(self) -> bool:
@@ -158,8 +168,22 @@ class Surface:
     @property
     def safety(self) -> SafetyVerdict:
         """The anti-poisoning stance: which tools are quarantined (untrusted-spec defense)."""
-        quarantined = tuple(sorted(self.client._poisoned_tool_names))
-        return SafetyVerdict(total_tools=len(self.tools()), quarantined=quarantined)
+        poisoned = self.client._poisoned_tool_names
+        quarantined = tuple(sorted(poisoned))
+        # Read the reason the sanitizer already stored on each tool (x-poison-reason) — the
+        # verdict CARRIES it so safechain never re-scans. Absent for schema/response-side
+        # poison (no reason was captured there); those fall back to a generic reason.
+        by_name = self.client._tool_by_name
+        reasons = {
+            name: by_name[name]["x-poison-reason"]
+            for name in poisoned
+            if name in by_name and by_name[name].get("x-poison-reason")
+        }
+        return SafetyVerdict(
+            total_tools=len(self.tools()),
+            quarantined=quarantined,
+            reasons=MappingProxyType(reasons),
+        )
 
     # -- the projections (one artifact, N shapes) --------------------------------
     def projections(

@@ -159,7 +159,9 @@ def to_tool(op: Operation) -> dict[str, Any]:
     # Anti-poisoning: the summary/description and every param schema come from the
     # (untrusted) spec. Neutralize any injected instruction / secret-looking default
     # before it reaches the agent, and flag the surface for quarantine if we had to.
-    description, poisoned_desc = sanitize.sanitize_text(question_description(op))
+    description, poison_reasons = sanitize.sanitize_text_reasons(
+        question_description(op)
+    )
     input_schema, poisoned_schema = sanitize.sanitize_schema(_input_schema(op))
     tool: dict[str, Any] = {
         "name": tool_name(op),
@@ -180,10 +182,17 @@ def to_tool(op: Operation) -> dict[str, Any]:
             },
         },
     }
-    if poisoned_desc or poisoned_schema:
+    if poison_reasons or poisoned_schema:
         # A poisoned op quarantines its whole surface (client enforces recorded-only,
         # no auth). Kept as spec metadata (a bool), never the stripped instruction text.
         tool["x-poison-flag"] = True
+        if poison_reasons:
+            # Carry the ALREADY-computed detection categories forward so the safety chain
+            # reads WHY it quarantined instead of re-scanning the description. Control-plane
+            # only: neutral rule names ("fund_routing", "secret_exfil"), NEVER the stripped
+            # instruction text. Schema-only poison carries no reason here (the description
+            # was clean) and falls back to the generic "quarantined" downstream, unchanged.
+            tool["x-poison-reason"] = ", ".join(poison_reasons)
     return tool
 
 
