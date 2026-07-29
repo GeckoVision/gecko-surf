@@ -7,7 +7,7 @@
 [![Claude Code](https://img.shields.io/badge/surface-MCP-D97757.svg)](https://modelcontextprotocol.io/)
 [![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-1940%20passing-2E7D32.svg)](#development)
+[![tests](https://img.shields.io/badge/tests-1984%20passing-2E7D32.svg)](#development)
 
 > **An OpenAPI tells an agent what endpoints *exist*. MCP tells it how to *invoke* one.
 > Neither tells it which calls, in what order, from what data — so the agent guesses, and
