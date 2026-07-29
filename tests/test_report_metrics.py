@@ -12,10 +12,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from gecko import report
+from gecko.access import public_session
+from gecko.client import AgentApiClient
 from gecko.ingest import load_spec
 from gecko.metrics import compute_metrics
+from gecko.surface import Surface
 
 _PEGANA = Path(__file__).parent / "fixtures" / "pegana_p0_openapi.json"
+_JUPITER = (
+    Path(__file__).parent.parent / "gecko" / "examples" / "jupiter_swap_openapi.json"
+)
 
 
 def _metrics():
@@ -27,6 +33,21 @@ def _metrics():
 
 def _html() -> str:
     return report.build_scorecard(str(_PEGANA))
+
+
+def _jupiter_surface() -> Surface:
+    # The peer surface with the customer-CONFIRMED mint vocabulary on both mint params.
+    return Surface.of(
+        AgentApiClient(
+            str(_JUPITER),
+            session=public_session(),
+            surface_id="jupiter",
+            declared_hints={
+                "inputMint": "solana-token-mint",
+                "outputMint": "solana-token-mint",
+            },
+        )
+    )
 
 
 def test_card_leads_with_measured_compression_hero() -> None:
@@ -54,18 +75,69 @@ def test_card_shows_recorded_readiness_rate() -> None:
     assert "NOT live-verified" in html
 
 
-def test_card_shows_correlation_score_with_provenance() -> None:
+def test_single_surface_correlation_reframes_join_surface() -> None:
+    # Single-surface: no bald "0 · 0" emptiness — reframe toward the join SURFACE (the
+    # potential), still truthful (no fabricated joins).
     html = _html()
     m = _metrics()
     x = m.correlation
-    # DECLARED entities + confirmed cross-API joins are the headline numbers
-    assert str(x.declared_entities) in html
-    assert str(x.cross_joins_plan_eligible) in html
-    # the join surface area + the corroborator-only self-declared domains
-    assert str(x.id_shaped_join_fields) in html
+    # the join surface area + the corroborator-only self-declared domains are the copy
+    assert str(x.id_shaped_join_fields) in html  # 250 id-shaped join keys
     assert str(x.self_declared_domains) in html
+    # reframed toward potential, not emptiness
+    assert "join keys" in html
+    assert "ready to correlate" in html.lower()
     # provenance label carried verbatim — corroborator, never a standalone join
     assert "corroborator" in html
+    # honesty: no fabricated cross-provider joins with a single surface
+    assert "cross-API joins" not in html
+
+
+def test_correlated_scorecard_renders_confirmed_cross_joins_ahha() -> None:
+    # The a-ha: Pegana(mint) ↔ Jupiter(inputMint/outputMint), both customer-CONFIRMED.
+    jupiter = _jupiter_surface()
+    html = report.build_scorecard(
+        str(_PEGANA), peers=[jupiter], confirmed={"mint": "solana-token-mint"}
+    )
+    m = compute_metrics(
+        load_spec(str(_PEGANA)),
+        raw_source=_PEGANA.read_text(encoding="utf-8"),
+        declared_hints={"mint": "solana-token-mint"},
+        peers=[jupiter],
+    )
+    n = m.correlation.cross_joins_plan_eligible
+    assert n == 42  # guards the real Pegana↔Jupiter join count off the shipped engine
+    # the real number, rendered prominently as the second hero
+    assert str(n) in html
+    assert "cross-API joins" in html
+    # plan-eligible + CONFIRMED, provenance-labeled — never a candidate shown as eligible
+    assert "Plan-eligible" in html
+    assert "CONFIRMED" in html
+    assert "DECLARED" in html
+    # names the peer surface
+    assert "jupiter" in html
+    # both sides confirmed -> nothing quarantined here
+    assert m.correlation.cross_joins_candidate == 0
+
+
+def test_correlated_scorecard_is_control_plane_clean() -> None:
+    jupiter = _jupiter_surface()
+    html = report.build_scorecard(
+        str(_PEGANA), peers=[jupiter], confirmed={"mint": "solana-token-mint"}
+    ).lower()
+    for leak in ("authorization", "bearer ", "x-api-key", "secret", "password"):
+        assert leak not in html, f"control-plane leak: {leak!r}"
+
+
+def test_correlated_scorecard_stays_deterministic() -> None:
+    jupiter = _jupiter_surface()
+    a = report.build_scorecard(
+        str(_PEGANA), peers=[jupiter], confirmed={"mint": "solana-token-mint"}
+    )
+    b = report.build_scorecard(
+        str(_PEGANA), peers=[jupiter], confirmed={"mint": "solana-token-mint"}
+    )
+    assert a == b
 
 
 def test_card_numbers_match_compute_metrics() -> None:
