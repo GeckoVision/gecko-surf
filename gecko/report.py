@@ -274,6 +274,44 @@ def _correlation_cell(metrics: Metrics) -> str:
     )
 
 
+def _compression_hero(c: Any) -> str:
+    """The compression hero — honest in BOTH directions (see
+    :class:`gecko.metrics.CompressionMetric`).
+
+    * **compressed** (``reduction_pct > 0``): a verbose spec comprehends smaller — the
+      differentiator, indigo hero, ``+X% smaller``.
+    * **enriched** (``is_enriched``): a spec too sparse to call correctly — Gecko ADDED the
+      question-shaped, first-call-correct descriptions + examples it lacked, so the surface
+      is bigger *because it is better*. Rendered ``+X% richer`` on a green (positive) accent,
+      NEVER as a negative "−X% smaller". Same hero weight, different truth.
+
+    Both use ``magnitude_pct`` (unsigned) so the number reads as a positive either way; the
+    signed ``reduction_pct`` stays the source of truth behind the interpretation."""
+    sizes = (
+        f'<div class="m-detail">{_kb(c.raw_bytes)} → {_kb(c.surface_bytes)} · '
+        f"{c.raw_tokens_est:,} → {c.surface_tokens_est:,} tokens (est)</div>"
+        f'<div class="m-prov">{escape(c.basis)}; {escape(c.token_estimate)}</div>'
+    )
+    if c.is_enriched:
+        return (
+            '<div class="metric hero enriched">'
+            f'<div class="m-value">+{c.magnitude_pct}%'
+            '<span class="m-unit"> richer</span></div>'
+            '<div class="m-label">Comprehension enrichment</div>'
+            f'<div class="m-detail">The spec was too sparse to call correctly — Gecko added '
+            f"the comprehension (question-shaped tools + examples) it lacked.</div>"
+            f"{sizes}"
+            "</div>"
+        )
+    return (
+        '<div class="metric hero">'
+        f'<div class="m-value">{c.reduction_pct}%<span class="m-unit"> smaller</span></div>'
+        '<div class="m-label">Context compression</div>'
+        f"{sizes}"
+        "</div>"
+    )
+
+
 def _render_metrics(metrics: Metrics) -> str:
     """The 'at a glance' card — the three measured, provenance-labeled numbers.
 
@@ -294,14 +332,8 @@ def _render_metrics(metrics: Metrics) -> str:
         "Bytes are measured; token counts are an estimate (chars/4); readiness is a "
         "recorded structural rate, never a live-verified claim.</p>"
         '<div class="metrics-grid">'
-        # --- hero: context-compression (the differentiator) ---
-        '<div class="metric hero">'
-        f'<div class="m-value">{c.reduction_pct}%<span class="m-unit"> smaller</span></div>'
-        '<div class="m-label">Context compression</div>'
-        f'<div class="m-detail">{_kb(c.raw_bytes)} → {_kb(c.surface_bytes)} · '
-        f"{c.raw_tokens_est:,} → {c.surface_tokens_est:,} tokens (est)</div>"
-        f'<div class="m-prov">{escape(c.basis)}; {escape(c.token_estimate)}</div>'
-        "</div>"
+        # --- hero: context-compression, OR enrichment for a too-sparse spec ---
+        f"{_compression_hero(c)}"
         # --- surface-readiness (recorded, never "verified") ---
         '<div class="metric">'
         f'<div class="m-value">{r.well_formed_tools}/{r.total_ops}'
@@ -633,6 +665,11 @@ h2 {{ font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(
 .metric {{ border:1px solid var(--line); border-radius:12px; padding:18px 18px 16px;
   background:#fbfcfe; display:flex; flex-direction:column; }}
 .metric.hero {{ background:linear-gradient(160deg,#eef2ff,#f6f7ff); border-color:#e0e7ff; }}
+/* enrichment hero: a too-sparse spec Gecko made RICHER — green so '+X% richer' reads as a
+   positive (comprehension added), never a failed compression. Same hero weight. */
+.metric.hero.enriched {{ background:linear-gradient(160deg,#e7f7ef,#f2fdf7);
+  border-color:#b7e6cf; }}
+.metric.hero.enriched .m-value, .metric.hero.enriched .m-unit {{ color:#0e9f6e; }}
 /* the correlation a-ha: a second hero, green to read as 'unlocked', not 'compressed'. */
 .metric.corr-hero {{ background:linear-gradient(160deg,#e7f7ef,#f2fdf7); border-color:#b7e6cf; }}
 .metric.corr-hero .m-value, .metric.corr-hero .m-unit {{ color:#0e9f6e; }}

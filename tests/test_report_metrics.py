@@ -19,9 +19,10 @@ from gecko.metrics import compute_metrics
 from gecko.surface import Surface
 
 _PEGANA = Path(__file__).parent / "fixtures" / "pegana_p0_openapi.json"
-_JUPITER = (
-    Path(__file__).parent.parent / "gecko" / "examples" / "jupiter_swap_openapi.json"
-)
+_EXAMPLES = Path(__file__).parent.parent / "gecko" / "examples"
+_JUPITER = _EXAMPLES / "jupiter_swap_openapi.json"
+#: A too-sparse spec: its scorecard must render the ENRICHMENT hero, never "-X% smaller".
+_COLOSSEUM = _EXAMPLES / "colosseum_copilot_openapi.json"
 
 
 def _metrics():
@@ -62,6 +63,43 @@ def test_card_leads_with_measured_compression_hero() -> None:
     assert "estimate" in html.lower()
     assert f"{m.compression.raw_tokens_est:,}" in html
     assert f"{m.compression.surface_tokens_est:,}" in html
+
+
+def test_enriched_spec_renders_enrichment_hero_not_negative_smaller() -> None:
+    # A too-sparse spec (Colosseum) must render the ENRICHMENT hero — "+X% richer" — and
+    # NEVER a "-X% smaller" negative. The surface is larger because it's better.
+    html = report.build_scorecard(str(_COLOSSEUM))
+    m = compute_metrics(
+        load_spec(str(_COLOSSEUM)),
+        raw_source=_COLOSSEUM.read_text(encoding="utf-8"),
+    )
+    c = m.compression
+    assert c.is_enriched  # guards the fixture stays terse/enriched
+    # the honest positive framing: the enrichment LABEL + "richer" unit, POSITIVE magnitude
+    assert "Comprehension enrichment" in html
+    assert f"+{c.magnitude_pct}%" in html
+    assert "richer</span>" in html
+    # never the dishonest negative framing for an enriched spec
+    assert f"{c.reduction_pct}%<span" not in html  # no signed-negative hero value
+    assert "smaller</span>" not in html  # no "-X% smaller" unit
+    # still the hero (same visual weight), just a different accent
+    assert "metric hero enriched" in html
+    # on-thesis copy: too sparse to call correctly, Gecko added the comprehension
+    assert "too sparse to call correctly" in html
+
+
+def test_compressed_spec_still_renders_the_compression_hero() -> None:
+    # The verbose case (Pegana) is unchanged: the "-…% smaller" compression hero stays.
+    html = _html()
+    m = _metrics()
+    c = m.compression
+    assert not c.is_enriched
+    assert f"{c.reduction_pct}%<span" in html  # the signed-positive hero value
+    assert "smaller</span>" in html
+    assert "Context compression" in html
+    # not the enrichment framing (the CSS defines the accent, but nothing renders it)
+    assert "Comprehension enrichment" not in html
+    assert "metric hero enriched" not in html  # the div class combo, never present
 
 
 def test_card_shows_recorded_readiness_rate() -> None:
