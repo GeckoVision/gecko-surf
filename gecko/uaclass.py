@@ -14,7 +14,10 @@ are checked first, so they win the tie.
 
 from __future__ import annotations
 
-from .events import ClientKind
+from collections.abc import Mapping
+from typing import Any, cast
+
+from .events import CLIENT_KINDS, ClientKind
 
 # Substrings (case-insensitive) that mark a crawler / prober / scanner / generic HTTP
 # library. Checked FIRST so a robot faking a real client name still classifies as robot.
@@ -50,6 +53,16 @@ _ROBOT_SUBSTRINGS: tuple[str, ...] = (
     # is a crawler, not a real client. No real MCP client name embeds these substrings.
     "indexer",
     "extractor",
+    # Crawler / CI-tooling verbs seen live landing in the `client` bucket:
+    # mcp-scraper, liner-mcp-verifier, mcp-server-validator, mcp-apps-validator. These
+    # are unambiguous tooling signals — a real interactive MCP client is never named a
+    # scraper/verifier/validator. (Deliberately NOT added: `inspector` — `mcp-inspector`
+    # is a legitimate human-driven dev tool, in fact one of our own self-clients; and
+    # bare `monitor`/`health`, which can plausibly appear in a real client name. When
+    # unsure we leave a marker out: a missed bot is recoverable, a hidden adopter is not.)
+    "scraper",
+    "verifier",
+    "validator",
     "python-requests",
     "go-http-client",
     "curl",
@@ -91,4 +104,33 @@ def classify_client(user_agent: str | None, client: str | None) -> ClientKind:
     return "unknown"
 
 
-__all__ = ["classify_client"]
+def reclassify_client(row: Mapping[str, Any]) -> ClientKind:
+    """Re-derive ``client_kind`` for a STORED event row on READ.
+
+    The persisted ``client_kind`` was frozen at EMIT under whatever classifier rules
+    shipped then, so a historical row can carry a STALE label — e.g. an ``mcp-scraper``
+    connect stored as ``client`` before ``scraper`` was a robot marker. Any read that
+    groups/counts by client kind must therefore re-derive from the raw signals every
+    time, never trust the frozen value; this keeps ``classify_client`` the single source
+    of truth for both emit and read.
+
+    Re-classifies from the raw ``user_agent`` + ``client`` (clientInfo) via
+    ``classify_client``. Falls back to the stored ``client_kind`` ONLY when BOTH raw
+    fields are absent (a pre-instrumentation row with nothing to re-derive from); an
+    absent/unusable stored value then degrades to ``"unknown"``. Read-only — it derives
+    a value and never mutates ``row``.
+    """
+    user_agent = row.get("user_agent")
+    client = row.get("client")
+    if user_agent is not None or client is not None:
+        return classify_client(
+            user_agent if isinstance(user_agent, str) else None,
+            client if isinstance(client, str) else None,
+        )
+    stored = row.get("client_kind")
+    if isinstance(stored, str) and stored in CLIENT_KINDS:
+        return cast(ClientKind, stored)
+    return "unknown"
+
+
+__all__ = ["classify_client", "reclassify_client"]

@@ -12,9 +12,10 @@ label, opaque session id). There is no payload/arg-value to read because none wa
 stored. Retention is a true per-session join: a ``surf.call`` carries the same opaque
 ``session_id`` the transport assigned at ``surf.connect``.
 
-EXTERNAL-only by default: OUR own clients (and any name in ``GECKO_SELF_CLIENTS``) are
+EXTERNAL-only by default: OUR own clients (and any name in ``GECKO_SELF_CLIENTS``) and
+ROBOTS (crawlers / MCP-directory indexers / scanners, re-classified on read) are
 excluded, so the numbers are honestly "N external devs connected, M activated, K
-returned" — not us testing our own server.
+returned" — not us testing our own server, and not a crawler fleet probing it.
 
 Graceful + read-only: with ``MONGODB_URI`` unset and no ``--jsonl`` it prints a
 friendly note and exits 0 (a plain OSS checkout never phones home to read, either).
@@ -40,6 +41,10 @@ from typing import Any
 
 # Single source of truth for the collection location + the event vocabulary.
 from gecko.events import EVENTS_COLLECTION, EVENTS_DB
+
+# Single source of truth for robot/human classification — re-derived on READ (never the
+# frozen client_kind), so a connect stored before a marker existed is still dropped.
+from gecko.uaclass import reclassify_client
 
 # Our own client names — a connect/call from one of these is US, not an external dev.
 # Matched case-insensitively as a name prefix (a client is "name/version"). Extend via
@@ -84,21 +89,29 @@ def summarize_funnel(
 ) -> list[FunnelRow]:
     """Pure aggregation: events -> one ``FunnelRow`` per surface, EXTERNAL only.
 
-    Self-attribution flows through the session id: a session whose ``surf.connect``
-    carried one of our own client labels is marked self, and its later calls (which
-    carry no client of their own) are excluded too. Sessions we only ever see calling
-    (no connect in-window) are still counted as external activity — an honest floor.
+    Two exclusions keep the numbers honest — both flow through the session id:
 
-    A ``surf.call`` with no ``session_id`` (aggregate fallback / a legacy row) cannot be
-    attributed to a session, so it is excluded from the per-session activated/returned
-    math rather than silently inflating it.
+    * **Self**: a session whose ``surf.connect`` carried one of our own client labels is
+      marked excluded, and its later calls (which carry no client of their own) too.
+    * **Robots**: a crawler / MCP-directory indexer / scanner that completes an
+      ``initialize`` is not an external dev. Its kind is RE-DERIVED on read via
+      ``reclassify_client`` (the raw UA/clientInfo), NEVER the frozen ``client_kind`` —
+      so a connect stored before a marker existed (e.g. ``mcp-scraper`` once labeled
+      ``client``) is still dropped.
+
+    Sessions we only ever see calling (no connect in-window) are still counted as
+    external activity — an honest floor. A ``surf.call`` with no ``session_id``
+    (aggregate fallback / a legacy row) cannot be attributed to a session, so it is
+    excluded from the per-session activated/returned math rather than silently inflating
+    it.
     """
     self_norm = frozenset(c.lower() for c in self_clients)
 
     surfaces: set[str] = set()
     # surface -> {session_id: client}
     connect_client: dict[str, dict[str, Any]] = defaultdict(dict)
-    self_sessions: dict[str, set[str]] = defaultdict(set)
+    # Sessions excluded from the external funnel: OUR OWN clients OR robots.
+    excluded_sessions: dict[str, set[str]] = defaultdict(set)
     failed: dict[str, int] = defaultdict(int)
     # surface -> {session_id: call_count}
     call_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -114,10 +127,10 @@ def summarize_funnel(
         if kind == "surf.connect":
             if isinstance(session_id, str) and session_id:
                 connect_client[surface][session_id] = client
-                if _is_self(client, self_norm):
-                    self_sessions[surface].add(session_id)
+                if _is_self(client, self_norm) or reclassify_client(event) == "robot":
+                    excluded_sessions[surface].add(session_id)
         elif kind == "surf.connect_failed":
-            if not _is_self(client, self_norm):
+            if not _is_self(client, self_norm) and reclassify_client(event) != "robot":
                 failed[surface] += 1
         elif kind in _CALL_EVENTS:
             if isinstance(session_id, str) and session_id:
@@ -125,14 +138,12 @@ def summarize_funnel(
 
     rows: list[FunnelRow] = []
     for surface in sorted(surfaces):
-        selfset = self_sessions[surface]
+        excluded = excluded_sessions[surface]
         ext_connect_sessions = {
-            sid
-            for sid, client in connect_client[surface].items()
-            if not _is_self(client, self_norm)
+            sid for sid in connect_client[surface] if sid not in excluded
         }
         ext_calls = {
-            sid: n for sid, n in call_counts[surface].items() if sid not in selfset
+            sid: n for sid, n in call_counts[surface].items() if sid not in excluded
         }
         rows.append(
             FunnelRow(

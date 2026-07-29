@@ -121,6 +121,49 @@ def test_search_counts_as_a_call_for_activation():
     assert row.activated == 1
 
 
+def test_robot_connect_is_excluded_from_the_external_funnel():
+    # A crawler that completes an MCP initialize must NOT count as an external dev,
+    # nor may its calls inflate activation/retention.
+    events = [
+        _connect("pegana", "human", client="claude-code/1.0"),
+        _connect("pegana", "bot", client="mcp-scraper/0.1"),  # crawler -> excluded
+        _call("pegana", "human"),
+        _call("pegana", "bot"),
+        _call("pegana", "bot"),
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.connects == 1  # only the human session
+    assert row.activated == 1  # only the human
+    assert row.returned == 0  # the bot's 2 calls are excluded
+
+
+def test_robot_connect_reclassified_from_stale_stored_kind():
+    # The connect row was frozen as `client` before `scraper` was a robot marker; the
+    # funnel must re-derive on read and drop it (never trust the stored client_kind).
+    events = [
+        {
+            "event": "surf.connect",
+            "surface_id": "pegana",
+            "session_id": "bot",
+            "client": "mcp-scraper/0.1",
+            "client_kind": "client",  # STALE frozen label
+        },
+        _call("pegana", "bot"),
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.connects == 0
+    assert row.activated == 0
+
+
+def test_robot_connect_failed_is_not_counted():
+    events = [
+        _failed("pegana", client="cursor/0.4"),  # a real client's failed handshake
+        _failed("pegana", client="mcp-server-validator/2"),  # a crawler -> excluded
+    ]
+    row = _row(funnel.summarize_funnel(events), "pegana")
+    assert row.connect_failed == 1
+
+
 def test_render_is_stable_and_mentions_the_funnel_stages():
     rows = funnel.summarize_funnel(
         [_connect("pegana", "s1"), _call("pegana", "s1"), _call("pegana", "s1")]

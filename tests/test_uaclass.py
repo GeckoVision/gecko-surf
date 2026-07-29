@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from gecko.events import CLIENT_KINDS
-from gecko.uaclass import classify_client
+from gecko.uaclass import classify_client, reclassify_client
 
 
 @pytest.mark.parametrize(
@@ -94,6 +94,72 @@ def test_indexer_patterns_do_not_over_match_real_clients(
     ua: str | None, client: str | None
 ) -> None:
     assert classify_client(ua, client) == "client"
+
+
+@pytest.mark.parametrize(
+    "ua_or_client",
+    [
+        # scraper / verifier / validator markers — real crawlers seen live in the
+        # `client` bucket. A genuine interactive MCP client is never named these.
+        "mcp-scraper/0.1",
+        "liner-mcp-verifier/1",
+        "mcp-server-validator/2",
+        "mcp-apps-validator/0.3",
+    ],
+)
+def test_scraper_verifier_validator_markers_are_robot(ua_or_client: str) -> None:
+    # Match whether the marker arrives via the UA or via clientInfo (both haystacks).
+    assert classify_client(ua_or_client, None) == "robot"
+    assert classify_client(None, ua_or_client) == "robot"
+
+
+@pytest.mark.parametrize(
+    "ua,client",
+    [
+        # The new markers must NOT catch a real interactive client.
+        ("claude-code/2.1.7", None),
+        (None, "Claude Code/2.1.x"),
+        ("cursor/0.43", None),
+        (None, "Cline/3.0"),
+    ],
+)
+def test_new_markers_do_not_over_match_real_clients(
+    ua: str | None, client: str | None
+) -> None:
+    assert classify_client(ua, client) == "client"
+
+
+def test_reclassify_row_rederives_from_raw_ignoring_stale_kind() -> None:
+    # A row frozen as `client` under old rules, but whose raw clientInfo is a crawler,
+    # must re-derive to `robot` on read — proving we never trust the stored kind.
+    row = {"client_kind": "client", "client": "mcp-scraper/0.1"}
+    assert reclassify_client(row) == "robot"
+
+
+def test_reclassify_row_rederives_from_user_agent() -> None:
+    row = {"client_kind": "client", "user_agent": "python-requests/2.31"}
+    assert reclassify_client(row) == "robot"
+
+
+def test_reclassify_row_falls_back_to_stored_kind_when_no_raw() -> None:
+    # A pre-instrumentation row with nothing to re-derive from keeps its stored label.
+    assert reclassify_client({"client_kind": "client"}) == "client"
+    assert reclassify_client({"client_kind": "robot"}) == "robot"
+
+
+def test_reclassify_row_unknown_when_no_raw_and_no_stored_kind() -> None:
+    assert reclassify_client({}) == "unknown"
+    assert reclassify_client({"client_kind": "bogus"}) == "unknown"
+
+
+def test_reclassify_row_result_is_always_a_closed_set_member() -> None:
+    for row in [
+        {"client": "curl/8"},
+        {"user_agent": "claude-code/1"},
+        {"client_kind": "unknown"},
+        {},
+    ]:
+        assert reclassify_client(row) in CLIENT_KINDS
 
 
 def test_robot_wins_a_tie() -> None:
