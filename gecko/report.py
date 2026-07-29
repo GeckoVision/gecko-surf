@@ -19,7 +19,7 @@ real response value.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from html import escape
 from typing import Any, get_args
 
@@ -32,6 +32,7 @@ from .inspect import InspectionReport, inspect
 from .metrics import Metrics, compute_metrics
 from .modes import CallMode
 from .sample import example_from_schema
+from .surface import Surface
 from .surfaceviz import graph_data, render_svg
 from .verify import verify_docs
 
@@ -213,25 +214,78 @@ def _read_raw_source(spec: str | dict[str, Any]) -> str | None:
     return None
 
 
+def _correlation_cell(metrics: Metrics) -> str:
+    """The adaptive correlation tile — the a-ha when peers confirm cross-provider joins,
+    an honest 'ready to correlate' join-surface framing when the surface stands alone.
+
+    Three provenance-honest shapes, all straight off :func:`compute_metrics` (no counts
+    fabricated here):
+
+    * **confirmed cross-joins (>0)** — the a-ha: a SECOND hero. The customer-CONFIRMED,
+      plan-eligible join count, named against the peer(s), labeled DECLARED + CONFIRMED.
+    * **peers present, none confirmed (candidates only)** — the quarantined-candidate
+      count, labeled 'needs confirm', NEVER shown as plan-eligible (the §13.6 gate).
+    * **single surface** — reframe toward the join surface itself (id-shaped join keys +
+      self-declared domains, 'ready to correlate') so it reads as potential, not a bald
+      '0 · 0'. Truthful: no cross-provider joins are claimed."""
+    x = metrics.correlation
+    peers = ", ".join(metrics.peers)
+
+    if x.cross_joins_plan_eligible > 0:
+        detail = (
+            f"{escape(metrics.surface_id)} ↔ {escape(peers)} — "
+            "DECLARED + CONFIRMED, first-plan-correct"
+        )
+        if x.cross_joins_candidate:
+            detail += f" · {x.cross_joins_candidate} quarantined candidate(s)"
+        return (
+            '<div class="metric hero corr-hero">'
+            f'<div class="m-value">{x.cross_joins_plan_eligible}'
+            '<span class="m-unit"> cross-API joins</span></div>'
+            '<div class="m-label">Plan-eligible · CONFIRMED</div>'
+            f'<div class="m-detail">{detail}</div>'
+            f'<div class="m-prov">{escape(x.provenance)}</div>'
+            "</div>"
+        )
+
+    if x.cross_joins_candidate > 0:
+        return (
+            '<div class="metric">'
+            f'<div class="m-value">{x.cross_joins_candidate}'
+            '<span class="m-unit"> candidate(s)</span></div>'
+            '<div class="m-label">Cross-API · needs confirm</div>'
+            f'<div class="m-detail">quarantined vs {escape(peers)} — confirm the value '
+            "domain to make these joins plan-eligible</div>"
+            f'<div class="m-prov">{escape(x.provenance)}</div>'
+            "</div>"
+        )
+
+    # Single surface: reframe toward the join surface (potential), never a bald "0 · 0".
+    return (
+        '<div class="metric">'
+        f'<div class="m-value">{x.id_shaped_join_fields}'
+        '<span class="m-unit"> join keys</span></div>'
+        '<div class="m-label">Ready to correlate</div>'
+        f'<div class="m-detail">{x.id_shaped_join_fields} id-shaped join keys · '
+        f"{x.self_declared_domains} self-declared domain(s), corroborator-only — add a "
+        "peer API to plan cross-provider joins</div>"
+        f'<div class="m-prov">{escape(x.provenance)}</div>'
+        "</div>"
+    )
+
+
 def _render_metrics(metrics: Metrics) -> str:
     """The 'at a glance' card — the three measured, provenance-labeled numbers.
 
     Rendered straight from :func:`gecko.metrics.compute_metrics` (never recomputed here):
     context-compression is the hero (the differentiator), then the recorded surface-
-    readiness rate and the honest correlation score. Every number carries the exact
-    honesty label ``metrics.py`` produced — measured vs estimated, recorded vs verified,
-    corroborator-only — so nothing is overclaimed. Control-plane clean: counts, byte/token
-    sizes, format-slot names and provenance strings only, never a response payload."""
+    readiness rate and the honest, ADAPTIVE correlation score (see
+    :func:`_correlation_cell`). Every number carries the exact honesty label ``metrics.py``
+    produced — measured vs estimated, recorded vs verified, corroborator-only — so nothing
+    is overclaimed. Control-plane clean: counts, byte/token sizes, format-slot names and
+    provenance strings only, never a response payload."""
     c = metrics.compression
     r = metrics.readiness
-    x = metrics.correlation
-
-    corr_extra = (
-        f"{x.id_shaped_join_fields} id-shaped join keys · "
-        f"{x.self_declared_domains} self-declared domain(s), corroborator-only"
-    )
-    if x.cross_joins_candidate:
-        corr_extra += f" · {x.cross_joins_candidate} quarantined candidate(s)"
 
     return (
         '<section class="card metrics">'
@@ -256,14 +310,8 @@ def _render_metrics(metrics: Metrics) -> str:
         f'<div class="m-detail">tools well-formed · {r.quarantined_tools} quarantined</div>'
         f'<div class="m-prov">{escape(r.provenance)}</div>'
         "</div>"
-        # --- correlation score (DECLARED + CONFIRMED only) ---
-        '<div class="metric">'
-        f'<div class="m-value">{x.declared_entities}'
-        f'<span class="m-unit"> · {x.cross_joins_plan_eligible}</span></div>'
-        '<div class="m-label">DECLARED entities · confirmed joins</div>'
-        f'<div class="m-detail">{escape(corr_extra)}</div>'
-        f'<div class="m-prov">{escape(x.provenance)}</div>'
-        "</div>"
+        # --- correlation: adaptive (a-ha when confirmed, potential when alone) ---
+        f"{_correlation_cell(metrics)}"
         "</div>"
         "</section>"
     )
@@ -416,11 +464,20 @@ def build_scorecard(
     verify: bool = False,
     verify_mode: CallMode = "recorded",
     verify_outcomes: Mapping[str, CallOutcome] | None = None,
+    peers: Sequence[Surface] | None = None,
+    confirmed: Mapping[str, str] | None = None,
 ) -> str:
     """Build the full self-contained HTML scorecard for ``spec``.
 
     Deterministic (same input → byte-stable output) and control-plane clean. ``intents``
     scripts the Playground; when omitted, a few are auto-picked from the surface's tools.
+
+    ``peers`` (loaded peer :class:`~gecko.surface.Surface` objects) and ``confirmed``
+    (a customer-CONFIRMED ``field-name -> value-domain`` map for THIS surface) flow into
+    :func:`gecko.metrics.compute_metrics` to render the CORRELATED correlation cell — the
+    a-ha: real, plan-eligible cross-provider joins. With neither the call is byte-identical
+    to today (both default to the single-surface metrics). No correlation logic lives here;
+    the count comes straight off the shipped engine, honesty labels intact.
 
     ``verify`` (opt-in) runs :func:`gecko.verify.verify_docs` first — replaying every op
     against reality (recorded by default, ``verify_mode="live"`` for real calls) — and
@@ -440,7 +497,9 @@ def build_scorecard(
     report = inspect(spec_dict, api=api)
     # The three a-ha numbers, computed once from the shipped engine (never recomputed in
     # this module). Deterministic from the spec, so the card is always included.
-    metrics = compute_metrics(spec_dict, raw_source=raw_source)
+    metrics = compute_metrics(
+        spec_dict, raw_source=raw_source, declared_hints=confirmed, peers=peers
+    )
     # A LIVE verify against a keyless API needs the no-auth adapter, or every keyless read
     # degrades live -> recorded and can never VERIFY (stub_session reports has_auth=True).
     # Recorded verify (and no-verify) keep the stub so the rendered HTML stays byte-identical
@@ -574,6 +633,9 @@ h2 {{ font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(
 .metric {{ border:1px solid var(--line); border-radius:12px; padding:18px 18px 16px;
   background:#fbfcfe; display:flex; flex-direction:column; }}
 .metric.hero {{ background:linear-gradient(160deg,#eef2ff,#f6f7ff); border-color:#e0e7ff; }}
+/* the correlation a-ha: a second hero, green to read as 'unlocked', not 'compressed'. */
+.metric.corr-hero {{ background:linear-gradient(160deg,#e7f7ef,#f2fdf7); border-color:#b7e6cf; }}
+.metric.corr-hero .m-value, .metric.corr-hero .m-unit {{ color:#0e9f6e; }}
 .m-value {{ font-size:34px; font-weight:800; letter-spacing:-.02em; line-height:1;
   color:var(--ink); font-variant-numeric:tabular-nums; }}
 .metric.hero .m-value {{ font-size:46px; color:var(--accent); }}

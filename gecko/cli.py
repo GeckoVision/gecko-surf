@@ -299,6 +299,7 @@ def _cmd_report(argv: list[str]) -> int:
     """
     from . import inspect as inspect_mod
     from . import report as report_mod
+    from .surface import Surface
 
     p = argparse.ArgumentParser(
         prog="gecko report",
@@ -335,9 +336,40 @@ def _cmd_report(argv: list[str]) -> int:
         action="store_true",
         help="With --verify, opt into real upstream calls (default: recorded, $0).",
     )
+    p.add_argument(
+        "--peer",
+        action="append",
+        default=[],
+        help="A peer spec to count CONFIRMED cross-provider joins against (repeatable) — "
+        "renders the correlated scorecard.",
+    )
+    p.add_argument(
+        "--peer-id",
+        action="append",
+        default=[],
+        help="Surface id for the matching --peer (repeatable, positional).",
+    )
+    p.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        metavar="NAME=ENTITY",
+        help="Customer-CONFIRMED value-domain hint for the primary surface (the "
+        "join-plan gate; repeatable).",
+    )
+    p.add_argument(
+        "--peer-confirm",
+        action="append",
+        default=[],
+        metavar="NAME=ENTITY",
+        help="Customer-CONFIRMED value-domain hint applied to EVERY peer surface.",
+    )
     args = p.parse_args(argv)
     if _reject_unsafe(args.spec, "report"):
         return 2
+    for peer_spec in args.peer:
+        if _reject_unsafe(peer_spec, "report"):
+            return 2
     # Load once, directly — mirrors `gecko graph` (load_spec handles both a local
     # yaml/json path and an SSRF-validated URL). The engine does the work.
     try:
@@ -353,9 +385,29 @@ def _cmd_report(argv: list[str]) -> int:
         print(report_mod.render_diff(report_mod.report_diff(old, new)))
         return 0
 
+    # Peer surfaces power the correlated (multi-API) scorecard — same load pattern as
+    # `gecko metrics`. Building a Surface does no network I/O beyond the one spec read.
+    peer_confirm = _parse_kv(args.peer_confirm)
+    peers = [
+        Surface.of(
+            AgentApiClient(
+                peer_spec,
+                session=public_session(),
+                surface_id=(args.peer_id[i] if i < len(args.peer_id) else f"peer{i}"),
+                declared_hints=peer_confirm or None,
+            )
+        )
+        for i, peer_spec in enumerate(args.peer)
+    ]
+
     verify_mode: CallMode = "live" if args.live else "recorded"
     html = report_mod.build_scorecard(
-        spec, intents=args.intent, verify=args.verify, verify_mode=verify_mode
+        spec,
+        intents=args.intent,
+        verify=args.verify,
+        verify_mode=verify_mode,
+        peers=peers or None,
+        confirmed=_parse_kv(args.confirm) or None,
     )
     out = Path(args.out) if args.out else Path(f"{name}.scorecard.html")
     out.write_text(html, encoding="utf-8")
