@@ -364,7 +364,17 @@ def scan_convention_text(text: str) -> list[str]:
 
 _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"\b0x[a-fA-F0-9]{40,}\b"),  # eth addr / private key hex
+    # 0x-hex SECRET = a private key (32 bytes = 64 hex) or longer. Deliberately NOT the
+    # exact-40-hex EVM ADDRESS (20 bytes): an address is PUBLIC data, not a secret, and a
+    # real API's wallet-response examples are full of them (privy: 40-hex addresses in 66
+    # of its response shapes). An address that must be kept out of a live ARG is caught by
+    # ``_ADDRESS_VALUE_PATTERNS`` on the request-routing side (const/default/enum), so the
+    # HARD arg-routing guarantee is untouched — this only stops mislabeling a public
+    # address as a secret in a RESPONSE example. 41+ hex (incl. the 64-hex key, and the
+    # ambiguous 32-byte hash/signature) stays flagged: fail closed on any non-address length.
+    re.compile(
+        r"\b0x[a-fA-F0-9]{41,}\b"
+    ),  # private key hex (32-byte key = 64), NOT a 40-hex address
     re.compile(r"\b[a-fA-F0-9]{64,}\b"),  # raw 32-byte+ hex (private key / secret)
     re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{80,90}\b"),  # solana secret key base58 (~88)
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),  # OpenAI-style

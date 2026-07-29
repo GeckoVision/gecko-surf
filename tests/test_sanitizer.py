@@ -121,6 +121,56 @@ def test_looks_like_secret_value():
     assert not sanitize.looks_like_secret_value(50)
 
 
+# --- An EVM ADDRESS (0x + exactly 40 hex) is PUBLIC data, not a secret ----------------
+# Round-2 FP: privy's wallet-response examples carry `0xF1DBff…` (a 40-hex EVM address).
+# `looks_like_secret_value` treated any `0x`+40-or-more hex as a private key, so all 72
+# wallet ops quarantined on a benign RESPONSE address. An EVM address is EXACTLY 40 hex
+# (20 bytes); a private key is 64 hex (32 bytes). The secret detector must recognise the
+# key length (41+), and leave the address to `_ADDRESS_VALUE_PATTERNS`, which drops it on
+# the REQUEST-routing side (const/default/enum) — so narrowing the SECRET rule opens NO
+# arg-routing bypass.
+_EVM_ADDR = "0xF1DBff66C993EE895C8cb176c30b07A559d76496"  # 40 hex — a public address
+_EVM_PRIVKEY = "0x" + "a" * 64  # 64 hex — a 32-byte private key
+
+
+def test_evm_address_is_not_a_secret_but_private_key_is():
+    assert not sanitize.looks_like_secret_value(_EVM_ADDR)  # 40 hex — public address
+    assert sanitize.looks_like_secret_value(_EVM_PRIVKEY)  # 64 hex — real key
+    # a 64-hex value with the 0x prefix (private key OR an ambiguous 32-byte hash/sig) stays
+    # flagged — fail closed on the shape that cannot be told apart from a key.
+    assert sanitize.looks_like_secret_value("0x" + "0775aeed9c9ce6e0fbc4" * 3 + "abcd")
+
+
+def test_evm_address_in_response_example_does_not_poison():
+    # THE privy case: a wallet address in a RESPONSE example (route_to_arg=False). It is
+    # public data echoed to the agent in recorded mode — must NOT quarantine the surface.
+    schema = {
+        "type": "object",
+        "properties": {
+            "address": {"type": "string", "example": _EVM_ADDR},
+        },
+    }
+    _, poisoned = sanitize.sanitize_schema(schema, route_to_arg=False)
+    assert poisoned is False
+
+
+def test_evm_address_in_request_const_still_quarantines_no_bypass():
+    # Adversarial: narrowing the SECRET rule must not let an attacker route an EVM address
+    # into a live arg. A MANDATED (const) EVM address is still caught by the ADDRESS rule
+    # on the request side → dropped AND quarantined (fail closed).
+    cleaned, poisoned = sanitize.sanitize_schema({"type": "string", "const": _EVM_ADDR})
+    assert poisoned is True
+    assert "const" not in cleaned
+
+
+def test_evm_private_key_in_response_still_poisons():
+    # A REAL private key (64 hex) echoed in a response example is a genuine secret leak and
+    # must still quarantine even on the best-effort response side (route_to_arg=False).
+    schema = {"type": "string", "example": _EVM_PRIVKEY}
+    _, poisoned = sanitize.sanitize_schema(schema, route_to_arg=False)
+    assert poisoned is True
+
+
 def test_sanitize_schema_drops_secret_default_and_flags():
     schema = {
         "type": "object",

@@ -4,10 +4,14 @@ Offline ($0, Pattern B). This encodes the whole provider-universe matrix as asse
 a regression ANYWHERE — a spec that stops comprehending, a surface that starts leaking an
 auth header, an unexpected Skill-Guard quarantine, or a broken cross-provider mint join —
 trips this test. The numbers here are the CURRENT honest state of the committed specs
-(see ``gecko.provider_matrix``); they include the known false-positive quarantines
-(payapi ``createTransfer`` / surfpool ``requestAirdrop`` / privy's 72 wallet-address ops)
-recorded AS FINDINGS, not hidden. Any change to detection/quarantine that moves these
-routes through defi-security — this test is the tripwire, never the thing you loosen.
+(see ``gecko.provider_matrix``). After the round-2 narrow (an EVM address is PUBLIC data,
+not a secret), privy's wallet-address FPs dropped 72 -> 6; the 6 survivors and the two
+remaining single-op quarantines (payapi ``createTransfer`` / surfpool ``requestAirdrop``)
+are CORRECT-BY-DESIGN fail-closed cases (indistinguishable-from-secret shapes, fund-routing
+vocabulary with no address target, or over-depth schemas), recorded AS FINDINGS with the
+honest answer = confirm-to-unquarantine, NOT loosen-a-rule. Any change to detection/
+quarantine that moves these routes through defi-security — this test is the tripwire, never
+the thing you loosen.
 """
 
 from __future__ import annotations
@@ -58,7 +62,8 @@ EXPECTED_QUARANTINE: dict[str, tuple[str, ...]] = {
     "colosseum": (),
     "jupiter": (),
     "pegana_p0": (),
-    # privy is asserted separately (72 wallet-address FPs) — too many to enumerate here.
+    # privy is asserted separately (6 correct-by-design fail-closed ops after the address
+    # narrow) in test_privy_wallet_address_false_positives_are_pinned.
 }
 
 #: Providers that participate in the DECLARED Solana-token-mint value domain (with the
@@ -101,15 +106,33 @@ def test_skill_guard_quarantine_matches_expected_per_provider() -> None:
 
 
 def test_privy_wallet_address_false_positives_are_pinned() -> None:
-    """Privy is the honest RED cell: 72 of 159 ops quarantine on wallet-address response
-    shapes / benign fund prose (the base58-address FP class). Pinned as a finding — this
-    is a comprehension gap to fix in detection, not something to hide by loosening a rule."""
+    """Privy: after the EVM-address-is-not-a-secret narrow, 66 wallet ops that quarantined
+    only on a PUBLIC 40-hex ``0x…`` address in a response example are now clean. The 6 that
+    REMAIN are CORRECT-BY-DESIGN fail-closed, not the address FP — pinned so a detection
+    change either way trips this gate:
+
+      * ``getTransaction`` / ``getTransactionByReferenceId`` / ``signWithWallet`` — a
+        64-hex ``0x…`` value (a 32-byte tx hash / signature) is byte-for-byte
+        indistinguishable from an EVM private key at the text layer, so it fails closed.
+      * ``withdrawFunds`` — the description "Withdraw funds" is fund-routing VOCABULARY with
+        no address target; identical in shape to the red-team attack "withdraw all funds
+        now", so the rule cannot un-flag it without opening a no-address routing bypass.
+      * ``createPolicy`` (request schema depth 16) / ``getKrakenUser`` (response depth 21) —
+        nesting past the depth cap is UNSCANNABLE, so it fails closed (a separate control,
+        not the address class).
+
+    The honest answer for all 6 is confirm-to-unquarantine by the provider, NOT loosening a
+    rule. ``transfer`` / ``createUser`` / ``getWallet`` dropped out (pure address FP, fixed).
+    """
     privy = _by_name()["privy"]
-    assert len(privy.quarantined) == 72  # type: ignore[attr-defined]
-    # a representative slice of the known FP set — regression trips if any drop out.
-    assert {"transfer", "signWithWallet", "createUser", "getWallet"} <= set(
-        privy.quarantined  # type: ignore[attr-defined]
-    )
+    assert set(privy.quarantined) == {  # type: ignore[attr-defined]
+        "getTransaction",
+        "getTransactionByReferenceId",
+        "signWithWallet",
+        "withdrawFunds",
+        "createPolicy",
+        "getKrakenUser",
+    }
 
 
 def test_only_declared_mint_providers_join_the_mint_domain() -> None:
