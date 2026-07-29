@@ -28,9 +28,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from .compose import Workspace, cross_plan
-from .sanitize import scan_text
-from .surface import Surface
-from .tools import question_description, tool_name
+from .surface import SafetyVerdict, Surface
+from .tools import tool_name
 
 
 @dataclass(frozen=True)
@@ -80,19 +79,16 @@ class SafeChainResult:
         return not any(n.quarantined for n in self.nodes) or self.refused
 
 
-def _quarantine_reason(surface: Surface, operation_id: str) -> str | None:
-    """The auditable "why" for a quarantined node: the anti-poisoning rules its
-    agent-facing text trips. Re-reads the shipped sanitizer (does NOT modify it) so the
-    refusal carries a provenance basis instead of a bare boolean."""
-    op = next(
-        (o for o in surface.client.operations if o.operation_id == operation_id), None
-    )
-    if op is None:
+def _quarantine_reason(verdict: SafetyVerdict, tool: str) -> str:
+    """The auditable "why" for a quarantined node — READ from the surface's safety verdict,
+    not recomputed. The sanitizer already recorded the tripped rule categories at ingest
+    (``x-poison-reason`` -> ``SafetyVerdict.reasons``); this just formats them. A tool
+    quarantined for a schema/response reason (no captured category) falls back to a generic
+    reason, matching the pre-refactor behavior — with NO second scan of the spec text."""
+    category = verdict.reasons.get(tool)
+    if not category:
         return "Skill Guard: quarantined"
-    rules = scan_text(question_description(op))
-    if not rules:
-        return "Skill Guard: quarantined"
-    return "Skill Guard: " + ", ".join(rules)
+    return "Skill Guard: " + category
 
 
 def compose_safe_chain(
@@ -119,8 +115,11 @@ def compose_safe_chain(
     nodes: list[ChainNode] = []
     for step in plan.steps:
         surface = surfaces[step.surface]
+        verdict = (
+            surface.safety
+        )  # the carried verdict: quarantine set + reasons, no re-scan
         tname = _tool_for(surface, step.operation_id)
-        quarantined = tname in surface.safety.quarantined
+        quarantined = tname in verdict.quarantined
         nodes.append(
             ChainNode(
                 surface_id=step.surface,
@@ -128,9 +127,7 @@ def compose_safe_chain(
                 tool=tname,
                 quarantined=quarantined,
                 quarantine_reason=(
-                    _quarantine_reason(surface, step.operation_id)
-                    if quarantined
-                    else None
+                    _quarantine_reason(verdict, tname) if quarantined else None
                 ),
             )
         )

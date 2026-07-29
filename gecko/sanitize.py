@@ -514,6 +514,25 @@ def looks_like_secret_value(value: Any) -> bool:
     return any(pat.search(folded) for pat in _SECRET_VALUE_PATTERNS)
 
 
+def sanitize_text_reasons(text: Any) -> tuple[Any, list[str]]:
+    """Sanitize one free-text field, returning ``(clean_text, reasons)`` where ``reasons``
+    are the danger-rule categories the field tripped (``[]`` == clean).
+
+    Same detection, same rules as :func:`sanitize_text` — this variant just KEEPS the rule
+    names ``scan_text`` already computed instead of collapsing them to a bool, so the
+    quarantine reason can be captured ONCE at ingest (``tools.to_tool``) and carried forward
+    rather than re-scanned downstream (``safechain``). No new detection is performed.
+    """
+    if not isinstance(text, str):
+        return text, []
+    reasons = scan_text(text)
+    if reasons:
+        return _REDACTION, reasons
+    if len(text) > MAX_TEXT_LEN:
+        return text[:MAX_TEXT_LEN].rstrip() + "…", []
+    return text, []
+
+
 def sanitize_text(text: Any) -> tuple[Any, bool]:
     """Sanitize one free-text field. Returns ``(clean_text, poisoned)``.
 
@@ -521,13 +540,8 @@ def sanitize_text(text: Any) -> tuple[Any, bool]:
     whole field is untrusted once it carries an injected instruction). A clean field is
     only length-capped.
     """
-    if not isinstance(text, str):
-        return text, False
-    if scan_text(text):
-        return _REDACTION, True
-    if len(text) > MAX_TEXT_LEN:
-        return text[:MAX_TEXT_LEN].rstrip() + "…", False
-    return text, False
+    cleaned, reasons = sanitize_text_reasons(text)
+    return cleaned, bool(reasons)
 
 
 # --- schema-keyword classes ----------------------------------------------------------
