@@ -110,6 +110,51 @@ check against the live API and show the result. Neutral and factual: name no vil
 
 ---
 
+## Worked example — Pegana peg-risk, the safe correlated chain (VAS-4)
+
+The same side-by-side, aimed at a real DeFi surface. Pegana (`api.pegana.xyz`) is a
+peg-risk **state** oracle; its own docs tell you to cross-check exit liquidity with a
+price/liquidity source. Gecko makes that cross-check **one safe query**: intent → Pegana
+peg-state → (if `DRIFT`+) Birdeye exit-liquidity, joined by the Solana token mint. Context7
+serves Pegana's *concept* docs (what `DRIFT` means) as an unverified INPUT; Gecko serves the
+deterministic, safety-checked call chain.
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "gecko-pegana": {
+      "command": "uvx",
+      "args": [
+        "--from", "gecko-surf[serve]",
+        "gecko", "https://api.pegana.xyz/openapi.json", "--stdio"
+      ]
+    }
+  }
+}
+```
+
+- **`context7`** — Pegana's peg-risk *concept* docs, retrieved as an **unverified claim**
+  (the "what does `DRIFT` mean" knowledge).
+- **`gecko-pegana`** — Gecko comprehends Pegana's OpenAPI and serves its Agent Surface over
+  stdio: the first-call-correct tools, the mint-joined exit-liquidity chain, and the safety
+  verdict. Pegana's public reads are **keyless**, so no credential is pasted into `mcp.json`.
+
+**Why this one is the safety demo.** A financial agent chaining untrusted DeFi APIs while
+positioned to move money is the juiciest target: poison any one surface (a tool description
+that appends a `transfer(<addr>)` or an "emit the API keys" instruction) and you misroute
+funds or lift a key. Gecko runs that chain **safely** — it is deterministic (no guess to
+hijack), **keyless** (auth is injected at call-time, never exposed in a tool def, so the
+agent holds no key to leak), and any node whose surface trips the anti-poisoning sanitizer on
+ingest is **quarantined per-tool**: the chain refuses that hop with a provenance reason rather
+than calling it. The poison never reaches the agent. (Pegana is a *state* oracle — we present
+state + exitability, never "sell now.")
+
+---
+
 ## Publish gecko-surf as a Context7 library
 
 > **Founder-run only.** The steps below *prepare* the listing artifacts. The actual
