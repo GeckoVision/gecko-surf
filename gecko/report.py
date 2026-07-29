@@ -29,6 +29,7 @@ from .corpus import CallOutcome
 from .graph import Provenance, VerifyStatus, op_provenance
 from .ingest import load_spec
 from .inspect import InspectionReport, inspect
+from .metrics import Metrics, compute_metrics
 from .modes import CallMode
 from .sample import example_from_schema
 from .surfaceviz import graph_data, render_svg
@@ -189,6 +190,82 @@ def _render_header(report: InspectionReport) -> str:
         f'<div class="score">{report.score}<span>/100</span></div>'
         "</div>"
         "</header>"
+    )
+
+
+def _kb(byte_count: int) -> str:
+    """Decimal KB, rounded — the human-readable before/after (108072 → '108KB')."""
+    return f"{round(byte_count / 1000)}KB"
+
+
+def _read_raw_source(spec: str | dict[str, Any]) -> str | None:
+    """The original spec text — the honest compression denominator.
+
+    Only a LOCAL path yields a raw source we can trust byte-for-byte; a URL would mean a
+    second (SSRF-guarded) fetch and a dict has no source text. In those cases return None
+    and let :func:`compute_metrics` fall back to a canonical re-serialization."""
+    if isinstance(spec, str) and not spec.startswith(("http://", "https://")):
+        try:
+            with open(spec, encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return None
+    return None
+
+
+def _render_metrics(metrics: Metrics) -> str:
+    """The 'at a glance' card — the three measured, provenance-labeled numbers.
+
+    Rendered straight from :func:`gecko.metrics.compute_metrics` (never recomputed here):
+    context-compression is the hero (the differentiator), then the recorded surface-
+    readiness rate and the honest correlation score. Every number carries the exact
+    honesty label ``metrics.py`` produced — measured vs estimated, recorded vs verified,
+    corroborator-only — so nothing is overclaimed. Control-plane clean: counts, byte/token
+    sizes, format-slot names and provenance strings only, never a response payload."""
+    c = metrics.compression
+    r = metrics.readiness
+    x = metrics.correlation
+
+    corr_extra = (
+        f"{x.id_shaped_join_fields} id-shaped join keys · "
+        f"{x.self_declared_domains} self-declared domain(s), corroborator-only"
+    )
+    if x.cross_joins_candidate:
+        corr_extra += f" · {x.cross_joins_candidate} quarantined candidate(s)"
+
+    return (
+        '<section class="card metrics">'
+        "<h2>At a glance</h2>"
+        '<p class="lede">What comprehension actually bought — measured on this spec. '
+        "Bytes are measured; token counts are an estimate (chars/4); readiness is a "
+        "recorded structural rate, never a live-verified claim.</p>"
+        '<div class="metrics-grid">'
+        # --- hero: context-compression (the differentiator) ---
+        '<div class="metric hero">'
+        f'<div class="m-value">{c.reduction_pct}%<span class="m-unit"> smaller</span></div>'
+        '<div class="m-label">Context compression</div>'
+        f'<div class="m-detail">{_kb(c.raw_bytes)} → {_kb(c.surface_bytes)} · '
+        f"{c.raw_tokens_est:,} → {c.surface_tokens_est:,} tokens (est)</div>"
+        f'<div class="m-prov">{escape(c.basis)}; {escape(c.token_estimate)}</div>'
+        "</div>"
+        # --- surface-readiness (recorded, never "verified") ---
+        '<div class="metric">'
+        f'<div class="m-value">{r.well_formed_tools}/{r.total_ops}'
+        '<span class="m-unit"> ready</span></div>'
+        '<div class="m-label">Surface-readiness</div>'
+        f'<div class="m-detail">tools well-formed · {r.quarantined_tools} quarantined</div>'
+        f'<div class="m-prov">{escape(r.provenance)}</div>'
+        "</div>"
+        # --- correlation score (DECLARED + CONFIRMED only) ---
+        '<div class="metric">'
+        f'<div class="m-value">{x.declared_entities}'
+        f'<span class="m-unit"> · {x.cross_joins_plan_eligible}</span></div>'
+        '<div class="m-label">DECLARED entities · confirmed joins</div>'
+        f'<div class="m-detail">{escape(corr_extra)}</div>'
+        f'<div class="m-prov">{escape(x.provenance)}</div>'
+        "</div>"
+        "</div>"
+        "</section>"
     )
 
 
@@ -357,9 +434,13 @@ def build_scorecard(
     verdict traces to a status that really came off the wire (see
     :func:`gecko.verify.load_observed_corpus`)."""
     spec_dict = load_spec(spec) if isinstance(spec, str) else spec
+    raw_source = _read_raw_source(spec)
     api = str((spec_dict.get("info") or {}).get("title") or "API")
 
     report = inspect(spec_dict, api=api)
+    # The three a-ha numbers, computed once from the shipped engine (never recomputed in
+    # this module). Deterministic from the spec, so the card is always included.
+    metrics = compute_metrics(spec_dict, raw_source=raw_source)
     # A LIVE verify against a keyless API needs the no-auth adapter, or every keyless read
     # degrades live -> recorded and can never VERIFY (stub_session reports has_auth=True).
     # Recorded verify (and no-verify) keep the stub so the rendered HTML stays byte-identical
@@ -382,6 +463,7 @@ def build_scorecard(
     body = "".join(
         (
             _render_header(report),
+            _render_metrics(metrics),
             _render_dimensions(report),
             verify_html,
             _render_graph(svg),
@@ -487,6 +569,22 @@ h2 {{ font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(
 .grade {{ font-size:56px; font-weight:800; line-height:1; color:var(--grade); }}
 .score {{ font-size:20px; font-weight:700; margin-top:6px; color:var(--ink); }}
 .score span {{ color:var(--muted); font-weight:500; font-size:14px; }}
+.metrics-grid {{ display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:16px;
+  align-items:stretch; }}
+.metric {{ border:1px solid var(--line); border-radius:12px; padding:18px 18px 16px;
+  background:#fbfcfe; display:flex; flex-direction:column; }}
+.metric.hero {{ background:linear-gradient(160deg,#eef2ff,#f6f7ff); border-color:#e0e7ff; }}
+.m-value {{ font-size:34px; font-weight:800; letter-spacing:-.02em; line-height:1;
+  color:var(--ink); font-variant-numeric:tabular-nums; }}
+.metric.hero .m-value {{ font-size:46px; color:var(--accent); }}
+.m-unit {{ font-size:16px; font-weight:600; color:var(--muted); }}
+.metric.hero .m-unit {{ font-size:20px; color:var(--accent); opacity:.75; }}
+.m-label {{ font-size:12px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); margin:10px 0 6px; }}
+.m-detail {{ font-size:13px; color:var(--ink); font-variant-numeric:tabular-nums; }}
+.m-prov {{ font-size:11px; color:var(--muted); margin-top:auto; padding-top:10px;
+  line-height:1.4; }}
+@media (max-width:640px) {{ .metrics-grid {{ grid-template-columns:1fr; }} }}
 .dim {{ margin:14px 0; }}
 .dim-top {{ display:flex; justify-content:space-between; font-size:14px;
   margin-bottom:6px; }}
