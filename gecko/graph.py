@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -57,8 +58,13 @@ _GENERIC_FLOOR = 4
 _GENERIC_FRAC = 0.03
 # formats that discriminate a value domain (§13.1). int32/int64 are NOT here on
 # purpose — every counter shares them; a shared int64 proves nothing (§13.6).
+# ``base58`` is a DERIVED domain (from an example shape / a "base58"/"mint address"
+# description hint) — a rare, high-entropy value domain that discriminates like a
+# declared pattern; folded into the format slot by ``_sig_of`` when no explicit format
+# is declared. It is a CORROBORATOR only — like every other signal here it never mints a
+# standalone cross-API join (the §13.6 gate lives in ``correlate._score``, untouched).
 _DISCRIMINATING_FMT = frozenset(
-    {"uuid", "uri", "email", "ipv4", "date-time", "currency"}
+    {"uuid", "uri", "email", "ipv4", "date-time", "currency", "base58"}
 )
 # planning tiebreak rank: the §13.2 ladder, lower is preferred.
 _PROV_RANK = {"DECLARED": 0, "INFERRED": 1}
@@ -210,16 +216,57 @@ def _resource_noun(op: Operation) -> str | None:
     return last[:-1] if last.endswith("s") else last
 
 
-def _sig_of(schema: object) -> str:
-    """The §13.1 value-domain signature of one schema, compact + control-plane clean:
+# base58 value-domain (§13.1 richer signature): a 32-44 char base58 string is the
+# Solana address/mint shape — a rare, high-entropy domain. Detected from an example's
+# SHAPE or a name/description hint, never from a response value. Bound the scanned text
+# so an untrusted, oversized description can't blow up the derivation.
+_BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+_BASE58_HINTS = ("base58", "mint address", "spl mint", "solana address", "pubkey")
+_DESC_SCAN_CAP = 400
+
+
+def _domain_signal(name: str, description: str, example: object) -> str:
+    """A DERIVED discriminating value-domain token for a field/param, or "".
+
+    Reads only SURFACE metadata (the field name, its description, and a spec-authored
+    example's SHAPE) — never a response value (invariant #1). Today it recognizes the
+    ``base58`` Solana-address/mint domain, the join key Pegana/Birdeye/Jupiter share
+    (``docs/specs/2026-07-28-pegana-correlation-surface.md``). This lets a field whose
+    spec ships NO ``pattern``/``format`` still self-declare its value domain, so an
+    intra-API join corroborates where before it had nothing to match on — WITHOUT
+    loosening any cross-API gate (that stays DECLARED+CONFIRMED in ``correlate._score``).
+    """
+    if isinstance(example, str) and _BASE58_RE.match(example):
+        return "base58"
+    hay = f"{name} {description}"[:_DESC_SCAN_CAP].lower()
+    if any(hint in hay for hint in _BASE58_HINTS):
+        return "base58"
+    return ""
+
+
+def _sig_of(
+    schema: object, name: str = "", description: str = "", example: object = None
+) -> str:
+    """The §13.1 value-domain signature of one field/param, compact + control-plane clean:
     ``type|format|pattern-hash8|enum-hash8`` ("" components when undeclared, "" when
     nothing is declared at all). Pattern and enum are hashed — the signature carries
     *identity of the constraint*, never the constraint text, so it can sit on a node
-    and inside content_hash without bloating either."""
+    and inside content_hash without bloating either.
+
+    Richer signature (§13.1): when the spec declares NO explicit ``format`` but the
+    field's name/description/example self-declares a discriminating value domain (e.g. a
+    ``base58`` mint), that DERIVED domain fills the format slot — so more fields carry
+    their own value-domain identity and more real joins corroborate. Still surface-only,
+    still a corroborator (folded into the same format slot every existing consumer already
+    reads), never a standalone cross-API auto-join basis."""
     if not isinstance(schema, dict):
         return ""
     t = schema.get("type") or ""
     fmt = schema.get("format") or ""
+    if not fmt:
+        # only DERIVE when the spec declared nothing — an explicit format always wins.
+        ex = example if example is not None else schema.get("example")
+        fmt = _domain_signal(name, description, ex)
     pat = schema.get("pattern") or ""
     pat8 = (
         hashlib.sha256(pat.encode()).hexdigest()[:8]
@@ -284,7 +331,11 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
                         name,
                         title or parent,
                         "number" if t == "integer" else t,
-                        _sig_of(sub),
+                        _sig_of(
+                            sub,
+                            name=name,
+                            description=str(sub.get("description") or ""),
+                        ),
                     )
                 )
             walk(sub, name, depth + 1, seen)
@@ -683,7 +734,17 @@ def build_graph(
             flag = "req" if p.required else "opt"
             add_node(
                 Node(
-                    "param", pid, p.name, oid, f"{p.location}|{flag}", _sig_of(p.schema)
+                    "param",
+                    pid,
+                    p.name,
+                    oid,
+                    f"{p.location}|{flag}",
+                    _sig_of(
+                        p.schema,
+                        name=p.name,
+                        description=p.description,
+                        example=p.example,
+                    ),
                 )
             )
             edges.append(Edge("consumes", op_node_id, pid, "EXTRACTED"))
@@ -755,7 +816,9 @@ def build_graph(
                 or (n if is_path else None)
                 or (rnoun if is_path else None)
             )
-            p_sig = _sig_of(p.schema)
+            p_sig = _sig_of(
+                p.schema, name=p.name, description=p.description, example=p.example
+            )
             for src_op, fld, parent, ftype, fsig in producers[n]:
                 if src_op == oid:
                     continue
