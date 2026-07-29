@@ -19,9 +19,11 @@ from gecko.surface import Surface
 
 _FIX = Path(__file__).parent / "fixtures"
 _PEGANA = _FIX / "pegana_p0_openapi.json"
-_JUPITER = (
-    Path(__file__).parent.parent / "gecko" / "examples" / "jupiter_swap_openapi.json"
-)
+_EXAMPLES = Path(__file__).parent.parent / "gecko" / "examples"
+_JUPITER = _EXAMPLES / "jupiter_swap_openapi.json"
+#: A deliberately terse spec: too sparse to call correctly, so comprehension ENRICHES it
+#: (adds question-shaped tool defs + examples) and the surface ends up LARGER than the raw.
+_COLOSSEUM = _EXAMPLES / "colosseum_copilot_openapi.json"
 
 
 def _pegana_metrics(**kw):
@@ -43,6 +45,34 @@ def test_compression_is_a_real_reduction() -> None:
     assert c.raw_tokens_est > c.surface_tokens_est > 0
     # honesty labels: bytes measured, tokens estimated.
     assert "estimate" in c.token_estimate
+    assert "measured" in c.basis
+
+
+# --- enrichment vs compression: the signed truth, interpreted honestly ------------
+def test_verbose_spec_is_compressed_not_enriched() -> None:
+    # a verbose spec (Pegana) comprehends SMALLER — noise stripped. reduction_pct is
+    # positive, the interpretation reads "compressed", magnitude mirrors the signed %.
+    c = _pegana_metrics().compression
+    assert c.reduction_pct > 0
+    assert c.is_enriched is False
+    assert c.magnitude_pct == c.reduction_pct  # positive: magnitude == signed value
+
+
+def test_terse_spec_is_enriched_not_a_hidden_negative() -> None:
+    # a terse spec (Colosseum) is too sparse to call correctly; comprehension ADDS the
+    # calling context, so the surface is LARGER — reduction_pct <= 0 -> is_enriched, and
+    # magnitude_pct is the POSITIVE size of the enrichment (never a hidden negative).
+    c = compute_metrics(
+        load_spec(str(_COLOSSEUM)),
+        raw_source=_COLOSSEUM.read_text(encoding="utf-8"),
+        surface_id="colosseum",
+    ).compression
+    assert c.surface_bytes > c.raw_bytes  # the surface is bigger — it's richer
+    assert c.reduction_pct <= 0  # the signed truth is preserved
+    assert c.is_enriched is True
+    assert c.magnitude_pct > 0  # a positive magnitude, not "-X%"
+    assert c.magnitude_pct == abs(c.reduction_pct)
+    # the measurement is unchanged; only the interpretation is added.
     assert "measured" in c.basis
 
 

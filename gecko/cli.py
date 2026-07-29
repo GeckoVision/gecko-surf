@@ -953,7 +953,14 @@ def _print_metrics(m: Any) -> None:
     print(
         f"    agent surface:   {c.surface_bytes:>9,} B  (~{c.surface_tokens_est:,} tok est)"
     )
-    print(f"    reduction:       {c.reduction_pct:>8}%  ({c.token_estimate})")
+    if c.is_enriched:
+        # too-sparse spec: comprehension ADDED calling context (surface larger, honest).
+        print(
+            f"    enrichment:      +{c.magnitude_pct:>7}%  richer — spec too sparse to "
+            f"call correctly; Gecko added the comprehension ({c.token_estimate})"
+        )
+    else:
+        print(f"    reduction:       {c.reduction_pct:>8}%  ({c.token_estimate})")
     print("")
     print("  surface-readiness (recorded, NOT live-verified)")
     print(
