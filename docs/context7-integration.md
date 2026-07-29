@@ -189,15 +189,30 @@ library look like."* A gecko-surf entry means that when someone is fighting a lo
 paywalled, poorly-documented API, Gecko shows up as the tool that makes it agent-usable —
 distribution to exactly our ICP, at zero marginal cost, reversible any time.
 
+The bottleneck this fixes is **discovery**: agents use what they already know, and people
+don't use services they've never heard of. A catalog is where the agent *finds* them. That is
+why the catalog matters — it is the bridge from "indexed" to "actually used."
+
+### A catalog, not a marketplace — we list only ourselves
+
+We list **gecko-surf, one library.** We do **not** re-list the providers Gecko comprehends
+(Pegana, Birdeye, Jupiter, …) as catalog entries — that would make us a marketplace, which we
+are not. Those providers are *discovered through Gecko* (it makes them agent-usable and safe),
+not through a listing we own. We **compose** Context7's catalog as a discovery surface; we never
+become the catalog/marketplace or the rail.
+
 ### The repo config — `context7.json`
 
 Context7 reads a repo-level `context7.json` at the repository root to control how the
-library is indexed. A draft is staged at the repo root: [`../context7.json`](../context7.json).
+library is indexed. It is staged at the repo root: [`../context7.json`](../context7.json).
 
-> **TODO (founder): confirm the schema against Context7's *current* `context7.json` spec
-> before submitting.** The staged file uses the fields we're confident about
-> (`$schema`, `projectTitle`, `description`, `folders`, `excludeFolders`, `rules`). Do not
-> invent additional fields — verify against Context7's published schema, then submit.
+> **Schema: confirmed valid.** Validated against Context7's published schema at
+> `https://context7.com/schema/context7.json` (`additionalProperties: false`, no required
+> fields). Every field we use — `projectTitle`, `description`, `folders`, `excludeFolders`,
+> `rules` — is in the allowed set (full set: `branch`, `description`, `disallow`,
+> `excludeFiles`, `excludeFolders`, `folders`, `previousVersions`, `projectTitle`,
+> `public_key`, `redirect`, `rules`, `url`). The `rules` are injected when an agent retrieves
+> the library, so they double as positioning — including the safety-by-construction rule.
 
 ### Submission steps (founder)
 
