@@ -15,6 +15,7 @@
     "gecko-surf is the API comprehension layer for agents: it derives the Agent Surface (a deterministic call graph) above an OpenAPI, never a payment rail or a marketplace.",
     "Gecko is the control plane, never the data plane — it stores the API surface and correctness metadata, never response payloads, user data, or secrets.",
     "Onboard any API with `gecko add <api>`; serve one over MCP with `gecko <openapi-url>`; verify doc claims against reality with `gecko verify-docs <spec>`.",
-    "Gecko composes on top of OpenAPI (input) and MCP (transport) and Context7 (a docs input) — it does not replace them."
+    "Gecko composes on top of OpenAPI (input) and MCP (transport) and Context7 (a docs input) — it does not replace them.",
+    "Gecko is safe by construction: it treats every ingested API surface (specs, docs, tool descriptions, images) as untrusted and quarantines prompt-injection or tool-poisoning before the agent reads it, and injects auth at call time so the agent never holds API keys."
   ]
 }
