@@ -12,9 +12,9 @@
 > moving real value, *without becoming the vulnerability.*
 
 This is **not** "Gecko makes your API usage easier." Convenience is a *symptom* of the value,
-not the value — and selling it sells a productivity tool, a worse Composio, which invites
-*"I already have my APIs, I'll write the glue."* The value is **safety, and it is intrinsic to
-how Gecko comprehends and calls** — not a scanner bolted on the side.
+not the value — and selling it sells a productivity tool, a worse integration-glue layer, which
+invites *"I already have my APIs, I'll write the glue."* The value is **safety, and it is
+intrinsic to how Gecko comprehends and calls** — not a scanner bolted on the side.
 
 ## The problem: an agent's power is its vulnerability
 
