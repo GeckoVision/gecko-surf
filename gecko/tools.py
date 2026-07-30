@@ -14,12 +14,26 @@ Two comprehension decisions that separate this from a raw OpenAPI dump:
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from . import sanitize
+from .canonical import ENTITY_SCHEMA_KEY, canonical_example
 from .ingest import Operation, Param
 
 _AUTH_HEADERS = {"authorization", "x-api-token", "x-apikey", "api-key", "x-api-key"}
+
+
+def _norm_name(name: str) -> str:
+    """Mirror of ``graph._norm`` — the declared vocabulary is matched on normalized names."""
+    return name.replace("_", "").replace("-", "").lower()
+
+
+def _normalized_declared(declared: Mapping[str, str] | None) -> dict[str, str]:
+    """The DECLARED name→entity vocabulary, keyed on normalized param names."""
+    if not declared:
+        return {}
+    return {_norm_name(k): v for k, v in declared.items() if k and v}
 
 
 def _is_auth_param(p: Param) -> bool:
@@ -63,8 +77,11 @@ def _agent_key_map(op: Operation) -> dict[str, str]:
     return mapping
 
 
-def _input_schema(op: Operation) -> dict[str, Any]:
+def _input_schema(
+    op: Operation, declared: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     keymap = _agent_key_map(op)
+    decl = _normalized_declared(declared)
     props: dict[str, Any] = {}
     required: list[str] = []
     for p in _agent_params(op):
@@ -77,6 +94,15 @@ def _input_schema(op: Operation) -> dict[str, Any]:
         # sanitized downstream (sanitize_schema scrubs a poisoned example/default).
         if p.example is not None and "example" not in schema:
             schema["example"] = p.example
+        # Stamp the DECLARED value-domain marker when this param's entity is both declared
+        # (x-gecko / a customer confirmation) AND has a registered canonical, so example
+        # synthesis can fill that real, stable value instead of a false-404 placeholder.
+        # Gated on a registered canonical: an unregistered domain (no canonical to fill) is
+        # NOT stamped — zero ripple, and honesty is preserved (unknown domain → placeholder).
+        if decl and ENTITY_SCHEMA_KEY not in schema:
+            entity = decl.get(_norm_name(p.name))
+            if entity and canonical_example(entity) is not None:
+                schema[ENTITY_SCHEMA_KEY] = entity
         key = keymap[p.name]
         props[key] = schema
         if p.required:
@@ -161,14 +187,18 @@ def auth_location_is_safe(spec: dict[str, Any], op: Operation) -> bool:
     return True
 
 
-def to_tool(op: Operation) -> dict[str, Any]:
+def to_tool(op: Operation, declared: Mapping[str, str] | None = None) -> dict[str, Any]:
     # Anti-poisoning: the summary/description and every param schema come from the
     # (untrusted) spec. Neutralize any injected instruction / secret-looking default
     # before it reaches the agent, and flag the surface for quarantine if we had to.
+    # ``declared`` (the client's DECLARED name→entity vocabulary) drives canonical
+    # example synthesis for KNOWN value domains — see ``_input_schema``.
     description, poison_reasons = sanitize.sanitize_text_reasons(
         question_description(op)
     )
-    input_schema, poisoned_schema = sanitize.sanitize_schema(_input_schema(op))
+    input_schema, poisoned_schema = sanitize.sanitize_schema(
+        _input_schema(op, declared)
+    )
     tool: dict[str, Any] = {
         "name": tool_name(op),
         "description": description,
@@ -202,5 +232,7 @@ def to_tool(op: Operation) -> dict[str, Any]:
     return tool
 
 
-def build_tools(operations: list[Operation]) -> list[dict[str, Any]]:
-    return [to_tool(o) for o in operations]
+def build_tools(
+    operations: list[Operation], declared: Mapping[str, str] | None = None
+) -> list[dict[str, Any]]:
+    return [to_tool(o, declared) for o in operations]

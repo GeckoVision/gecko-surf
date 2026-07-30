@@ -157,13 +157,22 @@ class AgentApiClient:
         self._base_url_explicit = base_url is not None
 
         self.operations = extract_operations(self.spec)
+        # Injected customer-confirmed DECLARED hints (§12 confirm loop), set BEFORE tool
+        # build so the DECLARED value-domain vocabulary can drive canonical example
+        # synthesis for KNOWN domains (a declared mint param fills a real USDC mint instead
+        # of a placeholder that would false-404 verify-docs --live). Merged over the spec's
+        # own x-gecko hints (customer confirmation wins on conflict, §13.2).
+        self._declared_hints = dict(declared_hints or {})
+        declared_vocab = {**declared_entity_hints(self.spec), **self._declared_hints}
         # S0 enrich (optional): pre-generated, already-sanitized blurbs (keyed by tool_name)
         # folded into the lexical overlap haystack. Pure data — no LLM/SDK reaches the
         # ranker (invariant #2). Absent -> the unchanged plain lexical baseline.
         self.catalog = Catalog(self.operations, blurbs)
-        self.tools = build_tools(self.operations)
+        self.tools = build_tools(self.operations, declared_vocab)
         self._tool_by_name = {t["name"]: t for t in self.tools}
-        self._op_by_name = {to_tool(o)["name"]: o for o in self.operations}
+        self._op_by_name = {
+            to_tool(o, declared_vocab)["name"]: o for o in self.operations
+        }
         # Serve-time integrity anchor: re-derived and re-asserted before every request
         # so an in-memory tamper of the shipped tool list is caught, not served.
         self.tools_rev = tools_rev(self.tools)
@@ -255,10 +264,10 @@ class AgentApiClient:
         # surface's operations. Built once on first plan request (pure, deterministic),
         # kept out of construction so a client that never plans pays nothing.
         self._surface_graph: SurfaceGraph | None = None
-        # Injected customer-confirmed DECLARED hints (§12 confirm loop) — merged over
-        # the spec's own x-gecko vocabulary at graph build. Injection (not disk I/O
-        # here) keeps the client pure; the CLI/serve edge loads and passes them.
-        self._declared_hints = dict(declared_hints or {})
+        # (``self._declared_hints`` is set earlier — before tool build — so the DECLARED
+        # value-domain vocabulary can drive canonical example synthesis; it is also merged
+        # over the spec's x-gecko vocabulary at graph build. Injection, not disk I/O here,
+        # keeps the client pure; the CLI/serve edge loads and passes them.)
 
     @property
     def surface_all(self) -> bool:
