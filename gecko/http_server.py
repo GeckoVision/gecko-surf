@@ -25,6 +25,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable, Coroutine, Iterable
 from pathlib import Path
@@ -122,6 +123,52 @@ _INSTALL_HINT = (
 
 # The MCP transport returns/reads the session id in this header (mcp SDK constant).
 _MCP_SESSION_ID_HEADER = "mcp-session-id"
+
+# --- the opaque install id a connecting client may echo (distinct-install count) ------
+# The onboard ping persists an opaque ``uuid4().hex`` at ``~/.gecko/install_id`` (see
+# ``onboard.read_or_create_install_id``). A connecting MCP client may echo that SAME id on
+# the ``initialize`` handshake — via the ``X-Gecko-Install-Id`` request header (transport
+# carrier) or ``params._meta["gecko/install_id"]`` (in-band carrier) — so distinct installs
+# are countable and one auto-updating dogfood machine no longer looks like many triers.
+# The id is UNTRUSTED here (a hostile client controls it), so it is validated to the EXACT
+# onboard shape (32 lowercase hex) and anything else folds to ``None``: it can never
+# fail-close the connect emit nor smuggle a value. It is opaque — no PII, not a secret —
+# and ``install_id`` is already an allowlisted, control-plane-clean event field.
+_INSTALL_ID_HEADER = b"x-gecko-install-id"
+_META_INSTALL_ID_KEY = "gecko/install_id"
+#: The onboard install id is ``uuid4().hex`` — 32 lowercase hex. Matching this exact shape
+#: (proven control-plane-safe by the surf.onboard tests) guarantees the value passes the
+#: events fail-closed label gate, so a valid id never breaks connect and junk becomes None.
+_INSTALL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _safe_install_id(value: Any) -> str | None:
+    """Reduce an UNTRUSTED client-echoed install id to the opaque onboard token or ``None``.
+
+    Returns the value ONLY when it is exactly a ``uuid4().hex`` (32 lowercase hex — the
+    onboard ping's shape); anything else — wrong length, dashes, uppercase, non-hex, a
+    secret-shaped string, PII, junk, a non-string — folds to ``None``. Never raises and
+    never fail-closes the connect emit: a hostile client cannot break the handshake nor
+    ride a value out through this field."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text if _INSTALL_ID_RE.fullmatch(text) else None
+
+
+def _install_id_from_scope(scope: Any) -> str | None:
+    """Pull the client-echoed install id from the ``X-Gecko-Install-Id`` request header
+    (ASGI scope). UNTRUSTED — the caller validates the shape (``_safe_install_id``) before
+    it is ever stored. A malformed/absent header is simply ``None``."""
+    for key, value in scope.get("headers") or []:
+        if bytes(key).lower() == _INSTALL_ID_HEADER:
+            try:
+                return bytes(value).decode("latin-1")
+            except Exception:  # noqa: BLE001 - a malformed header is simply no install id
+                return None
+    return None
+
+
 # We only ever peek at the first slice of a POST body to spot an `initialize` frame; an
 # MCP JSON-RPC request is tiny, so this cap keeps a hostile large body out of memory
 # while never truncating a real handshake.
@@ -168,21 +215,25 @@ def _make_replay(messages: list[dict[str, Any]], receive: Any) -> Any:
     return _replay
 
 
-def _parse_initialize(prefix: bytes) -> tuple[bool, str | None]:
-    """Return ``(is_initialize, raw_client)`` for a buffered request-body prefix.
+def _parse_initialize(prefix: bytes) -> tuple[bool, str | None, str | None]:
+    """Return ``(is_initialize, raw_client, raw_install_id)`` for a buffered request-body
+    prefix.
 
-    Detects a JSON-RPC ``"method":"initialize"`` frame (single or batched) and pulls
-    ``params.clientInfo`` name/version into a raw ``"name/version"`` string. The raw
-    string is UNTRUSTED — ``emit_surf_event`` sanitizes + caps it. Any parse failure is
-    a clean "not an initialize" (best-effort; never raises)."""
+    Detects a JSON-RPC ``"method":"initialize"`` frame (single or batched), pulls
+    ``params.clientInfo`` name/version into a raw ``"name/version"`` string, and pulls an
+    OPTIONAL install id the client echoed in-band under
+    ``params._meta["gecko/install_id"]`` (a request header is the other carrier). Both raw
+    strings are UNTRUSTED — the caller sanitizes/validates them before anything is stored.
+    Any parse failure is a clean "not an initialize" (best-effort; never raises)."""
     try:
         obj: Any = json.loads(prefix)
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        return (False, None)
+        return (False, None, None)
     frames = obj if isinstance(obj, list) else [obj]
     for frame in frames:
         if isinstance(frame, dict) and frame.get("method") == "initialize":
             client: str | None = None
+            install_id: str | None = None
             params = frame.get("params")
             info = params.get("clientInfo") if isinstance(params, dict) else None
             if isinstance(info, dict):
@@ -194,8 +245,13 @@ def _parse_initialize(prefix: bytes) -> tuple[bool, str | None]:
                         if isinstance(version, str) and version
                         else name
                     )
-            return (True, client)
-    return (False, None)
+            meta = params.get("_meta") if isinstance(params, dict) else None
+            if isinstance(meta, dict):
+                raw = meta.get(_META_INSTALL_ID_KEY)
+                if isinstance(raw, str):
+                    install_id = raw
+            return (True, client, install_id)
+    return (False, None, None)
 
 
 def _session_id_from_start_headers(headers: Any) -> str | None:
@@ -232,6 +288,7 @@ def _emit_connect_outcome(
     user_agent: str | None,
     client_kind: str,
     is_init: bool,
+    install_id: str | None = None,
 ) -> None:
     """Emit the control-plane-safe funnel event for a POST outcome to ``/mcp``.
 
@@ -241,6 +298,11 @@ def _emit_connect_outcome(
       — captured as ``surf.connect_failed`` (``client`` is ``None``, so classification is
       UA-only) so bots are visible in the funnel. Non-init 2xx (a normal tools/call) and
       any other status emit NOTHING — the conditionals ARE the noise guard.
+
+    A real ``surf.connect`` also carries the opaque ``install_id`` the client echoed (when
+    present + valid), so distinct installs are countable. It is validated to the onboard
+    shape upstream, so it is ``None`` (absent) rather than value-bearing when unresolved;
+    ``surf.connect_failed`` (a bot) never carries it.
 
     Every emit carries the sanitized ``user_agent`` + robot/human ``client_kind``.
     Best-effort: only a control-plane violation surfaces (telemetry never breaks a call).
@@ -254,6 +316,7 @@ def _emit_connect_outcome(
                 session_id=session_id,
                 user_agent=user_agent,
                 client_kind=client_kind,
+                install_id=install_id,
             )
         elif 400 <= status < 500:
             emit_surf_event(
@@ -289,11 +352,16 @@ class _InitializeCaptureASGI:
             await self._inner(scope, receive, send)
             return
         prefix, messages = await _tee_body(receive)
-        is_init, client = _parse_initialize(prefix)
+        is_init, client, meta_install_id = _parse_initialize(prefix)
         replay = _make_replay(messages, receive)
         # UA is request metadata (fine to store once sanitized); no raw IP (PII) here.
         user_agent = _safe_user_agent(_user_agent_from_scope(scope))
         client_kind = classify_client(user_agent, client)
+        # The opaque install id the client echoed — header carrier wins over the in-band
+        # _meta carrier; each is validated to the onboard shape so junk/absent -> None.
+        install_id = _safe_install_id(
+            _install_id_from_scope(scope)
+        ) or _safe_install_id(meta_install_id)
 
         emitted = False
         surface_id = self._surface_id
@@ -317,6 +385,7 @@ class _InitializeCaptureASGI:
                     user_agent=user_agent,
                     client_kind=client_kind,
                     is_init=is_init,
+                    install_id=install_id,
                 )
             await send(event)
 
