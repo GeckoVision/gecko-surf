@@ -119,6 +119,18 @@ _UNSET_SENTINEL = "__unset__"
 _JUPITER_SPEC = _ROOT / "gecko" / "examples" / "jupiter_swap_openapi.json"
 _JUPITER_BASE = "https://lite-api.jup.ag/swap/v1"  # keyless free-tier host
 
+# Pegana (Solana peg-state / de-peg oracle) — keyless + PUBLIC for reads, so it mounts
+# EXACTLY like Jupiter: the comprehended spec served LIVE against its own pinned host,
+# with public_session (no auth) so no secret can leak and every read op stays visible.
+# Its keyless POST/PATCH/DELETE ops (auth-flow, subs, webhooks) are NOT relayed unguarded:
+# the hosted risk gate (enforce=hosted_enforce) covers them at call time exactly as it
+# does for every other public mount — no recorded_ops carve-out (that's Jito's money-relay
+# boundary, which Pegana does not have). This surface previously lived only on the
+# undeployed serve_providers host, so mcp.geckovision.tech/pegana/mcp 404'd; now it mounts
+# next to the others.
+_PEGANA_SPEC = _ROOT / "examples" / "pegana_demo" / "spec" / "pegana_openapi.json"
+_PEGANA_BASE = "https://api.pegana.xyz"  # keyless public host (from the spec's servers)
+
 PUBLIC_HOST = "mcp.geckovision.tech"
 PUBLIC_URL = f"https://{PUBLIC_HOST}"
 
@@ -253,6 +265,25 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
                 AgentApiClient(
                     str(_JUPITER_SPEC),
                     base_url=_JUPITER_BASE,
+                    session=public_session(),
+                ),
+                mode="live",
+                enforce=hosted_enforce,
+            ),
+        )
+    )
+    # Pegana — keyless + public, mounted IDENTICALLY to Jupiter (comprehended spec, LIVE
+    # against its pinned host, public_session so no secret can leak, all ops visible). No
+    # recorded_ops carve-out: Pegana has no money-moving relay, so its keyless writes are
+    # covered by the SAME hosted risk gate as every other public mount, not exposed as
+    # unguarded writes. Not in GATED_SURFACES — the boot gate stays satisfied.
+    surfaces.append(
+        (
+            "pegana",
+            McpSurface(
+                AgentApiClient(
+                    str(_PEGANA_SPEC),
+                    base_url=_PEGANA_BASE,
                     session=public_session(),
                 ),
                 mode="live",

@@ -35,6 +35,7 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
         "birdeye",
         "jito",
         "jupiter",
+        "pegana",
     }
 
     store = serve_mcp._registry_store(surfaces)
