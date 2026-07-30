@@ -412,6 +412,145 @@ def test_noninit_2xx_emits_nothing(monkeypatch):
     assert not any(d["event"] == "surf.connect_failed" for d in docs)
 
 
+# --- funnel telemetry: surf.connect carries the opaque install_id (distinct-install count) ---
+
+# The onboard ping persists this shape (uuid4().hex) at ~/.gecko/install_id; a connecting
+# client echoes the SAME id so distinct installs are countable (one auto-updating dogfood
+# machine no longer looks like many triers). It is opaque — no PII, not a secret.
+_FAKE_INSTALL_ID = "0123456789abcdef0123456789abcdef"
+
+
+def test_safe_install_id_accepts_uuid_hex_rejects_everything_else():
+    from gecko.http_server import _safe_install_id
+
+    assert _safe_install_id(_FAKE_INSTALL_ID) == _FAKE_INSTALL_ID
+    # Wrong length / dashes / uppercase / non-hex / junk / secret-shaped -> None (never
+    # fail-closed, never a smuggled value): only the exact opaque-uuid shape survives.
+    assert _safe_install_id("deadbeef") is None
+    assert _safe_install_id("0123456789ABCDEF0123456789ABCDEF") is None
+    assert _safe_install_id("0123456789abcdef0123456789abcde") is None  # 31 chars
+    assert _safe_install_id("sk-live-" + "a" * 40) is None
+    assert _safe_install_id("../../etc/passwd") is None
+    assert _safe_install_id(None) is None
+    assert _safe_install_id(12345) is None  # type: ignore[arg-type]
+
+
+def test_parse_initialize_extracts_meta_install_id():
+    # The in-band carrier: a client may echo its install id under
+    # params._meta["gecko/install_id"]. It is UNTRUSTED here (validated downstream).
+    from gecko.http_server import _parse_initialize
+
+    frame = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "example-app", "version": "1"},
+            "_meta": {"gecko/install_id": _FAKE_INSTALL_ID},
+        },
+    }
+    is_init, client, install_id = _parse_initialize(json.dumps(frame).encode())
+    assert is_init is True
+    assert client == "example-app/1"
+    assert install_id == _FAKE_INSTALL_ID
+
+    # Absent _meta -> None install id, still a valid initialize.
+    bare = {**frame, "params": {**frame["params"]}}
+    del bare["params"]["_meta"]  # type: ignore[attr-defined]
+    is_init2, _client2, install_id2 = _parse_initialize(json.dumps(bare).encode())
+    assert is_init2 is True
+    assert install_id2 is None
+
+
+def test_initialize_carries_install_id_from_header(monkeypatch):
+    # The transport-level carrier: a client sends X-Gecko-Install-Id on the initialize
+    # POST; surf.connect must carry it so distinct installs are countable.
+    from gecko import events
+
+    body = {
+        **_INIT_BODY,
+        "params": {
+            **_INIT_BODY["params"],
+            "clientInfo": {"name": "example-app", "version": "1"},
+        },
+    }  # type: ignore[dict-item]
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(
+            body,
+            {
+                **_GOOD_HEADERS,
+                "user-agent": "claude-code/1.9",
+                "x-gecko-install-id": _FAKE_INSTALL_ID,
+            },
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert connect["install_id"] == _FAKE_INSTALL_ID
+    # Control plane: the payload holds only allowlisted keys, and install_id is the
+    # opaque uuid ONLY — no PII, no secret, nothing value-bearing rode in with it.
+    assert set(connect) <= events.RECORD_ALLOWED_KEYS
+
+
+def test_initialize_without_install_id_still_emits_connect(monkeypatch):
+    # Backward-compatible: a connect from a client that sends no install id still emits;
+    # the field is simply absent (dropped by to_doc). The current connect path is intact.
+    from gecko import events
+
+    body = {
+        **_INIT_BODY,
+        "params": {
+            **_INIT_BODY["params"],
+            "clientInfo": {"name": "example-app", "version": "1"},
+        },
+    }  # type: ignore[dict-item]
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(body, {**_GOOD_HEADERS, "user-agent": "claude-code/1.9"})
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert "install_id" not in connect  # None is dropped -> absent, connect still fired
+
+
+def test_junk_install_id_header_does_not_break_connect(monkeypatch):
+    # A hostile/malformed X-Gecko-Install-Id must NEVER fail-close the connect emit nor
+    # smuggle a value: it folds to absent, and the connect still fires (control-plane safe).
+    from gecko import events
+
+    body = {
+        **_INIT_BODY,
+        "params": {
+            **_INIT_BODY["params"],
+            "clientInfo": {"name": "example-app", "version": "1"},
+        },
+    }  # type: ignore[dict-item]
+    monkeypatch.setenv("MONGODB_URI", "mongodb://fake")
+    docs = _sink_capture()
+    try:
+        status = _raw_post(
+            body,
+            {
+                **_GOOD_HEADERS,
+                "user-agent": "claude-code/1.9",
+                "x-gecko-install-id": "sk-live-" + "a" * 48,  # secret-shaped junk
+            },
+        )
+    finally:
+        events.set_surf_sink_override(None)
+    assert status == 200
+    connect = next(d for d in docs if d["event"] == "surf.connect")
+    assert "install_id" not in connect  # junk rejected -> absent
+    assert set(connect) <= events.RECORD_ALLOWED_KEYS
+
+
 def test_search_capabilities_is_not_recorded(tmp_path):
     # The synthetic intent tool is not an upstream API call — it must not pollute
     # the per-operation correctness corpus.
