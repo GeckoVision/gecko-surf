@@ -27,10 +27,12 @@ import pytest
 from gecko import onboard
 from gecko.netguard import UnsafeUrlError
 from gecko.onboard import (
+    INSTALL_ID_HEADER,
     ONBOARD_PING_NOTE,
     ONBOARD_PING_URL,
     AddDeps,
     add,
+    install_id_headers,
     read_or_create_install_id,
 )
 from gecko.sanitize import looks_like_secret_value
@@ -221,6 +223,25 @@ def test_a_fresh_home_mints_a_new_install_id(tmp_path):
     first = read_or_create_install_id(tmp_path / "home-a")
     second = read_or_create_install_id(tmp_path / "home-b")
     assert first != second
+
+
+# --------------------------------------------------------------------------- #
+# install_id_headers — the client-emit carrier (step 2): the SAME persisted id,
+# shaped as the ``X-Gecko-Install-Id`` request header, opt-out honoured.
+# --------------------------------------------------------------------------- #
+def test_install_id_headers_carries_the_persisted_id(tmp_path, monkeypatch):
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    persisted = read_or_create_install_id(tmp_path)
+    headers = install_id_headers(home=tmp_path)
+    assert headers == {INSTALL_ID_HEADER: persisted}
+    assert INSTALL_ID_HEADER == "X-Gecko-Install-Id"
+
+
+def test_install_id_headers_respects_the_telemetry_opt_out(tmp_path, monkeypatch):
+    monkeypatch.setenv("GECKO_TELEMETRY", "off")
+    assert install_id_headers(home=tmp_path) == {}
+    # Opt-out must not even create the id file.
+    assert not (tmp_path / ".gecko" / "install_id").exists()
 
 
 def test_install_id_write_is_atomic_never_a_partial_file(tmp_path, monkeypatch):

@@ -95,6 +95,11 @@ Transport is **MCP Streamable HTTP** (`2025-11-25`), not SSE — use
 `streamablehttp_client`, not `sse_client`. Ready for your own API?
 → [Make any API agent-usable](#make-any-api-agent-usable).
 
+> Prefer the CLI? `gecko connect txline` serves the same surface over stdio and adds
+> an anonymous `X-Gecko-Install-Id` header (an opaque per-install id — no key, no PII;
+> `GECKO_TELEMETRY=off` to skip) so distinct installs are countable. The copy-paste
+> config above stays credential-free and header-free.
+
 ---
 
 ## Open source engine, hosted platform

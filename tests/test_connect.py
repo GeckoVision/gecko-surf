@@ -7,12 +7,13 @@ frame forwarding or teardown fails locally rather than during a live smoke.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import anyio
 import pytest
 
-from gecko import connect, credentials
+from gecko import connect, credentials, onboard
 from gecko.credentials import CredentialError, CredentialRef
 from gecko.login import IDENTITY_REF
 
@@ -124,6 +125,102 @@ def test_a_failed_resolve_never_echoes_the_key() -> None:
 
 def test_auth_headers_is_the_header_the_gate_reads() -> None:
     assert connect.auth_headers(KEY) == {"Authorization": f"Bearer {KEY}"}
+
+
+# --- client_headers: auth + the opaque install-id echoed on the handshake --------
+#
+# Step 2 of install-id-on-connect: the CLIENT must SEND ``X-Gecko-Install-Id`` so the
+# server-side capture becomes end-to-end. Everything here is falsified OFFLINE with an
+# INJECTED fake HOME — never a real ``~/.gecko`` — and the emitted value is asserted
+# against the SERVER's own validator so the two halves cannot silently drift apart.
+
+
+def test_client_headers_carries_the_persisted_install_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    # Seed the id the same way the onboard path would, into an injected HOME.
+    from gecko.onboard import read_or_create_install_id
+
+    persisted = read_or_create_install_id(tmp_path)
+
+    headers = connect.client_headers(KEY, home=tmp_path)
+
+    assert headers["Authorization"] == f"Bearer {KEY}"
+    assert headers[onboard.INSTALL_ID_HEADER] == persisted
+    # Shape the server enforces: a uuid4().hex, 32 lowercase hex.
+    assert re.fullmatch(r"[0-9a-f]{32}", headers[onboard.INSTALL_ID_HEADER])
+
+
+def test_first_connect_mints_and_persists_a_stable_install_id(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    id_file = tmp_path / ".gecko" / "install_id"
+    assert not id_file.exists()  # nothing exists yet — a fresh machine
+
+    first = connect.client_headers(KEY, home=tmp_path)[onboard.INSTALL_ID_HEADER]
+
+    assert id_file.exists()  # a first connect minted + persisted it
+    assert oct(id_file.stat().st_mode)[-3:] == "600"
+    # A second connect reuses the SAME id — distinct-install, never per-run.
+    second = connect.client_headers(KEY, home=tmp_path)[onboard.INSTALL_ID_HEADER]
+    assert second == first
+
+
+def test_the_emitted_install_id_passes_the_servers_validator(
+    tmp_path, monkeypatch
+) -> None:
+    # Round-trip sanity: import the SERVER's shape gate and assert the client's value
+    # survives it. This is the seam that makes the emit end-to-end — if it drifts, the
+    # server folds the id to None and distinct-install counting goes dark again.
+    from gecko.http_server import _safe_install_id
+
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    emitted = connect.client_headers(KEY, home=tmp_path)[onboard.INSTALL_ID_HEADER]
+
+    assert _safe_install_id(emitted) == emitted
+
+
+def test_the_header_name_matches_the_server_header(tmp_path, monkeypatch) -> None:
+    from gecko.http_server import _INSTALL_ID_HEADER
+
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    (name,) = [
+        k for k in connect.client_headers(KEY, home=tmp_path) if k != "Authorization"
+    ]
+    # The server matches case-insensitively on the lowercased header bytes.
+    assert name.lower().encode("latin-1") == _INSTALL_ID_HEADER
+
+
+def test_telemetry_off_omits_the_install_id_but_keeps_auth(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("GECKO_TELEMETRY", "off")
+    headers = connect.client_headers(KEY, home=tmp_path)
+
+    assert headers == {"Authorization": f"Bearer {KEY}"}  # auth intact, no id header
+    # Opt-out never even touches the id file.
+    assert not (tmp_path / ".gecko" / "install_id").exists()
+
+
+def test_an_unwritable_home_still_yields_a_valid_shaped_header(
+    tmp_path, monkeypatch
+) -> None:
+    # Degrade-not-crash: an unwritable HOME (read-only container, sandboxed shell) still
+    # emits a valid-shaped ephemeral id rather than breaking the connect.
+    monkeypatch.delenv("GECKO_TELEMETRY", raising=False)
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    (ro / ".gecko").mkdir()
+    import os as _os
+    import stat as _stat
+
+    _os.chmod(ro / ".gecko", _stat.S_IRUSR | _stat.S_IXUSR)  # no write
+    try:
+        headers = connect.client_headers(KEY, home=ro)
+    finally:
+        _os.chmod(ro / ".gecko", _stat.S_IRWXU)  # restore so tmp cleanup works
+
+    assert re.fullmatch(r"[0-9a-f]{32}", headers[onboard.INSTALL_ID_HEADER])
 
 
 # --- bridge: verbatim frames, deterministic teardown -----------------------------
