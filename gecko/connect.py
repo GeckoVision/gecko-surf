@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
-from . import credentials
+from . import credentials, onboard
 from .credentials import ChainResolver, CredentialError
 from .login import IDENTITY_REF
 from .netguard import UnsafeUrlError, validate_public_url
@@ -98,6 +99,25 @@ def resolve_key(resolver: ChainResolver | None = None) -> str:
 def auth_headers(key: str) -> dict[str, str]:
     """The single header the gate reads (``http_server._bearer_from_scope``)."""
     return {"Authorization": f"Bearer {key}"}
+
+
+def client_headers(key: str, *, home: Path | None = None) -> dict[str, str]:
+    """Every static header the bridged/probed client sends to the hosted surface.
+
+    Two carriers, both control-plane-clean:
+
+    * ``Authorization: Bearer …`` — the gate the surface authenticates on.
+    * ``X-Gecko-Install-Id: <uuid4 hex>`` — the opaque, non-PII install id (via the ONE
+      onboard helper, :func:`onboard.install_id_headers`) so a connect counts a DISTINCT
+      install, not a run. A first ``connect`` mints the stable id; the server validates its
+      shape and ignores anything malformed, so it can never fail-close the handshake, and a
+      not-yet-updated server simply drops it. Absent under ``GECKO_TELEMETRY=off`` (the
+      helper returns no header) — the auth header is unaffected.
+
+    Both ride EVERY request the transport makes — including the ``initialize`` frame the
+    server reads the id off — because an MCP client sends its static headers on each call.
+    """
+    return {**auth_headers(key), **onboard.install_id_headers(home=home)}
 
 
 async def bridge(
@@ -242,7 +262,7 @@ def probe(
     import anyio
 
     url = surface_url(surface, host=host)
-    headers = auth_headers(resolve_key(resolver))
+    headers = client_headers(resolve_key(resolver))
     try:
         return anyio.run(_probe, url, headers)
     except (KeyboardInterrupt, SystemExit, ConnectError):
@@ -265,7 +285,7 @@ def connect(
     # the public mount URL — and it answers "which host is it hitting?" at a glance, which
     # is the first question when a connection fails.
     print(f"gecko connect → {url}", file=sys.stderr, flush=True)
-    headers = auth_headers(resolve_key(resolver))
+    headers = client_headers(resolve_key(resolver))
     # This is an MCP *server*: it now waits for a client on stdin. Run by hand it looks
     # hung — say so, and point at --probe for a terminal self-test. (Stderr only; stdout
     # is the protocol channel the moment a client attaches.)
