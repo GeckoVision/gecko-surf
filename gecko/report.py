@@ -111,6 +111,11 @@ def _derive_call(client: AgentApiClient, intent: str) -> dict[str, Any] | None:
         for key, value in sorted(args.items())
     ]
     plan = client.plan_for(intent, name)
+    # Provenance + safety posture come STRAIGHT off the shipped engine (no logic added
+    # here): the op's provenance tier, and the per-tool poison quarantine that fails the
+    # live auth path closed. Together they make the trust boundary visible per call.
+    op = client._op_by_name.get(name)
+    provenance = op_provenance(client.spec, op.operation_id) if op is not None else ""
     return {
         "intent": intent,
         "tool": name,
@@ -118,48 +123,135 @@ def _derive_call(client: AgentApiClient, intent: str) -> dict[str, Any] | None:
         "path": top.get("path") or "",
         "params": params,
         "plan_steps": (plan or {}).get("steps") if plan else None,
+        "provenance": provenance,
+        "requires_auth": bool(tool.get("requires_auth")),
+        "quarantined": name in client._poisoned_tool_names,
     }
+
+
+# Safety posture → (badge label, css class, the one-line "why it's safe"). This is the
+# trust-boundary value made legible per call: a quarantined tool is REFUSED (never called,
+# never handed a key), an auth-gated tool is key-safe (Gecko injects the credential at
+# call-time so the agent's tool def carries none — invariant #4), a public tool has
+# nothing to leak. No secret/token string is ever emitted (control-plane #1).
+def _safety_posture(entry: dict[str, Any]) -> tuple[str, str, str]:
+    if entry["quarantined"]:
+        return (
+            "Refused",
+            "safe-refused",
+            "Quarantined by Skill Guard — the poisoned tool is never called and never "
+            "handed a key.",
+        )
+    if entry["requires_auth"]:
+        return (
+            "Key-safe",
+            "safe-auth",
+            "Auth is injected by Gecko at call-time — the tool the agent holds carries "
+            "no key to leak.",
+        )
+    return (
+        "Public",
+        "safe-public",
+        "Public endpoint — no credential required; the agent has nothing to leak.",
+    )
+
+
+def _render_chip(entry: dict[str, Any], idx: int) -> str:
+    """One intent control — a real <button> (keyboard-native) in the tablist rail."""
+    selected = "true" if idx == 0 else "false"
+    tabindex = "0" if idx == 0 else "-1"
+    return (
+        f'<button type="button" class="pg-chip" role="tab" id="pg-chip-{idx}" '
+        f'aria-controls="pg-panel-{idx}" aria-selected="{selected}" '
+        f'tabindex="{tabindex}">'
+        f'<span class="pg-chip-q">{escape(_short(entry["intent"], 72))}</span>'
+        f'<span class="pg-chip-go" aria-hidden="true">→</span>'
+        "</button>"
+    )
+
+
+def _render_panel(entry: dict[str, Any], idx: int) -> str:
+    """One intent's answer panel — the staged agent moment (plans → calls → stays safe).
+
+    Every value is the real derived call: METHOD + path, schema-synthesized params, the
+    op's provenance, and the safety posture. The three <li> stages are a CSS-only reveal
+    (see the inline style); the copy never claims a response value (control-plane #1)."""
+    params_html = ""
+    if entry["params"]:
+        items = "".join(
+            f'<tr><td class="p-name">{escape(name)}</td>'
+            f'<td class="p-loc">{escape(loc)}</td>'
+            f'<td class="p-val">{escape(_short(value))}</td></tr>'
+            for name, loc, value in entry["params"]
+        )
+        params_html = f'<table class="params">{items}</table>'
+
+    plan_html = ""
+    if entry["plan_steps"]:
+        steps = "".join(
+            '<li class="pg-hop">'
+            + escape(f"{s.get('method', '')} {s.get('path', '')}".strip())
+            + "</li>"
+            for s in entry["plan_steps"]
+        )
+        plan_html = (
+            '<div class="pg-plan"><span class="tag">supplier chain</span>'
+            f'<ol class="pg-hops">{steps}</ol></div>'
+        )
+
+    prov = str(entry["provenance"])
+    prov_html = ""
+    if prov:
+        prov_cls = _PROV_CLASS.get(prov, "prov-extracted")
+        prov_html = f'<span class="prov {prov_cls}">{escape(prov)}</span>'
+    safe_label, safe_cls, safe_detail = _safety_posture(entry)
+
+    open_cls = " is-open" if idx == 0 else ""
+    return (
+        f'<section class="pg-panel{open_cls}" id="pg-panel-{idx}" role="tabpanel" '
+        f'aria-labelledby="pg-chip-{idx}"{"" if idx == 0 else " hidden"}>'
+        '<ol class="pg-stages">'
+        # 1 — the agent plans
+        '<li class="pg-stage"><span class="pg-step">plans</span>'
+        f'<p class="pg-you">{escape(entry["intent"])}</p>'
+        '<p class="pg-think">Gecko matched this to a first-call-correct capability — '
+        "deterministic from the surface, no live model.</p></li>"
+        # 2 — the derived first-call-correct call
+        '<li class="pg-stage"><span class="pg-step">calls</span>'
+        f'<div class="derived">derived tool <code>{escape(entry["tool"])}</code></div>'
+        f'<div class="call"><span class="method">{escape(entry["method"])}</span> '
+        f"<code>{escape(entry['path'])}</code></div>"
+        f"{params_html}{plan_html}</li>"
+        # 3 — provenance + the safety posture (the trust boundary, made visible)
+        '<li class="pg-stage"><span class="pg-step">stays safe</span>'
+        f'<div class="pg-badges">{prov_html}'
+        f'<span class="safe {safe_cls}">{escape(safe_label)}</span></div>'
+        f'<p class="pg-safe-detail">{escape(safe_detail)}</p></li>'
+        "</ol></section>"
+    )
 
 
 def _render_playground(client: AgentApiClient, intents: list[str]) -> str:
     entries = [c for c in (_derive_call(client, i) for i in intents) if c is not None]
     if not entries:
         return ""
-    rows: list[str] = []
-    for entry in entries:
-        params_html = ""
-        if entry["params"]:
-            items = "".join(
-                f'<tr><td class="p-name">{escape(name)}</td>'
-                f'<td class="p-loc">{escape(loc)}</td>'
-                f'<td class="p-val">{escape(_short(value))}</td></tr>'
-                for name, loc, value in entry["params"]
-            )
-            params_html = f'<table class="params">{items}</table>'
-        plan_html = ""
-        if entry["plan_steps"]:
-            steps = " → ".join(
-                escape(f"{s.get('method', '')} {s.get('path', '')}".strip())
-                for s in entry["plan_steps"]
-            )
-            plan_html = f'<div class="plan"><span class="tag">supplier chain</span> {steps}</div>'
-        rows.append(
-            '<div class="turn">'
-            f'<div class="bubble user"><span class="who">You</span>'
-            f"{escape(entry['intent'])}</div>"
-            '<div class="bubble gecko"><span class="who">Gecko</span>'
-            f'<div class="derived">derived tool <code>{escape(entry["tool"])}</code></div>'
-            f'<div class="call"><span class="method">{escape(entry["method"])}</span> '
-            f"<code>{escape(entry['path'])}</code></div>"
-            f"{params_html}{plan_html}</div>"
-            "</div>"
-        )
+    chips = "".join(_render_chip(e, i) for i, e in enumerate(entries))
+    panels = "".join(_render_panel(e, i) for i, e in enumerate(entries))
     return (
         '<section class="card playground">'
         "<h2>The Playground</h2>"
-        '<p class="lede">Plain-English intent in, the first-call-correct call out — '
-        "replayed deterministically from the surface. No live model, no network.</p>"
-        f"{''.join(rows)}"
+        '<p class="lede">Pick an intent — watch the agent plan the call, make the '
+        "first-call-correct call, and stay safe. Replayed deterministically from the "
+        "surface: no live model, no network.</p>"
+        '<div class="pg-shell" id="pg-root">'
+        f'<div class="pg-rail" role="tablist" aria-label="Try an intent">{chips}</div>'
+        f'<div class="pg-panels">{panels}</div>'
+        "</div>"
+        # JS-disabled must never be blank: reveal every panel when scripting is off.
+        "<noscript><style>.pg-panel{display:block!important}"
+        ".pg-panel+.pg-panel{margin-top:14px;"
+        "border-top:1px solid var(--line);padding-top:14px}</style></noscript>"
+        f"{_PLAYGROUND_STYLE}{_PLAYGROUND_SCRIPT}"
         "</section>"
     )
 
@@ -167,6 +259,110 @@ def _render_playground(client: AgentApiClient, intents: list[str]) -> str:
 def _short(value: Any, cap: int = 40) -> str:
     text = str(value)
     return text if len(text) <= cap else text[: cap - 1] + "…"
+
+
+# Playground CSS — inlined in the section (self-contained, reuses the shell's :root
+# tokens). One accent, real type hierarchy, generous spacing. The staged reveal is armed
+# ONLY under ``.pg-anim`` (added by JS): without scripting the stages stay fully visible,
+# so the <noscript> fallback is never blank. ``prefers-reduced-motion`` disables motion.
+_PLAYGROUND_STYLE = """<style>
+.pg-shell{display:grid;grid-template-columns:minmax(190px,250px) 1fr;gap:22px;
+  margin-top:6px;}
+.pg-rail{display:flex;flex-direction:column;gap:8px;}
+.pg-chip{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  text-align:left;font:inherit;font-size:13.5px;line-height:1.35;color:var(--ink);
+  background:#fbfcfe;border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+  cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;}
+.pg-chip:hover{border-color:#c7cdf5;background:#fff;}
+.pg-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.pg-chip[aria-selected="true"]{background:var(--accent-soft);border-color:#c7cdf5;
+  box-shadow:inset 3px 0 0 var(--accent);font-weight:600;}
+.pg-chip-go{color:var(--accent);opacity:0;transform:translateX(-4px);
+  transition:opacity .15s,transform .15s;font-weight:700;}
+.pg-chip[aria-selected="true"] .pg-chip-go,.pg-chip:hover .pg-chip-go{opacity:1;
+  transform:none;}
+.pg-panels{min-width:0;}
+.pg-panel{border:1px solid var(--line);border-radius:12px;background:#fbfcfe;
+  padding:6px 20px;}
+.pg-stages{list-style:none;margin:0;padding:0;}
+.pg-stage{position:relative;padding:16px 0 16px 18px;border-left:2px solid var(--line);}
+.pg-stage::before{content:"";position:absolute;left:-6px;top:20px;width:10px;height:10px;
+  border-radius:50%;background:var(--accent);border:2px solid var(--card);}
+.pg-stage+.pg-stage{border-top:none;}
+.pg-step{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--accent);margin-bottom:8px;}
+.pg-you{margin:0 0 6px;font-size:15px;font-weight:600;color:var(--ink);}
+.pg-you::before{content:"\\201C";}.pg-you::after{content:"\\201D";}
+.pg-think{margin:0;font-size:13px;color:var(--muted);max-width:56ch;}
+.pg-panel .derived{font-size:13px;color:var(--muted);margin-bottom:8px;}
+.pg-panel .derived code,.pg-panel .call code{font-family:var(--mono);color:var(--ink);}
+.pg-panel .call{font-family:var(--mono);font-size:13.5px;}
+.pg-panel .method{display:inline-block;font-weight:700;color:var(--accent);
+  font-family:var(--mono);}
+.pg-hops{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px;
+  align-items:center;}
+.pg-hop{font-family:var(--mono);font-size:12px;background:#fff;border:1px solid var(--line);
+  border-radius:7px;padding:3px 8px;color:var(--ink);}
+.pg-hop+.pg-hop::before{content:"\\2192";color:var(--muted);margin-right:8px;
+  margin-left:-4px;}
+.pg-plan{margin-top:12px;}
+.pg-badges{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;}
+.safe{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;
+  border-radius:6px;padding:2px 9px;text-transform:uppercase;}
+.safe-auth{background:#eef2ff;color:var(--accent);border:1px solid #c7cdf5;}
+.safe-public{background:#e7f7ef;color:#0e9f6e;border:1px solid #b7e6cf;}
+.safe-refused{background:#dc2626;color:#fff;border:1px solid #b91c1c;}
+.pg-safe-detail{margin:0;font-size:13px;color:var(--ink);max-width:60ch;}
+@media (max-width:640px){.pg-shell{grid-template-columns:1fr;}
+  .pg-rail{flex-direction:row;flex-wrap:wrap;}}
+/* staged reveal — armed only when JS is present (.pg-anim), never hiding no-JS content */
+.pg-anim .pg-panel .pg-stage{opacity:0;transform:translateY(6px);}
+.pg-anim .pg-panel.is-open .pg-stage{animation:pgIn .34s ease forwards;}
+.pg-anim .pg-panel.is-open .pg-stage:nth-child(1){animation-delay:.02s;}
+.pg-anim .pg-panel.is-open .pg-stage:nth-child(2){animation-delay:.2s;}
+.pg-anim .pg-panel.is-open .pg-stage:nth-child(3){animation-delay:.42s;}
+@keyframes pgIn{to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion:reduce){
+  .pg-anim .pg-panel .pg-stage{opacity:1;transform:none;}
+  .pg-anim .pg-panel.is-open .pg-stage{animation:none;}}
+</style>"""
+
+# Playground JS — inline, no external anything, no wall-clock. Arms the staged reveal,
+# switches panels on chip click, restarts the reveal, and adds roving-tabindex arrow-key
+# navigation over the tablist (WAI-ARIA tabs pattern). Deterministic HTML: this changes
+# only runtime DOM state, never the generated markup.
+_PLAYGROUND_SCRIPT = """<script>
+(function(){
+  var root=document.getElementById("pg-root");
+  if(!root)return;
+  root.classList.add("pg-anim");
+  var chips=[].slice.call(root.querySelectorAll(".pg-chip"));
+  function panelFor(chip){return document.getElementById(chip.getAttribute("aria-controls"));}
+  function select(chip,focus){
+    chips.forEach(function(c){
+      var on=c===chip,p=panelFor(c);
+      c.setAttribute("aria-selected",on?"true":"false");
+      c.tabIndex=on?0:-1;
+      if(p){
+        if(on){p.hidden=false;p.classList.remove("is-open");void p.offsetWidth;
+          p.classList.add("is-open");}
+        else{p.hidden=true;p.classList.remove("is-open");}
+      }
+    });
+    if(focus)chip.focus();
+  }
+  chips.forEach(function(chip,i){
+    chip.addEventListener("click",function(){select(chip,false);});
+    chip.addEventListener("keydown",function(e){
+      var d=e.key==="ArrowDown"||e.key==="ArrowRight"?1:
+            e.key==="ArrowUp"||e.key==="ArrowLeft"?-1:0;
+      if(d){e.preventDefault();select(chips[(i+d+chips.length)%chips.length],true);}
+      else if(e.key==="Home"){e.preventDefault();select(chips[0],true);}
+      else if(e.key==="End"){e.preventDefault();select(chips[chips.length-1],true);}
+    });
+  });
+})();
+</script>"""
 
 
 # --------------------------------------------------------------------------- #
