@@ -430,6 +430,35 @@ def read_or_create_install_id(home: Path) -> str:
     return new_id
 
 
+#: The request header a Gecko MCP client echoes on the ``initialize`` handshake so the
+#: hosted surface can attribute a connect to a DISTINCT install (server reads it via
+#: ``http_server._install_id_from_scope`` and validates the shape with
+#: ``http_server._safe_install_id``). Casing here matches the header the server lowercases
+#: on read — an HTTP header name is case-insensitive on the wire either way.
+INSTALL_ID_HEADER = "X-Gecko-Install-Id"
+
+
+def install_id_headers(*, home: Path | None = None) -> dict[str, str]:
+    """The single control-plane header a Gecko MCP client sends so the hosted surface can
+    count DISTINCT installs instead of runs.
+
+    Reuses :func:`read_or_create_install_id` (the ONE onboard source of the id — never a
+    reimplementation): a first ``gecko connect`` mints the stable opaque id at
+    ``<home>/.gecko/install_id`` and every later run reuses it. The value is a
+    ``uuid4().hex`` (32 lowercase hex) — no PII, no secret, and exactly the shape the
+    server validates (``http_server._safe_install_id``), so sending it can never
+    fail-close a connect. Deterministic and best-effort: an unwritable HOME degrades to an
+    ephemeral (still valid-shaped) id rather than crash, so a present header is ALWAYS
+    well-formed.
+
+    Opt-out: ``GECKO_TELEMETRY=off`` returns ``{}`` (no header, no id file touched) — the
+    same switch that mutes the onboard ping mutes this attribution too."""
+    if not telemetry_enabled():
+        return {}
+    install_id = read_or_create_install_id(home if home is not None else Path.home())
+    return {INSTALL_ID_HEADER: install_id}
+
+
 # --------------------------------------------------------------------------- #
 # Once-per-install+surface markers — what makes the adoption metric count
 # adopters instead of runs. A marker lives NEXT TO the install-id file
