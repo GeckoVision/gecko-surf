@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .canonical import ENTITY_SCHEMA_KEY, canonical_example
+
 _MAX_DEPTH = 8
 
 
@@ -56,6 +58,15 @@ def example_from_schema(schema: Any, _depth: int = 0) -> Any:
         return schema["default"]
     if schema.get("enum"):
         return schema["enum"][0]
+    # Canonical-from-declared-entity (precedence: shipped example/default/enum win above;
+    # placeholder falls through below). A param whose value domain is DECLARED (x-gecko or
+    # a customer confirmation — the marker is stamped by tools._input_schema) AND KNOWN to
+    # the registry is filled with a real, stable representative, so a path/query op verifies
+    # first-call instead of 404ing on a placeholder. An unknown/absent entity → None →
+    # today's placeholder (never a fabricated value).
+    canon = canonical_example(schema.get(ENTITY_SCHEMA_KEY))
+    if canon is not None:
+        return canon
     for key in ("anyOf", "oneOf"):
         if schema.get(key):
             return example_from_schema(schema[key][0], _depth + 1)
