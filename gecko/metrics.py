@@ -48,18 +48,40 @@ def _est_tokens(char_count: int) -> int:
 
 @dataclass(frozen=True)
 class CompressionMetric:
-    """Raw OpenAPI vs the generated agent surface. Bytes MEASURED, tokens ESTIMATED."""
+    """Raw OpenAPI vs the generated agent surface. Bytes MEASURED, tokens ESTIMATED.
+
+    ``reduction_pct`` is the SIGNED truth (``1 - surface/raw``, as a %). A verbose spec
+    comprehends SMALLER — noise stripped — so it is positive (**compressed**). A terse spec
+    is too sparse to call correctly, so comprehension makes the surface *larger* by ADDING
+    the question-shaped, first-call-correct tool descriptions + examples the raw spec lacked;
+    ``reduction_pct`` then goes ``<= 0`` (**enriched**). Both are the same measurement — the
+    interpretation (:attr:`is_enriched`, :attr:`magnitude_pct`) reads it honestly, never a
+    hidden negative dressed as "smaller"."""
 
     raw_bytes: int
     raw_tokens_est: int
     surface_bytes: int
     surface_tokens_est: int
-    reduction_pct: float  # measured: 1 - surface_bytes/raw_bytes, as a percentage
+    reduction_pct: (
+        float  # measured: 1 - surface_bytes/raw_bytes, as a percentage (signed)
+    )
     token_estimate: str = f"chars/{_CHARS_PER_TOKEN} (estimate, not a tokenizer)"
     basis: str = (
         "measured bytes: raw spec source vs generated tool defs (compact JSON); "
         "% reduction is measured, token counts are estimated"
     )
+
+    @property
+    def is_enriched(self) -> bool:
+        """True when the surface is LARGER than the raw spec (``reduction_pct <= 0``): a
+        terse API where comprehension ADDED the calling context, not stripped noise."""
+        return self.reduction_pct <= 0
+
+    @property
+    def magnitude_pct(self) -> float:
+        """The unsigned size of the change — ``|reduction_pct|``. Read with
+        :attr:`is_enriched`: ``+X% smaller`` (compressed) vs ``+X% richer`` (enriched)."""
+        return round(abs(self.reduction_pct), 1)
 
 
 @dataclass(frozen=True)

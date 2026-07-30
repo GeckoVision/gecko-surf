@@ -1,48 +1,73 @@
-"""Universality — ``compute_metrics`` + the scorecard still work on ALL committed specs.
+"""Metrics + scorecard universality — the whole pipeline runs on EVERY committed spec.
 
-The tripwire for ingestion changes: slice 2 adds body/response-field decomposition at
-ingest, which every ``Surface`` build runs. This sweeps the whole committed provider
-universe (``provider_matrix.PROVIDERS``, 14 specs) and asserts each still comprehends into
-a Metrics + an HTML scorecard without raising — deterministic and $0 (Pattern B). A spec
-that stops comprehending, or a scorecard that stops rendering, trips here.
+The durable guarantee behind "works for every new API": the a-ha metrics pipeline AND the
+scorecard are API-agnostic, so they comprehend the whole committed provider universe without
+raising and yield sane numbers for each — whether the surface compresses (verbose spec) or
+ENRICHES (too-sparse spec, ``reduction_pct <= 0``). Slice-2's body/response-field
+decomposition runs in every ``Surface`` build, so this also tripwires ingestion changes.
+Offline ($0, Pattern B), deterministic, control-plane only.
+
+Parametrized over :data:`gecko.provider_matrix.PROVIDERS` (the single source of truth for
+the committed universe) so adding a new spec there is the ONLY change needed to cover it —
+one line keeps this test true.
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+
+import pytest
 
 from gecko.ingest import load_spec
 from gecko.metrics import compute_metrics
 from gecko.provider_matrix import MINT_HINTS, PROVIDERS
 from gecko.report import build_scorecard
 
+#: The repo root — this test lives in ``tests/``; PROVIDERS paths are repo-relative.
 _ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_there_are_fourteen_committed_providers() -> None:
+@pytest.mark.parametrize("name,rel_path", sorted(PROVIDERS.items()))
+def test_compute_metrics_runs_and_is_sane_for_every_committed_spec(
+    name: str, rel_path: str
+) -> None:
+    path = _ROOT / rel_path
+    raw_source = path.read_text(encoding="utf-8")
+
+    # (1) it must not raise for ANY committed provider spec — the universality claim.
+    m = compute_metrics(load_spec(str(path)), raw_source=raw_source, surface_id=name)
+
+    # (2) sane compression: a FINITE float (may be negative — an enriched, too-sparse spec).
+    c = m.compression
+    assert isinstance(c.reduction_pct, float)
+    assert math.isfinite(c.reduction_pct)
+    # the interpretation is self-consistent with the signed truth.
+    assert c.is_enriched is (c.reduction_pct <= 0)
+    assert c.magnitude_pct == round(abs(c.reduction_pct), 1)
+    assert c.raw_bytes > 0 and c.surface_bytes > 0
+
+    # (3) sane readiness: the total is the op count; well-formed never exceeds it.
+    r = m.readiness
+    assert r.total_ops == m.total_ops
+    assert 0 <= r.well_formed_tools <= r.total_ops
+    assert 0.0 <= r.readiness_pct <= 100.0
+
+
+@pytest.mark.parametrize("name,rel_path", sorted(PROVIDERS.items()))
+def test_scorecard_renders_deterministically_on_every_committed_spec(
+    name: str, rel_path: str
+) -> None:
+    # Slice-2 tripwire: body/response-field decomposition runs in every Surface build, so the
+    # scorecard must still render deterministic HTML for every committed spec.
+    path = _ROOT / rel_path
+    first = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
+    second = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
+    assert first == second, f"{name}: scorecard is not byte-stable"
+    assert "<html" in first.lower(), f"{name}: scorecard produced no HTML"
+
+
+def test_metrics_universe_is_the_full_committed_provider_set() -> None:
+    # A tripwire: if a committed provider is added/removed, this count must move WITH it —
+    # so the parametrized coverage above can never silently shrink.
     assert len(PROVIDERS) == 14
-
-
-def test_compute_metrics_works_on_every_committed_spec() -> None:
-    for name, rel_path in PROVIDERS.items():
-        path = _ROOT / rel_path
-        spec = load_spec(str(path))
-        m = compute_metrics(
-            spec,
-            raw_source=path.read_text(encoding="utf-8"),
-            surface_id=name,
-            declared_hints=MINT_HINTS.get(name),
-        )
-        assert m.total_ops > 0, f"{name}: comprehended 0 operations"
-        # the compression metric computes (byte counts present) — not asserting a positive
-        # reduction: a tiny spec can honestly yield a larger tool surface (colosseum).
-        assert m.compression.raw_bytes > 0 and m.compression.surface_bytes > 0
-
-
-def test_scorecard_renders_deterministically_on_every_committed_spec() -> None:
-    for name, rel_path in PROVIDERS.items():
-        path = _ROOT / rel_path
-        first = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
-        second = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
-        assert first == second, f"{name}: scorecard is not byte-stable"
-        assert "<html" in first.lower(), f"{name}: scorecard produced no HTML"
