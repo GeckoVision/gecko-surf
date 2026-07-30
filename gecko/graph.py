@@ -313,6 +313,12 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
     content = (resp.get("content") or {}).get("application/json") or {}
     schema = content.get("schema") or {}
     out: list[tuple[str, str | None, str, str]] = []
+    # slice 2 (§13.5): the canonical example ingest lifted per response field — including
+    # the OpenAPI ``examples`` map/list channel that ``_sig_of``'s inline fallback misses.
+    # Feeding it into the value-domain signature makes a producer field's discriminating
+    # domain (e.g. a base58 mint/pool) survive even when the spec used ``examples:`` — a
+    # richer PRODUCER side for cross-API mutate correlation. Corroborator only (§13.6).
+    resp_ex = {f.name: f.example for f in op.response_fields if f.example is not None}
 
     def walk(
         node: object, parent: str | None, depth: int, seen: frozenset[int]
@@ -335,6 +341,7 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
                             sub,
                             name=name,
                             description=str(sub.get("description") or ""),
+                            example=resp_ex.get(name),
                         ),
                     )
                 )
@@ -376,6 +383,11 @@ def _request_body_params(op: Operation) -> list[Param]:
     ) or {}
     out: list[Param] = []
     seen_names: set[str] = set()
+    # slice 2 (§13.5): the canonical example ingest lifted per body field — including the
+    # OpenAPI ``examples`` map/list channel ``_sig_of``'s inline fallback misses. Carried
+    # onto the synthetic body Param so the node's value-domain signature reflects a
+    # discriminating domain (e.g. a base58 pool address) on the CONSUMER/mutate side too.
+    body_ex = {f.name: f.example for f in op.body_fields if f.example is not None}
 
     def walk(node: object, depth: int, seen: frozenset[int]) -> None:
         if depth > _MAX_LEAF_DEPTH or not isinstance(node, dict) or id(node) in seen:
@@ -398,7 +410,15 @@ def _request_body_params(op: Operation) -> list[Param]:
                 # plan projection also fails closed on such a name (belt and braces).
                 and not key_is_dangerous(name)
             ):
-                out.append(Param(name=name, location="body", required=True, schema=sub))
+                out.append(
+                    Param(
+                        name=name,
+                        location="body",
+                        required=True,
+                        schema=sub,
+                        example=body_ex.get(name),
+                    )
+                )
                 seen_names.add(name)
             # only descend into a REQUIRED nested object — an optional parent can be
             # omitted whole, so its leaves never block the call.

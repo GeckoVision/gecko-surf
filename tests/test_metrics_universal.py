@@ -1,10 +1,11 @@
-"""Metrics universality — ``compute_metrics`` runs on EVERY committed provider spec.
+"""Metrics + scorecard universality — the whole pipeline runs on EVERY committed spec.
 
-The durable guarantee behind "works for every new API": the a-ha metrics pipeline is
-API-agnostic, so it comprehends the whole committed provider universe without raising and
-yields sane numbers for each — whether the surface compresses (verbose spec) or ENRICHES
-(too-sparse spec, ``reduction_pct <= 0``). Offline ($0, Pattern B), deterministic,
-control-plane only.
+The durable guarantee behind "works for every new API": the a-ha metrics pipeline AND the
+scorecard are API-agnostic, so they comprehend the whole committed provider universe without
+raising and yield sane numbers for each — whether the surface compresses (verbose spec) or
+ENRICHES (too-sparse spec, ``reduction_pct <= 0``). Slice-2's body/response-field
+decomposition runs in every ``Surface`` build, so this also tripwires ingestion changes.
+Offline ($0, Pattern B), deterministic, control-plane only.
 
 Parametrized over :data:`gecko.provider_matrix.PROVIDERS` (the single source of truth for
 the committed universe) so adding a new spec there is the ONLY change needed to cover it —
@@ -20,7 +21,8 @@ import pytest
 
 from gecko.ingest import load_spec
 from gecko.metrics import compute_metrics
-from gecko.provider_matrix import PROVIDERS
+from gecko.provider_matrix import MINT_HINTS, PROVIDERS
+from gecko.report import build_scorecard
 
 #: The repo root — this test lives in ``tests/``; PROVIDERS paths are repo-relative.
 _ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +54,20 @@ def test_compute_metrics_runs_and_is_sane_for_every_committed_spec(
     assert 0.0 <= r.readiness_pct <= 100.0
 
 
+@pytest.mark.parametrize("name,rel_path", sorted(PROVIDERS.items()))
+def test_scorecard_renders_deterministically_on_every_committed_spec(
+    name: str, rel_path: str
+) -> None:
+    # Slice-2 tripwire: body/response-field decomposition runs in every Surface build, so the
+    # scorecard must still render deterministic HTML for every committed spec.
+    path = _ROOT / rel_path
+    first = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
+    second = build_scorecard(str(path), confirmed=MINT_HINTS.get(name))
+    assert first == second, f"{name}: scorecard is not byte-stable"
+    assert "<html" in first.lower(), f"{name}: scorecard produced no HTML"
+
+
 def test_metrics_universe_is_the_full_committed_provider_set() -> None:
     # A tripwire: if a committed provider is added/removed, this count must move WITH it —
     # so the parametrized coverage above can never silently shrink.
-    assert len(PROVIDERS) >= 13
+    assert len(PROVIDERS) == 14
