@@ -9,6 +9,8 @@ fails. The real on-chain gate against a live surfpool mainnet fork is env-gated
 from __future__ import annotations
 
 import os
+import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -75,6 +77,45 @@ def test_surfpool_fork_errors_without_binary() -> None:
     with pytest.raises(SurfpoolError):
         with SurfpoolFork("https://example.invalid", binary="surfpool-does-not-exist"):
             pass
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group reaping is POSIX-only")
+def test_surfpool_fork_reaps_child_process(tmp_path: Path) -> None:
+    """__exit__ must reap the whole process group — a plain terminate() would leave
+    surfpool's child validator alive holding the RPC port. A fake 'surfpool' spawns a
+    child that records its pid; after the context exits, that child must be gone."""
+    pidfile = tmp_path / "child.pid"
+    fake = tmp_path / "surfpool"
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        "sleep 30 &\n"  # the 'validator' child in the same process group
+        f"echo $! > {pidfile}\n"
+        "wait\n"
+    )
+    fake.chmod(0o755)
+
+    def healthy(_url: str, _method: str, _params: list[Any]) -> dict[str, Any]:
+        return {"result": "ok"}
+
+    with SurfpoolFork(
+        "http://local.invalid", binary=str(fake), rpc_call=healthy, ready_timeout=5
+    ):
+        for _ in range(50):  # wait for the child pid to be recorded
+            if pidfile.exists():
+                break
+            time.sleep(0.1)
+    assert pidfile.exists(), "fake surfpool never spawned its child"
+    child_pid = int(pidfile.read_text().strip())
+
+    # after the context exits, the child must have been reaped with the group
+    for _ in range(30):
+        try:
+            os.kill(child_pid, 0)  # 0 = existence probe: raises when the pid is gone
+            time.sleep(0.1)
+        except ProcessLookupError:
+            break
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 # --- the real on-chain gate: env-gated, $0, no key ------------------------
