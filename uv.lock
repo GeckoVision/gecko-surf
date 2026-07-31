@@ -334,6 +334,9 @@ serve = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
 ]
+solana = [
+    { name = "solders" },
+]
 sosbot = [
     { name = "anthropic" },
     { name = "openai" },
@@ -345,6 +348,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "solders" },
     { name = "types-pyyaml" },
 ]
 
@@ -365,15 +369,17 @@ requires-dist = [
     { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.10" },
     { name = "python-telegram-bot", marker = "extra == 'sosbot'", specifier = ">=21" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "solders", marker = "extra == 'solana'", specifier = ">=0.21" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.49.0" },
 ]
-provides-extras = ["serve", "credentials", "events", "sosbot", "dense", "fcc", "imagescan", "ocr"]
+provides-extras = ["serve", "credentials", "events", "sosbot", "dense", "fcc", "imagescan", "ocr", "solana"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=2.1.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.15.20" },
+    { name = "solders", specifier = ">=0.21" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
 ]
 
@@ -586,6 +592,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/95/a06692b29e77473f286e1ec1f426d3ca44d7b5843be8ad21d7a5f3fcdcc0/jiter-0.15.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:b6c0ffae686c39bf3737be60793783267628783ea42545632c10b291105aee45", size = 305128, upload-time = "2026-05-19T10:09:43.657Z" },
     { url = "https://files.pythonhosted.org/packages/23/85/7270d7ad41d6061a25b950c6bf91d638bd9aacb113200a8c8d57a055fd67/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d54fb5b31dea401a41af3f8a7d2512e9b6a6a005491e6166c7e4ffab9639a9c", size = 340459, upload-time = "2026-05-19T10:09:45.452Z" },
     { url = "https://files.pythonhosted.org/packages/c8/8d/302cb2057b7513327b4d575cff6b1d066ee6431a5357fc3f8867cd684406/jiter-0.15.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54d5d6090cdc1b7c9e780dfb04949a990adb1e301a2fc0bbcee7de4638d33f9a", size = 344469, upload-time = "2026-05-19T10:09:46.864Z" },
+]
+
+[[package]]
+name = "jsonalias"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/45/ee7e17002cb7f3264f755ff6a1a72c55d1830e07808d643167d2a2277c4f/jsonalias-0.1.1.tar.gz", hash = "sha256:64f04d935397d579fc94509e1fcb6212f2d081235d9d6395bd10baedf760a769", size = 1095, upload-time = "2022-10-28T22:57:56.224Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/ed/05aebce69f78c104feff2ffcdd5a6f9d668a208aba3a8bf56e3750809fd8/jsonalias-0.1.1-py3-none-any.whl", hash = "sha256:a56d2888e6397812c606156504e861e8ec00e188005af149f003c787db3d3f18", size = 1312, upload-time = "2022-10-28T22:57:54.763Z" },
 ]
 
 [[package]]
@@ -1546,6 +1561,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
+]
+
+[[package]]
+name = "solders"
+version = "0.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jsonalias" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/b5/739f342aecacedf2a55e7baaff10714f1d70b4a4ccf2df4155fbe85a5a38/solders-0.28.0.tar.gz", hash = "sha256:c910d4fcc97bb00ec0146425b73a74e51241865de743be215b6c2fb664040013", size = 174557, upload-time = "2026-07-01T17:29:31.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/35/2ea73d0f6b7701a6747991842f76addb506dcc1cdcd1c310a6543e214d68/solders-0.28.0-cp310-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:07844e22f7a7b8fd698a46f2a09d355d35d9898a1bd86017ba6cb519eb11e4c1", size = 23084694, upload-time = "2026-07-01T17:29:14.522Z" },
+    { url = "https://files.pythonhosted.org/packages/57/9e/cfdd9eea38d221fc72844b030ac3bb3e5dc60758aaf023dc77482e76019e/solders-0.28.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:015ae6841cea52539521bb76c121df5742a476d1ae3718f1ddcd0d00f015fa59", size = 12056383, upload-time = "2026-07-01T17:29:18.016Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/cb/565ac41638d925516cf8898f5fb574f2f9c4110159af5e2da7d4cb163dbd/solders-0.28.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:dad8c3f4516cb2c0214763766b10c065b64cdda1efed9440319aceac3cdc2615", size = 12513925, upload-time = "2026-07-01T17:29:20.594Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/96/b8a74e55a0c978c776a30decc64266d56525eca89d5460c4965bf1c05735/solders-0.28.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:cd3635e478765c279788b5a0875c0be19e72ec5ac37f36659479d02f47287594", size = 12629581, upload-time = "2026-07-01T17:29:23.654Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/a7/5a6385537c6ae1071583b3538f1c40a8377d0b814d21505d5ccd535383cb/solders-0.28.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e21fd158660865f46dd93f0986f0606973f91833c723dc6f42c90e76aeaacf4d", size = 12663803, upload-time = "2026-07-01T17:29:26.594Z" },
+    { url = "https://files.pythonhosted.org/packages/19/22/6a6eb6e944c00579555de72a81bfb8191299e05aa2f1fbd28837179e6110/solders-0.28.0-cp310-abi3-win_amd64.whl", hash = "sha256:38eceb69ecb514cb8b5ee9a7a80434f147ab0655094ab2bfc685b31a115acdc4", size = 11152191, upload-time = "2026-07-01T17:29:29.269Z" },
 ]
 
 [[package]]
