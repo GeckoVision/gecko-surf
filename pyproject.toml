@@ -31,6 +31,11 @@ jupiter-mcp = "gecko.examples.jupiter:main"
 # "gecko-surf[serve]" txline-mcp` (and `npx @geckovision/gecko txline-mcp`) needs
 # NO local file and NO spec URL.
 txline-mcp = "gecko.examples.txline:main"
+# Bundled ready-to-use surface — serve the ORE program's instruction↔PDA graph. ORE is a
+# Steel-framework Solana program (no Anchor IDL), so its PDA seed recipes live only in
+# source; Gecko comprehends the bundled slice into first-call-correct derive/plan tools.
+# Keyless, never signs. `uvx --from "gecko-surf[serve]" ore-mcp` needs NO local file.
+ore-mcp = "gecko.examples.ore:main"
 # Serve a Solana program's instruction↔PDA graph over MCP (Streamable-HTTP or stdio)
 # from a local Anchor IDL and/or Rust source — the recovered seeds an IDL/llms.txt
 # loses, projected into first-call-correct derive/plan tools. Keyless. Needs [serve].

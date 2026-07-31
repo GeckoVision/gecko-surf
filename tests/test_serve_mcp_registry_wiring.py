@@ -36,14 +36,19 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
         "jito",
         "jupiter",
         "pegana",
+        "ore",
     }
 
     store = serve_mcp._registry_store(surfaces)
     store_names = set(store.names())
 
     assert "colosseum" in store_names
-    for name in hosted_names:
+    # Every OpenAPI-hosted surface is registry-distributed. The ORE Program Surface is
+    # hosted for /ore/mcp but has NO OpenAPI spec (it's a PDA graph), so it is
+    # intentionally NOT in the distribution store — mounted, not distributed.
+    for name in hosted_names - {"ore"}:
         assert name in store_names
+    assert "ore" not in store_names
     # colosseum is registry-distributed only — never becomes an MCP-hosted surface.
     assert "colosseum" not in hosted_names
 
