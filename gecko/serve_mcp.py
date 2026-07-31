@@ -48,6 +48,7 @@ from .http_server import (
     resolve_require_gecko_key,
     serve_multi_http,
 )
+from .examples.ore import build_ore_surface
 from .jito_surface import build_jito_surface
 from .mcp_server import McpSurface
 from .registry.api import registry_routes as _registry_routes
@@ -291,6 +292,12 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             ),
         )
     )
+    # ORE — the Program Surface: a Steel-framework Solana program with NO Anchor IDL, so
+    # its PDA seed recipes live only in source. Comprehended from the bundled source slice
+    # into derive_pda / plan_instruction / get_program_graph tools — the join an IDL/llms.txt
+    # loses. Keyless, control-plane only (computes addresses; never signs, no key). Public
+    # demo surface — NOT gated. Agent adds <host>/ore/mcp and derives ORE's PDAs live.
+    surfaces.append(("ore", build_ore_surface()))
     # Refugios (shelters) — comprehended with the publishable apikey injected as a
     # static header. Passed as a CLIENT (not a bare spec) so the multi-surface builder
     # uses its session; the key is invisible to the agent.
