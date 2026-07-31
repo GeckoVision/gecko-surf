@@ -303,7 +303,7 @@ wheels = [
 
 [[package]]
 name = "gecko-surf"
-version = "0.9.4"
+version = "0.9.5"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },
@@ -359,7 +359,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'sosbot'", specifier = ">=0.40" },
     { name = "certifi", marker = "extra == 'dense'", specifier = ">=2024.0" },
     { name = "keyring", specifier = ">=25" },
-    { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1" },
+    { name = "mcp", extras = ["cli"], marker = "extra == 'serve'", specifier = ">=1.28.1,<2" },
     { name = "openai", marker = "extra == 'sosbot'", specifier = ">=1.40" },
     { name = "pillow", marker = "extra == 'imagescan'", specifier = ">=10.0" },
     { name = "pillow", marker = "extra == 'ocr'", specifier = ">=10.0" },

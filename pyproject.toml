@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.9.4"
+version = "0.9.5"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 # README becomes the PyPI long-description; it carries the `mcp-name:` marker the
 # MCP Registry matches to prove PyPI ownership. Without this, the description is empty.
@@ -58,7 +58,12 @@ gecko-telemetry = "gecko.telemetry:_run"
 
 [project.optional-dependencies]
 serve = [
-    "mcp[cli]>=1.28.1",
+    # Capped <2: mcp 2.0.0 removed the low-level `Server.list_tools`/`call_tool`
+    # decorators our serve path uses (gecko.mcp_server / gecko.http_server), so an
+    # UNPINNED install (the PyInstaller binary + `uvx`/`pip`, which don't read uv.lock)
+    # resolved 2.0.0 and every bundled surface crashed on serve with
+    # `'Server' object has no attribute 'list_tools'`. Cap here until we migrate to 2.x.
+    "mcp[cli]>=1.28.1,<2",
     "uvicorn>=0.49.0",
     # Gecko-key gate (Layer 1): PrivyAccountResolver verifies a Privy access-token JWT
     # against Privy's JWKS (RS256/ES256), so the hosted serve path needs PyJWT + the
