@@ -22,10 +22,11 @@ data model — we never execute the source.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from .pda import (
     ConstantPdaSeedNode,
+    OrderedPairPdaSeedNode,
     PdaNode,
     PdaSeed,
     ResolverPdaSeedNode,
@@ -62,6 +63,13 @@ _FPA_RE = re.compile(r"find_program_address\s*\(\s*&\[([^\]]*)\]")
 # `ident.method()` seed forms.
 _METHOD_RE = re.compile(
     r"(\w+)\s*\.\s*(to_le_bytes|to_be_bytes|to_bytes|as_ref|as_bytes)\s*\(\s*\)"
+)
+# min/max(a, b) pool-pair ordering (Meteora min/max, Anchor max_key/min_key) — the
+# helper-fn seed the IDL macro drops. Operands may carry `&`; a method chain
+# (`.as_ref()`, `.key().as_ref()`, `.to_bytes()`) may follow.
+_ORDERED_RE = re.compile(
+    r"(min|max|min_key|max_key)\s*\(\s*&?\s*(\w+)\s*,\s*&?\s*(\w+)\s*\)"
+    r"(?:\s*\.\s*\w+\s*\(\s*\))*\s*"
 )
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
@@ -205,6 +213,17 @@ def _seed_from_token(
     if re.fullmatch(r"\w+", t) and t in consts:
         value = consts[t]
         return ConstantPdaSeedNode(value, encoding=_encoding_for(value))
+
+    # min/max(a, b) pair ordering — the seed Anchor's IDL macro drops (#4057), now
+    # RESOLVABLE (not a resolver): sort the two operands at derive time.
+    ordered = _ORDERED_RE.fullmatch(t)
+    if ordered:
+        select: Literal["min", "max"] = (
+            "min" if ordered.group(1).startswith("min") else "max"
+        )
+        return OrderedPairPdaSeedNode(
+            left=ordered.group(2), right=ordered.group(3), select=select
+        )
 
     # ident.method()
     method = _METHOD_RE.fullmatch(t)
