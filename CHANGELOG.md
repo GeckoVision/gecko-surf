@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.9.5 — 2026-07-31
+
+### Fixed
+- **Cap `mcp[cli]<2` so serving works from the binary / `uvx` / `pip`.** mcp 2.0.0
+  removed the low-level `Server.list_tools`/`call_tool` decorators the serve path uses;
+  unpinned installs (the PyInstaller binary and `uvx`/`pip`, which don't read `uv.lock`)
+  resolved 2.0.0, so **every bundled surface crashed on serve** with `'Server' object has
+  no attribute 'list_tools'` — including the `npx @geckovision/gecko orquestra … --stdio`
+  path. Reproduced with a minimal PyInstaller build and verified the cap fixes the frozen
+  binary. (Tests, hosted server, and dev already used 1.x via `uv.lock`, so this was
+  invisible until the frozen-binary serve was smoke-tested.)
+
 ## 0.9.4 — 2026-07-31
 
 ### Added
