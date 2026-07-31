@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.9.2"
+version = "0.9.3"
 description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
 # README becomes the PyPI long-description; it carries the `mcp-name:` marker the
 # MCP Registry matches to prove PyPI ownership. Without this, the description is empty.
@@ -36,10 +36,13 @@ txline-mcp = "gecko.examples.txline:main"
 # source; Gecko comprehends the bundled slice into first-call-correct derive/plan tools.
 # Keyless, never signs. `uvx --from "gecko-surf[serve]" ore-mcp` needs NO local file.
 ore-mcp = "gecko.examples.ore:main"
-# The Gecko × Orquestra provider demo — serve the Meteora DLMM front-door surface: an
-# agent plans a swap in plain English, Gecko derives the pool (lb_pair — the root
-# Orquestra's IDL drops) + reserves/oracle, and the plan points at Orquestra's builder to
-# execute. Keyless, never signs. `uvx --from "gecko-surf[serve,solana]" meteora-demo`.
+# The Gecko × Orquestra provider surface — the agent front door for any Orquestra program.
+# Entry = the PROVIDER, program = a parameter (per-provider model, not a mount each): an
+# agent plans in plain English, Gecko derives the PDAs Orquestra can't (helper-seeded roots
+# its IDL drops) + the rest, and the plan points at Orquestra's builder. Keyless, never signs.
+#   uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program meteora
+gecko-orquestra = "gecko.providers.cli:main"
+# DEPRECATED alias for `gecko-orquestra --program meteora` (kept so the 0.9.2 command works).
 meteora-demo = "gecko.providers.meteora:main"
 # Serve a Solana program's instruction↔PDA graph over MCP (Streamable-HTTP or stdio)
 # from a local Anchor IDL and/or Rust source — the recovered seeds an IDL/llms.txt

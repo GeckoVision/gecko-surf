@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.9.3 — 2026-07-31
+
+### Changed
+- **`gecko-orquestra --program <name>` — the provider-level entry.** The Orquestra
+  provider surface is now invoked by *provider*, with the program as a parameter
+  (`gecko-orquestra --program meteora`), so a new Orquestra program is a registry entry —
+  not a new CLI. Matches the per-provider integration model.
+- **`meteora-demo` is now a deprecated alias** for `gecko-orquestra --program meteora`
+  (kept working, prints a deprecation hint to stderr).
+
 ## 0.9.2 — 2026-07-31
 
 ### Added
