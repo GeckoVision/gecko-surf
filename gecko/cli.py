@@ -68,6 +68,10 @@ _SUBCOMMANDS = (
     "jupiter-mcp",
     "colosseum-mcp",
     "txline-mcp",
+    # The Orquestra provider surface — `gecko orquestra --program <name>`, so
+    # `npx @geckovision/gecko orquestra --program meteora` reaches it too. Needs the
+    # binary built with the [solana] extra for PDA derivation (see release.yaml).
+    "orquestra",
 )
 # Below this many recovered ops we hint that agent-browser renders JS nav better.
 _FEW_OPS = 2
@@ -1684,6 +1688,10 @@ def main(argv: list[str] | None = None) -> int:
         from .examples import txline  # lazy: pulls serve deps only when invoked
 
         return txline.main(rest)
+    if cmd == "orquestra":
+        from .providers.cli import main as orquestra_main  # lazy: serve+solana deps
+
+        return orquestra_main(rest)
     if cmd == "test":
         return _cmd_test(rest)
     if cmd == "inspect":
