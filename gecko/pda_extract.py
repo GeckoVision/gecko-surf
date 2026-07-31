@@ -22,6 +22,7 @@ data model — we never execute the source.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from .pda import (
     ConstantPdaSeedNode,
@@ -32,7 +33,7 @@ from .pda import (
     VariablePdaSeedNode,
 )
 
-__all__ = ["extract_seed_consts", "from_source"]
+__all__ = ["extract_seed_consts", "from_source", "from_anchor_idl", "merge_pda_nodes"]
 
 # Rust integer type -> byte width, for `.to_le_bytes()` / `.to_be_bytes()` seeds.
 _INT_WIDTHS: dict[str, int] = {
@@ -262,3 +263,118 @@ def from_source(source: str, program_id: str | None = None) -> dict[str, PdaNode
         if seeds:
             nodes[account] = PdaNode(name=account, seeds=seeds, program_id=program_id)
     return nodes
+
+
+# --- Anchor 0.30+ IDL extraction ------------------------------------------
+#
+# Anchor's own docs say it plainly: "Generated clients can derive PDAs only when
+# the IDL contains explicit array-form seed metadata. Opaque expression seeds ...
+# prevent clients from reproducing the address derivation." An account whose seed
+# is a helper-fn output therefore ships with NO `pda` block at all (Anchor #4057) —
+# so from_anchor_idl recovers only what the IDL kept, and merge_pda_nodes fills the
+# dropped recipes from source ("both, joined").
+
+# IDL scalar type string -> byte width for integer arg seeds.
+_IDL_INT_WIDTHS = dict(_INT_WIDTHS)
+
+
+def _idl_arg_seed(path: str, arg_types: dict[str, Any]) -> PdaSeed:
+    """An `{kind: arg, path}` seed, encoded from the instruction's arg type."""
+    if "." in path:  # a field of an arg struct — not statically reproducible
+        head = path.split(".", 1)[0]
+        return ResolverPdaSeedNode(
+            name=head,
+            depends_on=(head,),
+            reason=f"arg field seed {path!r} — runtime value",
+        )
+    ty = arg_types.get(path)
+    if isinstance(ty, str):
+        if ty in _IDL_INT_WIDTHS:
+            return VariablePdaSeedNode(
+                path, source="argument", encoding="le", width=_IDL_INT_WIDTHS[ty]
+            )
+        if ty == "pubkey":
+            return VariablePdaSeedNode(path, source="argument", encoding="pubkey")
+        if ty == "string":
+            return VariablePdaSeedNode(path, source="argument", encoding="utf8")
+        if ty == "bytes":
+            return VariablePdaSeedNode(path, source="argument", encoding="bytes")
+    return ResolverPdaSeedNode(
+        name=path,
+        depends_on=(path,),
+        reason=f"arg {path!r} has unsupported seed type {ty!r}",
+    )
+
+
+def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
+    """One Anchor-IDL seed entry -> a PdaSeed."""
+    kind = seed.get("kind")
+    if kind == "const":
+        value = bytes(seed.get("value", []))
+        return ConstantPdaSeedNode(value, encoding=_encoding_for(value))
+    if kind == "account":
+        path = str(seed.get("path", ""))
+        if "." in path:  # a field read from another account's DATA — runtime value
+            head = path.split(".", 1)[0]
+            return ResolverPdaSeedNode(
+                name=head,
+                depends_on=(head,),
+                reason=f"account field seed {path!r} — runtime data",
+            )
+        return VariablePdaSeedNode(path, source="account", encoding="pubkey")
+    if kind == "arg":
+        return _idl_arg_seed(str(seed.get("path", "")), arg_types)
+    # `program` seed (the program id itself) or anything unexpected: flag, don't guess
+    return ResolverPdaSeedNode(
+        name=kind or "seed",
+        depends_on=(),
+        reason=f"IDL seed kind {kind!r} not statically resolvable",
+    )
+
+
+def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
+    """Anchor 0.30+ IDL -> ``{account_name: PdaNode}`` for every account that carries
+    a ``pda.seeds`` block.
+
+    ``program_id`` is ``idl["address"]``. Arg seeds are encoded from each
+    instruction's ``args`` types; a seed that reads another account's field
+    (``path`` with a ``.``) is a runtime-data seed and becomes an honest resolver.
+
+    Accounts whose ``pda`` block Anchor *dropped* (the #4057 case) are simply absent
+    here — that gap is filled by :func:`merge_pda_nodes` from source recovery.
+    """
+    program_id = idl.get("address") or (idl.get("metadata") or {}).get("address")
+    nodes: dict[str, PdaNode] = {}
+    for ix in idl.get("instructions", []):
+        arg_types = {a.get("name"): a.get("type") for a in ix.get("args", [])}
+        for acct in ix.get("accounts", []):
+            pda = acct.get("pda")
+            name = acct.get("name")
+            if not pda or not name or name in nodes:
+                continue
+            seeds = tuple(_idl_seed(s, arg_types) for s in pda.get("seeds", []))
+            if seeds:
+                nodes[name] = PdaNode(name=name, seeds=seeds, program_id=program_id)
+    return nodes
+
+
+def merge_pda_nodes(
+    idl_nodes: dict[str, PdaNode], source_nodes: dict[str, PdaNode]
+) -> dict[str, PdaNode]:
+    """Join IDL-recovered and source-recovered PDA graphs — "both, joined".
+
+    IDL gives breadth (all instructions' accounts + arg-typed seeds); source fills
+    the exact recipes the IDL dropped (#4057) and resolves opaque IDL seeds. Rule,
+    per account name:
+
+    - in IDL only  -> keep IDL (authoritative array-form seeds);
+    - in source only -> use source (the IDL omitted the account's ``pda`` entirely);
+    - in both -> keep IDL if it is :attr:`~gecko.pda.PdaNode.resolvable`; otherwise
+      take the source node when *it* resolves the seeds the IDL left opaque.
+    """
+    merged: dict[str, PdaNode] = dict(idl_nodes)
+    for name, snode in source_nodes.items():
+        inode = merged.get(name)
+        if inode is None or (not inode.resolvable and snode.resolvable):
+            merged[name] = snode
+    return merged
