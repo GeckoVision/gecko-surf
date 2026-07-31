@@ -25,7 +25,9 @@ never account payload data (control-plane invariant #1).
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
 import time
 import urllib.request
@@ -158,18 +160,40 @@ class SurfpoolFork:
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # New session/process group: surfpool spawns a child validator, and a plain
+            # terminate() on the parent would leave that child holding the RPC port. Making
+            # the parent a group leader lets __exit__ signal the WHOLE group, reaping both.
+            start_new_session=True,
         )
         self._await_ready()
         return self
 
     def __exit__(self, *_exc: Any) -> None:
         if self._proc is not None:
-            self._proc.terminate()
+            self._signal_group(signal.SIGTERM)
             try:
                 self._proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                self._proc.kill()
+                self._signal_group(signal.SIGKILL)
+                try:
+                    self._proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
             self._proc = None
+
+    def _signal_group(self, sig: int) -> None:
+        """Signal the validator's whole process group (surfpool + its child), tolerating
+        an already-exited process."""
+        if self._proc is None:
+            return
+        try:
+            os.killpg(os.getpgid(self._proc.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            # already gone, or we couldn't address the group — fall back to the direct pid
+            try:
+                self._proc.send_signal(sig)
+            except ProcessLookupError:
+                pass
 
     def _await_ready(self) -> None:
         deadline = time.monotonic() + self.ready_timeout
