@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.1 — 2026-07-31
+
+### Added
+- **Derive the min/max pool-pair seed the IDL drops (#4057).** New
+  `OrderedPairPdaSeedNode` (`left`, `right`, `select=min|max`) makes the canonical AMM
+  pool-pair ordering — Meteora's `min/max(token_x, token_y)`, Anchor's `max_key(a, b)` —
+  a **resolvable** seed instead of a flagged gap. `derive_pda` sorts the two bound
+  operands by their on-chain bytes and takes the selected end; `from_source` recognizes
+  `min/max/min_key/max_key(a, b)`; `PdaNode.required_bindings` lists every operand a
+  caller must supply. Proven end-to-end: `from_source` on Meteora's real
+  `commons/src/pda.rs` recovers `lb_pair` as resolvable and derives the exact live
+  mainnet SOL/USDC pool. (A genuinely-unknown helper still becomes an honest resolver.)
+
 ## 0.9.0 — 2026-07-31
 
 ### Added
