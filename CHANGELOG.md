@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.9.4 — 2026-07-31
+
+### Added
+- **`gecko orquestra --program <name>` — the npx path.** The Orquestra provider surface
+  is now a `gecko` subcommand, so `npx @geckovision/gecko orquestra --program meteora`
+  reaches it (parity with `uvx … gecko-orquestra --program meteora`). The standalone
+  binary is now built with the `[solana]` extra so `solders` is bundled and PDA
+  derivation works in the frozen binary / npx path.
+
 ## 0.9.3 — 2026-07-31
 
 ### Changed
