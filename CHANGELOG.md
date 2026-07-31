@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-07-31
+
+### Added
+- **The Program Surface — the instruction↔PDA graph for Solana programs.** The on-chain
+  twin of the Agent Surface: turn any Solana program into the deterministic
+  instruction ↔ account ↔ PDA ↔ seeds graph an agent traverses to build a correct
+  transaction, by **recovering the PDA seed recipes an IDL/llms.txt loses** (Anchor #4057;
+  Steel/native programs emit no IDL). New `gecko.pda` (Codama-shaped seed model +
+  `derive_pda`, `solders` behind the optional `[solana]` extra, with an honest
+  `ResolverPdaSeedNode` for seeds it won't fabricate), `gecko.pda_extract` (`from_source`
+  + `from_anchor_idl` + `merge_pda_nodes` — "both, joined"), `gecko.program_graph`
+  (`build_program_graph` → the derivation DAG + JSON), `gecko.program_mcp`
+  (`get_program_graph` / `plan_instruction` / `derive_pda` tools), and `gecko.pda_testkit`
+  (a surfpool `$0` derive→verify harness). Proven against real ORE mainnet PDAs.
+- **`program-mcp` and `ore-mcp` CLIs.** Serve a program's PDA graph over MCP from local
+  IDL/source (`program-mcp`) or the bundled ORE surface (`ore-mcp`). Keyless, never signs.
+- **Hosted `/ore/mcp`.** The ORE Program Surface is mounted on the hosted multi-surface
+  server (public, ungated), so an agent can add `<host>/ore/mcp` and derive ORE's PDAs live.
+- **`[solana]` optional extra** (`solders`) — the PDA-derivation backend; the model and
+  extraction stay pure stdlib.
+
+### Fixed
+- The hosted image now installs the `[solana]` extra, so hosted `/ore/mcp` `derive_pda`
+  works (was returning a "missing extra" error).
+- `SurfpoolFork` reaps surfpool's child validator on exit (process-group signal) instead
+  of leaking it on the RPC port.
+
 ## 0.4.18 — 2026-07-24
 
 ### Added
