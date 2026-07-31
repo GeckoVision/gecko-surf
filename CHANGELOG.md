@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.9.2 — 2026-07-31
+
+### Added
+- **Orquestra provider surface + the Meteora instance.** The agent front door for the
+  Gecko × Orquestra integration: the agent connects to a Gecko surface, plans in plain
+  English, Gecko derives the PDAs Orquestra can't (the helper-seeded roots its IDL drops)
+  and returns a plan that points at Orquestra's own builder to execute — control plane, we
+  never proxy or sign. `gecko.providers.orquestra.OrquestraProgramSurface` (generic) +
+  `gecko.providers.meteora` (first instance, recipes as data). New `meteora-demo` CLI:
+  `uvx --from "gecko-surf[serve,solana]" meteora-demo` — `plan_swap(WSOL, USDC, bin_step=4)`
+  derives the real mainnet SOL/USDC pool + reserves/oracle and points at the swap builder.
+
 ## 0.9.1 — 2026-07-31
 
 ### Added
