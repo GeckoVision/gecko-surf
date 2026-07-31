@@ -25,6 +25,7 @@ from typing import Any
 
 from .pda import (
     ConstantPdaSeedNode,
+    OrderedPairPdaSeedNode,
     PdaNode,
     ResolverPdaSeedNode,
     VariablePdaSeedNode,
@@ -131,6 +132,14 @@ def _seed_to_json(seed: Any) -> dict[str, Any]:
         if seed.width is not None:
             d["width"] = seed.width
         return d
+    if isinstance(seed, OrderedPairPdaSeedNode):
+        return {
+            "kind": "ordered_pair",
+            "select": seed.select,
+            "left": seed.left,
+            "right": seed.right,
+            "encoding": seed.encoding,
+        }
     # ResolverPdaSeedNode
     return {
         "kind": "resolver",
@@ -190,6 +199,15 @@ def _bind_seeds(
                     else ("argument" if seed.name in arg_names else "unresolved")
                 )
                 bindings.append(SeedBinding(seed.name, seed.encoding, kind, bound))
+        elif isinstance(seed, OrderedPairPdaSeedNode):
+            for operand in (seed.left, seed.right):
+                kind = (
+                    "account"
+                    if operand in account_names
+                    else ("argument" if operand in arg_names else "unresolved")
+                )
+                bound = operand if kind != "unresolved" else None
+                bindings.append(SeedBinding(operand, seed.encoding, kind, bound))
         elif isinstance(seed, ResolverPdaSeedNode):
             for dep in seed.depends_on or (seed.name,):
                 kind = (

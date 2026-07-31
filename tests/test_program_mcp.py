@@ -56,7 +56,7 @@ def test_derive_pda_dynamic_with_bindings() -> None:
 def test_derive_pda_missing_binding_explains_what_is_needed() -> None:
     out = _surface().call_tool("derive_pda", {"account": "miner"})  # no authority
     assert "error" in out
-    assert any(n["seed"] == "authority" for n in out["needs"])
+    assert "authority" in out["needs"]  # required_bindings names to supply
 
 
 def test_derive_pda_unresolvable_is_flagged_not_guessed() -> None:

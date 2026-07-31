@@ -109,15 +109,15 @@ def test_recovered_dynamic_pda_shapes() -> None:
     )
 
 
-def test_helper_fn_seed_becomes_honest_resolver() -> None:
-    """The Anchor #4057 case: a seed that is a helper-function output cannot be
-    statically resolved — it becomes a flagged ResolverPdaSeedNode with its deps,
-    not a fabricated value and not a dropped account."""
+def test_unknown_helper_fn_seed_becomes_honest_resolver() -> None:
+    """A seed that is a genuinely-unknown helper output (not the min/max pair ordering,
+    which Gecko now derives) cannot be statically resolved — it becomes a flagged
+    ResolverPdaSeedNode with its deps, not a fabricated value and not a dropped account."""
     meteora_like = r"""
     pub const LB_PAIR: &[u8] = b"lb_pair";
     pub fn lb_pair_pda(token_x: Pubkey, token_y: Pubkey) -> (Pubkey, u8) {
         Pubkey::find_program_address(
-            &[LB_PAIR, &max_key(token_x, token_y).to_bytes(), &min_key(token_x, token_y).to_bytes()],
+            &[LB_PAIR, &pool_hash(token_x, token_y).to_bytes()],
             &crate::ID,
         )
     }
@@ -127,9 +127,9 @@ def test_helper_fn_seed_becomes_honest_resolver() -> None:
     assert lb_pair.resolvable is False
     # the constant prefix is still recovered
     assert lb_pair.seeds[0].value == b"lb_pair"  # type: ignore[union-attr]
-    # the max_key/min_key seeds are honestly flagged with their token deps
+    # the pool_hash seed is honestly flagged with its token deps
     resolvers = lb_pair.unresolved_seeds
-    assert len(resolvers) == 2
+    assert len(resolvers) == 1
     all_deps = {d for r in resolvers for d in r.depends_on}
     assert {"token_x", "token_y"} <= all_deps
     assert all(isinstance(r, ResolverPdaSeedNode) for r in resolvers)

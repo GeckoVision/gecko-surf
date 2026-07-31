@@ -170,10 +170,8 @@ class ProgramGraphSurface:
             return {
                 "account": account,
                 "error": str(exc),
-                "needs": [
-                    {"seed": s.name, "source": s.source, "encoding": s.encoding}
-                    for s in node.variable_seeds
-                ],
+                # every operand to bind — variable-seed names plus ordered-pair operands
+                "needs": list(node.required_bindings),
             }
         return {"account": account, "address": result.address, "bump": result.bump}
 

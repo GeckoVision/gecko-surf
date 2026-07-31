@@ -34,6 +34,7 @@ __all__ = [
     "SeedSource",
     "ConstantPdaSeedNode",
     "VariablePdaSeedNode",
+    "OrderedPairPdaSeedNode",
     "ResolverPdaSeedNode",
     "PdaSeed",
     "PdaNode",
@@ -122,8 +123,30 @@ class ResolverPdaSeedNode:
     reason: str = "seed could not be statically resolved"
 
 
+@dataclass(frozen=True)
+class OrderedPairPdaSeedNode:
+    """A seed that is one end — ``min`` or ``max`` — of two operands sorted by their
+    on-chain bytes: the canonical AMM pool-pair ordering (Meteora's
+    ``min/max(token_x, token_y)``, Anchor's ``max_key(a, b)``) that the IDL macro
+    silently drops (#4057). Unlike a :class:`ResolverPdaSeedNode`, this IS derivable —
+    bind both operands and Gecko sorts them and takes the selected end. Both operands
+    are typically account pubkeys (``encoding="pubkey"``); the caller binds ``left`` and
+    ``right`` like any variable seed.
+    """
+
+    left: str
+    right: str
+    select: Literal["min", "max"]
+    encoding: SeedEncoding = "pubkey"
+
+
 # A single seed in a PDA recipe.
-PdaSeed = Union[ConstantPdaSeedNode, VariablePdaSeedNode, ResolverPdaSeedNode]
+PdaSeed = Union[
+    ConstantPdaSeedNode,
+    VariablePdaSeedNode,
+    OrderedPairPdaSeedNode,
+    ResolverPdaSeedNode,
+]
 
 
 @dataclass(frozen=True)
@@ -161,6 +184,19 @@ class PdaNode:
         """The seeds we could not statically resolve — the honest gaps."""
         return tuple(s for s in self.seeds if isinstance(s, ResolverPdaSeedNode))
 
+    @property
+    def required_bindings(self) -> tuple[str, ...]:
+        """Every operand name a caller must supply to derive this PDA, in order —
+        the variable-seed names plus both operands of each ordered-pair seed. The
+        complete "what do I bind?" answer for a resolvable node."""
+        names: list[str] = []
+        for s in self.seeds:
+            if isinstance(s, VariablePdaSeedNode):
+                names.append(s.name)
+            elif isinstance(s, OrderedPairPdaSeedNode):
+                names.extend((s.left, s.right))
+        return tuple(dict.fromkeys(names))
+
 
 @dataclass(frozen=True)
 class DerivedPda:
@@ -194,12 +230,25 @@ class MissingBindingError(PdaDerivationError):
 
 
 def _encode_seed(
-    seed: ConstantPdaSeedNode | VariablePdaSeedNode,
+    seed: ConstantPdaSeedNode | VariablePdaSeedNode | OrderedPairPdaSeedNode,
     bindings: Mapping[str, str | int | bytes],
 ) -> bytes:
     """Turn one resolvable seed into the raw bytes fed to find_program_address."""
     if isinstance(seed, ConstantPdaSeedNode):
         return bytes(seed.value)
+
+    if isinstance(seed, OrderedPairPdaSeedNode):
+        # sort the two operands by their raw on-chain bytes (Rust Pubkey Ord), then
+        # take the selected end — the min/max pair ordering the IDL drops.
+        for operand in (seed.left, seed.right):
+            if operand not in bindings:
+                raise MissingBindingError(
+                    f"ordered-pair seed needs operand {operand!r}; "
+                    f"provide bindings[{operand!r}]"
+                )
+        a = _pubkey_bytes(seed.left, bindings[seed.left])
+        b = _pubkey_bytes(seed.right, bindings[seed.right])
+        return min(a, b) if seed.select == "min" else max(a, b)
 
     if seed.name not in bindings:
         raise MissingBindingError(
@@ -298,7 +347,9 @@ def derive_pda(
     seed_bytes = [
         _encode_seed(seed, bindings)
         for seed in node.seeds
-        if isinstance(seed, (ConstantPdaSeedNode, VariablePdaSeedNode))
+        if isinstance(
+            seed, (ConstantPdaSeedNode, VariablePdaSeedNode, OrderedPairPdaSeedNode)
+        )
     ]
 
     pubkey_cls = _load_pubkey()
