@@ -97,6 +97,14 @@ ocr = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0",
 ]
+# The Program Surface — PDA derivation (gecko.pda.derive_pda). find_program_address
+# needs ed25519 curve math to reject on-curve candidates, so it uses solders behind
+# this extra. OPTIONAL and lazy-imported — absent => derive_pda raises a clear
+# install hint, and the pda MODEL + (Phase 1) extraction stay pure stdlib. solders is
+# already used by scripts/subscribe.py; this makes it a first-class, pinned surface.
+solana = [
+    "solders>=0.21",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -111,6 +119,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15.20",
     "types-pyyaml>=6.0.12.20260518",
+    # The [solana] extra, in dev so the PDA-derivation tests (tests/test_pda.py)
+    # run in the default `uv run pytest` lane against real mainnet ground truth.
+    "solders>=0.21",
 ]
 
 [tool.pytest.ini_options]
@@ -126,5 +137,5 @@ python_version = "3.11"
 # PIL/pytesseract are the OPTIONAL Skill Guard image extras ([imagescan] / [ocr]),
 # lazy-imported inside gecko.imagescan; keep mypy clean whether or not they resolve.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*", "solders", "solders.*"]
 ignore_missing_imports = true
