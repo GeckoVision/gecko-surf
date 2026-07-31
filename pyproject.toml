@@ -36,6 +36,11 @@ txline-mcp = "gecko.examples.txline:main"
 # source; Gecko comprehends the bundled slice into first-call-correct derive/plan tools.
 # Keyless, never signs. `uvx --from "gecko-surf[serve]" ore-mcp` needs NO local file.
 ore-mcp = "gecko.examples.ore:main"
+# The Gecko × Orquestra provider demo — serve the Meteora DLMM front-door surface: an
+# agent plans a swap in plain English, Gecko derives the pool (lb_pair — the root
+# Orquestra's IDL drops) + reserves/oracle, and the plan points at Orquestra's builder to
+# execute. Keyless, never signs. `uvx --from "gecko-surf[serve,solana]" meteora-demo`.
+meteora-demo = "gecko.providers.meteora:main"
 # Serve a Solana program's instruction↔PDA graph over MCP (Streamable-HTTP or stdio)
 # from a local Anchor IDL and/or Rust source — the recovered seeds an IDL/llms.txt
 # loses, projected into first-call-correct derive/plan tools. Keyless. Needs [serve].
