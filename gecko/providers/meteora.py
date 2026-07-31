@@ -10,16 +10,16 @@ The PDA recipes below are the program's **public on-chain seed facts** for Meteo
 this ships license-clean. `lb_pair = [min(x,y), max(x,y), bin_step]`, `reserve = [lb_pair,
 token_mint]`, `oracle = [b"oracle", lb_pair]`.
 
-Run it (published 0.9.1+):
+Run it (published 0.9.3+):
     # stdio, add straight into Claude Code:
-    claude mcp add meteora -- uvx --from "gecko-surf[serve,solana]" meteora-demo --stdio
+    claude mcp add orquestra-meteora -- \
+        uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program meteora --stdio
     # or HTTP:
-    uvx --from "gecko-surf[serve,solana]" meteora-demo
+    uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program meteora
 """
 
 from __future__ import annotations
 
-import argparse
 import sys
 from typing import Any, Mapping
 
@@ -116,36 +116,16 @@ def build_meteora_surface() -> OrquestraProgramSurface:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI (``meteora-demo``): serve the Meteora provider surface over MCP. Needs [serve]."""
-    parser = argparse.ArgumentParser(
-        prog="meteora-demo",
-        description="Gecko × Orquestra: derive Meteora's lb_pair + plan a swap (keyless).",
-    )
-    parser.add_argument("--stdio", action="store_true", help="serve over stdio")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--public-url", default=None)
-    args = parser.parse_args(argv)
+    """DEPRECATED alias — use ``gecko-orquestra --program meteora``.
 
-    surface = build_meteora_surface()
+    Kept so the 0.9.2 command keeps working; delegates to the provider CLI with
+    ``--program meteora`` prepended.
+    """
+    from .cli import main as _cli_main
+
     print(
-        f"meteora-demo: {len(surface.pdas)} PDA(s), intents={list(surface.intents)} "
-        f"→ executes via {surface.project_base_url}",
+        "meteora-demo is deprecated — use: gecko-orquestra --program meteora",
         file=sys.stderr,
     )
-    if args.stdio:
-        from ..mcp_server import serve_stdio
-
-        serve_stdio(surface, server_name="meteora")
-    else:
-        from ..http_server import serve_http
-
-        serve_http(
-            surface,
-            host=args.host,
-            port=args.port,
-            mode="recorded",
-            server_name="meteora",
-            public_url=args.public_url,
-        )
-    return 0
+    passthrough = list(argv) if argv is not None else sys.argv[1:]
+    return _cli_main(["--program", "meteora", *passthrough])
