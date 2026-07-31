@@ -20,10 +20,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY gecko ./gecko
 
-# Engine + serve (mcp[cli], uvicorn, starlette) + events (pymongo). --no-dev
-# drops mypy/pytest/ruff; --frozen pins to uv.lock (must resolve both extras).
+# Engine + serve (mcp[cli], uvicorn, starlette) + events (pymongo) + solana (solders,
+# for the hosted /ore/mcp Program Surface's derive_pda). --no-dev drops mypy/pytest/ruff;
+# --frozen pins to uv.lock (must resolve every extra).
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra serve --extra events
+    uv sync --frozen --no-dev --extra serve --extra events --extra solana
 
 # -----------------------------------------------------------------------------
 
