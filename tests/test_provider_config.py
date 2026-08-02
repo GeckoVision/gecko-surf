@@ -10,6 +10,7 @@ from gecko.pda import derive_pda
 from gecko.provider_config import (
     ConfigError,
     api_config_from_dict,
+    load_packaged_provider,
     node_from_spec,
     seed_from_spec,
 )
@@ -77,3 +78,14 @@ def test_inline_secret_in_auth_is_rejected() -> None:
         assert False, "expected ConfigError for inline secret"
     except ConfigError:
         pass
+
+
+def test_packaged_orquestra_loads_and_derives() -> None:
+    provider, apis = load_packaged_provider("orquestra")
+    assert provider.provider_id == "orquestra"
+    assert "meteora" in apis
+    program = apis["meteora"].program
+    assert program is not None
+    node = program.pdas["lb_pair"]
+    got = derive_pda(node, {"token_x_mint": SOL, "token_y_mint": USDC, "bin_step": 4})
+    assert got.address == "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"

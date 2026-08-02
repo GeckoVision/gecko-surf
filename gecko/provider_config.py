@@ -8,7 +8,9 @@ pydantic. See docs/specs/2026-08-01-provider-control-panel.md (§B0).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from importlib import resources
 
 from .pda import (
     ConstantPdaSeedNode,
@@ -28,6 +30,8 @@ __all__ = [
     "ProviderConfig",
     "api_config_from_dict",
     "provider_config_from_dict",
+    "load_packaged_provider",
+    "load_packaged_provider_base_url",
 ]
 
 
@@ -169,3 +173,27 @@ def provider_config_from_dict(data: dict) -> ProviderConfig:
         display_name=data.get("display_name", data["provider_id"]),
         apis=tuple(data.get("apis", ())),
     )
+
+
+# --- packaged config loading (ships in the wheel, read via importlib.resources) ---
+
+
+def _read_json(provider: str, filename: str) -> dict:
+    anchor = resources.files("gecko.providers.configs").joinpath(provider, filename)
+    return json.loads(anchor.read_text(encoding="utf-8"))
+
+
+def load_packaged_provider(provider: str) -> tuple[ProviderConfig, dict[str, ApiConfig]]:
+    """Load a provider's packaged config: ``provider.json`` + one ``<api_id>.json``
+    per API, from ``gecko/providers/configs/<provider>/`` (shipped in the wheel)."""
+    provider_cfg = provider_config_from_dict(_read_json(provider, "provider.json"))
+    apis = {
+        api_id: api_config_from_dict(_read_json(provider, f"{api_id}.json"))
+        for api_id in provider_cfg.apis
+    }
+    return provider_cfg, apis
+
+
+def load_packaged_provider_base_url(provider: str) -> str:
+    """The provider's build base URL (e.g. Orquestra's API root) from its config."""
+    return str(_read_json(provider, "provider.json")["base_url"])

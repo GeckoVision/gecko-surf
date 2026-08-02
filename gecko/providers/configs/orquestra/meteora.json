@@ -1,0 +1,34 @@
+{
+  "api_id": "meteora",
+  "kind": "program",
+  "spec_source": {"type": "program", "value": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"},
+  "program": {
+    "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "orquestra_project": "v48gsz901w84zriqe0elsl",
+    "intents": ["plan_swap"],
+    "pdas": {
+      "lb_pair": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "min"},
+          {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "max"},
+          {"kind": "variable", "name": "bin_step", "source": "argument", "encoding": "le", "width": 2}
+        ]
+      },
+      "reserve": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "variable", "name": "lb_pair", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "token_mint", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "oracle": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "constant", "value": "oracle", "encoding": "utf8"},
+          {"kind": "variable", "name": "lb_pair", "source": "account", "encoding": "pubkey"}
+        ]
+      }
+    }
+  }
+}
