@@ -48,7 +48,11 @@ def seed_from_spec(spec: dict) -> PdaSeed:
         if encoding == "utf8":
             return ConstantPdaSeedNode(str(raw).encode("utf-8"), encoding="utf8")
         if encoding == "bytes":
-            value = bytes(raw) if isinstance(raw, (list, bytes, bytearray)) else str(raw).encode()
+            value = (
+                bytes(raw)
+                if isinstance(raw, (list, bytes, bytearray))
+                else str(raw).encode()
+            )
             return ConstantPdaSeedNode(value, encoding="bytes")
         raise ConfigError(f"constant seed encoding {encoding!r} unsupported")
     if kind == "variable":
@@ -183,7 +187,9 @@ def _read_json(provider: str, filename: str) -> dict:
     return json.loads(anchor.read_text(encoding="utf-8"))
 
 
-def load_packaged_provider(provider: str) -> tuple[ProviderConfig, dict[str, ApiConfig]]:
+def load_packaged_provider(
+    provider: str,
+) -> tuple[ProviderConfig, dict[str, ApiConfig]]:
     """Load a provider's packaged config: ``provider.json`` + one ``<api_id>.json``
     per API, from ``gecko/providers/configs/<provider>/`` (shipped in the wheel)."""
     provider_cfg = provider_config_from_dict(_read_json(provider, "provider.json"))

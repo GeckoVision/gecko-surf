@@ -22,9 +22,25 @@ USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 LB_PAIR_SPEC = {
     "program_id": METEORA,
     "seeds": [
-        {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "min"},
-        {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "max"},
-        {"kind": "variable", "name": "bin_step", "source": "argument", "encoding": "le", "width": 2},
+        {
+            "kind": "ordered_pair",
+            "left": "token_x_mint",
+            "right": "token_y_mint",
+            "select": "min",
+        },
+        {
+            "kind": "ordered_pair",
+            "left": "token_x_mint",
+            "right": "token_y_mint",
+            "select": "max",
+        },
+        {
+            "kind": "variable",
+            "name": "bin_step",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2,
+        },
     ],
 }
 
@@ -72,7 +88,10 @@ def test_api_config_builds_program_pdas() -> None:
 
 
 def test_inline_secret_in_auth_is_rejected() -> None:
-    bad = {**METEORA_API, "auth": {"scheme": "bearer", "account_ref": "sk_live_ABC123DEF456"}}
+    bad = {
+        **METEORA_API,
+        "auth": {"scheme": "bearer", "account_ref": "sk_live_ABC123DEF456"},
+    }
     try:
         api_config_from_dict(bad)
         assert False, "expected ConfigError for inline secret"

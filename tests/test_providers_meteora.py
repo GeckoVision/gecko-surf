@@ -67,8 +67,16 @@ def test_surface_identity_comes_from_config() -> None:
     # not hardcoded literals in meteora.py — proven end to end by the real derivation.
     surface = build_meteora_surface()
     assert surface.program_id == METEORA_PROGRAM_ID
-    assert surface.project_base_url == "https://api.orquestra.dev/api/v48gsz901w84zriqe0elsl"
-    assert surface.derive("lb_pair", {"token_x_mint": WSOL, "token_y_mint": USDC, "bin_step": 4}) == LB_PAIR
+    assert (
+        surface.project_base_url
+        == "https://api.orquestra.dev/api/v48gsz901w84zriqe0elsl"
+    )
+    assert (
+        surface.derive(
+            "lb_pair", {"token_x_mint": WSOL, "token_y_mint": USDC, "bin_step": 4}
+        )
+        == LB_PAIR
+    )
 
 
 def test_get_program_graph_summarizes_pdas_and_intents() -> None:

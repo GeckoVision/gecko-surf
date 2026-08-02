@@ -58,7 +58,9 @@ def _discover_programs() -> dict[str, Callable[[], OrquestraProgramSurface]]:
     for (provider, api_id), intents in intents_by_key.items():
 
         def _make(
-            provider: str = provider, api_id: str = api_id, intents: dict[str, Intent] = intents
+            provider: str = provider,
+            api_id: str = api_id,
+            intents: dict[str, Intent] = intents,
         ) -> OrquestraProgramSurface:
             return build_surface_from_config(provider, api_id, intents)
 
