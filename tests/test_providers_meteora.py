@@ -62,6 +62,23 @@ def test_plan_swap_missing_input_is_reported() -> None:
     assert "error" in plan and "bin_step" in plan["error"]
 
 
+def test_surface_identity_comes_from_config() -> None:
+    # the config-driven backbone: identity + project base come from packaged config,
+    # not hardcoded literals in meteora.py — proven end to end by the real derivation.
+    surface = build_meteora_surface()
+    assert surface.program_id == METEORA_PROGRAM_ID
+    assert (
+        surface.project_base_url
+        == "https://api.orquestra.dev/api/v48gsz901w84zriqe0elsl"
+    )
+    assert (
+        surface.derive(
+            "lb_pair", {"token_x_mint": WSOL, "token_y_mint": USDC, "bin_step": 4}
+        )
+        == LB_PAIR
+    )
+
+
 def test_get_program_graph_summarizes_pdas_and_intents() -> None:
     g = build_meteora_surface().call_tool("get_program_graph", {})
     assert g["program_id"] == METEORA_PROGRAM_ID

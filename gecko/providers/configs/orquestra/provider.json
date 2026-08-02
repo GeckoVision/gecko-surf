@@ -1,0 +1,6 @@
+{
+  "provider_id": "orquestra",
+  "display_name": "Orquestra",
+  "base_url": "https://api.orquestra.dev/api",
+  "apis": ["meteora"]
+}

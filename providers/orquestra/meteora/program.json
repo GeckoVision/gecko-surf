@@ -1,9 +1,0 @@
-{
-  "program": "meteora",
-  "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
-  "orquestra_project": "v48gsz901w84zriqe0elsl",
-  "source": "github.com/MeteoraAg/dlmm-sdk : commons/src/pda.rs",
-  "gap": "lb_pair root seed = min/max(token_x, token_y) + bin_step — dropped by the Anchor IDL (#4057); Orquestra returns 'has no PDA seeds'.",
-  "recipes": "authored as data (license-clean) in gecko/providers/meteora.py; leaves reserve/oracle seed FROM lb_pair.",
-  "intents": ["plan_swap"]
-}

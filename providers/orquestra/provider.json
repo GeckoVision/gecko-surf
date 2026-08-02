@@ -1,6 +1,0 @@
-{
-  "provider": "orquestra",
-  "base_url": "https://api.orquestra.dev/api",
-  "build_endpoint_template": "/api/{project}/instructions/{instruction}/build",
-  "notes": "Agent connects to the Gecko surface; execution runs on Orquestra's builder. Gecko is metadata/control-plane, never proxies, never signs."
-}
