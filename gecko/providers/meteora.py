@@ -23,53 +23,14 @@ from __future__ import annotations
 import sys
 from typing import Any, Mapping
 
-from ..pda import (
-    ConstantPdaSeedNode,
-    OrderedPairPdaSeedNode,
-    PdaNode,
-    VariablePdaSeedNode,
-)
 from .orquestra import Intent, OrquestraProgramSurface
 
-__all__ = ["METEORA_PROGRAM_ID", "build_meteora_surface", "main"]
+__all__ = ["METEORA_PROGRAM_ID", "METEORA_INTENTS", "build_meteora_surface", "main"]
 
+# Display constant, kept for consumers. The authoritative program id + PDA recipes
+# now live in the packaged config (gecko/providers/configs/orquestra/meteora.json),
+# loaded by build_meteora_surface — this is data, not code.
 METEORA_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
-# Orquestra's indexed Meteora DLMM project (public, keyless consumption).
-ORQUESTRA_PROJECT_BASE = "https://api.orquestra.dev/api/v48gsz901w84zriqe0elsl"
-
-
-def _pdas() -> dict[str, PdaNode]:
-    return {
-        # the root Orquestra drops: min/max pool-pair ordering + bin_step
-        "lb_pair": PdaNode(
-            "lb_pair",
-            (
-                OrderedPairPdaSeedNode("token_x_mint", "token_y_mint", "min"),
-                OrderedPairPdaSeedNode("token_x_mint", "token_y_mint", "max"),
-                VariablePdaSeedNode(
-                    "bin_step", source="argument", encoding="le", width=2
-                ),
-            ),
-            program_id=METEORA_PROGRAM_ID,
-        ),
-        # leaves — seed FROM lb_pair (Orquestra has these, once you have the root)
-        "reserve": PdaNode(
-            "reserve",
-            (
-                VariablePdaSeedNode("lb_pair", source="account", encoding="pubkey"),
-                VariablePdaSeedNode("token_mint", source="account", encoding="pubkey"),
-            ),
-            program_id=METEORA_PROGRAM_ID,
-        ),
-        "oracle": PdaNode(
-            "oracle",
-            (
-                ConstantPdaSeedNode(b"oracle", encoding="utf8"),
-                VariablePdaSeedNode("lb_pair", source="account", encoding="pubkey"),
-            ),
-            program_id=METEORA_PROGRAM_ID,
-        ),
-    }
 
 
 def _swap_plan(
@@ -106,13 +67,18 @@ _SWAP = Intent(
 )
 
 
+# The code half of the config: the multi-step plan callables this program exposes,
+# keyed by intent name. The config lists the intent NAMES; here we supply their
+# derivation logic. (Making plans declarative — data too — is a follow-on PR.)
+METEORA_INTENTS: dict[str, Intent] = {_SWAP.name: _SWAP}
+
+
 def build_meteora_surface() -> OrquestraProgramSurface:
-    return OrquestraProgramSurface(
-        program_id=METEORA_PROGRAM_ID,
-        project_base_url=ORQUESTRA_PROJECT_BASE,
-        pdas=_pdas(),
-        intents={_SWAP.name: _SWAP},
-    )
+    """Build the Meteora surface from packaged config (identity + PDA recipes) +
+    the local intent registry (the plan callables)."""
+    from .cli import build_surface_from_config
+
+    return build_surface_from_config("orquestra", "meteora", METEORA_INTENTS)
 
 
 def main(argv: list[str] | None = None) -> int:

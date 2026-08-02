@@ -18,17 +18,58 @@ import argparse
 import sys
 from typing import Callable
 
-from .orquestra import OrquestraProgramSurface
+from ..provider_config import load_packaged_provider, load_packaged_provider_base_url
+from .orquestra import Intent, OrquestraProgramSurface
 
-__all__ = ["main", "PROGRAMS"]
+__all__ = ["main", "PROGRAMS", "build_surface_from_config"]
 
-# The provider's program registry — program name → surface builder. Add an instance here
-# (config + recipes) to expose a new Orquestra program; no new CLI entry.
-from .meteora import build_meteora_surface
 
-PROGRAMS: dict[str, Callable[[], OrquestraProgramSurface]] = {
-    "meteora": build_meteora_surface,
-}
+def build_surface_from_config(
+    provider: str, api_id: str, intents: dict[str, Intent]
+) -> OrquestraProgramSurface:
+    """Build a program surface from packaged config (identity + PDA recipes) + a
+    supplied intent registry (the plan callables). This is the config-driven
+    backbone: PDAs are DATA, only the multi-step plan is code."""
+    _, apis = load_packaged_provider(provider)
+    api = apis[api_id]
+    if api.program is None:
+        raise ValueError(f"api {api_id!r} of provider {provider!r} is not a program")
+    base = load_packaged_provider_base_url(provider).rstrip("/")
+    project_base_url = f"{base}/{api.program.orquestra_project}"
+    wanted = {k: v for k, v in intents.items() if k in set(api.program.intents)}
+    return OrquestraProgramSurface(
+        program_id=api.program.program_id,
+        project_base_url=project_base_url,
+        pdas=dict(api.program.pdas),
+        intents=wanted,
+    )
+
+
+def _discover_programs() -> dict[str, Callable[[], OrquestraProgramSurface]]:
+    """Discover servable programs from packaged config. Each config-listed program
+    is paired with its code-side intent registry (the plan callables)."""
+    from .meteora import METEORA_INTENTS
+
+    # (provider, api_id) → the intent registry supplying that program's plan callables
+    intents_by_key: dict[tuple[str, str], dict[str, Intent]] = {
+        ("orquestra", "meteora"): METEORA_INTENTS,
+    }
+    programs: dict[str, Callable[[], OrquestraProgramSurface]] = {}
+    for (provider, api_id), intents in intents_by_key.items():
+
+        def _make(
+            provider: str = provider, api_id: str = api_id, intents: dict[str, Intent] = intents
+        ) -> OrquestraProgramSurface:
+            return build_surface_from_config(provider, api_id, intents)
+
+        programs[api_id] = _make
+    return programs
+
+
+# The provider's program registry — program name → surface builder, discovered from
+# packaged config. Add a program by writing its config + registering its intents in
+# _discover_programs; no new CLI entry.
+PROGRAMS: dict[str, Callable[[], OrquestraProgramSurface]] = _discover_programs()
 
 
 def serve(surface: OrquestraProgramSurface, args: argparse.Namespace, name: str) -> int:
