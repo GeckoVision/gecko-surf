@@ -1,0 +1,57 @@
+{
+  "api_id": "pumpfun",
+  "kind": "program",
+  "spec_source": {"type": "program", "value": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"},
+  "program": {
+    "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "intents": [],
+    "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; no execute URL wired yet (derivation-only). Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts.",
+    "pdas": {
+      "global": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "global", "encoding": "utf8"}
+        ]
+      },
+      "mint_authority": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "mint-authority", "encoding": "utf8"}
+        ]
+      },
+      "event_authority": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "__event_authority", "encoding": "utf8"}
+        ]
+      },
+      "global_volume_accumulator": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "global_volume_accumulator", "encoding": "utf8"}
+        ]
+      },
+      "bonding_curve": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "bonding-curve", "encoding": "utf8"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "user_volume_accumulator": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "user_volume_accumulator", "encoding": "utf8"},
+          {"kind": "variable", "name": "user", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "creator_vault": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "creator-vault", "encoding": "utf8"},
+          {"kind": "resolver", "name": "creator", "depends_on": ["bonding_curve"], "reason": "seed is bonding_curve.data.creator — fetch the bonding_curve account + Anchor-decode its creator field; the dotted-path seed a naive IDL->derivation drops (#4057)"}
+        ]
+      }
+    }
+  }
+}

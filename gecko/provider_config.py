@@ -17,6 +17,7 @@ from .pda import (
     OrderedPairPdaSeedNode,
     PdaNode,
     PdaSeed,
+    ResolverPdaSeedNode,
     VariablePdaSeedNode,
 )
 
@@ -65,6 +66,17 @@ def seed_from_spec(spec: dict) -> PdaSeed:
         )
     if kind == "ordered_pair":
         return OrderedPairPdaSeedNode(spec["left"], spec["right"], spec["select"])
+    if kind == "resolver":
+        # A seed we cannot statically resolve (e.g. a field inside another account's
+        # data, like Anchor's `bonding_curve.creator`). Honest by construction: declares
+        # its dependencies + reason, never fabricates a value. Makes the node
+        # non-resolvable until the value is supplied — the whole differentiator over
+        # "read the IDL and hope".
+        return ResolverPdaSeedNode(
+            spec["name"],
+            depends_on=tuple(spec.get("depends_on", ())),
+            reason=spec.get("reason", "seed could not be statically resolved"),
+        )
     raise ConfigError(f"unknown seed kind {kind!r}")
 
 
@@ -102,12 +114,15 @@ class SpecSource:
 @dataclass(frozen=True)
 class ProgramSpec:
     """A Solana program's on-chain identity + its recovered PDA recipes (already
-    deserialized to :class:`~gecko.pda.PdaNode`) + the intents it exposes."""
+    deserialized to :class:`~gecko.pda.PdaNode`) + the intents it exposes.
+
+    ``orquestra_project`` is optional: a program can be comprehended for DERIVATION
+    (the first-plan-correct PDA recovery) before its execute/build URL is wired."""
 
     program_id: str
-    orquestra_project: str
     pdas: dict[str, PdaNode]
     intents: tuple[str, ...]
+    orquestra_project: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,7 +156,7 @@ def _program_from_dict(data: dict) -> ProgramSpec:
     pdas = {name: node_from_spec(name, spec) for name, spec in data["pdas"].items()}
     return ProgramSpec(
         program_id=data["program_id"],
-        orquestra_project=data["orquestra_project"],
+        orquestra_project=data.get("orquestra_project"),
         pdas=pdas,
         intents=tuple(data.get("intents", ())),
     )
