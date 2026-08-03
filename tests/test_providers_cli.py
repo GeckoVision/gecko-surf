@@ -43,5 +43,7 @@ def test_gecko_orquestra_subcommand_dispatches() -> None:
 
     assert "orquestra" in _SUBCOMMANDS
     with pytest.raises(SystemExit) as exc:
-        gecko_main(["orquestra", "--program", "meteora", "--help"])  # argparse --help exits 0
+        gecko_main(
+            ["orquestra", "--program", "meteora", "--help"]
+        )  # argparse --help exits 0
     assert exc.value.code == 0
