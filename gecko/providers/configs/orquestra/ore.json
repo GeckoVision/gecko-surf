@@ -1,0 +1,52 @@
+{
+  "api_id": "ore",
+  "kind": "program",
+  "spec_source": {"type": "program", "value": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv"},
+  "program": {
+    "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+    "intents": [],
+    "notes": "ORE V3 (regolith-labs/ore), a Steel-framework program (no Anchor IDL — seeds live in source). Singletons config/board/treasury are const-only; automation/miner bind `authority` (NOT the tx signer — an automation bot signs for a different authority); round's id is read from board/miner data (resolver). The `stake` account is CPI'd across a program boundary and belongs to the SEPARATE ore-stake program — its owner is stakecNP..., not ORE. Recipes cross-verified against regolith-labs/ore@master + real mainnet accounts.",
+    "pdas": {
+      "config": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [{"kind": "constant", "value": "config", "encoding": "utf8"}]
+      },
+      "board": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [{"kind": "constant", "value": "board", "encoding": "utf8"}]
+      },
+      "treasury": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [{"kind": "constant", "value": "treasury", "encoding": "utf8"}]
+      },
+      "automation": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [
+          {"kind": "constant", "value": "automation", "encoding": "utf8"},
+          {"kind": "variable", "name": "authority", "source": "argument", "encoding": "pubkey"}
+        ]
+      },
+      "miner": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [
+          {"kind": "constant", "value": "miner", "encoding": "utf8"},
+          {"kind": "variable", "name": "authority", "source": "argument", "encoding": "pubkey"}
+        ]
+      },
+      "round": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "seeds": [
+          {"kind": "constant", "value": "round", "encoding": "utf8"},
+          {"kind": "resolver", "name": "round_id", "depends_on": ["board"], "reason": "seed is board.round_id (deploy/reset) or miner.round_id (checkpoint) read from account data — not a free-choice argument"}
+        ]
+      },
+      "stake": {
+        "program_id": "stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH",
+        "seeds": [
+          {"kind": "constant", "value": "stake", "encoding": "utf8"},
+          {"kind": "variable", "name": "signer", "source": "account", "encoding": "pubkey"}
+        ]
+      }
+    }
+  }
+}
