@@ -34,6 +34,11 @@ def build_surface_from_config(
     api = apis[api_id]
     if api.program is None:
         raise ValueError(f"api {api_id!r} of provider {provider!r} is not a program")
+    if api.program.orquestra_project is None:
+        raise ValueError(
+            f"api {api_id!r} has no orquestra_project — comprehended for derivation only, "
+            "not yet servable (no execute/build URL wired)"
+        )
     base = load_packaged_provider_base_url(provider).rstrip("/")
     project_base_url = f"{base}/{api.program.orquestra_project}"
     wanted = {k: v for k, v in intents.items() if k in set(api.program.intents)}

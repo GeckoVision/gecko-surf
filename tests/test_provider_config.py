@@ -108,3 +108,38 @@ def test_packaged_orquestra_loads_and_derives() -> None:
     node = program.pdas["lb_pair"]
     got = derive_pda(node, {"token_x_mint": SOL, "token_y_mint": USDC, "bin_step": 4})
     assert got.address == "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
+
+
+def test_resolver_seed_kind_is_honest_gap() -> None:
+    # a seed we cannot statically resolve (a field inside another account's data)
+    # becomes a ResolverPdaSeedNode — never fabricated, dependencies declared.
+    from gecko.pda import ResolverPdaSeedNode
+
+    seed = seed_from_spec(
+        {
+            "kind": "resolver",
+            "name": "creator",
+            "depends_on": ["bonding_curve"],
+            "reason": "bonding_curve.data.creator — fetch + Anchor-decode",
+        }
+    )
+    assert isinstance(seed, ResolverPdaSeedNode)
+    assert seed.depends_on == ("bonding_curve",)
+    assert "creator" in seed.reason
+
+
+def test_program_orquestra_project_is_optional() -> None:
+    # a program can be comprehended for derivation before its execute/build URL is wired
+    data = {
+        "api_id": "someprog",
+        "kind": "program",
+        "spec_source": {"type": "program", "value": METEORA},
+        "program": {
+            "program_id": METEORA,
+            "intents": [],
+            "pdas": {"lb_pair": LB_PAIR_SPEC},
+        },
+    }
+    cfg = api_config_from_dict(data)
+    assert cfg.program is not None
+    assert cfg.program.orquestra_project is None
