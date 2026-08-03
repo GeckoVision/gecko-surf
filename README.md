@@ -7,7 +7,7 @@
 [![Claude Code](https://img.shields.io/badge/surface-MCP-D97757.svg)](https://modelcontextprotocol.io/)
 [![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-2074%20passing-2E7D32.svg)](#development)
+[![tests](https://img.shields.io/badge/tests-2170%2B%20passing-2E7D32.svg)](#development)
 
 > **An OpenAPI tells an agent what endpoints *exist*. MCP tells it how to *invoke* one.
 > Neither tells it which calls, in what order, from what data — so the agent guesses, and
@@ -48,6 +48,7 @@ deterministic answer, so the model doesn't have to guess. Gecko **composes on** 
 - [Architecture](#architecture)
 - [What you get](#what-you-get)
 - [The surface graph](#the-surface-graph)
+- [Beyond HTTP — the Program Surface](#beyond-http--the-program-surface-on-chain)
 - [Make any API agent-usable](#make-any-api-agent-usable)
   - [Registry surfaces](#registry-surfaces)
   - [Alongside Context7](#alongside-context7)
@@ -114,8 +115,9 @@ is complete and stays free.
 
 The hosted platform is where an API stays live for agents without you operating anything:
 comprehended surfaces served over Streamable-HTTP MCP, credentials injected at call time
-(never in `mcp.json`), per-surface key gating for paid and private APIs, and
-first-call-correctness suites that run against the surface as it drifts.
+(never in `mcp.json`), per-surface key gating for paid and private APIs, an
+**Agent-Readiness Scorecard** (grade + fixable findings + an interactive Playground), and
+**drift-watch** that re-scores the surface every time its spec changes.
 
 **Who pays:** API providers, to keep their surface live, correct, and agent-reachable —
 a flat price per API, never a cut of your calls. **Developers never pay.** Gecko takes no
@@ -200,7 +202,7 @@ is what lets it ingest any API unilaterally.
 3. **Tools** — question-shaped defs; auth headers hidden.
 4. **Access** — subscribe/session via one seam: `Session.auth_headers()`.
 5. **Call** — agent hits the real API; Gecko injects credentials, stays off the data path.
-6. **Validate** — replay, confirm first-call-correct, JSONL log → V2 correctness corpus seed.
+6. **Validate** — replay, confirm first-call-correct, JSONL outcome log for CI (structure only, never response data).
 
 ---
 
@@ -213,10 +215,11 @@ is what lets it ingest any API unilaterally.
 | **Recover a draft OpenAPI from human docs** (no spec? point it at the doc page) | `gecko from-docs <doc-url-or-path> [-o draft.json]` | shipped |
 | **Embed the SDK** (`search / list_tools / prepare / call`) | `from gecko import AgentApiClient` | shipped |
 | **Cross-API chains** (join two surfaces on a declared entity) | `gecko.compose.cross_plan` | shipped |
+| **Program Surface** (Solana program → recovered PDA seeds → first-plan-correct derivation; composes with Orquestra's builder) | `gecko-orquestra --program <name>` | shipped |
 | **Forkable starter** (an app on any API, ~20 lines, $0) | `examples/_starter/` | shipped |
 | **$0 recorded demo** (goal → discover → correct call → data, offline) | `python -m gecko.demo` | runnable now |
 | **Live demo** against real TxODDS World Cup data | `gecko.demo:live_demo` (after subscribe) | mainnet-proven |
-| **Correctness harness** (first-call-correct + flywheel log) | `gecko.validator` | shipped |
+| **Correctness harness** (first-call-correct check + CI outcome log) | `gecko.validator` | shipped |
 
 ---
 
@@ -262,6 +265,36 @@ between unrelated APIs —
 [design](docs/specs/2026-07-19-surface-graph-correlations-design.md). What's next
 (body-carried join keys, semantic tiebreak, live validation) is in the
 [correlation roadmap](docs/specs/2026-07-22-correlation-roadmap.md).
+
+---
+
+## Beyond HTTP — the Program Surface (on-chain)
+
+The same thesis, one layer down. A Solana program's instruction↔account↔PDA graph is the
+on-chain twin of the Agent Surface — and an Anchor IDL (or an `llms.txt` built from one)
+**drops the seed recipes** an agent needs, so it derives the wrong accounts and the
+transaction fails.
+
+**Gecko does the comprehension, not the access.** It recovers those seed recipes from
+program source and derives the PDAs **first-plan-correct** — the accounts a naive IDL tool
+omits or gets wrong. **[Orquestra](https://github.com/berkayoztunc/orquestra) does the
+access:** it builds and submits the transaction against the program. Gecko fills the
+derivation gap and hands the plan to Orquestra's builder to execute — Gecko never signs and
+never replaces the builder. We comprehend; Orquestra accesses.
+
+Proven on **four real mainnet programs** against a local `surfpool` fork (`$0`, no signing)
+— **Meteora DLMM, Pump.fun, ORE, MetaDAO** — each with a gap a naive IDL tool gets wrong: a
+helper-seeded root PDA, a field-inside-account-data seed, a cross-program account owner, or
+an IDL that declares no PDA seeds at all.
+
+```bash
+uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program meteora --stdio
+```
+
+And Gecko's anti-poisoning **verdict can gate a signer**: a downstream custody/signing layer
+refuses to sign for a tool Gecko quarantined (`gecko/signing_gate.py`), so the key holder
+only ever signs what Gecko cleared. *Gecko comprehends the call; Orquestra builds it; the
+vault holds the key and signs it.*
 
 ---
 
@@ -338,7 +371,7 @@ $0, no keys, no subscription:
 ```bash
 git clone https://github.com/GeckoVision/gecko-surf
 cd gecko-surf && uv sync
-uv run pytest                       # 1,630 passing
+uv run pytest                       # 2,170+ passing
 uv run python -m gecko.demo         # E2E: goal → discover → correct call → data (recorded, $0)
 ```
 
@@ -375,12 +408,16 @@ client.call(tool, args, mode="live")   # same path as recorded
 | `gecko/caller.py` | tool + args → correct `PreparedRequest` (stdlib `urllib`) |
 | `gecko/graph.py` | The surface graph — entities, edges, provenance, chain planning |
 | `gecko/compose.py` | Cross-API chains — per-surface graphs joined on `DECLARED` entities only |
+| `gecko/pda.py` | The Program Surface — Solana PDA seed-graph model + deterministic derivation |
+| `gecko/provider_config.py` | Config-driven program backbone — recovered PDA recipes as packaged data |
+| `gecko/providers/` | Per-program surfaces (config + intents) that compose with Orquestra's builder |
+| `gecko/signing_gate.py` | Verdict → signing-gate seam — a custody layer gates on the anti-poisoning verdict |
 | `gecko/sanitize.py` | Anti-poisoning — untrusted spec/doc text, fail-closed arg routing |
 | `gecko/access.py` | `Session.auth_headers()` — the engine/adapter seam; two-token session |
 | `gecko/sample.py` | deterministic schema → example (powers $0 recorded mode) |
 | `gecko/client.py` | `AgentApiClient` — `search / list_tools / prepare / call` |
 | `gecko/mcp_server.py` | `McpSurface` — the agent-facing MCP surface |
-| `gecko/validator.py` | replay + first-call-correct + JSONL outcome log (moat seed) |
+| `gecko/validator.py` | replay + first-call-correct + JSONL outcome log (CI signal; never payloads) |
 | `gecko/demo.py` | `run()` (recorded) + `live_demo()` |
 | `gecko/serve.py` | `gecko <url>` CLI — comprehend + serve over Streamable-HTTP MCP (+ one-click add) |
 | `examples/_starter/` | forkable "app on any API" (engine-only, $0); `examples/sos_vzla_bot/` is the full LLM agent |
@@ -400,7 +437,7 @@ server, the client, and scripts are thin transport.
 | Engine | stdlib-first (`urllib`); minimal deps; `pyyaml` for spec loading |
 | Agent surface | `mcp` (Model Context Protocol) |
 | Access / payments | x402; on-chain subscribe via `solders`; modes `stub` / `live` |
-| Quality | `ruff` · `mypy` · `pytest` (1,630 tests) |
+| Quality | `ruff` · `mypy` · `pytest` (2,170+ tests) |
 
 ---
 
@@ -422,7 +459,7 @@ Recorded mode and the test suite need **no** keys.
 ```bash
 uv run ruff format && uv run ruff check --fix
 uv run mypy gecko
-uv run pytest                       # 1,630 passing; targeted invocations preferred
+uv run pytest                       # 2,170+ passing; targeted invocations preferred
 uv run python -m gecko.demo         # $0 recorded smoke
 ```
 
@@ -464,6 +501,18 @@ correctly, you don't need Gecko.
 No. Gecko hands the agent a correct, credentialed request; the agent calls the API
 directly. We are the control plane, never the data plane — see
 [Architecture](#architecture).
+
+</details>
+
+<details>
+<summary><strong>Does this work for Solana programs, not just HTTP APIs?</strong></summary>
+
+Yes — that's the [Program Surface](#beyond-http--the-program-surface-on-chain). Gecko
+comprehends a Solana program's instruction↔PDA graph and recovers the seed recipes an
+Anchor IDL / `llms.txt` drops, so an agent derives the right accounts first-plan-correct.
+Gecko does the comprehension; [Orquestra](https://github.com/berkayoztunc/orquestra) builds
+and submits the transaction. Proven on four mainnet programs (Meteora, Pump.fun, ORE,
+MetaDAO) against a `$0` surfpool fork. Gecko never signs.
 
 </details>
 
@@ -613,8 +662,8 @@ the details, including the rule that a skill points at engine code rather than r
 ## License
 
 **Apache License 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Apache-2.0 carries
-an explicit patent grant. The engine is open (the distribution funnel); the correctness corpus
-and hosted layer stay private (open-core).
+an explicit patent grant. The engine is open (the distribution funnel); the hosted layer,
+strategy, and business docs stay private (open-core).
 
 ---
 
