@@ -39,6 +39,13 @@
           {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
         ]
       },
+      "bonding_curve_v2": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "seeds": [
+          {"kind": "constant", "value": "bonding-curve-v2", "encoding": "utf8"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
+        ]
+      },
       "user_volume_accumulator": {
         "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
         "seeds": [
