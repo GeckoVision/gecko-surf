@@ -42,6 +42,33 @@ def _pumpfun_pdas() -> dict[str, PdaNode]:
     return program.pdas
 
 
+# --- servable: the config now carries an orquestra_project, so it builds a surface ---
+
+
+def test_pumpfun_is_servable_derivation_only() -> None:
+    # Sprint 1 wired the slug → build_surface_from_config succeeds; the surface exposes
+    # get_program_graph + derive_pda (no plan intents yet — those land in a later sprint).
+    from gecko.providers.cli import PROGRAMS
+
+    _, apis = load_packaged_provider("orquestra")
+    program = apis["pumpfun"].program
+    assert program is not None
+    assert program.orquestra_project == "6i6q26bmm46b89xlxo1kv"
+
+    surface = PROGRAMS["pumpfun"]()
+    assert surface.program_id == PUMP
+    assert (
+        surface.project_base_url
+        == "https://api.orquestra.dev/api/6i6q26bmm46b89xlxo1kv"
+    )
+    tool_names = {t["name"] for t in surface.list_tools()}
+    assert tool_names == {"get_program_graph", "derive_pda"}
+    out = surface.call_tool(
+        "derive_pda", {"account": "bonding_curve", "bindings": {"mint": MINT}}
+    )
+    assert out["address"] == BONDING_CURVE
+
+
 # --- offline, $0: config recipes derive the real mainnet addresses ---
 
 
