@@ -143,3 +143,65 @@ def test_search_finds_operation_without_operation_id():
     client = AgentApiClient(SPEC_NO_OPID)
     hits = client.search("create charge")
     assert hits, "search must return a hit for an op that has no operationId"
+
+
+# FIX C (Raff repro) — an op must win its OWN intent. On a Pegana-shaped surface a sibling
+# (`list_alerts`) whose summary happens to share the query's generic tokens ("list/all/
+# active/assets", "state") tied `list_assets`/`state` on raw overlap and then WON on the
+# alphabetical path tiebreak (`/v1/alerts` < `/v1/assets`) — so the wrong op ranked #1.
+# Weighting the operationId overlap (the op's own identity: list·assets, ...·state) breaks
+# the tie toward the op the intent actually names.
+_PEGANA_SHAPED = {
+    "openapi": "3.0.0",
+    "info": {"title": "Peg", "version": "1"},
+    "servers": [{"url": "https://api.example.test"}],
+    "paths": {
+        # Sibling seeded with the distinctive tokens so it TIES on raw text overlap.
+        "/v1/alerts": {
+            "get": {
+                "operationId": "list_alerts",
+                "summary": "List all active assets state-transition alerts feed",
+                "responses": {"200": {"description": "ok"}},
+            }
+        },
+        "/v1/assets": {
+            "get": {
+                "operationId": "list_assets",
+                "summary": "List all active assets",
+                "responses": {"200": {"description": "ok"}},
+            }
+        },
+        "/v1/assets/{symbol}/state": {
+            "get": {
+                "operationId": "get_asset_state",
+                "summary": "Get an asset's current peg state",
+                "parameters": [
+                    {
+                        "name": "symbol",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "ok"}},
+            }
+        },
+    },
+}
+
+
+def test_op_wins_its_own_intent_over_token_sharing_sibling():
+    cat = Catalog(extract_operations(_PEGANA_SHAPED))
+
+    assets = cat.search_scored("list all active assets")
+    assert assets[0].entry.operation.operation_id == "list_assets", (
+        "the assets op must win its own intent, not the token-sharing list_alerts sibling"
+    )
+
+    peg = [s for s in cat.search_scored("qual o peg state do USDC?") if s.score > 0]
+    names = [s.entry.operation.operation_id for s in peg]
+    assert "get_asset_state" in names
+    if "list_alerts" in names:
+        assert names.index("get_asset_state") < names.index("list_alerts"), (
+            "the state op must rank above the alerts sibling for a 'peg state' intent"
+        )

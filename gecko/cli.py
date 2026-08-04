@@ -420,7 +420,10 @@ def _cmd_report(argv: list[str]) -> int:
         json.dumps(inspect_mod.inspect(spec, api=name).to_dict(), indent=2),
         encoding="utf-8",
     )
-    print(f"  → wrote {out} ({len(html)} bytes) and {sidecar}")
+    # Print the ABSOLUTE path so the leave-behind is findable regardless of CWD — Raff
+    # hit "wrote <name>.scorecard.html" with no hint of where the file landed.
+    print(f"  → wrote {out.resolve()} ({len(html)} bytes)")
+    print(f"  → wrote {sidecar.resolve()}")
     return 0
 
 
@@ -484,7 +487,13 @@ def _cmd_test(argv: list[str]) -> int:
         "--mode",
         choices=("recorded", "live"),
         default="recorded",
-        help="recorded ($0, synthesized) or live (real upstream calls).",
+        help="recorded ($0, synthesized) or live (real upstream calls + sealed auth).",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Shorthand for --mode live: run the suite against the real API "
+        "(sealed credentials). Default stays recorded ($0).",
     )
     p.add_argument(
         "-o",
@@ -494,10 +503,34 @@ def _cmd_test(argv: list[str]) -> int:
     )
     args = p.parse_args(argv)
 
+    # --live is the ergonomic shorthand; it wins over the recorded default. Explicit
+    # --mode live is equivalent. Keeping both means `serve --mode` users and agents
+    # reaching for the obvious `--live` flag both land on the live suite.
+    mode: CallMode = "live" if (args.live or args.mode == "live") else "recorded"
+
     if _reject_unsafe(args.spec, "ingest"):
         return 2
+
+    # Live mode runs the suite against the REAL upstream with sealed credentials. The
+    # session is resolved off the SPEC's own declared security schemes via the same
+    # keychain seam `serve --auth-keychain` uses (never a hardcoded header/scheme). A
+    # spec with no header-shaped scheme degrades to no-auth + a printed warning, exactly
+    # like serve — the run never crashes. Recorded needs no session ($0, synthesized).
+    session = None
+    if mode == "live":
+        from .access import keychain_session
+
+        try:
+            spec_dict = load_spec(args.spec)
+        except (UnsafeUrlError, OSError, ValueError) as exc:
+            print(f"Could not comprehend spec: {exc}", file=sys.stderr)
+            return 2
+        session, warning = keychain_session(spec_dict, onboard.safe_name(args.spec))
+        if warning:
+            print(f"  ⚠ {warning}", file=sys.stderr)
+
     try:
-        results = testgen.check(args.spec, mode=coerce_mode(args.mode))
+        results = testgen.check(args.spec, mode=coerce_mode(mode), session=session)
     except (UnsafeUrlError, ValueError) as exc:
         print(f"Could not comprehend spec: {exc}", file=sys.stderr)
         return 2
@@ -505,9 +538,9 @@ def _cmd_test(argv: list[str]) -> int:
     for r in results:
         print(f"  [{'PASS' if r.ok else 'FAIL'}] {r.tool} · {r.kind} — {r.detail}")
     passed, total = testgen.summary(results)
-    print(f"\n{passed}/{total} checks passed ({args.mode} mode)")
+    print(f"\n{passed}/{total} checks passed ({mode} mode)")
 
-    if args.mode == "recorded":
+    if mode == "recorded":
         _print_key_clarity(args.spec)
 
     if args.out:
