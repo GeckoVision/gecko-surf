@@ -6,7 +6,7 @@
     "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
     "orquestra_project": "6i6q26bmm46b89xlxo1kv",
     "intents": [],
-    "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; no execute URL wired yet (derivation-only). Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts.",
+    "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; no execute URL wired yet (derivation-only). Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts. Pump tokens may be Token-2022; associated_bonding_curve is parameterized on token_program, which the caller supplies per-mint (Gecko will resolve it from the mint owner in a later sprint).",
     "pdas": {
       "global": {
         "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
@@ -51,6 +51,14 @@
         "seeds": [
           {"kind": "constant", "value": "creator-vault", "encoding": "utf8"},
           {"kind": "resolver", "name": "creator", "depends_on": ["bonding_curve"], "reason": "seed is bonding_curve.data.creator — fetch the bonding_curve account + Anchor-decode its creator field; the dotted-path seed a naive IDL->derivation drops (#4057)"}
+        ]
+      },
+      "associated_bonding_curve": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {"kind": "variable", "name": "owner", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "token_program", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
         ]
       }
     }

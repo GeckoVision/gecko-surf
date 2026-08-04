@@ -34,6 +34,16 @@ CREATOR_VAULT = "9B1eLfPtyqyTepP98VPosL7s2cQWN29SKMhk2iNTVkqd"
 GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
 
+# Sprint 2: the associated_bonding_curve (the bonding curve's Associated Token Account).
+# This particular fixture mint is a TOKEN-2022 mint (its owner is the Token-2022 program),
+# verified on a surfpool mainnet fork below — so the REAL associated bonding curve is the
+# Token-2022 ATA, and the mint carries its metadata as an in-mint Token-2022 extension
+# (metadataPointer + tokenMetadata) rather than a separate Metaplex PDA. The config's ATA
+# recipe is parameterized on token_program, so the same recipe derives the real address
+# once the caller supplies the Token-2022 program id.
+ASSOCIATED_BONDING_CURVE = "6qg9ZgTnbeqdmzkuVT6Ffv95nmD2yX6KUxEyVRc1DmDH"
+TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
 
 def _pumpfun_pdas() -> dict[str, PdaNode]:
     _, apis = load_packaged_provider("orquestra")
@@ -82,6 +92,19 @@ def test_global_and_event_authority_are_constants() -> None:
     pdas = _pumpfun_pdas()
     assert derive_pda(pdas["global"], {}).address == GLOBAL
     assert derive_pda(pdas["event_authority"], {}).address == EVENT_AUTHORITY
+
+
+def test_associated_bonding_curve_derives_real_ata() -> None:
+    # ATA recipe: owner (the bonding curve) + the token program (supplied per-mint —
+    # here Token-2022) + the mint → the associated token account holding the curve's
+    # token reserve. The recipe is parameterized on token_program, so the same config
+    # derives the real address for either Token or Token-2022 mints.
+    pdas = _pumpfun_pdas()
+    got = derive_pda(
+        pdas["associated_bonding_curve"],
+        {"owner": BONDING_CURVE, "token_program": TOKEN_2022_PROGRAM, "mint": MINT},
+    )
+    assert got.address == ASSOCIATED_BONDING_CURVE
 
 
 def test_creator_vault_is_an_honest_gap() -> None:
@@ -136,6 +159,18 @@ def test_pumpfun_derivation_against_surfpool_fork() -> None:
             cv = verify_derivation(
                 resolved_vault, {"creator": CREATOR}, rpc_url=fork.rpc_url
             )
+            # The config's associated_bonding_curve, parameterized on token_program.
+            # This fixture mint is Token-2022, so we supply the Token-2022 program id —
+            # the recipe then derives the REAL on-chain ATA (no phantom).
+            abc = verify_derivation(
+                pdas["associated_bonding_curve"],
+                {
+                    "owner": BONDING_CURVE,
+                    "token_program": TOKEN_2022_PROGRAM,
+                    "mint": MINT,
+                },
+                rpc_url=fork.rpc_url,
+            )
     except SurfpoolError as exc:
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
@@ -149,3 +184,14 @@ def test_pumpfun_derivation_against_surfpool_fork() -> None:
     assert (
         cv.owner == "11111111111111111111111111111111"
     )  # System Program (a SOL vault)
+
+    # --- HONEST on-chain finding (see the ground-truth constants above) ---
+    # The surfpool E2E honestly found this fixture mint is a TOKEN-2022 mint. The config
+    # no longer carries a Metaplex `metadata` PDA (a Token-2022 mint stores metadata as an
+    # in-mint extension — metadataPointer + tokenMetadata — not a separate account), and
+    # associated_bonding_curve is now parameterized on token_program. Supplying the
+    # Token-2022 program id, the config's own recipe derives the REAL ATA — no phantoms:
+    # it EXISTS and is OWNED BY the Token-2022 program (ATAs are owned by their token
+    # program, not the ATA program).
+    assert abc.address == ASSOCIATED_BONDING_CURVE and abc.exists
+    assert abc.owner == TOKEN_2022_PROGRAM
