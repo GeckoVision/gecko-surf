@@ -131,8 +131,17 @@ def test_packaged_orquestra_loads_and_derives() -> None:
     program = apis["meteora"].program
     assert program is not None
     node = program.pdas["lb_pair"]
-    got = derive_pda(node, {"token_x_mint": SOL, "token_y_mint": USDC, "bin_step": 4})
-    assert got.address == "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
+    # the packaged recipe is the 4-seed `derive_lb_pair_pda2` scheme → a real CURRENT pool
+    got = derive_pda(
+        node,
+        {
+            "token_x_mint": "Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump",
+            "token_y_mint": SOL,
+            "bin_step": 250,
+            "base_factor": 4000,
+        },
+    )
+    assert got.address == "EtAdVRLFH22rjWh3mcUasKFF27WtHhsaCvK27tPFFWig"
 
 
 def test_resolver_seed_kind_is_honest_gap() -> None:
