@@ -74,6 +74,34 @@ def test_default_rpc_call_validates_scheme_first() -> None:
         default_rpc_call("file:///etc/passwd", "getHealth", [])
 
 
+def test_http_post_sends_an_identifiable_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A CDN bot-check (Cloudflare error 1010) bans the default Python-urllib UA with a 403
+    # before the request reaches the API. The transport must send a real gecko-surf UA.
+    import gecko.rpc as rpc
+
+    captured: dict[str, Any] = {}
+
+    class FakeResp:
+        def __enter__(self) -> "FakeResp":
+            return self
+
+        def __exit__(self, *_exc: Any) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def fake_urlopen(req: Any, timeout: int = 0) -> FakeResp:
+        captured["ua"] = req.get_header("User-agent")
+        return FakeResp()
+
+    monkeypatch.setattr(rpc.urllib.request, "urlopen", fake_urlopen)
+    rpc._http_post_json("https://example.com", b"{}")
+    assert captured["ua"] and captured["ua"].startswith("gecko-surf")
+
+
 def test_layering_pda_modules_import_transport_from_rpc() -> None:
     # the bug fix: pda_resolve must source the transport from gecko.rpc, not pda_testkit
     import gecko.pda_resolve as pda_resolve

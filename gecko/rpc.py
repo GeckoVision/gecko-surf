@@ -34,6 +34,24 @@ RpcCall = Callable[[str, str, list[Any]], dict[str, Any]]
 
 LOCAL_RPC = "http://127.0.0.1:8899"
 
+# A real User-Agent, not the stdlib default. Some RPC/builder endpoints sit behind a
+# CDN (e.g. Cloudflare) whose bot-integrity check bans the default ``Python-urllib/x.y``
+# signature with a 403 (Cloudflare error 1010) BEFORE the request reaches the API — a
+# self-inflicted failure that looks like an auth/access problem but is neither. Sending
+# an honest, identifiable agent string avoids it. Read via a getter so the version is
+# resolved lazily (and never crashes the transport if metadata is unavailable).
+_USER_AGENT_FALLBACK = "gecko-surf"
+
+
+def _user_agent() -> str:
+    try:
+        from importlib.metadata import version
+
+        return f"gecko-surf/{version('gecko-surf')}"
+    except Exception:  # metadata missing (source checkout / odd install) — stay honest
+        return _USER_AGENT_FALLBACK
+
+
 # Schemes we will POST JSON-RPC to. The RPC endpoint is a user-CONFIGURED transport
 # target (surfpool fork on loopback OR a public mainnet RPC), not ingested spec content,
 # so the anti-SSRF private-range block (which guards untrusted specs) deliberately does
@@ -65,7 +83,9 @@ def validate_rpc_url(rpc_url: str) -> None:
 def _http_post_json(url: str, body: bytes) -> dict[str, Any]:
     """POST ``body`` as JSON and parse the response. Seam kept tiny so tests inject here."""
     req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": _user_agent()},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - scheme validated
         return json.loads(resp.read())  # type: ignore[no-any-return]
