@@ -39,6 +39,33 @@ def _pdas() -> dict[str, PdaNode]:
     return program.pdas
 
 
+# --- servable: the config now carries an orquestra_project, so it builds a surface ---
+
+
+def test_metadao_is_servable_derivation_only() -> None:
+    # Sprint 1 wired the slug → build_surface_from_config succeeds; the surface exposes
+    # get_program_graph + derive_pda (no plan intents yet — those land in a later sprint).
+    from gecko.providers.cli import PROGRAMS
+
+    _, apis = load_packaged_provider("orquestra")
+    program = apis["metadao_ico"].program
+    assert program is not None
+    assert program.orquestra_project == "krhmrxpy2fgwn3q0whic7"
+
+    surface = PROGRAMS["metadao_ico"]()
+    assert surface.program_id == LAUNCHPAD
+    assert (
+        surface.project_base_url
+        == "https://api.orquestra.dev/api/krhmrxpy2fgwn3q0whic7"
+    )
+    tool_names = {t["name"] for t in surface.list_tools()}
+    assert tool_names == {"get_program_graph", "derive_pda"}
+    out = surface.call_tool(
+        "derive_pda", {"account": "launch", "bindings": {"base_mint": BASE_MINT}}
+    )
+    assert out["address"] == LAUNCH
+
+
 # --- offline, $0: config recipes derive the real mainnet addresses ---
 
 

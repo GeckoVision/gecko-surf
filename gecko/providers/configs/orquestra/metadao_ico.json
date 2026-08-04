@@ -4,6 +4,7 @@
   "spec_source": {"type": "program", "value": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM"},
   "program": {
     "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
+    "orquestra_project": "krhmrxpy2fgwn3q0whic7",
     "intents": [],
     "notes": "MetaDAO launchpad_v7 (the ICO/launch program): initialize_launch -> start_launch -> fund -> complete/close -> claim/refund. Orquestra's PDA Finder reports 'No PDA accounts found in this IDL' for this program — its Anchor-IDL generator drops EVERY seed because none are declared in IDL pda.seeds; they exist only as #[account(seeds=...)] in v07 source. Gecko recovers them from source. (Version gotcha: Orquestra labels this 'IDL v8' — its own upload counter — but the program is v07_launchpad, NOT v08 moonDJU...; recipes verified against v07 + real mainnet accounts.) Follow-ons needing new seed kinds: token_metadata (constant-pubkey Metaplex seed + cross-program owner), the SPL ATA vaults, and complete_launch's caller-supplied foreign programs (DAMM v2/Squads/Futarchy).",
     "pdas": {

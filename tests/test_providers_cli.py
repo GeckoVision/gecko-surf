@@ -6,23 +6,71 @@ import pytest
 
 from gecko.providers.cli import PROGRAMS, main
 
-
-def test_registry_has_meteora() -> None:
-    assert "meteora" in PROGRAMS
-    surface = PROGRAMS["meteora"]()
-    # the registered builder yields a working surface
-    out = surface.call_tool(
-        "derive_pda",
-        {
-            "account": "lb_pair",
-            "bindings": {
-                "token_x_mint": "So11111111111111111111111111111111111111112",
-                "token_y_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-                "bin_step": 4,
-            },
+# Each servable program: (name, expected program_id, orquestra slug, a known derive_pda
+# case → real mainnet address). These reuse the ground truth pinned in each program's own
+# test module; here we prove the *registry-built* surface derives them (servable, end to
+# end through PROGRAMS[...]()).
+_SERVABLE = {
+    "meteora": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "slug": "v48gsz901w84zriqe0elsl",
+        "account": "lb_pair",
+        "bindings": {
+            "token_x_mint": "So11111111111111111111111111111111111111112",
+            "token_y_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "bin_step": 4,
         },
+        "address": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
+    },
+    "pumpfun": {
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "slug": "6i6q26bmm46b89xlxo1kv",
+        "account": "bonding_curve",
+        "bindings": {"mint": "8zN8yA21ZGyKRWoxeYqyb2XquHPjVa31Bpxj1bC5pump"},
+        "address": "EExN5XXyaaE3G3w93WdKbJgMUAH3sFgLJBsg5crNp3tH",
+    },
+    "ore": {
+        "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+        "slug": "6alwvs9936laepljczqumb",
+        "account": "config",
+        "bindings": {},
+        "address": "9c9X7aDRAF41faiDs94ELjT19UrGnn72wBW9hPsS4Awy",
+    },
+    "metadao_ico": {
+        "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
+        "slug": "krhmrxpy2fgwn3q0whic7",
+        "account": "launch",
+        "bindings": {"base_mint": "Hszh6zhqhfR6vv27dQi5rARjvdXyaobGcVhj3t73meta"},
+        "address": "1AEZZsShFCnC8UUetqk9hGby66Q5mgyszDHdXjAmdYe",
+    },
+}
+
+
+def test_registry_has_all_four_programs() -> None:
+    # Meteora plus the three wired this sprint (pumpfun/ore/metadao_ico).
+    assert set(PROGRAMS) == set(_SERVABLE)
+
+
+@pytest.mark.parametrize("name", sorted(_SERVABLE))
+def test_registered_surface_is_servable(name: str) -> None:
+    spec = _SERVABLE[name]
+    surface = PROGRAMS[name]()  # the registered builder yields a working surface
+    assert surface.program_id == spec["program_id"]
+    assert surface.project_base_url == f"https://api.orquestra.dev/api/{spec['slug']}"
+    # every servable program exposes the derive + graph tools
+    tool_names = {t["name"] for t in surface.list_tools()}
+    assert {"get_program_graph", "derive_pda"} <= tool_names
+    # …and derives the known real mainnet address, first call correct
+    out = surface.call_tool(
+        "derive_pda", {"account": spec["account"], "bindings": spec["bindings"]}
     )
-    assert out["address"] == "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
+    assert out["address"] == spec["address"]
+
+
+def test_meteora_keeps_its_plan_intent() -> None:
+    # Wiring the derivation-only programs must not disturb Meteora's plan_swap intent.
+    tool_names = {t["name"] for t in PROGRAMS["meteora"]().list_tools()}
+    assert "plan_swap" in tool_names
 
 
 def test_program_is_required() -> None:
@@ -33,6 +81,14 @@ def test_program_is_required() -> None:
 def test_unknown_program_rejected() -> None:
     with pytest.raises(SystemExit):
         main(["--program", "nope"])  # not in the registry
+
+
+@pytest.mark.parametrize("name", ["pumpfun", "ore", "metadao_ico"])
+def test_new_programs_are_valid_program_choices(name: str) -> None:
+    # `gecko-orquestra --program <p> --help` exits 0 → argparse accepts it as a choice.
+    with pytest.raises(SystemExit) as exc:
+        main(["--program", name, "--help"])
+    assert exc.value.code == 0
 
 
 def test_gecko_orquestra_subcommand_dispatches() -> None:
