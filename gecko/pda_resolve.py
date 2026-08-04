@@ -39,7 +39,7 @@ from .pda import (
     VariablePdaSeedNode,
     derive_pda,
 )
-from .pda_testkit import LOCAL_RPC, RpcCall, _default_rpc_call
+from .rpc import LOCAL_RPC, RpcCall, default_rpc_call as _default_rpc_call
 
 __all__ = [
     "ResolveError",
