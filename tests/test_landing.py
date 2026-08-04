@@ -17,12 +17,16 @@ import pytest
 from gecko.landing import (
     ASSOCIATED_TOKEN_PROGRAM_ID,
     COMPUTE_BUDGET_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
     LandingError,
     assemble_unsigned_tx,
+    close_account_ix,
     compute_budget_ixs,
     create_idempotent_ata_ix,
     orquestra_instruction_to_solders,
     simulate_landing_bundle,
+    wrap_sol_ixs,
 )
 
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -94,6 +98,35 @@ def test_orquestra_instruction_missing_fields_raises() -> None:
         orquestra_instruction_to_solders({"programId": PUMP})
 
 
+def test_wrap_sol_ixs_transfer_then_sync_native() -> None:
+    # the wSOL wrap pair: System Transfer(lamports) into the ATA, then SyncNative
+    transfer, sync = wrap_sol_ixs(USER, ASSOCIATED_USER, 1_000_000)
+    assert str(transfer.program_id) == SYSTEM_PROGRAM_ID
+    import struct as _struct
+
+    index, lamports = _struct.unpack("<IQ", bytes(transfer.data))
+    assert index == 2 and lamports == 1_000_000  # SystemInstruction::Transfer
+    assert transfer.accounts[0].is_signer  # funding owner
+    assert str(transfer.accounts[1].pubkey) == ASSOCIATED_USER
+    assert str(sync.program_id) == TOKEN_PROGRAM_ID
+    assert bytes(sync.data) == bytes([17])  # SyncNative
+    assert str(sync.accounts[0].pubkey) == ASSOCIATED_USER
+
+
+def test_wrap_sol_ixs_rejects_non_positive_amount() -> None:
+    with pytest.raises(LandingError):
+        wrap_sol_ixs(USER, ASSOCIATED_USER, 0)
+
+
+def test_close_account_ix_shape() -> None:
+    ix = close_account_ix(ASSOCIATED_USER, USER, USER)
+    assert str(ix.program_id) == TOKEN_PROGRAM_ID
+    assert bytes(ix.data) == bytes([9])  # CloseAccount
+    assert str(ix.accounts[0].pubkey) == ASSOCIATED_USER
+    assert str(ix.accounts[1].pubkey) == USER  # destination gets lamports + rent
+    assert ix.accounts[2].is_signer  # close authority
+
+
 # --- assembly: the prelude is really in the bundle ---------------------------
 
 
@@ -109,6 +142,35 @@ def test_assemble_bundle_contains_ata_prelude_before_buy() -> None:
     assert COMPUTE_BUDGET_PROGRAM_ID in programs
     # ordered: compute-budget…, ATA, then the buy — the ATA lands before the buy uses it
     assert programs.index(ASSOCIATED_TOKEN_PROGRAM_ID) < programs.index(PUMP)
+
+
+def test_simulate_landing_bundle_places_postludes_after_program_ix() -> None:
+    # the postlude seam (the wSOL CloseAccount unwrap) lands AFTER the program ix
+    buy_ix = orquestra_instruction_to_solders(CANNED_BUY)
+    ata_ix = create_idempotent_ata_ix(USER, USER, MINT, ASSOCIATED_USER, TOKEN_2022)
+    close_ix = close_account_ix(ASSOCIATED_USER, USER, USER)
+    sim_txs: list[str] = []
+
+    def rpc(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return {"result": {"value": {"lamports": 5_000_000}}}
+        assert method == "simulateTransaction"
+        sim_txs.append(params[0])
+        return {"result": {"value": {"err": None, "unitsConsumed": 10_000, "logs": []}}}
+
+    receipt, _ = simulate_landing_bundle(
+        buy_ix,
+        [ata_ix],
+        USER,
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=rpc,
+        postlude_ixs=[close_ix],
+    )
+    assert receipt.status == "pass"
+    programs = _instruction_programs(sim_txs[-1])
+    # …, ATA, buy, then the Token-program postlude last
+    assert programs.index(PUMP) == len(programs) - 2
+    assert programs[-1] == TOKEN_PROGRAM_ID
 
 
 # --- two-pass simulate: the a-ha (pass) and the differential (3012) ----------
@@ -193,7 +255,9 @@ def test_no_sign_or_broadcast_path_in_landing_layer() -> None:
     sources = [
         root / "landing.py",
         root / "pump_curve.py",
+        root / "meteora_math.py",
         root / "providers" / "pumpfun_landing.py",
+        root / "providers" / "meteora_landing.py",
     ]
     forbidden = {
         "sendTransaction",
