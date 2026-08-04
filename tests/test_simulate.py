@@ -7,6 +7,7 @@ string (the future corpus vocabulary), never a fabricated number.
 
 from __future__ import annotations
 
+import urllib.error
 from typing import Any
 
 import pytest
@@ -184,3 +185,18 @@ def test_default_build_call_raises_when_no_tx_field(
             rpc_call=_sim_rpc(value),
             # no build_call → uses the default which POSTs build_url
         )
+
+
+def test_default_build_call_wraps_http_error_as_simulate_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a 403 from the builder (auth/bad payload) is a build-transport failure, not a
+    # program revert — it must become a typed SimulateError carrying the status but no body
+    def fake_post(url: str, body: bytes) -> dict[str, Any]:
+        raise urllib.error.HTTPError(url, 403, "Forbidden", hdrs=None, fp=None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("gecko.simulate._http_post_json", fake_post)
+    value = {"err": None, "unitsConsumed": 1, "logs": []}
+    with pytest.raises(SimulateError) as exc:
+        simulate(PLAN, rpc_url="http://127.0.0.1:8899", rpc_call=_sim_rpc(value))
+    assert "403" in str(exc.value)

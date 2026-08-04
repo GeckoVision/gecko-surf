@@ -20,6 +20,7 @@ a stable vocabulary (the future D2 corpus is CATEGORICAL-only — out of scope h
 from __future__ import annotations
 
 import json
+import urllib.error
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Sequence
 
@@ -126,7 +127,16 @@ def _default_build_call(plan: Mapping[str, Any]) -> str:
             "feePayer": plan.get("feePayer"),
         }
     ).encode()
-    resp = _http_post_json(url, body)
+    try:
+        resp = _http_post_json(url, body)
+    except urllib.error.HTTPError as exc:
+        # A build-transport failure (auth, bad payload) — NOT a program revert. Surface
+        # the status + url only; never echo the request/response body (redaction posture).
+        raise SimulateError(
+            f"build POST to {url} failed: HTTP {exc.code} {exc.reason}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise SimulateError(f"build POST to {url} failed: {exc.reason}") from exc
     for key in ("transaction", "tx", "serializedTransaction"):
         tx = resp.get(key)
         if isinstance(tx, str) and tx:
