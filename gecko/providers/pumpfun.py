@@ -81,6 +81,10 @@ def plan_buy(
     ``fee_recipient`` is returned under ``unresolved`` — an honest gap, not a guess
     (see the module docstring). The ``accounts`` dict therefore carries the 15 accounts
     Gecko can supply first-call-correct; the caller/``/build`` adds ``fee_recipient``.
+
+    The returned ``simulate`` block closes the loop two ways: Path B (self-serve — a dev
+    fills ``fee_recipient``, POSTs ``build_url``, runs ``simulateTransaction``) or Path A
+    (hand the plan, with ``fee_recipient``, to the surface's generic ``simulate`` tool).
     """
     missing = [
         k
