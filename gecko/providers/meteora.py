@@ -7,8 +7,15 @@ its program id, the recovered PDA recipes, the Orquestra project's build base, a
 
 The PDA recipes below are the program's **public on-chain seed facts** for Meteora DLMM
 (`LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`) — authored as data (not copied source), so
-this ships license-clean. `lb_pair = [min(x,y), max(x,y), bin_step]`, `reserve = [lb_pair,
-token_mint]`, `oracle = [b"oracle", lb_pair]`.
+this ships license-clean. `lb_pair = [min(x,y), max(x,y), bin_step, base_factor]`,
+`reserve = [lb_pair, token_mint]`, `oracle = [b"oracle", lb_pair]`.
+
+The `lb_pair` recipe carries a 4th seed — `base_factor:u16` (LE) — since the dlmm-sdk
+deprecated the 3-seed scheme (`derive_lb_pair_pda`) for `derive_lb_pair_pda2` in PR #49
+(merged 2024-05-09). base_factor selects among fee-tier pools that share the same
+(mint-pair, bin_step), so it is NOT derivable from the mints — the caller MUST supply the
+fee tier. Dropping it silently derives the WRONG pool for every pool created after that
+upgrade (source: MeteoraAg/dlmm-sdk `commons/src/pda.rs::derive_lb_pair_pda2`).
 
 Run it (published 0.9.3+):
     # stdio, add straight into Claude Code:
@@ -37,13 +44,20 @@ def _swap_plan(
     surface: OrquestraProgramSurface, args: Mapping[str, Any]
 ) -> dict[str, str]:
     """Derive the full account set for a swap — lb_pair first (the root), then the leaves."""
-    x, y, bin_step = (
+    x, y, bin_step, base_factor = (
         str(args["input_mint"]),
         str(args["output_mint"]),
         int(args["bin_step"]),
+        int(args["base_factor"]),
     )
     lb_pair = surface.derive(
-        "lb_pair", {"token_x_mint": x, "token_y_mint": y, "bin_step": bin_step}
+        "lb_pair",
+        {
+            "token_x_mint": x,
+            "token_y_mint": y,
+            "bin_step": bin_step,
+            "base_factor": base_factor,
+        },
     )
     return {
         "lb_pair": lb_pair,  # ← the address Orquestra can't derive
@@ -57,12 +71,16 @@ _SWAP = Intent(
     name="plan_swap",
     instruction="swap",
     description=(
-        "Plan a Meteora DLMM swap from two token mints. Give input_mint, output_mint and "
-        "bin_step; Gecko derives the pool (lb_pair) and its reserves/oracle — the accounts "
-        "Orquestra's IDL can't derive — and returns the plan pointing at Orquestra's swap "
-        "builder to execute."
+        "Plan a Meteora DLMM swap from two token mints. Give input_mint, output_mint, "
+        "bin_step and base_factor; Gecko derives the pool (lb_pair) and its reserves/oracle "
+        "— the accounts Orquestra's IDL can't derive — and returns the plan pointing at "
+        "Orquestra's swap builder to execute. base_factor is the pool's fee tier: multiple "
+        "pools share the same (mint-pair, bin_step) at different base_factors, so it is NOT "
+        "inferable from the mints — you must pick the fee tier (read it off the target "
+        "pool's on-chain parameters, or the Meteora pair list). Omit it and Gecko would "
+        "derive a DIFFERENT, wrong pool for any pool created after the 2024-05 SDK upgrade."
     ),
-    inputs=("input_mint", "output_mint", "bin_step"),
+    inputs=("input_mint", "output_mint", "bin_step", "base_factor"),
     plan=_swap_plan,
 )
 

@@ -15,12 +15,15 @@ _SERVABLE = {
         "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
         "slug": "v48gsz901w84zriqe0elsl",
         "account": "lb_pair",
+        # A real CURRENT (post-May-2024, require_base_factor_seed == 1) mainnet pool —
+        # derived via the 4-seed `derive_lb_pair_pda2` scheme (bin_step + base_factor).
         "bindings": {
-            "token_x_mint": "So11111111111111111111111111111111111111112",
-            "token_y_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            "bin_step": 4,
+            "token_x_mint": "Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump",
+            "token_y_mint": "So11111111111111111111111111111111111111112",
+            "bin_step": 250,
+            "base_factor": 4000,
         },
-        "address": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
+        "address": "EtAdVRLFH22rjWh3mcUasKFF27WtHhsaCvK27tPFFWig",
     },
     "pumpfun": {
         "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
