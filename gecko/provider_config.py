@@ -55,6 +55,26 @@ def seed_from_spec(spec: dict) -> PdaSeed:
                 else str(raw).encode()
             )
             return ConstantPdaSeedNode(value, encoding="bytes")
+        if encoding == "pubkey":
+            # A hardcoded program/account address baked into a seed (e.g. the SPL
+            # Token program id in an ATA recipe, or the Token Metadata program in a
+            # Metaplex metadata PDA). The raw seed bytes are just the 32-byte pubkey;
+            # decode the base58 string here. Solders is behind the [solana] extra, so
+            # import it lazily to keep the module import-light (mirrors gecko.pda).
+            try:
+                from solders.pubkey import Pubkey
+            except ImportError as exc:  # pragma: no cover - needs the [solana] extra
+                raise ConfigError(
+                    "constant pubkey seed needs the 'solana' extra: install with "
+                    "`pip install gecko-surf[solana]` (or `uv add solders`)"
+                ) from exc
+            try:
+                value = bytes(Pubkey.from_string(str(raw)))
+            except Exception as exc:  # solders raises a ValueError-family type
+                raise ConfigError(
+                    f"constant pubkey seed value {raw!r} is not a valid base58 pubkey"
+                ) from exc
+            return ConstantPdaSeedNode(value, encoding="pubkey")
         raise ConfigError(f"constant seed encoding {encoding!r} unsupported")
     if kind == "variable":
         width = int(spec["width"]) if "width" in spec else None

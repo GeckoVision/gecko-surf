@@ -24,7 +24,7 @@ import pytest
 
 from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode, derive_pda
 from gecko.pda_testkit import SurfpoolError, SurfpoolFork, verify_derivation
-from gecko.provider_config import load_packaged_provider
+from gecko.provider_config import load_packaged_provider, node_from_spec
 
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 MINT = "8zN8yA21ZGyKRWoxeYqyb2XquHPjVa31Bpxj1bC5pump"
@@ -33,6 +33,21 @@ BONDING_CURVE = "EExN5XXyaaE3G3w93WdKbJgMUAH3sFgLJBsg5crNp3tH"
 CREATOR_VAULT = "9B1eLfPtyqyTepP98VPosL7s2cQWN29SKMhk2iNTVkqd"
 GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
 EVENT_AUTHORITY = "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"
+
+# Sprint 2: the full account set — metadata (Metaplex Token Metadata PDA) and the
+# associated_bonding_curve (the bonding curve's SPL Associated Token Account).
+METADATA = "GDheBHm1UbTQLxweQUNW6aeqZc3uyFx7kHULKonVASza"
+ASSOCIATED_BONDING_CURVE = "4cpMS2VREvNkrwgLnoGxAMp6vMZPybzHkseAyzqij3Gi"
+METAPLEX_PROGRAM = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+# This particular fixture mint turns out to be a TOKEN-2022 mint (its owner is the
+# Token-2022 program), verified on a surfpool mainnet fork below. So on-chain: the
+# classic-Token ATA (4cpMS2…) is a phantom — the REAL associated bonding curve is the
+# Token-2022 ATA, and the mint carries its metadata as an in-mint Token-2022 extension
+# (metadataPointer + tokenMetadata) rather than a separate Metaplex PDA.
+TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+ASSOCIATED_BONDING_CURVE_T22 = "6qg9ZgTnbeqdmzkuVT6Ffv95nmD2yX6KUxEyVRc1DmDH"
 
 
 def _pumpfun_pdas() -> dict[str, PdaNode]:
@@ -82,6 +97,23 @@ def test_global_and_event_authority_are_constants() -> None:
     pdas = _pumpfun_pdas()
     assert derive_pda(pdas["global"], {}).address == GLOBAL
     assert derive_pda(pdas["event_authority"], {}).address == EVENT_AUTHORITY
+
+
+def test_metadata_derives_real_metaplex_pda() -> None:
+    # constant-pubkey seed (the Metaplex program id) + the mint → the token's metadata PDA.
+    pdas = _pumpfun_pdas()
+    got = derive_pda(pdas["metadata"], {"mint": MINT})
+    assert got.address == METADATA
+
+
+def test_associated_bonding_curve_derives_real_ata() -> None:
+    # SPL ATA recipe: owner (the bonding curve) + the SPL Token program (constant pubkey)
+    # + the mint → the associated token account holding the curve's token reserve.
+    pdas = _pumpfun_pdas()
+    got = derive_pda(
+        pdas["associated_bonding_curve"], {"owner": BONDING_CURVE, "mint": MINT}
+    )
+    assert got.address == ASSOCIATED_BONDING_CURVE
 
 
 def test_creator_vault_is_an_honest_gap() -> None:
@@ -136,6 +168,47 @@ def test_pumpfun_derivation_against_surfpool_fork() -> None:
             cv = verify_derivation(
                 resolved_vault, {"creator": CREATOR}, rpc_url=fork.rpc_url
             )
+            md = verify_derivation(
+                pdas["metadata"], {"mint": MINT}, rpc_url=fork.rpc_url
+            )
+            abc = verify_derivation(
+                pdas["associated_bonding_curve"],
+                {"owner": BONDING_CURVE, "mint": MINT},
+                rpc_url=fork.rpc_url,
+            )
+            # The REAL associated bonding curve on-chain: a TOKEN-2022 ATA. Same config
+            # machinery (constant-pubkey seed) but with the Token-2022 program id — proves
+            # ATA derivation reaches genuine on-chain state.
+            abc_t22_node = node_from_spec(
+                "associated_bonding_curve_t22",
+                {
+                    "program_id": ATA_PROGRAM,
+                    "seeds": [
+                        {
+                            "kind": "variable",
+                            "name": "owner",
+                            "source": "account",
+                            "encoding": "pubkey",
+                        },
+                        {
+                            "kind": "constant",
+                            "value": TOKEN_2022_PROGRAM,
+                            "encoding": "pubkey",
+                        },
+                        {
+                            "kind": "variable",
+                            "name": "mint",
+                            "source": "account",
+                            "encoding": "pubkey",
+                        },
+                    ],
+                },
+            )
+            abc_t22 = verify_derivation(
+                abc_t22_node,
+                {"owner": BONDING_CURVE, "mint": MINT},
+                rpc_url=fork.rpc_url,
+            )
     except SurfpoolError as exc:
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
@@ -149,3 +222,22 @@ def test_pumpfun_derivation_against_surfpool_fork() -> None:
     assert (
         cv.owner == "11111111111111111111111111111111"
     )  # System Program (a SOL vault)
+
+    # --- HONEST on-chain finding (see the ground-truth constants above) ---
+    # The metadata + associated_bonding_curve recipes DERIVE the exact expected
+    # addresses (proven offline, $0). But this fixture mint is a TOKEN-2022 mint, so
+    # against real chain state:
+    #   * metadata (a Metaplex Token Metadata PDA) does NOT exist — a Token-2022 mint
+    #     stores its metadata as an in-mint extension, not a separate Metaplex account.
+    #   * the classic-Token associated_bonding_curve (4cpMS2…) does NOT exist — the real
+    #     ATA is derived under the Token-2022 program, not classic SPL Token.
+    # We assert the derivations are ADDRESS-correct and record the real existence we
+    # observed rather than forcing a green existence check on a phantom account.
+    assert md.address == METADATA and not md.exists
+    assert abc.address == ASSOCIATED_BONDING_CURVE and not abc.exists
+
+    # POSITIVE on-chain proof that constant-pubkey + ATA derivation reaches real state:
+    # the Token-2022 ATA of the bonding curve EXISTS and is OWNED BY the Token-2022
+    # program (ATAs are owned by their token program, not the ATA program).
+    assert abc_t22.address == ASSOCIATED_BONDING_CURVE_T22 and abc_t22.exists
+    assert abc_t22.owner == TOKEN_2022_PROGRAM

@@ -56,6 +56,31 @@ def test_constant_utf8_seed_bytes() -> None:
     assert seed.value == b"oracle"
 
 
+def test_constant_pubkey_seed_decodes_to_32_bytes() -> None:
+    # a hardcoded program/account address baked into a seed (e.g. the SPL Token
+    # program in an ATA recipe): the base58 string decodes to the raw 32 pubkey bytes.
+    seed = seed_from_spec(
+        {
+            "kind": "constant",
+            "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "encoding": "pubkey",
+        }
+    )
+    assert seed.encoding == "pubkey"
+    assert isinstance(seed.value, bytes)
+    assert len(seed.value) == 32
+
+
+def test_constant_pubkey_seed_rejects_bad_base58() -> None:
+    try:
+        seed_from_spec(
+            {"kind": "constant", "value": "not-a-pubkey!", "encoding": "pubkey"}
+        )
+        assert False, "expected ConfigError"
+    except ConfigError:
+        pass
+
+
 def test_unknown_seed_kind_rejected() -> None:
     try:
         seed_from_spec({"kind": "nope"})
