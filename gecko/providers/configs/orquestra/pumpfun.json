@@ -5,8 +5,8 @@
   "program": {
     "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
     "orquestra_project": "6i6q26bmm46b89xlxo1kv",
-    "intents": [],
-    "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; no execute URL wired yet (derivation-only). Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts. Pump tokens may be Token-2022; associated_bonding_curve is parameterized on token_program, which the caller supplies per-mint (Gecko will resolve it from the mint owner in a later sprint).",
+    "intents": ["plan_buy"],
+    "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; executes via the wired Orquestra project's /instructions/buy/build. Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts. Pump tokens may be Token-2022; the ATA recipes are parameterized on token_program, which Gecko resolves from the mint owner (read_account_owner). fee_recipient is NOT modelled as a PDA/resolver: the on-chain Global carries BOTH a single `fee_recipient` pubkey field (data offset 41) AND a `fee_recipients: [pubkey;7]` array, populated with different valid recipients — which one `buy` validates against is not determinable from the surface, so plan_buy flags fee_recipient as unresolved (honest gap) rather than guess. fee_config = PDA under the fee program pfeeUxB6...; associated_user = the buyer's ATA.",
     "pdas": {
       "global": {
         "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
@@ -59,6 +59,21 @@
           {"kind": "variable", "name": "owner", "source": "account", "encoding": "pubkey"},
           {"kind": "variable", "name": "token_program", "source": "account", "encoding": "pubkey"},
           {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "associated_user": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {"kind": "variable", "name": "owner", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "token_program", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "fee_config": {
+        "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+        "seeds": [
+          {"kind": "constant", "value": "fee_config", "encoding": "utf8"},
+          {"kind": "constant", "value": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", "encoding": "pubkey"}
         ]
       }
     }

@@ -55,15 +55,16 @@ def _pumpfun_pdas() -> dict[str, PdaNode]:
 # --- servable: the config now carries an orquestra_project, so it builds a surface ---
 
 
-def test_pumpfun_is_servable_derivation_only() -> None:
-    # Sprint 1 wired the slug → build_surface_from_config succeeds; the surface exposes
-    # get_program_graph + derive_pda (no plan intents yet — those land in a later sprint).
+def test_pumpfun_is_servable_with_plan_buy() -> None:
+    # Sprint 1 wired the slug; Sprint 3 adds the plan_buy intent. The surface exposes
+    # get_program_graph + derive_pda + plan_buy.
     from gecko.providers.cli import PROGRAMS
 
     _, apis = load_packaged_provider("orquestra")
     program = apis["pumpfun"].program
     assert program is not None
     assert program.orquestra_project == "6i6q26bmm46b89xlxo1kv"
+    assert program.intents == ("plan_buy",)
 
     surface = PROGRAMS["pumpfun"]()
     assert surface.program_id == PUMP
@@ -72,7 +73,15 @@ def test_pumpfun_is_servable_derivation_only() -> None:
         == "https://api.orquestra.dev/api/6i6q26bmm46b89xlxo1kv"
     )
     tool_names = {t["name"] for t in surface.list_tools()}
-    assert tool_names == {"get_program_graph", "derive_pda"}
+    assert tool_names == {"get_program_graph", "derive_pda", "plan_buy"}
+    plan_tool = next(t for t in surface.list_tools() if t["name"] == "plan_buy")
+    assert set(plan_tool["inputSchema"]["required"]) == {
+        "mint",
+        "user",
+        "amount",
+        "max_sol_cost",
+        "track_volume",
+    }
     out = surface.call_tool(
         "derive_pda", {"account": "bonding_curve", "bindings": {"mint": MINT}}
     )
