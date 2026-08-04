@@ -56,8 +56,9 @@ def _pumpfun_pdas() -> dict[str, PdaNode]:
 
 
 def test_pumpfun_is_servable_with_plan_buy() -> None:
-    # Sprint 1 wired the slug; Sprint 3 adds the plan_buy intent. The surface exposes
-    # get_program_graph + derive_pda + plan_buy.
+    # Sprint 1 wired the slug; Sprint 3 adds the plan_buy intent; Delivery 1 adds the
+    # generic simulate tool. The surface exposes
+    # get_program_graph + derive_pda + plan_buy + simulate.
     from gecko.providers.cli import PROGRAMS
 
     _, apis = load_packaged_provider("orquestra")
@@ -73,7 +74,7 @@ def test_pumpfun_is_servable_with_plan_buy() -> None:
         == "https://api.orquestra.dev/api/6i6q26bmm46b89xlxo1kv"
     )
     tool_names = {t["name"] for t in surface.list_tools()}
-    assert tool_names == {"get_program_graph", "derive_pda", "plan_buy"}
+    assert tool_names == {"get_program_graph", "derive_pda", "plan_buy", "simulate"}
     plan_tool = next(t for t in surface.list_tools() if t["name"] == "plan_buy")
     assert set(plan_tool["inputSchema"]["required"]) == {
         "mint",

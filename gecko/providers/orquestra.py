@@ -15,12 +15,25 @@ each.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
 
 from ..pda import PdaDerivationError, PdaNode, derive_pda
+from ..rpc import RpcError
+
+# Path A: this surface can also close a built plan into a Receipt. Imported at module
+# level (not lazily) so the offline test can monkeypatch `gecko.providers.orquestra.simulate`
+# and assert the tool routes to the engine without any network.
+from ..simulate import SimulateError, simulate
 
 __all__ = ["Intent", "OrquestraProgramSurface"]
+
+# The honesty caveat stamped on every Receipt this surface returns.
+_SIMULATE_NOTE = (
+    "A Receipt says whether this tx would LAND against a state snapshot (fork/RPC — NOT "
+    "mainnet, NOT a price/slippage prediction). Gecko simulates only; it never signs or "
+    "broadcasts. Nothing is stored."
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +81,7 @@ class OrquestraProgramSurface:
         tools = [_GRAPH_TOOL, _DERIVE_TOOL]
         for intent in self.intents.values():
             tools.append(_intent_tool(intent))
+        tools.append(_SIMULATE_TOOL)
         return tools
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
@@ -83,10 +97,46 @@ class OrquestraProgramSurface:
             return self._derive_tool(
                 str(args.get("account", "")), args.get("bindings") or {}
             )
+        if name == "simulate":
+            return self._simulate_tool(args)
         intent = self.intents.get(name)
         if intent is not None:
             return self._plan(intent, args)
         return {"error": f"unknown tool {name!r}"}
+
+    def _simulate_tool(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Path A: build the supplied plan and simulate it into a Receipt.
+
+        Generic — any program's built plan (``instruction``/``accounts``/``args``/
+        ``feePayer``/``build_url``) can be simulated, not just pump. A supplied
+        ``fee_recipient`` (pump's honest gap) is merged into ``accounts`` here; Gecko
+        never guesses it. Uses the engine's default transport — never signs/broadcasts.
+        """
+        plan = args.get("plan")
+        if not isinstance(plan, Mapping):
+            return {"error": "simulate needs a built `plan` object"}
+        rpc_url = args.get("rpc_url")
+        if not isinstance(rpc_url, str) or not rpc_url:
+            return {
+                "error": "simulate needs an `rpc_url` (surfpool fork or mainnet RPC)"
+            }
+
+        accounts = dict(plan.get("accounts") or {})
+        fee_recipient = args.get("fee_recipient")
+        if fee_recipient:
+            accounts["fee_recipient"] = fee_recipient
+        merged_plan = {**plan, "accounts": accounts}
+        track = list(args.get("track") or ())
+
+        try:
+            receipt = simulate(merged_plan, rpc_url=rpc_url, track=track)
+        except (SimulateError, RpcError) as exc:
+            return {"error": str(exc)}
+        return {
+            "instruction": plan.get("instruction"),
+            "receipt": asdict(receipt),
+            "note": _SIMULATE_NOTE,
+        }
 
     def _derive_tool(self, account: str, bindings: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -146,6 +196,30 @@ _DERIVE_TOOL = {
             "bindings": {"type": "object"},
         },
         "required": ["account"],
+        "additionalProperties": False,
+    },
+}
+
+
+_SIMULATE_TOOL = {
+    "name": "simulate",
+    "description": (
+        "Simulate a built plan into a Receipt: does this tx LAND against a state snapshot, "
+        "with compute units + a categorical revert class if not. Give the plan (from a "
+        "plan_* tool, with `fee_recipient` supplied), an `rpc_url` (surfpool fork or "
+        "mainnet RPC), and optional `track` accounts for a SOL delta. Gecko simulates only "
+        "— never signs or broadcasts; the Receipt is a fork/RPC snapshot, NOT mainnet or a "
+        "price prediction, and is stored nowhere."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "plan": {"type": "object"},
+            "rpc_url": {"type": "string"},
+            "fee_recipient": {"type": "string"},
+            "track": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["plan", "rpc_url"],
         "additionalProperties": False,
     },
 }

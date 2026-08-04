@@ -24,51 +24,33 @@ never account payload data (control-plane invariant #1).
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import signal
 import subprocess
 import time
-import urllib.request
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from .pda import PdaNode, derive_pda
+
+# The JSON-RPC transport now lives in the domain-neutral gecko.rpc module (layering fix).
+# Re-exported here as back-compat so existing callers (pda_resolve, pumpfun, tests) that
+# import RpcCall/LOCAL_RPC/_default_rpc_call from pda_testkit keep working unchanged.
+from .rpc import LOCAL_RPC, RpcCall, default_rpc_call as _default_rpc_call
 
 __all__ = [
     "DerivationCheck",
     "RpcCall",
+    "LOCAL_RPC",
     "verify_derivation",
     "SurfpoolFork",
     "SurfpoolError",
 ]
 
-# A JSON-RPC caller: (rpc_url, method, params) -> the parsed response dict.
-RpcCall = Callable[[str, str, list[Any]], dict[str, Any]]
-
-LOCAL_RPC = "http://127.0.0.1:8899"
-
 
 class SurfpoolError(Exception):
     """Raised when the surfpool fork can't be started or never becomes ready."""
-
-
-def _default_rpc_call(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
-    """POST a JSON-RPC request to a LOCAL surfpool validator.
-
-    This deliberately targets loopback (the local fork), so the engine's anti-SSRF
-    fetch rules — which guard ingestion of untrusted *specs* — do not apply here; this
-    is our own test validator, not fetched content.
-    """
-    body = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    ).encode()
-    req = urllib.request.Request(
-        rpc_url, data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - loopback only
-        return json.loads(resp.read())  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)

@@ -81,6 +81,10 @@ def plan_buy(
     ``fee_recipient`` is returned under ``unresolved`` — an honest gap, not a guess
     (see the module docstring). The ``accounts`` dict therefore carries the 15 accounts
     Gecko can supply first-call-correct; the caller/``/build`` adds ``fee_recipient``.
+
+    The returned ``simulate`` block closes the loop two ways: Path B (self-serve — a dev
+    fills ``fee_recipient``, POSTs ``build_url``, runs ``simulateTransaction``) or Path A
+    (hand the plan, with ``fee_recipient``, to the surface's generic ``simulate`` tool).
     """
     missing = [
         k
@@ -150,6 +154,20 @@ def plan_buy(
         },
         "feePayer": user,
         "build_url": BUILD_URL,
+        # Path B (self-serve): a dev fills fee_recipient, POSTs build_url, then runs the
+        # simulate loop themselves. Path A: hand this plan (fee_recipient merged) to
+        # Gecko's `simulate` tool. Either way Gecko never signs or broadcasts.
+        "simulate": {
+            "after": "fill `fee_recipient` (see `unresolved`) then POST build_url to get the tx",
+            "rpc_method": "simulateTransaction",
+            "params_note": (
+                "base64 tx + {sigVerify:false, replaceRecentBlockhash:true, "
+                "commitment:'processed'}"
+            ),
+            "gecko_tool": (
+                "simulate  # Path A: hand this plan (with fee_recipient) to Gecko's simulate tool"
+            ),
+        },
     }
 
 

@@ -69,12 +69,17 @@ Each sprint ends in a **demoable deliverable**. Effort: S/M/L. Founder-gated ite
 **Deliverable:** Pump.fun's **complete `buy` account set** derives — including `creator_vault` via a live read — proven on surfpool.
 **Fit:** unblocks executable plans; delivers the founder's "provide everything so the call runs e2e."
 
-### Sprint 3 — Executable + simulate *(the runnable, verified call)* · M–L
+### Sprint 3 — Executable + simulate *(the runnable, verified call)* · M–L ✅ sim DONE (Delivery 1)
 **Goal:** intent → complete runnable plan → Orquestra builds → surfpool **simulates it would land**.
 - Executable intents (Pump.fun `buy`/`sell` as reference) that assemble the full account set + point at `/instructions/:name/build`.
 - Generalize the surfpool harness to **`simulateTransaction`** the built tx (spec Phase 4) — $0, no signing, the "it lands" proof.
 **Deliverable:** `plan_buy` on Pump.fun → Orquestra-built tx → surfpool sim passes. The reusable "derive → build → simulate" loop for any program.
 **Fit:** the core of "simulate before you spend" (P3 local rung); the engine behind the flagship demo.
+**Delivery 1 (done):** the `simulate → Receipt` engine landed — `gecko/rpc.py` (canonical
+transport, layering fix) + `gecko/simulate.py` (the Receipt: land/no-land, categorical
+`revert_class`, compute units, best-effort SOL delta). Path A = the generic `simulate` MCP
+tool; Path B = `plan_buy`'s self-serve `simulate` recipe. `simulateTransaction` only, never
+signs, Receipt returned never stored. See `docs/receipt.md`.
 
 ### Sprint 4 — The reusable Orquestra catalog *(discovery)* · L
 **Goal:** point at Orquestra → a browsable catalog of **agent-ready** program surfaces; comprehend-on-demand.
