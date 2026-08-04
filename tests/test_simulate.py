@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from gecko.simulate import (
+    BuiltTx,
     Receipt,
     SimulateError,
     classify_revert,
@@ -28,13 +29,17 @@ PLAN = {
 }
 
 
-def _build_ok(_plan: Any) -> str:
-    return "QkFTRTY0VFg="  # any canned base64 tx
+def _build_ok(_plan: Any) -> BuiltTx:
+    return BuiltTx(tx="QkFTRTY0VFg=", encoding="base64")  # any canned tx
 
 
-def _sim_rpc(value: dict[str, Any], pre_lamports: int | None = None):
+def _sim_rpc(
+    value: dict[str, Any],
+    pre_lamports: int | None = None,
+    capture: dict[str, Any] | None = None,
+):
     """A fake rpc_call: getAccountInfo returns the pre-lamports snapshot,
-    simulateTransaction returns the given value."""
+    simulateTransaction returns the given value. ``capture`` records the sim config."""
 
     def rpc(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
         if method == "getAccountInfo":
@@ -42,6 +47,9 @@ def _sim_rpc(value: dict[str, Any], pre_lamports: int | None = None):
                 return {"result": {"value": None}}
             return {"result": {"value": {"lamports": pre_lamports}}}
         if method == "simulateTransaction":
+            if capture is not None:
+                capture["tx"] = params[0]
+                capture["config"] = params[1]
             return {"result": {"value": value}}
         raise AssertionError(f"unexpected method {method}")
 
@@ -77,6 +85,17 @@ def test_classify_insufficient_funds() -> None:
 def test_classify_account_error() -> None:
     err = {"InstructionError": [2, "AccountOwnedByWrongProgram"]}
     logs = ["Program log: AccountOwnedByWrongProgram"]
+    assert classify_revert(err, logs) == "account_error"
+
+
+def test_classify_account_not_initialized_beats_custom_code() -> None:
+    # AnchorError 3012 (associated_user AccountNotInitialized) — the log name is more
+    # actionable than the raw code, so it classifies as account_error, not custom_program_error.
+    err = {"InstructionError": [0, {"Custom": 3012}]}
+    logs = [
+        "Program log: AnchorError caused by account: associated_user. "
+        "Error Code: AccountNotInitialized. Error Number: 3012."
+    ]
     assert classify_revert(err, logs) == "account_error"
 
 
@@ -167,6 +186,47 @@ def test_network_label_propagates() -> None:
         network_label="surfpool fork (mainnet-backed — NOT mainnet)",
     )
     assert receipt.network_label == "surfpool fork (mainnet-backed — NOT mainnet)"
+
+
+def test_simulate_passes_the_built_tx_encoding_through() -> None:
+    # Orquestra returns the tx in base58; the sim config must carry THAT encoding, not a
+    # hardcoded base64 (passing the wrong encoding is a silent decode failure).
+    captured: dict[str, Any] = {}
+    value = {"err": None, "unitsConsumed": 1, "logs": []}
+    simulate(
+        PLAN,
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_sim_rpc(value, capture=captured),
+        build_call=lambda _p: BuiltTx(tx="3base58tx", encoding="base58"),
+    )
+    assert captured["tx"] == "3base58tx"
+    assert captured["config"]["encoding"] == "base58"
+
+
+def test_default_build_call_prefers_serialized_and_carries_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Orquestra returns BOTH `transaction` (oversized/unusable) and `serializedTransaction`
+    # (the real signable tx) in base58. The default builder must pick serializedTransaction
+    # and report the response's encoding.
+    def fake_post(url: str, body: bytes) -> dict[str, Any]:
+        return {
+            "transaction": "X" * 5000,  # oversized decoy
+            "serializedTransaction": "3realsignabletx",
+            "encoding": "base58",
+        }
+
+    monkeypatch.setattr("gecko.simulate._http_post_json", fake_post)
+    captured: dict[str, Any] = {}
+    value = {"err": None, "unitsConsumed": 1, "logs": []}
+    simulate(
+        PLAN,
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_sim_rpc(value, capture=captured),
+        # no build_call → exercises _default_build_call
+    )
+    assert captured["tx"] == "3realsignabletx"
+    assert captured["config"]["encoding"] == "base58"
 
 
 def test_default_build_call_raises_when_no_tx_field(

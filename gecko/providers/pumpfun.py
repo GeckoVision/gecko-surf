@@ -56,6 +56,21 @@ _FEE_RECIPIENT_NOTE = (
 )
 
 
+def _option_bool(value: Any) -> dict[str, bool]:
+    """Coerce a bool-ish value into Orquestra's ``OptionBool`` wire shape.
+
+    Pump's ``track_volume`` arg is an Anchor ``Option<bool>``, which Orquestra models as a
+    defined struct ``OptionBool { field_0: bool }`` — its ``/build`` rejects a bare ``true``
+    with "must be an object matching struct OptionBool". Accepts real bools and the string
+    forms an MCP tool passes ("true"/"false"/"1"/"0").
+    """
+    if isinstance(value, str):
+        flag = value.strip().lower() in {"true", "1", "yes"}
+    else:
+        flag = bool(value)
+    return {"field_0": flag}
+
+
 def _load_pumpfun_pdas() -> dict[str, Any]:
     _, apis = load_packaged_provider("orquestra")
     program = apis["pumpfun"].program
@@ -147,10 +162,21 @@ def plan_buy(
         "instruction": "buy",
         "accounts": accounts,
         "unresolved": {"fee_recipient": _FEE_RECIPIENT_NOTE},
+        # A real buy reverts with AnchorError 3012 (associated_user AccountNotInitialized)
+        # if the buyer doesn't already hold the token's ATA — the tx must be preceded by a
+        # create-associated-token-account-idempotent instruction (or the buyer must own it).
+        # Gecko flags this honestly rather than emit a plan that lands in a revert.
+        "preconditions": {
+            "associated_user": (
+                "must be an initialized ATA for (user, mint); if the buyer doesn't hold it, "
+                "prepend a createAssociatedTokenAccountIdempotent instruction before `buy`"
+            )
+        },
         "args": {
             "amount": bindings["amount"],
             "max_sol_cost": bindings["max_sol_cost"],
-            "track_volume": bindings["track_volume"],
+            # OptionBool wire shape Orquestra's /build requires (not a bare bool).
+            "track_volume": _option_bool(bindings["track_volume"]),
         },
         "feePayer": user,
         "build_url": BUILD_URL,
@@ -161,8 +187,8 @@ def plan_buy(
             "after": "fill `fee_recipient` (see `unresolved`) then POST build_url to get the tx",
             "rpc_method": "simulateTransaction",
             "params_note": (
-                "base64 tx + {sigVerify:false, replaceRecentBlockhash:true, "
-                "commitment:'processed'}"
+                "the tx in the encoding /build reports (Orquestra returns base58) + "
+                "{sigVerify:false, replaceRecentBlockhash:true, commitment:'processed'}"
             ),
             "gecko_tool": (
                 "simulate  # Path A: hand this plan (with fee_recipient) to Gecko's simulate tool"

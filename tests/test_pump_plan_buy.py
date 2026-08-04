@@ -135,8 +135,33 @@ def test_plan_buy_returns_payload_shape() -> None:
     assert plan["args"] == {
         "amount": 1_000_000,
         "max_sol_cost": 50_000_000,
-        "track_volume": True,
+        # OptionBool wire shape Orquestra's /build requires (not a bare bool)
+        "track_volume": {"field_0": True},
     }
+
+
+def test_plan_buy_track_volume_is_option_bool() -> None:
+    # a bare bool is rejected by Orquestra ("must be an object matching struct OptionBool");
+    # plan_buy emits {"field_0": bool}, coercing string inputs an MCP tool passes.
+    assert _plan()["args"]["track_volume"] == {"field_0": True}
+    false_plan = plan_buy(
+        {
+            "mint": MINT,
+            "user": USER,
+            "amount": 1,
+            "max_sol_cost": 1,
+            "track_volume": "false",
+        },
+        rpc_call=_fake_rpc(),
+    )
+    assert false_plan["args"]["track_volume"] == {"field_0": False}
+
+
+def test_plan_buy_flags_associated_user_ata_precondition() -> None:
+    # honest first-call-correctness: the real cause of AnchorError 3012 is a missing buyer
+    # ATA; plan_buy surfaces the precondition rather than emit a plan that reverts.
+    plan = _plan()
+    assert "associated_user" in plan["preconditions"]
 
 
 def test_plan_buy_resolves_fifteen_accounts_flags_fee_recipient() -> None:
