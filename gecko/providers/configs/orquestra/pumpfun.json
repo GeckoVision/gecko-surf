@@ -50,7 +50,7 @@
         "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
         "seeds": [
           {"kind": "constant", "value": "creator-vault", "encoding": "utf8"},
-          {"kind": "resolver", "name": "creator", "depends_on": ["bonding_curve"], "reason": "seed is bonding_curve.data.creator — fetch the bonding_curve account + Anchor-decode its creator field; the dotted-path seed a naive IDL->derivation drops (#4057)"}
+          {"kind": "resolver", "name": "creator", "depends_on": ["bonding_curve"], "reason": "seed is bonding_curve.data.creator — fetch the bonding_curve account + Anchor-decode its creator field; the dotted-path seed a naive IDL->derivation drops (#4057)", "resolve": {"read": "bonding_curve", "field_offset": 49}}
         ]
       },
       "associated_bonding_curve": {
