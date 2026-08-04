@@ -4,6 +4,7 @@
   "spec_source": {"type": "program", "value": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv"},
   "program": {
     "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+    "orquestra_project": "6alwvs9936laepljczqumb",
     "intents": [],
     "notes": "ORE V3 (regolith-labs/ore), a Steel-framework program (no Anchor IDL — seeds live in source). Singletons config/board/treasury are const-only; automation/miner bind `authority` (NOT the tx signer — an automation bot signs for a different authority); round's id is read from board/miner data (resolver). The `stake` account is CPI'd across a program boundary and belongs to the SEPARATE ore-stake program — its owner is stakecNP..., not ORE. Recipes cross-verified against regolith-labs/ore@master + real mainnet accounts.",
     "pdas": {

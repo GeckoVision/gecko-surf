@@ -4,6 +4,7 @@
   "spec_source": {"type": "program", "value": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"},
   "program": {
     "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "orquestra_project": "6i6q26bmm46b89xlxo1kv",
     "intents": [],
     "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; no execute URL wired yet (derivation-only). Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts.",
     "pdas": {
