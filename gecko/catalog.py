@@ -78,8 +78,21 @@ class CatalogEntry:
             return 0
         hay = _tokens(self._haystack)
         summary = _tokens(self.operation.summary)
-        # summary matches count double (the most intent-bearing field)
-        return len(query_tokens & hay) + len(query_tokens & summary)
+        # The operationId is the op's OWN identity — its camelCase/snake sub-words
+        # (list·assets) are what the intent that names this op overlaps. Counting that
+        # overlap a second time (like the summary double-count) lets the op the query
+        # actually names win its own intent when a sibling shares generic tokens: for
+        # "list all active assets", `list_assets` and `list_alerts` tie on summary text,
+        # but only `list_assets` has "assets" in its id, so it breaks the tie the right
+        # way instead of losing on the alphabetical path fallback (Raff's repro). Bounded
+        # by the id's token count, so it re-weights identity — never swamps the ranking.
+        op_id = _tokens(self.operation.operation_id)
+        # summary + operationId matches count double (the most intent-bearing fields)
+        return (
+            len(query_tokens & hay)
+            + len(query_tokens & summary)
+            + len(query_tokens & op_id)
+        )
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from gecko import __version__, cli, serve
+from gecko import __version__, cli, serve, testgen
 
 _FIX = Path(__file__).resolve().parent / "fixtures"
 PEGANA = str(_FIX / "pegana_openapi.json")
@@ -170,6 +170,51 @@ def test_test_rejects_unsafe_url(capsys) -> None:
     rc = cli.main(["test", "http://169.254.169.254/openapi.json"])
     assert rc == 2
     assert "unsafe" in capsys.readouterr().err.lower()
+
+
+# FIX B (Raff DX) — `gecko test` gains a live path. `--help` advertises it, and `--live`
+# (or the explicit `--mode live`) routes the suite to live mode. Injected: testgen.check is
+# faked so the routing is asserted with no real network call.
+def test_test_help_advertises_live_flag(capsys) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["test", "--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "--live" in out and "--mode" in out
+
+
+def test_test_live_flag_routes_to_live_mode(tmp_path, monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_check(spec, *, mode="recorded", base_url=None, session=None):
+        captured["mode"] = mode
+        return []
+
+    monkeypatch.setattr(testgen, "check", fake_check)
+    spec = _write_tiny(tmp_path)
+
+    cli.main(["test", spec, "--live"])
+    assert captured["mode"] == "live"
+
+    cli.main(["test", spec, "--mode", "live"])
+    assert captured["mode"] == "live"
+
+    cli.main(["test", spec])  # default stays recorded ($0)
+    assert captured["mode"] == "recorded"
+
+
+# FIX A (Raff DX) — `gecko report` must print WHERE it wrote, not just the filename. Both
+# the HTML scorecard and its sidecar JSON print their ABSOLUTE paths.
+def test_report_prints_absolute_output_paths(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    rc = cli.main(["report", _write_tiny(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    written = list(tmp_path.glob("*.scorecard.html"))
+    assert written, "report must write an HTML scorecard"
+    html = written[0]
+    assert str(html.resolve()) in out
+    assert str(html.with_suffix(".json").resolve()) in out
 
 
 def test_dispatch_bundled_example_subcommands(monkeypatch) -> None:
