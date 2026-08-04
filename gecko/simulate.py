@@ -28,14 +28,29 @@ from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
 
 __all__ = [
     "BuildCall",
+    "BuiltTx",
     "Receipt",
     "SimulateError",
     "classify_revert",
     "simulate",
 ]
 
-# plan -> base64 serialized UNSIGNED transaction (Orquestra /build, or an injected fake).
-BuildCall = Callable[[Mapping[str, Any]], str]
+
+@dataclass(frozen=True)
+class BuiltTx:
+    """A serialized UNSIGNED transaction plus the encoding it is in.
+
+    The builder (Orquestra ``/build``) returns the tx in **base58**; other builders may
+    return base64. ``simulateTransaction`` supports both, so we carry the encoding rather
+    than assume one — passing the wrong encoding is a silent decode failure.
+    """
+
+    tx: str
+    encoding: str  # "base58" | "base64" — as reported by the builder
+
+
+# plan -> the built UNSIGNED transaction (Orquestra /build, or an injected fake).
+BuildCall = Callable[[Mapping[str, Any]], "BuiltTx"]
 
 # The default honesty label: a simulation is a snapshot, not mainnet, not a price.
 _DEFAULT_NETWORK_LABEL = "simulated (fork/RPC snapshot — not mainnet)"
@@ -48,6 +63,9 @@ _ACCOUNT_MARKERS = (
     "accountnotfound",
     "could not find account",
     "accountownedbywrongprogram",
+    "accountnotinitialized",
+    "not initialized",
+    "notinitialized",
 )
 
 
@@ -92,31 +110,37 @@ def classify_revert(err: Any, logs: Sequence[str]) -> str | None:
     """Map a simulation ``err`` + logs to a STABLE categorical revert class.
 
     These keys are the corpus vocabulary later — do not rename casually. A dollar number
-    is never fabricated; the class is a string. Slippage markers in the logs win over the
-    raw custom code (a tripped slippage guard is the actionable signal).
+    is never fabricated; the class is a string. The SEMANTIC log-based classes (slippage,
+    account_error, insufficient_funds) win over the raw ``custom_program_error:<code>``:
+    the same Anchor code (e.g. 3012 = AccountNotInitialized) is far more actionable named
+    than numbered, and the logs carry the name.
     """
     if err is None:
         return None
     log_text = " ".join(logs).lower()
     if any(marker in log_text for marker in _SLIPPAGE_MARKERS):
         return "slippage"
+    if any(marker in log_text for marker in _ACCOUNT_MARKERS):
+        return "account_error"
+    if any(marker in log_text for marker in _INSUFFICIENT_MARKERS):
+        return "insufficient_funds"
     custom = _custom_code(err)
     if custom is not None:
         return f"custom_program_error:{custom}"
-    if any(marker in log_text for marker in _INSUFFICIENT_MARKERS):
-        return "insufficient_funds"
-    if any(marker in log_text for marker in _ACCOUNT_MARKERS):
-        return "account_error"
     return "other"
 
 
-def _default_build_call(plan: Mapping[str, Any]) -> str:
-    """POST the plan to its ``build_url`` and extract the serialized tx.
+def _default_build_call(plan: Mapping[str, Any]) -> BuiltTx:
+    """POST the plan to its ``build_url`` and extract the serialized tx + its encoding.
 
     The builder (Orquestra ``/build``) is a user-configured HTTP target, not ingested
     spec content — scheme is gated to http/https, same posture as the RPC endpoint.
-    Tries ``transaction`` / ``tx`` / ``serializedTransaction``; raises
-    :class:`SimulateError` if none are present.
+
+    Prefers ``serializedTransaction`` — Orquestra returns TWO tx fields, and the plain
+    ``transaction`` one is oversized (exceeds the 1232-byte tx limit, unusable for
+    ``simulateTransaction``) while ``serializedTransaction`` is the real signable tx. The
+    encoding is read from the response (``encoding``), defaulting to ``base64`` for
+    builders that omit it. Raises :class:`SimulateError` if no tx field is present.
     """
     url = str(plan["build_url"])
     validate_rpc_url(url)
@@ -137,13 +161,16 @@ def _default_build_call(plan: Mapping[str, Any]) -> str:
         ) from exc
     except urllib.error.URLError as exc:
         raise SimulateError(f"build POST to {url} failed: {exc.reason}") from exc
-    for key in ("transaction", "tx", "serializedTransaction"):
+    encoding = (
+        resp.get("encoding") if isinstance(resp.get("encoding"), str) else "base64"
+    )
+    for key in ("serializedTransaction", "transaction", "tx"):
         tx = resp.get(key)
         if isinstance(tx, str) and tx:
-            return tx
+            return BuiltTx(tx=tx, encoding=str(encoding))
     raise SimulateError(
         f"build response from {url} carried no transaction "
-        "(tried keys: transaction, tx, serializedTransaction)"
+        "(tried keys: serializedTransaction, transaction, tx)"
     )
 
 
@@ -176,7 +203,7 @@ def simulate(
     call = rpc_call or default_rpc_call
     builder = build_call or _default_build_call
 
-    tx_b64 = builder(plan)
+    built = builder(plan)
     tracked = list(track)
 
     pre_lamports: int | None = None
@@ -184,8 +211,11 @@ def simulate(
         pre = call(rpc_url, "getAccountInfo", [tracked[0], {"encoding": "base64"}])
         pre_lamports = _tracked_lamports((pre.get("result") or {}).get("value"))
 
+    # The tx carries its own encoding (Orquestra returns base58); getAccountInfo is a
+    # separate read and stays base64. Passing the tx's own encoding avoids a silent
+    # simulateTransaction decode failure.
     sim_config: dict[str, Any] = {
-        "encoding": "base64",
+        "encoding": built.encoding,
         "sigVerify": False,
         "replaceRecentBlockhash": True,
         "commitment": "processed",
@@ -193,7 +223,7 @@ def simulate(
     if tracked:
         sim_config["accounts"] = {"encoding": "base64", "addresses": tracked}
 
-    sim = call(rpc_url, "simulateTransaction", [tx_b64, sim_config])
+    sim = call(rpc_url, "simulateTransaction", [built.tx, sim_config])
     value = (sim.get("result") or {}).get("value") or {}
 
     err = value.get("err")

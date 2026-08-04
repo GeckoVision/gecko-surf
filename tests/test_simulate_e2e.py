@@ -4,11 +4,18 @@ With ``GECKO_SIMULATE_E2E=1`` this builds a REAL Pump.fun ``buy`` via the live O
 ``/build`` slug, supplies a ``fee_recipient`` candidate (``Global.fee_recipient`` @ data
 offset 41, read from the fork), and ``simulateTransaction``s it against a surfpool mainnet
 fork (preferred, $0) or ``GECKO_MAINNET_RPC``. It asserts a Receipt comes back — a PASS or a
-CLASSIFIED fail — and PRINTS it. A classified fail (e.g. the fee_recipient ambiguity
-surfacing as a revert) is itself the honest finding; do not massage it into a pass.
+CLASSIFIED fail — and PRINTS it. A classified fail is itself the honest finding.
+
+This is the standing "revert caught before mainnet" proof. As observed (2026-08-04) it
+catches a REAL revert: ``AnchorError 3012 (associated_user AccountNotInitialized)`` →
+``revert_class="account_error"`` — the buyer holds no ATA, so a real buy would revert and
+burn fees on-chain. Gecko flags that precondition (see ``plan_buy`` ``preconditions``) and
+the Receipt catches it here for $0. It exercises the full corrected live path: ``plan_buy``
+emits the ``OptionBool`` arg shape, the engine prefers ``serializedTransaction`` and passes
+the builder's base58 encoding through, and the UA fix clears Cloudflare's bot check.
 
 Never signs, never broadcasts. The default suite stays offline; this only runs when the
-env flag is set AND surfpool + a mainnet RPC are available.
+env flag is set AND surfpool + a mainnet RPC + network are available.
 """
 
 from __future__ import annotations
