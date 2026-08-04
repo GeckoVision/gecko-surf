@@ -96,6 +96,10 @@ def seed_from_spec(spec: dict) -> PdaSeed:
             spec["name"],
             depends_on=tuple(spec.get("depends_on", ())),
             reason=spec.get("reason", "seed could not be statically resolved"),
+            # Optional pure-data recipe (e.g. {"read": "bonding_curve",
+            # "field_offset": 49}) telling a control-plane resolver HOW to fill this
+            # seed from public on-chain metadata. Carried through verbatim.
+            resolve=spec.get("resolve"),
         )
     raise ConfigError(f"unknown seed kind {kind!r}")
 

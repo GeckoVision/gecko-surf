@@ -27,7 +27,7 @@ model and (later) the extraction are dep-light. See
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Mapping, Union
+from typing import Any, Literal, Mapping, Union
 
 __all__ = [
     "SeedEncoding",
@@ -121,6 +121,11 @@ class ResolverPdaSeedNode:
     name: str
     depends_on: tuple[str, ...] = ()
     reason: str = "seed could not be statically resolved"
+    # Optional pure-data recipe for HOW a control-plane resolver fills this seed by
+    # reading public on-chain metadata (e.g. {"read": "bonding_curve",
+    # "field_offset": 49}). A declaration only — nothing here touches a chain, and a
+    # recipe still leaves the node non-resolvable until a resolver supplies the value.
+    resolve: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
