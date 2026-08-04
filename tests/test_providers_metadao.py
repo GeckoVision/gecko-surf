@@ -44,7 +44,7 @@ def _pdas() -> dict[str, PdaNode]:
 
 def test_metadao_is_servable_derivation_only() -> None:
     # Sprint 1 wired the slug → build_surface_from_config succeeds; the surface exposes
-    # get_program_graph + derive_pda (no plan intents yet — those land in a later sprint).
+    # get_program_graph + derive_pda + the generic simulate tool (no plan intents yet).
     from gecko.providers.cli import PROGRAMS
 
     _, apis = load_packaged_provider("orquestra")
@@ -59,7 +59,7 @@ def test_metadao_is_servable_derivation_only() -> None:
         == "https://api.orquestra.dev/api/krhmrxpy2fgwn3q0whic7"
     )
     tool_names = {t["name"] for t in surface.list_tools()}
-    assert tool_names == {"get_program_graph", "derive_pda"}
+    assert tool_names == {"get_program_graph", "derive_pda", "simulate"}
     out = surface.call_tool(
         "derive_pda", {"account": "launch", "bindings": {"base_mint": BASE_MINT}}
     )
