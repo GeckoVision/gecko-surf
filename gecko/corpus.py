@@ -19,14 +19,16 @@ payload) and human-auditable (``grep`` the file; assert no value substrings).
 
 from __future__ import annotations
 
+import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
 from .caller import CallError
 from .sanitize import looks_like_secret_value
+from .simulate import REVERT_FAMILIES, Receipt, revert_family
 
 # --- the closed categorical outcome set (§1; never free text) -----------------
 # Append-only to the CLOSED set. ``auth_host_blocked`` records that Gecko refused to
@@ -58,7 +60,13 @@ ERROR_CLASSES = frozenset(
 # wire? It is DERIVED from the capture mode at the ``outcome_from`` boundary (see
 # ``source_for_mode``), never free-set by a caller, and it governs ROUTING: only
 # ``observed`` rows may feed the published first-call-correct / adoption rate.
-OutcomeSource = Literal["observed", "reported", "synthetic"]
+#
+# ``simulated`` is the D2 tier: the outcome comes from Gecko's OWN ``simulate()`` run
+# against a fork/RPC it controls — there is no agent data plane to capture. Like
+# ``synthetic`` it is NOT wire-observed, so it is structurally excluded from the published
+# first-call-correct metric (``telemetry`` filters ``source == "observed"``); its value is
+# the drift SERIES over slots, not the FCC rate. It lives in its own segregated file.
+OutcomeSource = Literal["observed", "reported", "synthetic", "simulated"]
 OUTCOME_SOURCES: frozenset[str] = frozenset(get_args(OutcomeSource))
 
 # ``tenancy`` answers "may this record LEAVE the machine into the cross-customer corpus?"
@@ -451,4 +459,194 @@ def record_adversarial(outcome: AdversarialOutcome, path: str | Path) -> None:
 
         logging.getLogger("gecko.corpus").warning(
             "adversarial corpus write failed (redacted)"
+        )
+
+
+# --- simulated (self-run Receipt) tier — the third control-plane-safe sibling ---------
+# The D2 corpus (docs/specs/2026-08-04-delivery2-simulated-corpus.md). Gecko runs its OWN
+# ``simulate()`` against a fork/RPC it controls and records the CATEGORICAL outcome — there
+# is no agent data plane to capture. Same discipline as CallOutcome/AdversarialOutcome:
+# closed sets, an allowlist writer, an append-only segregated JSONL file. It NEVER stores a
+# pubkey, balance, amount, instruction data, the revert LOG string, or an RPC URL — only
+# names/families/hashes and public integers (slot, error_code, units — analogous to the
+# raw ``latency_ms`` CallOutcome already stores).
+
+# The land/no-land verdict — mirrors Receipt.status (simulate.py). Closed, never free text.
+SIM_STATUSES: frozenset[str] = frozenset({"pass", "fail", "unknown"})
+
+# The revert FAMILY set is imported from simulate.py — the single source of truth for the
+# revert vocabulary (both classify_revert and the corpus name the same families). Never
+# redeclared here; a change to the vocabulary can only happen in one place.
+REVERT_CLASSES: frozenset[str] = REVERT_FAMILIES
+
+# The network the sim ran against — a categorical LABEL, never the RPC URL (a URL could
+# carry an API key). ``fork`` is a mainnet-backed snapshot; ``other`` is the fail-closed bucket.
+NETWORKS: frozenset[str] = frozenset({"fork", "mainnet", "devnet", "other"})
+
+
+@dataclass(frozen=True)
+class SimulatedOutcome:
+    """Control-plane-safe self-simulation record — categorical/structural fields ONLY.
+
+    Built by ``simulated_outcome_from`` from a :class:`~gecko.simulate.Receipt`'s
+    CATEGORICAL fields plus the plan's values-free structural fingerprint. It reads the
+    instruction/account/arg NAMES and the recipe SHAPE, never the resolved pubkeys/amounts
+    — the same "names & types, never values" rule ``outcome_from`` follows. Frozen so it
+    can't accrete fields at runtime; the field set IS the persisted schema (see
+    ``SIMULATED_ALLOWED_KEYS``).
+    """
+
+    ts: int
+    surface_id: str  # "orquestra:<program_id>" — a program id, public, not a secret
+    program_id: str  # the on-chain program, public
+    instruction: str  # instruction NAME ("buy"), never args
+    recipe_hash: str  # sha256 hex of the STRUCTURAL fingerprint (§3) — values-free
+    status: str  # SIM_STATUSES: "pass" | "fail" | "unknown"
+    revert_class: str  # REVERT_CLASSES (closed family) — never free text, never the log
+    error_code: int | None  # Anchor/program error NUMBER (public), or None
+    units_consumed: int | None  # compute units — a public metric, like latency_ms
+    slot: int | None  # the slot the sim ran against — powers the drift SERIES
+    network: str  # NETWORKS: "fork" | "mainnet" | "devnet" | "other" (never a URL)
+    source: str  # OutcomeSource — always "simulated" (the new tier)
+    tenancy: str = "local"  # Tenancy — egress governance, fail-closed default
+
+
+SIMULATED_ALLOWED_KEYS = frozenset(SimulatedOutcome.__dataclass_fields__)
+
+
+def assert_simulated_allowlisted(mapping: Mapping[str, Any]) -> None:
+    """Reject (fail closed) any key not on the ``SimulatedOutcome`` allowlist."""
+    extra = set(mapping) - SIMULATED_ALLOWED_KEYS
+    if extra:
+        raise CorpusError(
+            f"non-allowlisted simulated key(s) would be persisted: {sorted(extra)}"
+        )
+
+
+def to_simulated_record(outcome: SimulatedOutcome) -> dict[str, Any]:
+    """Serialize a ``SimulatedOutcome``, enforcing the allowlist AND the closed-set axes
+    before it can be written — the same fail-closed discipline ``to_adversarial_record``
+    applies. Raises ``CorpusError`` on any off-set categorical value or non-allowlisted
+    key, so an off-vocabulary string is a build break, not a silent smuggle."""
+    record_dict = asdict(outcome)
+    assert_simulated_allowlisted(record_dict)
+    if outcome.status not in SIM_STATUSES:
+        raise CorpusError(f"status {outcome.status!r} not in the closed set")
+    if outcome.revert_class not in REVERT_CLASSES:
+        raise CorpusError(
+            f"revert_class {outcome.revert_class!r} not in the closed set"
+        )
+    if outcome.network not in NETWORKS:
+        raise CorpusError(f"network {outcome.network!r} not in the closed set")
+    if outcome.source not in OUTCOME_SOURCES:
+        raise CorpusError(f"source {outcome.source!r} not in the closed set")
+    if outcome.tenancy not in TENANCIES:
+        raise CorpusError(f"tenancy {outcome.tenancy!r} not in the closed set")
+    if outcome.error_code is not None and not isinstance(outcome.error_code, int):
+        raise CorpusError("error_code must be an int (a public code) or None")
+    return record_dict
+
+
+def simulated_sibling(path: str | Path) -> Path:
+    """The segregated file for ``simulated`` outcomes, co-located with the corpus
+    (``<dir>/simulated.jsonl``).
+
+    Segregation is by PATH (not an in-band tag), the same posture as ``synthetic_sibling``:
+    a reader of the main corpus that doesn't know about the simulated tier then NEVER sees
+    a simulated row — it FAILS CLOSED. Routing HERE, at the single write boundary, means no
+    call site can forget to segregate (and a self-simulated ``pass`` can never leak into the
+    published, wire-only first-call-correct metric)."""
+    return Path(path).with_name("simulated.jsonl")
+
+
+def recipe_hash(
+    *,
+    program_id: str,
+    instruction: str,
+    account_names: Iterable[str],
+    arg_names: Iterable[str],
+    seed_recipes: Any,
+) -> str:
+    """The values-free structural fingerprint of a call plan (§3).
+
+    The drift question is *did the outcome of the SAME plan SHAPE change over time?* — so
+    the hash fingerprints the plan STRUCTURE, never its filled values. Account/arg NAMES
+    are sorted (order-independent), and ``seed_recipes`` is the PDA seed-recipe KINDS per
+    account (from the ProgramSpec), not any derived pubkey. Two runs of the same intent
+    against the same program → identical hash even though the resolved pubkeys differ per
+    mint/user; a program upgrade that changes a PDA layout → a reverting sim on a STABLE
+    hash (= drift), and a change in our RECOVERED recipe → a new hash.
+
+    Callers MUST pass names/kinds only. There is no pubkey/amount parameter here, so a
+    value physically cannot enter the fingerprint (the same boundary discipline as
+    ``outcome_from``)."""
+    fingerprint = {
+        "program_id": program_id,
+        "instruction": instruction,
+        "accounts": sorted(account_names),  # names, never pubkeys
+        "args": sorted(arg_names),  # names, never values
+        "seed_recipes": seed_recipes,  # seed-recipe KINDS, never derived addresses
+    }
+    blob = json.dumps(fingerprint, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def simulated_outcome_from(
+    receipt: Receipt,
+    *,
+    program_id: str,
+    instruction: str,
+    recipe_hash: str,
+    slot: int | None,
+    network: str,
+    ts: int,
+    surface_id: str,
+    tenancy: str = "local",
+) -> SimulatedOutcome:
+    """Build a control-plane-safe ``SimulatedOutcome`` from a :class:`Receipt`'s
+    CATEGORICAL fields plus the plan's values-free structural fingerprint.
+
+    NOTE what it reads off the Receipt: ONLY ``status`` (the land/no-land verdict),
+    ``revert_class`` (split by ``revert_family`` into a closed family + a public error
+    NUMBER), and ``units_consumed`` (a public compute metric, like ``latency_ms``). It
+    NEVER reads ``sol_delta``/``tokens_received``/``logs_tail``/``err`` — those are per-user
+    state / secret-shaped and are excluded from the corpus by construction (they are not
+    parameters and are not touched here). ``source`` is fixed to ``"simulated"`` — a caller
+    cannot mislabel it. The closed-set gate runs at ``to_simulated_record``."""
+    family, error_code = revert_family(receipt.revert_class)
+    return SimulatedOutcome(
+        ts=ts,
+        surface_id=surface_id,
+        program_id=program_id,
+        instruction=instruction,
+        recipe_hash=recipe_hash,
+        status=receipt.status,
+        revert_class=family,
+        error_code=error_code,
+        units_consumed=receipt.units_consumed,
+        slot=slot,
+        network=network,
+        source="simulated",
+        tenancy=tenancy,
+    )
+
+
+def record_simulated(outcome: SimulatedOutcome, path: str | Path) -> None:
+    """Append one allowlisted simulated JSONL record to the segregated ``simulated.jsonl``
+    sibling. Best-effort like ``record``/``record_adversarial``: a corpus write must never
+    break the caller, so non-violation failures are swallowed with a redacted note; a
+    control-plane violation (``CorpusError``) still surfaces."""
+    try:
+        record_dict = to_simulated_record(outcome)
+        target = simulated_sibling(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record_dict) + "\n")
+    except CorpusError:
+        raise  # a control-plane violation must surface, not be swallowed
+    except Exception:  # noqa: BLE001 - best-effort; never break the caller
+        import logging
+
+        logging.getLogger("gecko.corpus").warning(
+            "simulated corpus write failed (redacted)"
         )
