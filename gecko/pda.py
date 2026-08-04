@@ -286,7 +286,15 @@ def _encode_seed(
         )
     assert seed.width is not None  # guaranteed by VariablePdaSeedNode.__post_init__
     try:
-        return value.to_bytes(seed.width, "little" if seed.encoding == "le" else "big")
+        # signed only when negative: a non-negative value encodes identically either
+        # way, and a negative one becomes two's-complement — exactly Rust's
+        # iN::to_le_bytes (e.g. Meteora's bin_array index, an i64 that is negative
+        # for below-1 prices). Unsigned range is preserved for non-negative values.
+        return value.to_bytes(
+            seed.width,
+            "little" if seed.encoding == "le" else "big",
+            signed=value < 0,
+        )
     except OverflowError as exc:
         raise PdaDerivationError(
             f"seed {seed.name!r} value {value} does not fit in {seed.width} bytes"

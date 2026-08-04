@@ -101,6 +101,30 @@ def test_variable_le_integer_seed_derivation() -> None:
     assert len(r0.address) >= 32  # base58 pubkey
 
 
+def test_negative_le_integer_seed_encodes_twos_complement() -> None:
+    """A SIGNED integer seed (Meteora's bin_array `index: i64`, negative for
+    below-1 prices) must encode as two's-complement LE — Rust's `i64::to_le_bytes`.
+    Ground truth: `["bin_array", lb_pair, (-1 as i64).to_le_bytes()]` under the DLMM
+    program derives `E6gur9Jw8675DCR7GpJVhoSrkruRgt8EdEVqLAc5RLUt`, verified live on
+    mainnet (the account exists, owned by the program, its `index` field reads −1)."""
+    dlmm = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+    node = PdaNode(
+        name="bin_array",
+        seeds=(
+            ConstantPdaSeedNode(b"bin_array", encoding="utf8"),
+            VariablePdaSeedNode("lb_pair", source="account", encoding="pubkey"),
+            VariablePdaSeedNode("index", source="argument", encoding="le", width=8),
+        ),
+        program_id=dlmm,
+    )
+    lb_pair = "EtAdVRLFH22rjWh3mcUasKFF27WtHhsaCvK27tPFFWig"
+    got = derive_pda(node, {"lb_pair": lb_pair, "index": -1})
+    assert got.address == "E6gur9Jw8675DCR7GpJVhoSrkruRgt8EdEVqLAc5RLUt"
+    # non-negative values keep their unsigned encoding (identical bytes)
+    got0 = derive_pda(node, {"lb_pair": lb_pair, "index": 0})
+    assert got0.address == "5Sm2ecMeqohRkNpFJPWSqHL1BkA7AEW4ck8TmdF1gD4t"
+
+
 def test_program_id_argument_overrides_node() -> None:
     """A node recovered before the program id is known can be derived by passing
     program_id= at call time."""
