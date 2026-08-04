@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ..landing import ASSOCIATED_TOKEN_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID
 from ..pda import derive_pda
 from ..pda_resolve import read_account_owner, resolve_pda
 from ..pda_testkit import LOCAL_RPC, RpcCall
@@ -69,6 +70,51 @@ def _option_bool(value: Any) -> dict[str, bool]:
     else:
         flag = bool(value)
     return {"field_0": flag}
+
+
+def _landing_plan(accounts: Mapping[str, str]) -> list[dict[str, Any]]:
+    """The DECLARED ordered instruction plan a real builder (Orquestra) assembles + 1claw
+    signs — the "declare" half of the buy-that-passes. Pure structured data (no bytes, no
+    signing): ``[SetComputeUnitLimit, SetComputeUnitPrice, createIdempotentATA, buy]``. The
+    compute-budget values and fee_recipient are filled by the simulate/build step; this is
+    the ordered contract, not a tx. See :func:`gecko.providers.pumpfun_landing.simulate_buy_landing`.
+    """
+    return [
+        {
+            "kind": "compute_budget",
+            "program": COMPUTE_BUDGET_PROGRAM_ID,
+            "instruction": "SetComputeUnitLimit",
+            "note": "units from the Receipt's units_consumed × 1.2 (Gecko simulates to measure)",
+        },
+        {
+            "kind": "compute_budget",
+            "program": COMPUTE_BUDGET_PROGRAM_ID,
+            "instruction": "SetComputeUnitPrice",
+            "note": "micro-lamports from getRecentPrioritizationFees (operator's RPC)",
+        },
+        {
+            "kind": "create_idempotent_ata",
+            "program": ASSOCIATED_TOKEN_PROGRAM_ID,
+            "accounts": {
+                "payer": accounts["user"],
+                "ata": accounts["associated_user"],
+                "owner": accounts["user"],
+                "mint": accounts["mint"],
+                "system_program": SYSTEM_PROGRAM_ID,
+                "token_program": accounts["token_program"],
+            },
+            "note": "removes AnchorError 3012 — initializes the buyer's associated_user ATA",
+        },
+        {
+            "kind": "buy",
+            "program": PUMPFUN_PROGRAM_ID,
+            "accounts": dict(accounts),
+            "note": (
+                "Orquestra builds this instruction; fee_recipient is supplied at /build "
+                "(the honest gap) and max_sol_cost is the curve-quoted arg"
+            ),
+        },
+    ]
 
 
 def _load_pumpfun_pdas() -> dict[str, Any]:
@@ -180,6 +226,9 @@ def plan_buy(
         },
         "feePayer": user,
         "build_url": BUILD_URL,
+        # The DECLARED ordered plan (compute-budget + ATA prelude + buy) a real builder
+        # assembles — the "declare" half. Gecko emits the plan, never a signed/broadcast tx.
+        "landing_plan": _landing_plan(accounts),
         # Path B (self-serve): a dev fills fee_recipient, POSTs build_url, then runs the
         # simulate loop themselves. Path A: hand this plan (fee_recipient merged) to
         # Gecko's `simulate` tool. Either way Gecko never signs or broadcasts.
