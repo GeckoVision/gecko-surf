@@ -12,7 +12,8 @@
         "seeds": [
           {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "min"},
           {"kind": "ordered_pair", "left": "token_x_mint", "right": "token_y_mint", "select": "max"},
-          {"kind": "variable", "name": "bin_step", "source": "argument", "encoding": "le", "width": 2}
+          {"kind": "variable", "name": "bin_step", "source": "argument", "encoding": "le", "width": 2},
+          {"kind": "variable", "name": "base_factor", "source": "argument", "encoding": "le", "width": 2}
         ]
       },
       "reserve": {
