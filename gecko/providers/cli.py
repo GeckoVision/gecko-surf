@@ -54,13 +54,14 @@ def _discover_programs() -> dict[str, Callable[[], OrquestraProgramSurface]]:
     """Discover servable programs from packaged config. Each config-listed program
     is paired with its code-side intent registry (the plan callables)."""
     from .meteora import METEORA_INTENTS
+    from .pumpfun import PUMPFUN_INTENTS
 
     # (provider, api_id) → the intent registry supplying that program's plan callables.
-    # pumpfun/ore/metadao_ico are servable for derive_pda + get_program_graph but carry
-    # no plan intents yet (execute plans land in a later sprint) → empty registries.
+    # ore/metadao_ico are servable for derive_pda + get_program_graph but carry no plan
+    # intents yet (execute plans land in a later sprint) → empty registries.
     intents_by_key: dict[tuple[str, str], dict[str, Intent]] = {
         ("orquestra", "meteora"): METEORA_INTENTS,
-        ("orquestra", "pumpfun"): {},
+        ("orquestra", "pumpfun"): PUMPFUN_INTENTS,
         ("orquestra", "ore"): {},
         ("orquestra", "metadao_ico"): {},
     }
