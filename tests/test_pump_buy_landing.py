@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from gecko.providers.pumpfun import buy_remaining_accounts, plan_buy
 from gecko.providers.pumpfun_landing import (
     BuyLandingError,
     simulate_buy_landing,
@@ -30,7 +31,9 @@ ASSOCIATED_USER = "CTAUKpZkmejuonDJnBRW43FMZx6WpkytQrF8Cty4GfVc"
 USER = "FFWtrEQ4B4PKQoVuHYzZq8FabGkVatYzDpEVHsK5rrhF"
 TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
-# Global.fee_recipient @ data offset 41 (RPC-verified) — the authoritative gap-fill.
+# A valid pubkey standing in for fee_recipient in the canned offline sim (the fake RPC
+# accepts anything). LIVE, the E2E resolves a REGULAR recipient — Global.fee_recipients[0]
+# @ offset 162; the old "@41" guidance is refuted (@41 is a BUYBACK recipient, 6062).
 FEE_RECIPIENT = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
 
 # Real mainnet reserves (RPC-verified) so max_sol_cost is a known value: 1_000_000 units →
@@ -198,6 +201,55 @@ def test_result_declares_recovered_hidden_remaining_accounts() -> None:
     remaining = [r["pubkey"] for r in buy["remaining_accounts"]]
     assert remaining == [BONDING_CURVE_V2, *BUYBACK]
     assert all(r["isWritable"] and not r["isSigner"] for r in buy["remaining_accounts"])
+    # the resolver-style recipe plan_buy declares is RESOLVED here, so it is dropped
+    assert "remaining_accounts_unresolved" not in buy
+
+
+def test_declared_plan_and_orchestrator_assembly_do_not_drift() -> None:
+    """The no-drift guard: plan_buy's DECLARED buy step and the set simulate_buy_landing
+    actually assembles are the same truth — same named accounts, the declared concrete
+    prefix (bonding_curve_v2) is the orchestrator's prefix, and the orchestrator's full
+    set is exactly buy_remaining_accounts(bonding_curve_v2, <the declared @741 recipe
+    resolved>). If either side changes alone, this fails."""
+    value = {"err": None, "unitsConsumed": 80_000, "logs": []}
+    result = simulate_buy_landing(
+        _bindings(),
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_fake_rpc(value),
+        fetch_buy_instruction=lambda a, ar, fp: CANNED_BUY,
+        include_derive_only=False,
+    )
+    plan = plan_buy(
+        {
+            "mint": MINT,
+            "user": USER,
+            "amount": 1_000_000,
+            "max_sol_cost": result.max_sol_cost,
+            "track_volume": True,
+        },
+        rpc_call=_fake_rpc(value),
+    )
+    declared = next(s for s in plan["landing_plan"] if s["kind"] == "buy")
+    verified = next(s for s in result.landing_plan if s["kind"] == "buy")
+
+    # named accounts: identical (incl. bonding_curve_v2, the declared account #17)
+    assert verified["accounts"] == declared["accounts"]
+    # the declared concrete prefix IS the orchestrator's prefix …
+    prefix = declared["remaining_accounts"]
+    assert verified["remaining_accounts"][: len(prefix)] == prefix
+    # … and resolving the declared @741 recipe completes the exact orchestrator set,
+    # via the one shared assembly function (single source of truth).
+    recipe = declared["remaining_accounts_unresolved"]["buyback_fee_recipient"][
+        "resolve"
+    ]
+    assert (recipe["read"], recipe["field_offset"], recipe["count"]) == (
+        "global",
+        741,
+        8,
+    )
+    assert verified["remaining_accounts"] == buy_remaining_accounts(
+        BONDING_CURVE_V2, BUYBACK
+    )
 
 
 # --- env-gated real E2E: the side-by-side a-ha on a surfpool mainnet fork -----
