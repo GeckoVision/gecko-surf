@@ -29,11 +29,31 @@ from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
 __all__ = [
     "BuildCall",
     "BuiltTx",
+    "REVERT_FAMILIES",
     "Receipt",
     "SimulateError",
     "classify_revert",
+    "revert_family",
     "simulate",
 ]
+
+# The CLOSED family set for a revert. Single source of truth: these are exactly the
+# names ``classify_revert`` can return (``none`` for the no-revert case, plus the
+# ``custom_program_error`` family that classify emits parametrically as
+# ``custom_program_error:<code>``). The D2 corpus imports this rather than redeclaring
+# it, so the vocabulary can only ever change HERE (invariant: never two sources).
+REVERT_FAMILIES: frozenset[str] = frozenset(
+    {
+        "none",
+        "slippage",
+        "account_error",
+        "insufficient_funds",
+        "custom_program_error",
+        "other",
+    }
+)
+
+_CUSTOM_FAMILY = "custom_program_error"
 
 
 @dataclass(frozen=True)
@@ -128,6 +148,29 @@ def classify_revert(err: Any, logs: Sequence[str]) -> str | None:
     if custom is not None:
         return f"custom_program_error:{custom}"
     return "other"
+
+
+def revert_family(revert_class: str | None) -> tuple[str, int | None]:
+    """Split a ``classify_revert`` output into a CLOSED family + an optional public code.
+
+    The corpus stores the family (a ``REVERT_FAMILIES`` member) and the numeric error
+    code SEPARATELY — a code is a public program constant (like an HTTP status), never a
+    value. ``None`` (no revert) → ``("none", None)``; ``"custom_program_error:3012"`` →
+    ``("custom_program_error", 3012)``; every other class carries no code →
+    ``(<class>, None)``. Fails CLOSED: an unrecognized family collapses to ``"other"`` so
+    a drifted classifier can never smuggle a non-vocabulary string into the corpus.
+    """
+    if revert_class is None:
+        return ("none", None)
+    if revert_class.startswith(_CUSTOM_FAMILY + ":"):
+        code_text = revert_class[len(_CUSTOM_FAMILY) + 1 :]
+        try:
+            return (_CUSTOM_FAMILY, int(code_text))
+        except ValueError:
+            return (_CUSTOM_FAMILY, None)
+    if revert_class in REVERT_FAMILIES:
+        return (revert_class, None)
+    return ("other", None)
 
 
 def _default_build_call(plan: Mapping[str, Any]) -> BuiltTx:
