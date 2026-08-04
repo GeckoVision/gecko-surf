@@ -205,6 +205,27 @@ def test_plan_buy_missing_binding_raises() -> None:
         plan_buy({"mint": MINT, "user": USER}, rpc_call=_fake_rpc())
 
 
+# --- Task 3 (Path B): the self-serve simulate recipe block -------------------
+
+
+def test_plan_buy_carries_simulate_recipe() -> None:
+    plan = _plan()
+    sim = plan["simulate"]
+    assert sim["rpc_method"] == "simulateTransaction"
+    # the honest-order recipe: fill fee_recipient, POST build_url, then simulate
+    assert "fee_recipient" in sim["after"]
+    assert "replaceRecentBlockhash" in sim["params_note"]
+    assert sim["gecko_tool"].startswith("simulate")
+
+
+def test_plan_buy_simulate_block_does_not_disturb_account_contract() -> None:
+    # the new key is purely additive: the 15-account set + fee_recipient gap are unchanged
+    plan = _plan()
+    assert set(plan["accounts"]) == _ALL_BUY_ACCOUNTS - {"fee_recipient"}
+    assert "fee_recipient" in plan["unresolved"]
+    assert "fee_recipient" not in plan["accounts"]
+
+
 # --- real on-chain gate: verify the mint-derived accounts on a surfpool fork (env-gated) ---
 
 

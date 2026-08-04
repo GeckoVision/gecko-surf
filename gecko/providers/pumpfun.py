@@ -150,6 +150,20 @@ def plan_buy(
         },
         "feePayer": user,
         "build_url": BUILD_URL,
+        # Path B (self-serve): a dev fills fee_recipient, POSTs build_url, then runs the
+        # simulate loop themselves. Path A: hand this plan (fee_recipient merged) to
+        # Gecko's `simulate` tool. Either way Gecko never signs or broadcasts.
+        "simulate": {
+            "after": "fill `fee_recipient` (see `unresolved`) then POST build_url to get the tx",
+            "rpc_method": "simulateTransaction",
+            "params_note": (
+                "base64 tx + {sigVerify:false, replaceRecentBlockhash:true, "
+                "commitment:'processed'}"
+            ),
+            "gecko_tool": (
+                "simulate  # Path A: hand this plan (with fee_recipient) to Gecko's simulate tool"
+            ),
+        },
     }
 
 
