@@ -1,17 +1,21 @@
 {
   "name": "@geckovision/gecko",
   "version": "0.9.5",
-  "description": "Make any API agent-usable — first call correct. Point gecko at an API and your agent can use it.",
+  "description": "The knowledge graph for APIs your agent can trust \u2014 map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves.",
   "keywords": [
     "gecko",
     "mcp",
-    "api",
-    "agent",
+    "ai-agents",
+    "agent-tools",
     "openapi",
+    "api-integration",
+    "knowledge-graph",
+    "agent-security",
+    "solana",
     "cli"
   ],
   "license": "Apache-2.0",
-  "homepage": "https://geckovision.tech",
+  "homepage": "https://docs.geckovision.tech",
   "repository": "github:GeckoVision/gecko-surf",
   "bin": {
     "gecko": "bin/gecko.js"

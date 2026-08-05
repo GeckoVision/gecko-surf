@@ -46,7 +46,9 @@ npx @geckovision/gecko serve <spec>        # 4. your agent uses it over MCP
 Or install once:
 
 ```bash
-uv tool install "gecko-surf[serve]"        # or: pip install "gecko-surf[serve]"
+npm install -g @geckovision/gecko          # prebuilt binary — no Python needed
+uv tool install "gecko-surf[serve]"        # or pip, if you want the Python package
+
 gecko add <spec-or-docs>
 ```
 
