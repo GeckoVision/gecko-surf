@@ -1,10 +1,11 @@
 # Gecko architecture
 
 > The three views, with interactive versions and the agent-readable summary:
-> [full pipeline (interactive)](assets/architecture.html) ·
-> [context engineering (interactive)](assets/architecture-context.html) ·
-> [the on-chain loop (interactive)](assets/architecture-onchain.html) ·
+> [all three views on docs.geckovision.tech](https://docs.geckovision.tech/architecture) ·
 > [architecture.llms.txt](../architecture.llms.txt)
+>
+> The self-contained interactive files live in `docs/assets/architecture*.html` —
+> GitHub renders them as source, so download one and open it locally (no server needed).
 
 # Gecko — the architecture, in three views
 
