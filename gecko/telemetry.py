@@ -204,22 +204,40 @@ def read_or_create_install_id(path: str | Path | None = None) -> str:
 
     No PII, not derived from anything identifying. Best-effort persistence: if the
     file can't be written, returns an ephemeral id rather than raising.
+
+    Creation is ATOMIC (``O_CREAT | O_EXCL``) and the winner's id is re-read, so two
+    processes starting at once converge on ONE id. The read-then-write version had a
+    TOCTOU race: both saw "absent", both minted a uuid, and each reported a different
+    install — which is exactly how 50 phantom "installs" were recorded in a four-day
+    window from a single machine.
     """
     target = Path(path) if path is not None else default_install_id_path()
-    try:
-        if target.exists():
+
+    def _read() -> str | None:
+        try:
             existing = target.read_text(encoding="utf-8").strip()
-            if existing:
-                return existing
-    except OSError:
-        pass
+        except OSError:
+            return None
+        return existing or None
+
+    found = _read()
+    if found:
+        return found
+
     new_id = str(uuid.uuid4())
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(new_id + "\n", encoding="utf-8")
+        # Exclusive create: whoever wins writes; everyone else falls through to re-read.
+        with open(target, "x", encoding="utf-8") as handle:
+            handle.write(new_id + "\n")
+        return new_id
+    except FileExistsError:
+        # Another process created it between our read and our write — theirs is the
+        # identity for this machine.
+        return _read() or new_id
     except OSError:
         logger.warning("could not persist install-id (ephemeral this run)")
-    return new_id
+        return new_id
 
 
 def build_payload(

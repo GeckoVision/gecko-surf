@@ -26,6 +26,7 @@ import base64
 import struct
 from typing import Any, Mapping, Sequence
 
+from .events import emit_surf_event
 from .rpc import RpcCall
 from .simulate import BuiltTx, Receipt, simulate
 
@@ -310,6 +311,8 @@ def simulate_landing_bundle(
     track: Sequence[str] = (),
     network_label: str | None = None,
     postlude_ixs: Sequence[Any] = (),
+    program: str | None = None,
+    instruction: str | None = None,
 ) -> tuple[Receipt, int]:
     """Two-pass simulate ``[compute_budget..., *prelude_ixs, program_ix, *postlude_ixs]``.
 
@@ -321,6 +324,24 @@ def simulate_landing_bundle(
     verdict, no second guess. ``simulateTransaction`` only; the unsigned tx is never
     sent.
     """
+    # The Program Surface was previously invisible to usage telemetry: every event kind
+    # we emitted came from the HTTP/MCP path, so "an agent planned a real Solana call"
+    # produced no record at all. One emit here covers all four programs, since every
+    # landing orchestrator routes through this function.
+    #
+    # It emits ``prepare`` ("we assembled a complete call") and deliberately NOT
+    # ``first_call_correct``: a fork simulation passing is not the same claim as a real
+    # first call succeeding, and the simulated outcome already has an honest home in the
+    # corpus's ``simulated`` tier. Overstating here would corrupt the one metric we can
+    # defend.
+    if program and instruction:
+        emit_surf_event(
+            "surf.prepare",
+            surface_id=program,
+            tool_name=instruction,
+            plane="surface",
+        )
+
     kwargs: dict[str, Any] = {"rpc_url": rpc_url, "rpc_call": rpc_call, "track": track}
     if network_label is not None:
         kwargs["network_label"] = network_label

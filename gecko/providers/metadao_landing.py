@@ -187,6 +187,8 @@ def simulate_fund_landing(
         unit_price_microlamports=unit_price_microlamports,
         track=[payer],
         network_label=network_label,
+        program="metadao",
+        instruction="fund",
     )
 
     derive_only_receipt: Receipt | None = None
