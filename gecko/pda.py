@@ -43,8 +43,31 @@ __all__ = [
     "PdaDerivationError",
     "UnresolvedSeedError",
     "MissingBindingError",
+    "b58_encode",
     "derive_pda",
 ]
+
+# The Bitcoin/Solana base58 alphabet (no 0, O, I, l).
+_B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def b58_encode(raw: bytes) -> str:
+    """Base58-encode raw bytes (a 32-byte pubkey → its base58 address).
+
+    Pure stdlib on purpose: rendering a pubkey-encoded seed back to its base58
+    form is a *model* concern (the human-readable round-trip of
+    ``SeedEncoding == "pubkey"``) and must not require the ``[solana]`` extra.
+    Decoding/validation still goes through solders where derivation needs it.
+    """
+    number = int.from_bytes(raw, "big")
+    digits: list[str] = []
+    while number:
+        number, rem = divmod(number, 58)
+        digits.append(_B58_ALPHABET[rem])
+    # each leading zero byte encodes as a leading '1'
+    pad = len(raw) - len(bytes(raw).lstrip(b"\x00"))
+    return "1" * pad + "".join(reversed(digits))
+
 
 # How a seed's value is encoded into the raw bytes fed to find_program_address.
 # This is provenance carried from the source (``authority.to_bytes()`` is a
