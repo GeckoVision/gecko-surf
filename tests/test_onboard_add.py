@@ -260,16 +260,16 @@ def test_add_mode_live_wires_live_surface(tmp_path):
 
 _MULTI_SERVER_SPEC = {
     "openapi": "3.0.3",
-    "info": {"title": "Woovi-ish", "version": "1"},
+    "info": {"title": "PixPay-ish", "version": "1"},
     # Production FIRST — the money-API footgun order a silent servers[0] pick hits.
     "servers": [
-        {"url": "https://api.woovi.example", "description": "Production"},
-        {"url": "https://api.woovi-sandbox.example", "description": "Sandbox"},
+        {"url": "https://api.pixpay.example", "description": "Production"},
+        {"url": "https://api.pixpay-sandbox.example", "description": "Sandbox"},
     ],
     "paths": {},
 }
 
-_WOOVI_HOST = _fake_resolver({"api.woovi.example": ["93.184.216.34"]})
+_PIXPAY_HOST = _fake_resolver({"api.pixpay.example": ["93.184.216.34"]})
 
 
 def test_add_mode_live_multi_server_without_base_url_refuses(tmp_path, capsys):
@@ -284,14 +284,14 @@ def test_add_mode_live_multi_server_without_base_url_refuses(tmp_path, capsys):
         store=lambda n, s: bool(calls.append(("store", n)) or True),
         run=lambda cmd: bool(calls.append(("run", cmd))) or 0,
         home=tmp_path,
-        resolver=_WOOVI_HOST,
+        resolver=_PIXPAY_HOST,
     )
-    rc = add("https://api.woovi.example/openapi.json", mode="live", deps=deps)
+    rc = add("https://api.pixpay.example/openapi.json", mode="live", deps=deps)
     err = capsys.readouterr().err
     assert rc != 0
     assert "✗" in err
-    assert "[0]" in err and "https://api.woovi.example" in err
-    assert "[1]" in err and "https://api.woovi-sandbox.example" in err
+    assert "[0]" in err and "https://api.pixpay.example" in err
+    assert "[1]" in err and "https://api.pixpay-sandbox.example" in err
     assert "--base-url" in err
     assert calls == []  # refused before key prompt / store / configure_claude
     assert not (tmp_path / ".gecko" / "surfaces").exists()
@@ -309,14 +309,14 @@ def test_add_mode_live_multi_server_with_base_url_proceeds(tmp_path):
         home=tmp_path,
         resolver=_fake_resolver(
             {
-                "api.woovi.example": ["93.184.216.34"],
-                "api.woovi-sandbox.example": ["93.184.216.35"],
+                "api.pixpay.example": ["93.184.216.34"],
+                "api.pixpay-sandbox.example": ["93.184.216.35"],
             }
         ),
     )
     rc = add(
-        "https://api.woovi.example/openapi.json",
-        base_url="https://api.woovi-sandbox.example",
+        "https://api.pixpay.example/openapi.json",
+        base_url="https://api.pixpay-sandbox.example",
         mode="live",
         deps=deps,
     )
@@ -334,9 +334,9 @@ def test_add_recorded_multi_server_without_base_url_is_unchanged(tmp_path):
         store=lambda n, s: True,
         run=lambda cmd: bool(calls.append(cmd)) or 0,
         home=tmp_path,
-        resolver=_WOOVI_HOST,
+        resolver=_PIXPAY_HOST,
     )
-    rc = add("https://api.woovi.example/openapi.json", deps=deps)
+    rc = add("https://api.pixpay.example/openapi.json", deps=deps)
     assert rc == 0
     assert calls  # wired as before
 

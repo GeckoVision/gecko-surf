@@ -1,7 +1,7 @@
 """Live mode on a multi-server spec fails closed — no silent ``servers[0]``.
 
 The money-API footgun: a spec that declares production first and sandbox second
-(e.g. Woovi) makes an un-pinned live call hit PRODUCTION silently. The fix: when
+(e.g. a Pix payments API) makes an un-pinned live call hit PRODUCTION silently. The fix: when
 the caller never chose a ``base_url``, a live call on a >1-server spec raises a
 typed ``AmbiguousServerError`` that lists every server and says how to choose.
 
@@ -20,13 +20,13 @@ from gecko.access import public_session, stub_session
 from gecko.caller import CallError, PreparedRequest
 from gecko.client import AgentApiClient, AmbiguousServerError
 
-PROD = "https://api.woovi.example"
-SANDBOX = "https://api.woovi-sandbox.example"
+PROD = "https://api.pixpay.example"
+SANDBOX = "https://api.pixpay-sandbox.example"
 
-# Woovi-shaped: production listed FIRST, sandbox second — the exact footgun order.
+# a Pix payments API-shaped: production listed FIRST, sandbox second — the exact footgun order.
 MULTI_SERVER_SPEC: dict[str, Any] = {
     "openapi": "3.0.3",
-    "info": {"title": "Woovi-ish", "version": "1"},
+    "info": {"title": "PixPay-ish", "version": "1"},
     "servers": [
         {"url": PROD, "description": "Production"},
         {"url": SANDBOX, "description": "Sandbox"},

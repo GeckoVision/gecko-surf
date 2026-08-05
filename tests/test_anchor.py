@@ -20,9 +20,9 @@ from gecko.surfaces import TrustAnchor, anchor_for
 
 # --- anchor_for: the pure provenance -> trust decision -------------------------------
 def test_explicit_base_url_pins_to_its_host():
-    a = anchor_for(base_url="https://api.woovi.com")
+    a = anchor_for(base_url="https://api.pixpay.example")
     assert a.state == "pinned"
-    assert a.trusted_hosts == frozenset({"api.woovi.com"})
+    assert a.trusted_hosts == frozenset({"api.pixpay.example"})
     assert a.may_inject_auth is True
 
 
@@ -42,15 +42,17 @@ def test_no_provenance_is_unverified_with_no_trusted_host():
 
 
 def test_quarantine_overrides_every_provenance():
-    a = anchor_for(base_url="https://api.woovi.com", quarantined=True)
+    a = anchor_for(base_url="https://api.pixpay.example", quarantined=True)
     assert a.state == "quarantined"
     assert a.trusted_hosts == frozenset()
     assert a.may_inject_auth is False
 
 
 def test_base_url_precedence_over_spec_url():
-    a = anchor_for(base_url="https://api.woovi.com", spec_url="https://docs.evil.test")
-    assert a.trusted_hosts == frozenset({"api.woovi.com"})
+    a = anchor_for(
+        base_url="https://api.pixpay.example", spec_url="https://docs.evil.test"
+    )
+    assert a.trusted_hosts == frozenset({"api.pixpay.example"})
 
 
 def test_may_inject_auth_requires_pinned_and_a_host():
