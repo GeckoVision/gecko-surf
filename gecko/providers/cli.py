@@ -11,6 +11,9 @@ per-provider model: docs/specs/2026-07-31-orquestra-provider-integration.md).
     gecko-orquestra comprehend --project <slug> \\
         [--source <path>] [--overlay <path>]       # generate a program config
 
+    gecko-orquestra find-start "buy token X on pump"   # intent → the right start
+    gecko-orquestra --catalog --stdio              # serve the catalog router surface
+
 Adding a program later (pump, jupiter, …) is a new entry in ``_PROGRAMS`` + its recipes —
 not a new CLI. Keyless, control plane only: it derives the accounts and points at
 Orquestra's builder; it never proxies or signs. ``comprehend`` is the auto path that
@@ -24,12 +27,23 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..provider_config import load_packaged_provider, load_packaged_provider_base_url
 from .orquestra import Intent, OrquestraProgramSurface
 
-__all__ = ["main", "comprehend_main", "PROGRAMS", "build_surface_from_config"]
+if TYPE_CHECKING:
+    from ..find_start import StartSpec
+
+__all__ = [
+    "main",
+    "comprehend_main",
+    "find_start_main",
+    "PROGRAMS",
+    "build_surface_from_config",
+    "intent_registries",
+    "start_specs",
+]
 
 
 def build_surface_from_config(
@@ -58,20 +72,35 @@ def build_surface_from_config(
     )
 
 
-def _discover_programs() -> dict[str, Callable[[], OrquestraProgramSurface]]:
-    """Discover servable programs from packaged config. Each config-listed program
-    is paired with its code-side intent registry (the plan callables)."""
+def intent_registries() -> dict[str, dict[str, Intent]]:
+    """api_id → the intent registry supplying that program's plan callables.
+    ore/metadao_ico are servable for derive_pda + get_program_graph but carry no
+    plan intents yet (execute plans land in a later sprint) → empty registries."""
     from .meteora import METEORA_INTENTS
     from .pumpfun import PUMPFUN_INTENTS
 
-    # (provider, api_id) → the intent registry supplying that program's plan callables.
-    # ore/metadao_ico are servable for derive_pda + get_program_graph but carry no plan
-    # intents yet (execute plans land in a later sprint) → empty registries.
+    return {
+        "meteora": METEORA_INTENTS,
+        "pumpfun": PUMPFUN_INTENTS,
+        "ore": {},
+        "metadao_ico": {},
+    }
+
+
+def start_specs() -> dict[str, dict[str, "StartSpec"]]:
+    """api_id → intent name → its declarative StartSpec (what find_start routes to)."""
+    from .meteora import METEORA_STARTS
+    from .pumpfun import PUMPFUN_STARTS
+
+    return {"meteora": METEORA_STARTS, "pumpfun": PUMPFUN_STARTS}
+
+
+def _discover_programs() -> dict[str, Callable[[], OrquestraProgramSurface]]:
+    """Discover servable programs from packaged config. Each config-listed program
+    is paired with its code-side intent registry (the plan callables)."""
     intents_by_key: dict[tuple[str, str], dict[str, Intent]] = {
-        ("orquestra", "meteora"): METEORA_INTENTS,
-        ("orquestra", "pumpfun"): PUMPFUN_INTENTS,
-        ("orquestra", "ore"): {},
-        ("orquestra", "metadao_ico"): {},
+        ("orquestra", api_id): intents
+        for api_id, intents in intent_registries().items()
     }
     programs: dict[str, Callable[[], OrquestraProgramSurface]] = {}
     for (provider, api_id), intents in intents_by_key.items():
@@ -100,6 +129,12 @@ def serve(surface: OrquestraProgramSurface, args: argparse.Namespace, name: str)
         f"→ executes via {surface.project_base_url}",
         file=sys.stderr,  # stdout is the stdio JSON-RPC channel
     )
+    return _serve_transport(surface, args, name)
+
+
+def _serve_transport(surface: Any, args: argparse.Namespace, name: str) -> int:
+    """The shared transport tail (stdio / Streamable-HTTP) for any duck-typed
+    list_tools/call_tool surface."""
     if args.stdio:
         from ..mcp_server import serve_stdio
 
@@ -125,6 +160,89 @@ def _add_serve_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--public-url", default=None, help="external URL behind a tunnel/ALB"
     )
+
+
+# Bound on --catalog-pages: each page is one upstream GET; the catalog is ~225
+# pages and a router query never needs more than a few.
+_MAX_CATALOG_PAGES = 5
+
+
+def find_start_main(argv: list[str]) -> int:
+    """``gecko-orquestra find-start "<intent>"`` — intent → ranked start points.
+
+    Offline by default (the wired programs' packaged configs). ``--catalog-pages N``
+    additionally consults the live Orquestra catalog (capped) for unwired
+    comprehend-first candidates. Exit 0 = a start was found; 1 = honest no-start.
+    """
+    parser = argparse.ArgumentParser(
+        prog="gecko-orquestra find-start",
+        description=(
+            "Route a plain intent to the right starting point: (program, "
+            "instruction) + the provenance-tagged, dependency-ordered derive plan "
+            "+ DECLARED preludes + honest flagged gaps + the Orquestra execute "
+            "pointer. Never fabricates: below the retrieval floor it says so."
+        ),
+    )
+    parser.add_argument("intent", help="what you want to do, in plain words")
+    parser.add_argument(
+        "--program", default=None, help="optional hint: a wired program or catalog name"
+    )
+    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument(
+        "--catalog-pages",
+        type=int,
+        default=0,
+        help=(
+            "fetch up to N pages of the live Orquestra catalog for unwired "
+            f"comprehend-first candidates (0 = offline, default; capped at "
+            f"{_MAX_CATALOG_PAGES})"
+        ),
+    )
+    parser.add_argument(
+        "--base-url", default=None, help="override the Orquestra API base URL"
+    )
+    parser.add_argument("--json", action="store_true", help="emit the result as JSON")
+    parser.add_argument(
+        "--log-misses",
+        default=None,
+        metavar="PATH",
+        help=(
+            "opt-in retrieval-miss instrumentation: append one CATEGORICAL JSON "
+            "line (counts only — never the intent text) to PATH on a miss"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    from ..find_start import find_start, format_result, jsonl_miss_logger
+
+    pages = []
+    if args.catalog_pages > 0:
+        from ..orquestra_client import OrquestraClient, OrquestraClientError
+
+        try:
+            client = OrquestraClient(base_url=args.base_url)
+            first = client.list_projects(page=1)
+            pages.append(first)
+            last = min(args.catalog_pages, _MAX_CATALOG_PAGES, first.total_pages)
+            for page_no in range(2, last + 1):
+                pages.append(client.list_projects(page=page_no))
+        except OrquestraClientError as exc:
+            print(f"catalog unavailable ({exc}); continuing offline", file=sys.stderr)
+
+    on_miss = jsonl_miss_logger(args.log_misses) if args.log_misses else None
+    result = find_start(
+        args.intent,
+        program=args.program,
+        catalog_pages=pages,
+        limit=args.limit,
+        on_miss=on_miss,
+    )
+    if args.json:
+        json.dump(result.to_json(), sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    else:
+        sys.stdout.write(format_result(result))
+    return 1 if result.no_start else 0
 
 
 def comprehend_main(argv: list[str], *, client: Any = None) -> int:
@@ -223,18 +341,39 @@ def main(argv: list[str] | None = None) -> int:
     args_list = list(argv) if argv is not None else sys.argv[1:]
     if args_list and args_list[0] == "comprehend":
         return comprehend_main(args_list[1:])
+    if args_list and args_list[0] == "find-start":
+        return find_start_main(args_list[1:])
     parser = argparse.ArgumentParser(
         prog="gecko-orquestra",
         description="Serve an Orquestra program's front-door surface over MCP (keyless).",
     )
-    parser.add_argument(
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument(
         "--program",
-        required=True,
         choices=sorted(PROGRAMS),
         help="which Orquestra program to serve",
     )
+    target.add_argument(
+        "--catalog",
+        action="store_true",
+        help=(
+            "serve the catalog router surface instead (list_programs + find_start "
+            "+ comprehend_program)"
+        ),
+    )
     _add_serve_args(parser)
     args = parser.parse_args(args_list)
+
+    if args.catalog:
+        from .catalog_surface import OrquestraCatalogSurface
+
+        catalog_surface = OrquestraCatalogSurface()
+        print(
+            f"gecko-orquestra[catalog]: {len(PROGRAMS)} wired program(s); "
+            "find_start routes intents, comprehend_program generates configs",
+            file=sys.stderr,  # stdout is the stdio JSON-RPC channel
+        )
+        return _serve_transport(catalog_surface, args, name="orquestra-catalog")
 
     surface = PROGRAMS[args.program]()
     return serve(surface, args, name=args.program)

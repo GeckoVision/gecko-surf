@@ -209,6 +209,9 @@ class ProgramSpec:
     pdas: dict[str, PdaNode]
     intents: tuple[str, ...]
     orquestra_project: str | None = None
+    # The config's curated prose (gotchas, cross-program warnings, hidden-account
+    # facts) — surfaced by find_start's router; empty when the config carries none.
+    notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -245,6 +248,7 @@ def _program_from_dict(data: dict) -> ProgramSpec:
         orquestra_project=data.get("orquestra_project"),
         pdas=pdas,
         intents=tuple(data.get("intents", ())),
+        notes=str(data.get("notes", "")),
     )
 
 

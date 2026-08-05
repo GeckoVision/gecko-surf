@@ -37,6 +37,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Mapping
 
+from ..find_start import PreludeSpec, StartSpec
 from ..landing import (
     ASSOCIATED_TOKEN_PROGRAM_ID,
     COMPUTE_BUDGET_PROGRAM_ID,
@@ -61,6 +62,7 @@ from .orquestra import Intent, OrquestraProgramSurface
 __all__ = [
     "METEORA_PROGRAM_ID",
     "METEORA_INTENTS",
+    "METEORA_STARTS",
     "plan_swap",
     "build_meteora_surface",
     "main",
@@ -376,6 +378,67 @@ _SWAP = Intent(
 # keyed by intent name. The config lists the intent NAMES; here we supply their
 # derivation logic. (Making plans declarative — data too — is a follow-on PR.)
 METEORA_INTENTS: dict[str, Intent] = {_SWAP.name: _SWAP}
+
+# What find_start declares about plan_swap: the derive set + the source-recovered
+# facts the packaged overlay does not carry (the overlay only hand-models
+# user_token; lb_pair/bin_array were recovered from program SOURCE) + the
+# DECLARED landing preludes. Pure data.
+METEORA_STARTS: dict[str, StartSpec] = {
+    "plan_swap": StartSpec(
+        accounts=(
+            "lb_pair",
+            "reserve",
+            "oracle",
+            "bin_array",
+            "event_authority",
+            "user_token",
+        ),
+        recovered={
+            "lb_pair": (
+                "the helper-seeded ROOT the IDL drops (#4057), recovered from source "
+                "(derive_lb_pair_pda2): 4-seed recipe [min(x,y), max(x,y), bin_step, "
+                "base_factor(u16 LE)]. base_factor is the pool's FEE TIER — "
+                "caller-supplied, not inferable from the mints; omitting it silently "
+                "derives the WRONG pool for any post-2024-05 pool"
+            ),
+            "bin_array": (
+                "remaining_accounts the IDL never names: which bin_array PDAs the "
+                "swap traverses is selected from the pool's LIVE liquidity bitmap at "
+                "active_id (gecko.meteora_math) — declared in the plan, filled at "
+                "plan time"
+            ),
+        },
+        preludes=(
+            PreludeSpec(
+                kind="compute_budget",
+                program=COMPUTE_BUDGET_PROGRAM_ID,
+                note=(
+                    "SetComputeUnitLimit (units from the simulate Receipt) + "
+                    "SetComputeUnitPrice (getRecentPrioritizationFees)"
+                ),
+            ),
+            PreludeSpec(
+                kind="create_idempotent_ata",
+                program=ASSOCIATED_TOKEN_PROGRAM_ID,
+                note=(
+                    "createAssociatedTokenAccountIdempotent for BOTH user token "
+                    "accounts (in/out legs). token_program note: each ATA derives "
+                    "under the token program read from its mint's OWNER (Token vs "
+                    "Token-2022), never a hardcoded SPL Token"
+                ),
+            ),
+            PreludeSpec(
+                kind="wrap_unwrap_wsol",
+                program=SYSTEM_PROGRAM_ID,
+                note=(
+                    "CONDITIONAL: when a side's mint is native SOL, the plan adds "
+                    "the wSOL wrap (transfer + SyncNative) before the swap and a "
+                    "CloseAccount unwrap after it"
+                ),
+            ),
+        ),
+    )
+}
 
 
 def build_meteora_surface() -> OrquestraProgramSurface:
