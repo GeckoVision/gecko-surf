@@ -120,9 +120,8 @@ And the depth is measured, not asserted:
   receipt-pairs · −77%/−89% measured context cuts · a 4,500-program catalog listed ·
   0 auth headers exposed across 14 real specs.
 
-**Explore it interactively:** [full pipeline](docs/assets/architecture.html) ·
-[context engineering](docs/assets/architecture-context.html) ·
-[the on-chain loop](docs/assets/architecture-onchain.html) · [the map](docs/architecture.md)
+**Explore the diagrams:** [architecture on docs.geckovision.tech](https://docs.geckovision.tech/architecture)
+(all three views, rendered) · [the map in this repo](docs/architecture.md)
 
 ## Proof, not promises
 
@@ -154,10 +153,10 @@ surfaces first-try. Try it: `gecko graph svg <spec>` renders any surface's call 
 **Solana programs — try the call before you make it**
 
 <p align="center">
-  <img src="docs/assets/onchain-receipt.thumb.png" alt="A coding assistant builds a Pump.fun buy on its own and it reverts; Gecko's complete plan simulates to a passing receipt at $0" width="720">
+  <img src="docs/assets/onchain-receipt.gif" alt="A coding assistant builds a Pump.fun buy on its own and it reverts; Gecko's complete plan simulates to a passing receipt at $0" width="820">
 </p>
 
-[▶ watch the 43s demo](docs/assets/onchain-receipt.mp4) — a coding assistant builds the
+[MP4 version](docs/assets/onchain-receipt.mp4) — a coding assistant builds the
 call by itself and can only find out by trying. Same intent through Gecko: the complete
 plan, every account tagged with where it came from, simulated to a **passing receipt for
 $0** before anything is spent.
