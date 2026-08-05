@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.13.0">
-  <title>Gecko — Full Architecture Diagram</title>
+  <title>Gecko — Context Engineering Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -4496,12 +4496,12 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>Gecko — Full Architecture</h1>
+        <h1>Gecko — Context Engineering</h1>
       </div>
-      <p class="subtitle">Untrusted surfaces → provenance knowledge → verified action. Gecko never builds the production tx, never signs.</p>
+      <p class="subtitle">The memory substrate under other people&#39;s agents — semantic, procedural, episodic, working</p>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"comprehend-rail","label":"Comprehension rail","focus":["sources","gate","comprehend","knowledge","projection"],"note":"Everything ingested is untrusted until sanitized; knowledge carries provenance tags (extracted / recovered / flagged)."},{"id":"verify-rail","label":"Verify rail","focus":["agent","planner","builder","simulate","signgate","signer"],"note":"External builder builds; Gecko simulates to a Receipt. The gate is verdict-based today — message-hash binding is planned, not built."},{"id":"memory-loop","label":"Memory loop","focus":["simulate","corpusdrift","knowledge"],"note":"Every simulation outcome lands as a categorical record; the drift series feeds comprehension back — self-generated episodic memory."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"semantic-path","label":"Semantic memory","focus":["surfaces","comprehend","knowledge","catalog"],"note":"Untrusted surfaces become provenance-tagged knowledge; retrieval is lexical and deterministic — no vectors by evidence-gated choice."},{"id":"procedural","label":"Procedural memory","focus":["tooldefs","plans","working"],"note":"Tools and plans are typed, executable data — not prose an LLM re-reads."},{"id":"episodic-loop","label":"Episodic loop","focus":["working","corpus","drift","knowledge"],"note":"Outcomes are stored as categories only, and Gecko generates its own episodes by re-simulating — the drift series feeds knowledge back."}]</script>
 
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
       <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
@@ -4544,9 +4544,9 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read">
-      <svg viewBox="0 0 1520 742" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
-        <title id="archify-diagram-title">Gecko — Full Architecture</title>
-        <desc id="archify-diagram-description">Untrusted surfaces → provenance knowledge → verified action. Gecko never builds the production tx, never signs.</desc>
+      <svg viewBox="0 0 1400 632" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Gecko — Context Engineering</title>
+        <desc id="archify-diagram-description">The memory substrate under other people&#39;s agents — semantic, procedural, episodic, working</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -4570,227 +4570,185 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="260" y="110" width="1220" height="564" rx="12" class="c-region" stroke-width="1"/>
-        <text x="268" y="128" class="t-cloud" font-size="9" font-weight="600">Gecko control plane — stores surfaces + correctness metadata, never payloads</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="230" y="100" width="900" height="464" rx="12" class="c-region" stroke-width="1"/>
+        <text x="238" y="118" class="t-cloud" font-size="9" font-weight="600">Gecko — the substrate (control plane only)</text>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="sources" data-edge-to="gate" data-edge-key="0" data-edge-id="ingest-flow" data-composition-points="210,172;290,172" d="M 210 172 L 290 172" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="gate" data-edge-to="comprehend" data-edge-key="1" data-edge-id="gate-comprehend" data-composition-points="460,172;540,172" d="M 460 172 L 540 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="comprehend" data-edge-to="knowledge" data-edge-key="2" data-edge-id="comprehend-knowledge" data-composition-points="710,172;790,172" d="M 710 172 L 790 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="knowledge" data-edge-to="projection" data-edge-key="3" data-edge-id="knowledge-projection" data-composition-points="970,172;1050,172" d="M 970 172 L 1050 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="projection" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="projection-agent" data-composition-points="1200,172;1280,172" d="M 1200 172 L 1280 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="agent" data-edge-to="planner" data-edge-label="intent" data-edge-key="5" data-edge-id="agent-intent" data-composition-points="1350,204;1350,228;1381,228;1381,376;1365,376;1365,400" d="M 1350 204 L 1350 220 Q 1350 228 1358 228 L 1373 228 Q 1381 228 1381 236 L 1381 368 Q 1381 376 1373 376 L 1373 376 Q 1365 376 1365 384 L 1365 400" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="planner" data-edge-to="builder" data-edge-label="declared plan" data-edge-key="6" data-edge-id="plan-to-build" data-composition-points="1280,432;1160,432" d="M 1280 432 L 1160 432" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="builder" data-edge-to="simulate" data-edge-label="built ix" data-edge-key="7" data-edge-id="build-to-sim" data-composition-points="1010,432;910,432" d="M 1010 432 L 910 432" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="simulate" data-edge-to="signgate" data-edge-label="pass (verdict)" data-edge-key="8" data-edge-id="sim-to-gate" data-composition-points="740,432;620,432" d="M 740 432 L 620 432" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="signgate" data-edge-to="signer" data-edge-label="sign" data-edge-key="9" data-edge-id="gate-to-signer" data-composition-points="480,432;380,432" d="M 480 432 L 380 432" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="simulate" data-edge-to="corpusdrift" data-edge-label="outcome" data-edge-key="10" data-edge-id="sim-outcome" data-composition-points="825,464;825,590" d="M 825 464 L 825 590" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="corpusdrift" data-edge-to="knowledge" data-edge-label="drift" data-edge-key="11" data-edge-id="drift-back" data-composition-points="740,622;200,622;200,300;880,300;880,204" d="M 740 622 L 208 622 Q 200 622 200 614 L 200 308 Q 200 300 208 300 L 872 300 Q 880 300 880 292 L 880 204" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="surfaces" data-edge-to="comprehend" data-edge-label="sanitize first" data-edge-key="0" data-edge-id="sanitize-ingest" data-composition-points="180,332;260,332" d="M 180 332 L 260 332" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="comprehend" data-edge-to="knowledge" data-edge-key="1" data-edge-id="comprehend-to-knowledge" data-composition-points="400,332;480,332" d="M 400 332 L 480 332" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="knowledge" data-edge-to="catalog" data-edge-key="2" data-edge-id="knowledge-indexed" data-composition-points="630,332;710,332" d="M 630 332 L 710 332" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="catalog" data-edge-to="working" data-edge-label="top-k slice" data-edge-key="3" data-edge-id="topk-slice" data-composition-points="860,332;940,332" d="M 860 332 L 940 332" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="working" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="context-loop" data-composition-points="1100,332;1220,332" d="M 1100 332 L 1220 332" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="tooldefs" data-edge-to="working" data-edge-key="5" data-edge-id="tools-project" data-composition-points="785,194;785,247;1013,247;1013,300" d="M 785 194 L 785 239 Q 785 247 793 247 L 1005 247 Q 1013 247 1013 255 L 1013 300" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="plans" data-edge-to="working" data-edge-key="6" data-edge-id="plans-project" data-composition-points="1020,194;1020,218;1043,218;1043,276;1027,276;1027,300" d="M 1020 194 L 1020 210 Q 1020 218 1028 218 L 1035 218 Q 1043 218 1043 226 L 1043 268 Q 1043 276 1035 276 L 1035 276 Q 1027 276 1027 284 L 1027 300" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="working" data-edge-to="corpus" data-edge-label="outcomes" data-edge-key="7" data-edge-id="outcomes-down" data-composition-points="1020,364;1020,480" d="M 1020 364 L 1020 480" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="corpus" data-edge-to="drift" data-edge-key="8" data-edge-id="corpus-to-drift" data-composition-points="940,512;860,512" d="M 940 512 L 860 512" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="drift" data-edge-to="knowledge" data-edge-label="what changed" data-edge-key="9" data-edge-id="drift-feedback" data-composition-points="710,512;555,512;555,364" d="M 710 512 L 563 512 Q 555 512 555 504 L 555 364" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-sources" data-node-id="sources" data-node-label="Untrusted Sources" tabindex="0" role="button" aria-label="Focus Untrusted Sources, OpenAPI · IDL · 4,500-project catalog, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="OpenAPI · IDL · 4,500-project catalog" data-node-context="Architecture component">
-          <title>Untrusted Sources · OpenAPI · IDL · 4,500-project catalog · Architecture component</title>
-          <rect x="40" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="40" y="140" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 146) scale(0.6875)">
+        <g id="node-surfaces" data-node-id="surfaces" data-node-label="Untrusted Surfaces" tabindex="0" role="button" aria-label="Focus Untrusted Surfaces, OpenAPI · IDL · source, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="OpenAPI · IDL · source" data-node-context="Architecture component">
+          <title>Untrusted Surfaces · OpenAPI · IDL · source · Architecture component</title>
+          <rect x="40" y="300" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="40" y="300" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 306) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-detail-anchor x="125" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Untrusted Sources</text>
-        <text data-detail="context" x="125" y="186" class="t-muted" font-size="9" text-anchor="middle">OpenAPI · IDL · 4,500-project catalog</text>
+          <text data-detail-anchor x="110" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Untrusted Surfaces</text>
+        <text data-detail="context" x="110" y="346" class="t-muted" font-size="9" text-anchor="middle">OpenAPI · IDL · source</text>
         </g>
 
-        <g id="node-gate" data-node-id="gate" data-node-label="Anti-Poison Gate" tabindex="0" role="button" aria-label="Focus Anti-Poison Gate, sanitize · quarantine · Skill Guard, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="security" data-node-sublabel="sanitize · quarantine · Skill Guard" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Anti-Poison Gate · sanitize · quarantine · Skill Guard · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="290" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="290" y="140" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(296 146) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-detail-anchor x="375" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Anti-Poison Gate</text>
-        <text data-detail="context" x="375" y="186" class="t-muted" font-size="9" text-anchor="middle">sanitize · quarantine · Skill Guard</text>
-        </g>
-
-        <g id="node-comprehend" data-node-id="comprehend" data-node-label="Comprehension" tabindex="0" role="button" aria-label="Focus Comprehension, ingest · seed recovery · overlays, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ingest · seed recovery · overlays" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Comprehension · ingest · seed recovery · overlays · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="540" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="540" y="140" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(546 146) scale(0.6875)">
+        <g id="node-comprehend" data-node-id="comprehend" data-node-label="Comprehension" tabindex="0" role="button" aria-label="Focus Comprehension, ingest · pda_extract, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ingest · pda_extract" data-node-tag="semantic" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Comprehension · ingest · pda_extract · Gecko — the substrate (control plane only) · semantic</title>
+          <rect x="260" y="300" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="260" y="300" width="140" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(266 306) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="625" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Comprehension</text>
-        <text data-detail="context" x="625" y="186" class="t-muted" font-size="9" text-anchor="middle">ingest · seed recovery · overlays</text>
+          <text data-detail-anchor x="330" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Comprehension</text>
+        <text data-detail="context" x="330" y="346" class="t-muted" font-size="9" text-anchor="middle">ingest · pda_extract</text>
+        <text data-detail="fine" x="330" y="356" class="t-backend" font-size="7" text-anchor="middle">semantic</text>
         </g>
 
-        <g id="node-knowledge" data-node-id="knowledge" data-node-label="Provenance Knowledge" tabindex="0" role="button" aria-label="Focus Provenance Knowledge, extracted / recovered / flagged, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="database" data-node-sublabel="extracted / recovered / flagged" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Provenance Knowledge · extracted / recovered / flagged · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="790" y="140" width="180" height="64" rx="6" class="c-mask"/>
-          <rect x="790" y="140" width="180" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(796 146) scale(0.6875)">
+        <g id="node-knowledge" data-node-id="knowledge" data-node-label="Provenance Graphs" tabindex="0" role="button" aria-label="Focus Provenance Graphs, surface · program · joins, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="database" data-node-sublabel="surface · program · joins" data-node-tag="semantic" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Provenance Graphs · surface · program · joins · Gecko — the substrate (control plane only) · semantic</title>
+          <rect x="480" y="300" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="480" y="300" width="150" height="64" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(486 306) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="880" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Provenance Knowledge</text>
-        <text data-detail="context" x="880" y="186" class="t-muted" font-size="9" text-anchor="middle">extracted / recovered / flagged</text>
+          <text data-detail-anchor x="555" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Provenance Graphs</text>
+        <text data-detail="context" x="555" y="346" class="t-muted" font-size="9" text-anchor="middle">surface · program · joins</text>
+        <text data-detail="fine" x="555" y="356" class="t-database" font-size="7" text-anchor="middle">semantic</text>
         </g>
 
-        <g id="node-projection" data-node-id="projection" data-node-label="Projection" tabindex="0" role="button" aria-label="Focus Projection, MCP · CLI · Scorecard, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="MCP · CLI · Scorecard" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Projection · MCP · CLI · Scorecard · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="1050" y="140" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1050" y="140" width="150" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(1056 146) scale(0.6875)">
-            <rect x="2" y="3" width="12" height="10" rx="2"/>
-            <path d="M2 6.5h12"/>
-            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
-            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
-          </g>
-          <text data-detail-anchor x="1125" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Projection</text>
-        <text data-detail="context" x="1125" y="186" class="t-muted" font-size="9" text-anchor="middle">MCP · CLI · Scorecard</text>
-        </g>
-
-        <g id="node-agent" data-node-id="agent" data-node-label="The Agent" tabindex="0" role="button" aria-label="Focus The Agent, intent in · context out, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="intent in · context out" data-node-context="Architecture component">
-          <title>The Agent · intent in · context out · Architecture component</title>
-          <rect x="1280" y="140" width="140" height="64" rx="6" class="c-mask"/>
-          <rect x="1280" y="140" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1286 146) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1350" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The Agent</text>
-        <text data-detail="context" x="1350" y="186" class="t-muted" font-size="9" text-anchor="middle">intent in · context out</text>
-        </g>
-
-        <g id="node-planner" data-node-id="planner" data-node-label="Planner" tabindex="0" role="button" aria-label="Focus Planner, account set · state reads · preludes, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="account set · state reads · preludes" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Planner · account set · state reads · preludes · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="1280" y="400" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="1280" y="400" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1286 406) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="1365" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Planner</text>
-        <text data-detail="context" x="1365" y="446" class="t-muted" font-size="9" text-anchor="middle">account set · state reads · preludes</text>
-        </g>
-
-        <g id="node-builder" data-node-id="builder" data-node-label="Orquestra /build" tabindex="0" role="button" aria-label="Focus Orquestra /build, external builder, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="external builder" data-node-context="Architecture component">
-          <title>Orquestra /build · external builder · Architecture component</title>
-          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1016 406) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1085" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Orquestra /build</text>
-        <text data-detail="context" x="1085" y="446" class="t-muted" font-size="9" text-anchor="middle">external builder</text>
-        </g>
-
-        <g id="node-simulate" data-node-id="simulate" data-node-label="Simulate → Receipt" tabindex="0" role="button" aria-label="Focus Simulate → Receipt, surfpool · $0 · never signs, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="surfpool · $0 · never signs" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Simulate → Receipt · surfpool · $0 · never signs · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="740" y="400" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="740" y="400" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(746 406) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="825" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Simulate → Receipt</text>
-        <text data-detail="context" x="825" y="446" class="t-muted" font-size="9" text-anchor="middle">surfpool · $0 · never signs</text>
-        </g>
-
-        <g id="node-signgate" data-node-id="signgate" data-node-label="Signing Gate" tabindex="0" role="button" aria-label="Focus Signing Gate, fail-closed, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="security" data-node-sublabel="fail-closed" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Signing Gate · fail-closed · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="480" y="400" width="140" height="64" rx="6" class="c-mask"/>
-          <rect x="480" y="400" width="140" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(486 406) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-detail-anchor x="550" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signing Gate</text>
-        <text data-detail="context" x="550" y="446" class="t-muted" font-size="9" text-anchor="middle">fail-closed</text>
-        </g>
-
-        <g id="node-signer" data-node-id="signer" data-node-label="Signer" tabindex="0" role="button" aria-label="Focus Signer, wallet · TEE · founder, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="wallet · TEE · founder" data-node-context="Architecture component">
-          <title>Signer · wallet · TEE · founder · Architecture component</title>
-          <rect x="250" y="400" width="130" height="64" rx="6" class="c-mask"/>
-          <rect x="250" y="400" width="130" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(256 406) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="315" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signer</text>
-        <text data-detail="context" x="315" y="446" class="t-muted" font-size="9" text-anchor="middle">wallet · TEE · founder</text>
-        </g>
-
-        <g id="node-corpusdrift" data-node-id="corpusdrift" data-node-label="Corpus + Drift" tabindex="0" role="button" aria-label="Focus Corpus + Drift, categorical only, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="database" data-node-sublabel="categorical only" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Corpus + Drift · categorical only · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="740" y="590" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="740" y="590" width="170" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(746 596) scale(0.6875)">
+        <g id="node-catalog" data-node-id="catalog" data-node-label="Lexical Catalog" tabindex="0" role="button" aria-label="Focus Lexical Catalog, BM25-shaped, no vectors, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="database" data-node-sublabel="BM25-shaped, no vectors" data-node-tag="semantic" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Lexical Catalog · BM25-shaped, no vectors · Gecko — the substrate (control plane only) · semantic</title>
+          <rect x="710" y="300" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="710" y="300" width="150" height="64" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(716 306) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="825" y="620" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Corpus + Drift</text>
-        <text data-detail="context" x="825" y="636" class="t-muted" font-size="9" text-anchor="middle">categorical only</text>
+          <text data-detail-anchor x="785" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Lexical Catalog</text>
+        <text data-detail="context" x="785" y="346" class="t-muted" font-size="9" text-anchor="middle">BM25-shaped, no vectors</text>
+        <text data-detail="fine" x="785" y="356" class="t-database" font-size="7" text-anchor="middle">semantic</text>
+        </g>
+
+        <g id="node-working" data-node-id="working" data-node-label="Working Projection" tabindex="0" role="button" aria-label="Focus Working Projection, just-in-time · −77/−89% tokens, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="just-in-time · −77/−89% tokens" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Working Projection · just-in-time · −77/−89% tokens · Gecko — the substrate (control plane only)</title>
+          <rect x="940" y="300" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="940" y="300" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(946 306) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="1020" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Working Projection</text>
+        <text data-detail="context" x="1020" y="346" class="t-muted" font-size="9" text-anchor="middle">just-in-time · −77/−89% tokens</text>
+        </g>
+
+        <g id="node-agent" data-node-id="agent" data-node-label="The Agent" tabindex="0" role="button" aria-label="Focus The Agent, Claude Code · Bankr · MCP, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Claude Code · Bankr · MCP" data-node-context="Architecture component">
+          <title>The Agent · Claude Code · Bankr · MCP · Architecture component</title>
+          <rect x="1220" y="300" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="1220" y="300" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1226 306) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-detail-anchor x="1290" y="330" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The Agent</text>
+        <text data-detail="context" x="1290" y="346" class="t-muted" font-size="9" text-anchor="middle">Claude Code · Bankr · MCP</text>
+        </g>
+
+        <g id="node-tooldefs" data-node-id="tooldefs" data-node-label="Tool Defs" tabindex="0" role="button" aria-label="Focus Tool Defs, question-shaped, auth hidden, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="question-shaped, auth hidden" data-node-tag="procedural" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Tool Defs · question-shaped, auth hidden · Gecko — the substrate (control plane only) · procedural</title>
+          <rect x="710" y="130" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="710" y="130" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(716 136) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="785" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tool Defs</text>
+        <text data-detail="context" x="785" y="176" class="t-muted" font-size="9" text-anchor="middle">question-shaped, auth hidden</text>
+        <text data-detail="fine" x="785" y="186" class="t-backend" font-size="7" text-anchor="middle">procedural</text>
+        </g>
+
+        <g id="node-plans" data-node-id="plans" data-node-label="Typed Plans" tabindex="0" role="button" aria-label="Focus Typed Plans, landing_plan · derive order, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="landing_plan · derive order" data-node-tag="procedural" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Typed Plans · landing_plan · derive order · Gecko — the substrate (control plane only) · procedural</title>
+          <rect x="940" y="130" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="940" y="130" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(946 136) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="1020" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Typed Plans</text>
+        <text data-detail="context" x="1020" y="176" class="t-muted" font-size="9" text-anchor="middle">landing_plan · derive order</text>
+        <text data-detail="fine" x="1020" y="186" class="t-backend" font-size="7" text-anchor="middle">procedural</text>
+        </g>
+
+        <g id="node-corpus" data-node-id="corpus" data-node-label="Categorical Corpus" tabindex="0" role="button" aria-label="Focus Categorical Corpus, closed vocab, no payloads, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="database" data-node-sublabel="closed vocab, no payloads" data-node-tag="episodic" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Categorical Corpus · closed vocab, no payloads · Gecko — the substrate (control plane only) · episodic</title>
+          <rect x="940" y="480" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="940" y="480" width="160" height="64" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(946 486) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-detail-anchor x="1020" y="510" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Categorical Corpus</text>
+        <text data-detail="context" x="1020" y="526" class="t-muted" font-size="9" text-anchor="middle">closed vocab, no payloads</text>
+        <text data-detail="fine" x="1020" y="536" class="t-database" font-size="7" text-anchor="middle">episodic</text>
+        </g>
+
+        <g id="node-drift" data-node-id="drift" data-node-label="Drift Series" tabindex="0" role="button" aria-label="Focus Drift Series, N-confirmed re-simulation, Gecko — the substrate (control plane only)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="N-confirmed re-simulation" data-node-tag="episodic" data-node-context="Gecko — the substrate (control plane only)">
+          <title>Drift Series · N-confirmed re-simulation · Gecko — the substrate (control plane only) · episodic</title>
+          <rect x="710" y="480" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="710" y="480" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(716 486) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-detail-anchor x="785" y="510" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Drift Series</text>
+        <text data-detail="context" x="785" y="526" class="t-muted" font-size="9" text-anchor="middle">N-confirmed re-simulation</text>
+        <text data-detail="fine" x="785" y="536" class="t-backend" font-size="7" text-anchor="middle">episodic</text>
         </g>
 
         <!-- Connection labels -->
+        <g data-detail="context" data-edge-from="surfaces" data-edge-to="comprehend" data-edge-label="sanitize first" data-edge-key="0" data-edge-id="sanitize-ingest">
+          <rect x="181.4" y="312" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="220" y="322" class="t-security" font-size="8" text-anchor="middle">sanitize first</text>
+        </g>
 
 
+        <g data-detail="context" data-edge-from="catalog" data-edge-to="working" data-edge-label="top-k slice" data-edge-key="3" data-edge-id="topk-slice">
+          <rect x="868.6" y="312" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="900" y="322" class="t-backend" font-size="8" text-anchor="middle">top-k slice</text>
+        </g>
+        <g data-detail="context" data-edge-from="working" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="context-loop">
+          <rect x="1138.2" y="312" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="1160" y="322" class="t-backend" font-size="8" text-anchor="middle">context</text>
+        </g>
 
 
-        <g data-detail="context" data-edge-from="projection" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="projection-agent">
-          <rect x="1218.2" y="152" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="1240" y="162" class="t-backend" font-size="8" text-anchor="middle">context</text>
+        <g data-detail="context" data-edge-from="working" data-edge-to="corpus" data-edge-label="outcomes" data-edge-key="7" data-edge-id="outcomes-down">
+          <rect x="995.8" y="384" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="1020" y="394" class="t-messagebus" font-size="8" text-anchor="middle">outcomes</text>
         </g>
-        <g data-detail="context" data-edge-from="agent" data-edge-to="planner" data-edge-label="intent" data-edge-key="5" data-edge-id="agent-intent">
-          <rect x="1346.1" y="208" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="1365.5" y="218" class="t-muted" font-size="8" text-anchor="middle">intent</text>
-        </g>
-        <g data-detail="context" data-edge-from="planner" data-edge-to="builder" data-edge-label="declared plan" data-edge-key="6" data-edge-id="plan-to-build">
-          <rect x="1183.8" y="412" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="1220" y="422" class="t-backend" font-size="8" text-anchor="middle">declared plan</text>
-        </g>
-        <g data-detail="context" data-edge-from="builder" data-edge-to="simulate" data-edge-label="built ix" data-edge-key="7" data-edge-id="build-to-sim">
-          <rect x="935.8" y="412" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="960" y="422" class="t-backend" font-size="8" text-anchor="middle">built ix</text>
-        </g>
-        <g data-detail="context" data-edge-from="simulate" data-edge-to="signgate" data-edge-label="pass (verdict)" data-edge-key="8" data-edge-id="sim-to-gate">
-          <rect x="641.4" y="412" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="680" y="422" class="t-security" font-size="8" text-anchor="middle">pass (verdict)</text>
-        </g>
-        <g data-detail="context" data-edge-from="signgate" data-edge-to="signer" data-edge-label="sign" data-edge-key="9" data-edge-id="gate-to-signer">
-          <rect x="415" y="412" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="430" y="422" class="t-security" font-size="8" text-anchor="middle">sign</text>
-        </g>
-        <g data-detail="context" data-edge-from="simulate" data-edge-to="corpusdrift" data-edge-label="outcome" data-edge-key="10" data-edge-id="sim-outcome">
-          <rect x="803.2" y="484" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="825" y="494" class="t-messagebus" font-size="8" text-anchor="middle">outcome</text>
-        </g>
-        <g data-detail="context" data-edge-from="corpusdrift" data-edge-to="knowledge" data-edge-label="drift" data-edge-key="11" data-edge-id="drift-back">
-          <rect x="183" y="441" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="200" y="451" class="t-messagebus" font-size="8" text-anchor="middle">drift</text>
+
+        <g data-detail="context" data-edge-from="drift" data-edge-to="knowledge" data-edge-label="what changed" data-edge-key="9" data-edge-id="drift-feedback">
+          <rect x="521.2" y="418" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="555" y="428" class="t-messagebus" font-size="8" text-anchor="middle">what changed</text>
         </g>
 
         <!-- Legend -->
         <g data-legend data-legend-bridge>
-          <text x="40" y="706" class="t-primary" font-size="10" font-weight="600">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="726" data-legend-width="82">
-            <rect x="40" y="718" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-            <text x="61" y="726" class="t-muted" font-size="8">Frontend</text>
+          <text x="40" y="596" class="t-primary" font-size="10" font-weight="600">Legend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="40" data-legend-baseline="616" data-legend-width="77">
+            <rect x="40" y="608" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="61" y="616" class="t-muted" font-size="8">Backend</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="144" data-legend-baseline="726" data-legend-width="77">
-            <rect x="144" y="718" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="165" y="726" class="t-muted" font-size="8">Backend</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="139" data-legend-baseline="616" data-legend-width="82">
+            <rect x="139" y="608" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="160" y="616" class="t-muted" font-size="8">Database</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="243" data-legend-baseline="726" data-legend-width="82">
-            <rect x="243" y="718" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="264" y="726" class="t-muted" font-size="8">Database</text>
-          </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="347" data-legend-baseline="726" data-legend-width="82">
-            <rect x="347" y="718" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-            <text x="368" y="726" class="t-muted" font-size="8">Security</text>
-          </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="451" data-legend-baseline="726" data-legend-width="82">
-            <rect x="451" y="718" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-            <text x="472" y="726" class="t-muted" font-size="8">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="243" data-legend-baseline="616" data-legend-width="82">
+            <rect x="243" y="608" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="264" y="616" class="t-muted" font-size="8">External</text>
           </g>
         </g>
       </svg>
@@ -4979,36 +4937,33 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>Comprehension rail</h3>
+          <h3>Semantic — deterministic</h3>
         </div>
         <ul>
-          <li>&bull; Seed recovery beats the IDL (#4057)</li>
-          <li>&bull; Auto-comprehend + measured overlays</li>
-          <li>&bull; Every edge provenance-tagged</li>
+          <li>&bull; Lexical retrieval, never approximate</li>
+          <li>&bull; Vector tier evidence-gated OFF</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>Verify rail — proven live</h3>
+          <h3>Procedural — typed</h3>
         </div>
         <ul>
-          <li>&bull; pump buy: naive ❌3012 → Gecko ✅ 86,669 CU</li>
-          <li>&bull; Meteora swap: wrap→swap→unwrap ✅ 81,964 CU</li>
-          <li>&bull; Receipt before money moves, $0</li>
+          <li>&bull; Plans are executable JSON</li>
+          <li>&bull; Text loses the join; ours doesn&#39;t</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot rose"></div>
-          <h3>Hard boundaries</h3>
+          <h3>Episodic — categorical</h3>
         </div>
         <ul>
-          <li>&bull; Never signs, never broadcasts</li>
-          <li>&bull; Builder + signer are compose partners</li>
-          <li>&bull; Control plane only — no payloads stored</li>
+          <li>&bull; Categories only, never payloads</li>
+          <li>&bull; Self-generated by re-simulation</li>
         </ul>
       </div>
     </div>
