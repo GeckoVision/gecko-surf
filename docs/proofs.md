@@ -1,7 +1,7 @@
 # Live proofs — the E2E side-by-sides, verbatim
 
-The two landing-orchestrator numbers the architecture cites (pump `86,669 CU`,
-Meteora `81,964 CU`) come from real env-gated E2E runs. This file is their durable
+The three landing-orchestrator numbers the architecture cites (pump `86,669 CU`,
+Meteora `81,964 CU`, MetaDAO `44,476 CU`) come from real env-gated E2E runs. This file is their durable
 record: the verbatim output, the date, and exactly how to re-run each. Honesty
 labels: every run is a **surfpool mainnet fork** (a mainnet-backed state snapshot —
 **NOT mainnet**), simulation only (`sigVerify:false`), $0, nothing signed or
@@ -61,6 +61,39 @@ Re-run (same prerequisites; `GECKO_E2E_METEORA_BIN_STEP` /
 ```bash
 GECKO_SIMULATE_E2E=1 uv run pytest \
   tests/test_meteora_swap_landing.py::test_swap_that_passes_e2e_side_by_side -s
+```
+
+## MetaDAO launchpad `fund` — Gecko landing bundle ✅ 44,476 CU on a currently-Live launch
+
+Run 2026-08-05: real Orquestra `/build`, surfpool mainnet fork, against a launch the
+test DISCOVERED as genuinely fundable at run time (state `Live`, fund window open) and
+a real funder of that launch whose USDC ATA still held the amount. The comprehension
+gap here is upstream of the preludes: Orquestra's PDA Finder reports **zero** PDAs for
+this program (no seeds in IDL `pda.seeds` — they live only in v07 source), and the
+USDC vault is not derivable at all (`has_one = launch_quote_vault` — a field READ from
+the launch account). Honesty note, verbatim in the output: because the discovered
+funder already held the USDC ATA, the derive-only path (accounts already Gecko-filled)
+also landed — the differential for this program is the account set itself, not the
+ATA prelude. `funding_record` needed no init: the program `init_if_needed`s it
+(source-verified).
+
+Verbatim verdict block (`test_fund_that_passes_e2e_side_by_side`):
+
+```
+=== metadao fund: naive derive-only vs GECKO landing bundle ===
+launch state=Live window_open=True amount=10000 (USDC base units)
+  Live; fund window open until unix 1785945601
+✅ NAIVE (derive-only) also lands — this funder already holds the USDC ATA; the fund gap is deriving/reading the account set at all (the IDL carries ZERO PDA seeds), not the prelude
+✅ GECKO landing bundle — PASSES: 44,476 CU
+```
+
+Re-run (needs `surfpool` on PATH + a mainnet RPC; discovery is automatic, or pin
+`GECKO_E2E_METADAO_BASE_MINT` / `GECKO_E2E_METADAO_FUNDER` / `GECKO_E2E_METADAO_AMOUNT`;
+skips with the exact reason if no launch is fundable at run time):
+
+```bash
+GECKO_SIMULATE_E2E=1 uv run pytest \
+  tests/test_metadao_fund_landing.py::test_fund_that_passes_e2e_side_by_side -s
 ```
 
 ## Recording an outcome from a re-run (opt-in)

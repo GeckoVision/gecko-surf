@@ -64,7 +64,9 @@ EXPECTED_MANUAL: dict[str, tuple[str, ...]] = {
         "associated_user",
     ),
     "ore": ("automation", "miner", "round", "stake"),
-    "metadao_ico": (),
+    # the fund intent's two beyond-surface recipes: the #[event_cpi] macro PDA
+    # (implicit in source — no visible seeds text) and the funder's USDC ATA.
+    "metadao_ico": ("event_authority", "funder_quote_account"),
 }
 
 
@@ -138,12 +140,17 @@ def test_without_overlay_the_differential_fails_loudly_naming_the_gaps() -> None
         ), f"surface-derivable recipe {clean!r} unexpectedly differs"
 
 
-def test_metadao_needs_no_manual_recipes_at_all() -> None:
-    """The IDL declares zero PDAs; source recovery alone rebuilds every recipe —
-    the overlay carries only the curated notes."""
+def test_metadao_core_seed_set_needs_no_manual_recipes() -> None:
+    """The IDL declares zero PDAs; source recovery alone rebuilds every #[account(
+    seeds=...)] recipe (launch/launch_signer/funding_record). The fund intent adds
+    exactly two manual recipes — the #[event_cpi] macro PDA (implicit in source,
+    no visible seeds text) and the funder's USDC ATA — declared in the overlay,
+    never silently."""
     result = _comprehend("metadao_ico")
-    assert result.manual == ()
-    assert {p.tier for p in result.provenance.values()} == {"recovered"}
+    assert result.manual == ("event_authority", "funder_quote_account")
+    for name in ("launch", "launch_signer", "funding_record"):
+        assert result.provenance[name].tier == "recovered"
+    assert {p.tier for p in result.provenance.values()} == {"recovered", "manual"}
 
 
 # -- honesty: flags survive, provenance is truthful -------------------------
