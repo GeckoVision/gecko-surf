@@ -32,7 +32,9 @@ def rpc(rpc_url: str, method: str, params: list) -> dict:
 
     if method == "getAccountInfo":
         params = list(params)
-        opts = dict(params[1]) if len(params) > 1 and isinstance(params[1], dict) else {}
+        opts = (
+            dict(params[1]) if len(params) > 1 and isinstance(params[1], dict) else {}
+        )
         opts["encoding"] = "base64"
         params = [params[0], opts]
     return default_rpc_call(rpc_url, method, params)
@@ -86,10 +88,10 @@ def ore_claim() -> tuple[str, str, str]:
     from test_ore_claim_landing import _discover_claimable_miner
     from gecko.providers.ore_landing import simulate_claim_landing
 
-    found = _discover_claimable_miner(MAINNET)
-    if not found:
-        return ("ore       claim", "no claimable miner right now", "—")
-    r = simulate_claim_landing(dict(found), rpc_url=RPC, rpc_call=rpc)
+    authority, note = _discover_claimable_miner(MAINNET)
+    if not authority:
+        return ("ore       claim", f"skipped: {note}", "—")
+    r = simulate_claim_landing({"signer": authority}, rpc_url=RPC, rpc_call=rpc)
     return ("ore       claim", *_verdicts(r))
 
 
@@ -97,14 +99,45 @@ def metadao_fund() -> tuple[str, str, str]:
     from test_metadao_fund_landing import _discover_live_launch_and_funder
     from gecko.providers.metadao_landing import simulate_fund_landing
 
-    found = _discover_live_launch_and_funder(MAINNET, 10_000)
-    if not found:
-        return ("metadao   fund", "no open funding window", "—")
-    r = simulate_fund_landing(dict(found), rpc_url=RPC, rpc_call=rpc)
+    amount = 10_000
+    base_mint, funder, note = _discover_live_launch_and_funder(MAINNET, amount)
+    if not (base_mint and funder):
+        return ("metadao   fund", f"skipped: {note}", "—")
+    r = simulate_fund_landing(
+        {"base_mint": base_mint, "funder": funder, "amount": amount},
+        rpc_url=RPC,
+        rpc_call=rpc,
+    )
     return ("metadao   fund", *_verdicts(r))
 
 
-FLOWS = {"pump": pump_buy, "ore": ore_claim, "metadao": metadao_fund}
+def meteora_swap() -> tuple[str, str, str]:
+    """WSOL -> USDC on a live DLMM pool (the SOL leg exercises wrap + close)."""
+    from gecko.providers.meteora_landing import simulate_swap_landing
+
+    WSOL = "So11111111111111111111111111111111111111112"
+    USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    r = simulate_swap_landing(
+        {
+            "input_mint": WSOL,
+            "output_mint": USDC,
+            "bin_step": int(os.getenv("GECKO_E2E_METEORA_BIN_STEP", "10")),
+            "base_factor": int(os.getenv("GECKO_E2E_METEORA_BASE_FACTOR", "10000")),
+            "user": PUMP_USER,
+            "amount_in": 1_000_000,
+        },
+        rpc_url=RPC,
+        rpc_call=rpc,
+    )
+    return ("meteora   swap", *_verdicts(r))
+
+
+FLOWS = {
+    "pump": pump_buy,
+    "meteora": meteora_swap,
+    "ore": ore_claim,
+    "metadao": metadao_fund,
+}
 
 
 def sweep(on_result=None) -> list[tuple[str, str, str]]:
@@ -128,6 +161,8 @@ if __name__ == "__main__":
     import time
 
     t0 = time.time()
-    for label, bad, good in sweep(lambda r: print(f"  {r[0]:<16} naive: {r[1]:<34} gecko: {r[2]}")):
+    for label, bad, good in sweep(
+        lambda r: print(f"  {r[0]:<16} naive: {r[1]:<34} gecko: {r[2]}")
+    ):
         pass
     print(f"\nswept in {time.time() - t0:.1f}s")
