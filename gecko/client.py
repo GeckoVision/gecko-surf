@@ -82,7 +82,7 @@ class AmbiguousServerError(CallError):
     """A live call on a >1-server spec with no explicit ``base_url`` — fail closed.
 
     The money-API footgun: many specs list production FIRST and sandbox second
-    (e.g. Woovi), so silently defaulting to ``servers[0]`` sends a live call to
+    (e.g. a Pix payments API), so silently defaulting to ``servers[0]`` sends a live call to
     production. When the caller never chose a server, refusing loudly — with the
     full server list and the exact fix — beats guessing. Recorded/probe are
     untouched: they never reach the wire, so the ``servers[0]`` default stays a

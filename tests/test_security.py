@@ -123,7 +123,7 @@ def test_build_request_refuses_auth_toward_unexpected_host():
             {},
             base_url="https://evil.attacker.test",
             auth={"Authorization": "SECRETTOKEN"},
-            allowed_auth_hosts={"api.woovi.com"},
+            allowed_auth_hosts={"api.pixpay.example"},
         )
     msg = str(ei.value)
     assert "evil.attacker.test" in msg
@@ -134,9 +134,9 @@ def test_build_request_injects_auth_toward_allowed_host():
     req = build_request(
         _bare_tool(),
         {},
-        base_url="https://api.woovi.com",
+        base_url="https://api.pixpay.example",
         auth={"Authorization": "SECRETTOKEN"},
-        allowed_auth_hosts={"api.woovi.com"},
+        allowed_auth_hosts={"api.pixpay.example"},
     )
     assert req.headers["Authorization"] == "SECRETTOKEN"
 
