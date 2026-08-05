@@ -53,12 +53,16 @@ simulation before execution, and never signs, never broadcasts, never stores pay
 - Auto-comprehend-on-pick: point at an Orquestra project → a generated program config,
   differential-proven equal to hand-authored ground truth on 4 programs, with an explicit
   measured overlay of what could NOT be derived from any public surface.
-- The simulate→Receipt engine, live-proven three times: a Pump.fun buy where the naive
+- The simulate→Receipt engine, live-proven four times: a Pump.fun buy where the naive
   path reverts (AnchorError 3012) and Gecko's landing bundle passes (86,669 CU), a
-  Meteora DLMM swap (wrap → swap across live bins → unwrap, 81,964 CU), and a MetaDAO
+  Meteora DLMM swap (wrap → swap across live bins → unwrap, 81,964 CU), a MetaDAO
   launchpad fund on a currently-Live launch (44,476 CU) — a program whose IDL carries
   ZERO PDA seeds and whose USDC vault exists only as a field inside the launch account —
-  all at $0, on a mainnet fork, before any spend.
+  and an ORE claim (41,023 CU) where the BUILDER'S OWN instruction fails: its Steel IDL
+  marks `board` read-only, the program hands it to a closing self-CPI as a writable
+  signer, so the naive bundle transfers the tokens and then dies on "writable privilege
+  escalated"; Gecko reconciles the meta from source and it lands. All at $0, on a
+  mainnet fork, before any spend.
 - Real recovered facts a coding agent cannot get from the surface: Meteora's base_factor
   4th seed (the deprecated 3-seed scheme silently derives the WRONG pool), Pump.fun's
   bonding_curve_v2 (required, invisible in the IDL), the fee-recipient field resolved
@@ -84,8 +88,10 @@ simulation before execution, and never signs, never broadcasts, never stores pay
   TEE credential backend. Today's gate is verdict-based (the diagram labels this honestly).
 - Catalog breadth: 4,500 projects listed, 4 wired deep. Non-Anchor generalization is
   proven once (ORE); wider Steel/native coverage is open.
-- Pump.fun sell round-trip; ORE claim executable intents. (MetaDAO fund shipped —
-  the last of that trio is ORE.)
+- Pump.fun sell round-trip; ORE `mine` (needs an off-chain drillx PoW solver — out of
+  scope by decision) and ORE `checkpoint` (claim's precondition; its surface account set
+  is short by two — declared, not wired). All four target programs now have a runnable
+  executable intent.
 - The semantic/vector retrieval tier (deliberately OFF behind an evidence gate — flips
   only on measured lexical recall failure, not fashion).
 - Cross-customer episodic pooling (tenancy is local-only until a consent/egress layer

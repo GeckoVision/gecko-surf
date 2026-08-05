@@ -1,7 +1,7 @@
 # Live proofs — the E2E side-by-sides, verbatim
 
-The three landing-orchestrator numbers the architecture cites (pump `86,669 CU`,
-Meteora `81,964 CU`, MetaDAO `44,476 CU`) come from real env-gated E2E runs. This file is their durable
+The four landing-orchestrator numbers the architecture cites (pump `86,669 CU`,
+Meteora `81,964 CU`, MetaDAO `44,476 CU`, ORE `41,023 CU`) come from real env-gated E2E runs. This file is their durable
 record: the verbatim output, the date, and exactly how to re-run each. Honesty
 labels: every run is a **surfpool mainnet fork** (a mainnet-backed state snapshot —
 **NOT mainnet**), simulation only (`sigVerify:false`), $0, nothing signed or
@@ -96,9 +96,65 @@ GECKO_SIMULATE_E2E=1 uv run pytest \
   tests/test_metadao_fund_landing.py::test_fund_that_passes_e2e_side_by_side -s
 ```
 
+## ORE `claimOre` — naive builder instruction ❌ privilege escalation → Gecko landing bundle ✅ 41,023 CU
+
+Run 2026-08-05: real Orquestra `/build`, surfpool mainnet fork, against a miner the test
+DISCOVERED at run time as holding accrued rewards (`getProgramAccounts` over the two
+balance fields; skips honestly if none is claimable). `claim` — not `mine` — is the
+runnable agent flow: mining needs an off-chain drillx PoW solution neither Gecko nor a
+builder computes.
+
+This is the cleanest differential of the four, and it is **not** about preludes: `claimOre`
+needs none (the program creates the recipient ATA itself). The builder's own instruction
+does not land. ORE is a Steel program; the `api/idl.json` it ships (`metadata.origin:
+"steel"`) marks `board` `isMut: false`, and `/build` emits it read-only — but `claim_ore`
+ends with `program_log`, a self-CPI that takes the board as a **writable** signer. So the
+naive instruction transfers the tokens and *then* dies. `sdk::claim_ore` marks the board
+writable, and every real mainnet `claimOre` carries it writable; Gecko reconciles the meta
+from source (widening writability only — never signer-ness) and the bundle passes.
+
+Verbatim verdict block (`test_claim_that_passes_e2e_side_by_side`):
+
+```
+=== ore claim: naive derive-only vs GECKO landing bundle ===
+discovery: miner 3iRVwgvcTJCj6qCK3hcBhyZiXDNzmmBKwcryR6tjJjGw holds 283645877668295 ORE base units
+authority=5D1oAw6sE14YvdSPwGWGbFCj7SVTbivnTxWXxbvNrur6 bps=10000 checkpoint_pending=False
+claimable=2836.458777 ORE → pays out at least 2665.946201 ORE (refining fee 170.512576, 11 decimals)
+❌ NAIVE (builder metas verbatim, board read-only) — FAILS: other
+✅ GECKO landing bundle — PASSES: 41,023 CU
+gecko corrected account metas from source: BrcSxdp1nXFzou1YyDnQJcPNBNHgoypZmTsyKBSLLXzi
+```
+
+The naive failure, verbatim from its `logs_tail` — note it fails *after* the transfer
+succeeds, which is why no static surface reveals it:
+
+```
+Program log: Claiming 2799.067287878 ORE. Paid 170.51257590283 ORE in refining fees.
+Program Tokenkeg... invoke [2] / Instruction: Transfer / success
+BrcSxdp1nXFzou1YyDnQJcPNBNHgoypZmTsyKBSLLXzi's writable privilege escalated
+Program oreV3EG... failed: Cross-program invocation with unauthorized signer or writable account
+```
+
+Two more measured gaps ride along in the plan, declared not fixed: the optional `bps`
+argument (`ClaimORE { bps: [u8; 8] }` — a *partial* claim) that the surface declares
+`args: []` and `/build` drops even when supplied, so a "claim half" ask would silently
+claim everything (the orchestrator refuses to simulate it); and `checkpoint`, claim's
+precondition, which takes 8 accounts on mainnet (193/193 sampled) against the 6 the
+surface declares. ORE has **11** decimals, and the `Miner` layout in the shipped IDL is
+536 bytes against the deployed struct's 744 (every mainnet miner account is 752 = 8 + 744)
+— an IDL-driven decoder reads the claimable balance at the wrong offset.
+
+Re-run (needs `surfpool` on PATH + a mainnet RPC; discovery is automatic, or pin
+`GECKO_E2E_ORE_SIGNER`; skips with the exact reason if no miner holds claimable rewards):
+
+```bash
+GECKO_SIMULATE_E2E=1 uv run pytest \
+  tests/test_ore_claim_landing.py::test_claim_that_passes_e2e_side_by_side -s
+```
+
 ## Recording an outcome from a re-run (opt-in)
 
-Either orchestrator (and the Path-A `simulate` MCP tool) can append the run's
+Any of the orchestrators (and the Path-A `simulate` MCP tool) can append the run's
 categorical outcome — status, revert family + public code, compute units, slot,
 network category, values-free `recipe_hash`; never a pubkey/amount/log — to a
 segregated `simulated.jsonl` via the explicit `record_to` opt-in (default: record

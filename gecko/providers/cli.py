@@ -75,17 +75,16 @@ def build_surface_from_config(
 
 
 def intent_registries() -> dict[str, dict[str, Intent]]:
-    """api_id → the intent registry supplying that program's plan callables.
-    ore is servable for derive_pda + get_program_graph but carries no plan intent
-    yet (its execute plan lands in a later sprint) → empty registry."""
+    """api_id → the intent registry supplying that program's plan callables."""
     from .metadao import METADAO_INTENTS
     from .meteora import METEORA_INTENTS
+    from .ore import ORE_INTENTS
     from .pumpfun import PUMPFUN_INTENTS
 
     return {
         "meteora": METEORA_INTENTS,
         "pumpfun": PUMPFUN_INTENTS,
-        "ore": {},
+        "ore": ORE_INTENTS,
         "metadao_ico": METADAO_INTENTS,
     }
 
@@ -94,11 +93,13 @@ def start_specs() -> dict[str, dict[str, "StartSpec"]]:
     """api_id → intent name → its declarative StartSpec (what find_start routes to)."""
     from .metadao import METADAO_STARTS
     from .meteora import METEORA_STARTS
+    from .ore import ORE_STARTS
     from .pumpfun import PUMPFUN_STARTS
 
     return {
         "meteora": METEORA_STARTS,
         "pumpfun": PUMPFUN_STARTS,
+        "ore": ORE_STARTS,
         "metadao_ico": METADAO_STARTS,
     }
 

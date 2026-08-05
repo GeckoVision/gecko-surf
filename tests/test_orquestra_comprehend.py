@@ -63,7 +63,17 @@ EXPECTED_MANUAL: dict[str, tuple[str, ...]] = {
         "associated_bonding_curve",
         "associated_user",
     ),
-    "ore": ("automation", "miner", "round", "stake"),
+    # the claim intent adds the two ATAs the live instruction surface reports
+    # `pda: null` for — the claimer's ORE ATA and the treasury PDA's own ATA
+    # (a two-step derivation no surface expresses).
+    "ore": (
+        "automation",
+        "miner",
+        "round",
+        "stake",
+        "recipient",
+        "treasury_tokens",
+    ),
     # the fund intent's two beyond-surface recipes: the #[event_cpi] macro PDA
     # (implicit in source — no visible seeds text) and the funder's USDC ATA.
     "metadao_ico": ("event_authority", "funder_quote_account"),
