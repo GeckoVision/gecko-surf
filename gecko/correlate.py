@@ -51,8 +51,11 @@ from .graph import (
 if TYPE_CHECKING:
     from .surface import Surface
 
-# single source of truth for this module's Literal types (CLAUDE.md).
-Provenance = Literal["DECLARED", "INFERRED"]
+# single source of truth for this module's Literal types (CLAUDE.md). The closed
+# cross-API provenance sub-ladder lives in gecko.provenance; aliased to keep this
+# module's public name (`correlate.Provenance`) unchanged.
+from .provenance import CrossApiProvenance as Provenance
+
 Confidence = Literal["high", "medium", "low"]
 Origin = Literal["SPEC", "DOCS"]
 DeclaredSource = Literal["customer", "provider"]

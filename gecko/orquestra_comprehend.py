@@ -34,11 +34,12 @@ treated as untrusted input (size-capped, parsed by regex, never executed).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
 from .orquestra_client import ProjectSurface
 from .pda import PdaNode, ResolverPdaSeedNode
 from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes
+from .provenance import ProgramProvenanceTier
 from .provider_config import node_from_spec, node_to_spec
 
 __all__ = [
@@ -58,7 +59,9 @@ MAX_SOURCE_BYTES = 2 * 1024 * 1024
 # overlay self-describing as the comprehension-beyond-the-surface artifact.
 _OVERLAY_KEYS = frozenset({"api_id", "intents", "notes", "include", "pdas", "why"})
 
-ProvenanceTier = Literal["extracted", "recovered", "manual"]
+# The closed program-provenance ladder, from the single source of truth
+# (gecko.provenance); aliased to keep this module's public name unchanged.
+ProvenanceTier = ProgramProvenanceTier
 
 
 class ComprehendError(Exception):

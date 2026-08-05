@@ -38,6 +38,7 @@ __all__ = [
     "InstructionGraph",
     "ProgramGraph",
     "build_program_graph",
+    "derivation_order_for",
 ]
 
 
@@ -259,6 +260,39 @@ def _derivation_order(
                     resolved.add(n)
             break
     return tuple(order)
+
+
+def derivation_order_for(
+    pdas: dict[str, PdaNode], accounts: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    """Dependency-order a subset of a program's PDA accounts (the public seam
+    :mod:`gecko.find_start` uses for its derive plans).
+
+    Reuses the same seed-binding + Kahn ordering as :func:`build_program_graph`:
+    an account whose seed is bound to another listed account (a resolver's
+    ``depends_on``, or a variable seed naming it) is derived after it. Names not
+    present in ``pdas`` are kept in place (they are non-PDA slots, not dropped).
+    """
+    names = [a for a in accounts]
+    listed = set(names)
+    refs: dict[str, AccountRef] = {}
+    for name in names:
+        node = pdas.get(name)
+        if node is None:
+            continue
+        refs[name] = AccountRef(
+            name=name,
+            is_pda=True,
+            resolvable=node.resolvable,
+            derive_from=_bind_seeds(node, listed, set()),
+        )
+    ordered_pdas = _derivation_order(refs)
+    # merge: PDA accounts in dependency order, non-PDA names in declared position
+    result: list[str] = []
+    pda_iter = iter(ordered_pdas)
+    for name in names:
+        result.append(next(pda_iter) if name in refs else name)
+    return tuple(result)
 
 
 def build_program_graph(

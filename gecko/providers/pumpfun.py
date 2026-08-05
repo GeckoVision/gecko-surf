@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from ..find_start import GapSpec, PreludeSpec, StartSpec
 from ..landing import ASSOCIATED_TOKEN_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID
 from ..pda import derive_pda
 from ..pda_resolve import read_account_owner, resolve_pda
@@ -44,6 +45,7 @@ __all__ = [
     "BUYBACK_FEE_RECIPIENTS_OFFSET",
     "BUYBACK_FEE_RECIPIENTS_COUNT",
     "PUMPFUN_INTENTS",
+    "PUMPFUN_STARTS",
     "buy_remaining_accounts",
     "plan_buy",
     "build_pumpfun_surface",
@@ -390,6 +392,52 @@ _BUY = Intent(
 # The code half of the config: the plan callables this program exposes, keyed by intent
 # name. The config lists the intent NAMES; here we supply their derivation logic.
 PUMPFUN_INTENTS: dict[str, Intent] = {_BUY.name: _BUY}
+
+# What find_start declares about each intent: which config PDAs the plan derives
+# (dependency-ordered by the router), the honest FLAGGED gaps (reusing the module's
+# canonical notes — single source), and the DECLARED landing preludes. Pure data.
+PUMPFUN_STARTS: dict[str, StartSpec] = {
+    "plan_buy": StartSpec(
+        accounts=(
+            "global",
+            "fee_config",
+            "bonding_curve",
+            "associated_bonding_curve",
+            "associated_user",
+            "creator_vault",
+            "bonding_curve_v2",
+            "event_authority",
+            "global_volume_accumulator",
+            "user_volume_accumulator",
+        ),
+        gaps=(
+            GapSpec("fee_recipient", _FEE_RECIPIENT_NOTE),
+            GapSpec("buyback_fee_recipient", _BUYBACK_RECIPIENT_NOTE),
+        ),
+        preludes=(
+            PreludeSpec(
+                kind="compute_budget",
+                program=COMPUTE_BUDGET_PROGRAM_ID,
+                note=(
+                    "SetComputeUnitLimit (units from the simulate Receipt's "
+                    "units_consumed) + SetComputeUnitPrice (micro-lamports from "
+                    "getRecentPrioritizationFees) — required to land under load"
+                ),
+            ),
+            PreludeSpec(
+                kind="create_idempotent_ata",
+                program=ASSOCIATED_TOKEN_PROGRAM_ID,
+                note=(
+                    "createAssociatedTokenAccountIdempotent for the buyer's "
+                    "associated_user ATA — removes the AnchorError 3012 revert. "
+                    "token_program note: pump mints may be Token-2022; Gecko resolves "
+                    "the token program from the mint's OWNER and the ATA derives "
+                    "under that program, not a hardcoded SPL Token"
+                ),
+            ),
+        ),
+    )
+}
 
 
 def build_pumpfun_surface() -> OrquestraProgramSurface:
