@@ -225,6 +225,8 @@ def simulate_claim_landing(
         unit_price_microlamports=unit_price_microlamports,
         track=[signer],
         network_label=network_label,
+        program="ore",
+        instruction="claim",
     )
 
     derive_only_receipt: Receipt | None = None

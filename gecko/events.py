@@ -431,6 +431,35 @@ def _mongo_collection() -> Any | None:
 
 _SINK_OVERRIDE: Sink | None = None
 
+# --------------------------------------------------------------------------- #
+# Local identity — the join that makes an event attributable.
+# --------------------------------------------------------------------------- #
+# Until now ``install_id`` rode on ``surf.onboard`` ONLY, and onboard carries no
+# session — so the events that prove value (``surf.prepare``, ``surf.call``,
+# ``surf.first_call_correct``) were entirely anonymous and could never be tied to an
+# install. That is why the adoption number read as ~3 while real people were using it.
+#
+# The stamp is OPT-IN PER PROCESS, never ambient: a LOCAL client (the CLI, a stdio MCP)
+# calls ``set_local_install_id`` once at startup. The HOSTED server never calls it, so
+# it can never stamp its own machine id on other people's traffic and collapse every
+# visitor into one "user" — the failure mode that would be worse than counting nothing.
+_LOCAL_INSTALL_ID: str | None = None
+
+
+def set_local_install_id(install_id: str | None) -> None:
+    """Declare this process a LOCAL client, so every emit carries ``install_id``.
+
+    Call once from a client entry point. ``None`` clears it (the server default).
+    """
+    global _LOCAL_INSTALL_ID
+    _LOCAL_INSTALL_ID = install_id
+
+
+def local_install_id() -> str | None:
+    """The declared local install id, or ``None`` when this process is not a local
+    client (hosted server, library use)."""
+    return _LOCAL_INSTALL_ID
+
 
 def set_surf_sink_override(sink: Sink | None) -> None:
     """Test/opt-in seam. Inject a fake sink (receives the validated doc); ``None``
@@ -484,6 +513,12 @@ def emit_surf_event(
 
     Ships silent: no-op when ``MONGODB_URI`` is unset and hard-disabled by
     ``GECKO_TELEMETRY=off``."""
+    # 0. Attribution: stamp the local install id when this process declared itself a
+    #    local client. An explicit caller-supplied value always wins (the onboard ping
+    #    passes its own), and a server process never declared one, so this is a no-op
+    #    there.
+    if _LOCAL_INSTALL_ID is not None and fields.get("install_id") is None:
+        fields["install_id"] = _LOCAL_INSTALL_ID
     # 1. Validate + build — ALWAYS runs, so a disallowed field is a build break in
     #    dev/CI even when no sink is configured.
     record = build_surf_record(event, surface_id=surface_id, **fields)

@@ -73,6 +73,14 @@ _ROBOT_SUBSTRINGS: tuple[str, ...] = (
     "node-fetch",
 )
 
+#: Named agent PRODUCTS that connect from a server, so their UA is a generic HTTP
+#: library while their clientInfo carries a real product name. Checked against the
+#: DECLARED client name only (never the UA), and only these exact known products —
+#: a substring here outranks the robot rules, so the bar for adding one is "we can
+#: name the company." Keep it short; when unsure, leave it out (a missed bot is
+#: recoverable, a hidden adopter is not).
+_AGENT_PRODUCT_SUBSTRINGS: tuple[str, ...] = ("manus",)
+
 # Substrings that mark a real MCP client (a person driving an agent). Checked only after
 # the robot rules, so a client-shaped name never overrides a robot-shaped UA.
 _CLIENT_SUBSTRINGS: tuple[str, ...] = (
@@ -90,13 +98,24 @@ def classify_client(user_agent: str | None, client: str | None) -> ClientKind:
     """Classify a connecting client as ``robot`` / ``client`` / ``unknown``.
 
     Matches the (case-insensitive) UA and clientInfo name against an ordered rule list:
-    a robot substring wins first (a faked client name + a bot UA is a robot), then a
-    real-MCP-client substring, else ``unknown``. Pure and side-effect-free — the whole
-    classification is testable offline.
+    a NAMED agent product wins first, then a robot substring (a faked client name + a
+    bot UA is a robot), then a real-MCP-client substring, else ``unknown``. Pure and
+    side-effect-free — the whole classification is testable offline.
     """
     haystack = " ".join(part for part in (user_agent, client) if part).lower()
     if not haystack:
         return "unknown"
+    # A hosted agent product declares itself in clientInfo but connects from a server,
+    # so its UA is a generic HTTP library — and the UA-first rule then buried it as a
+    # robot. Manus was misfiled exactly this way: a real product, a real person behind
+    # it, dropped from every "non-robot" report we ever ran. The declared product name
+    # wins over a generic-library UA.
+    #
+    # NOT a security relaxation: the WAF floors anything it BLOCKS to ``robot``
+    # independently (waf.py `_BLOCKED_CLIENT_KIND`), so a hostile prober that spoofs
+    # `manus` still lands as a robot. This label is a metrics classification only.
+    if any(marker in (client or "").lower() for marker in _AGENT_PRODUCT_SUBSTRINGS):
+        return "client"
     if any(marker in haystack for marker in _ROBOT_SUBSTRINGS):
         return "robot"
     if any(marker in haystack for marker in _CLIENT_SUBSTRINGS):

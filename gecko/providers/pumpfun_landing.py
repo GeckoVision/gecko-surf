@@ -302,6 +302,8 @@ def simulate_buy_landing(
         unit_price_microlamports=unit_price_microlamports,
         track=[user],
         network_label=network_label,
+        program="pumpfun",
+        instruction="buy",
     )
 
     derive_only_receipt: Receipt | None = None
@@ -497,6 +499,8 @@ def simulate_sell_landing(
         unit_price_microlamports=unit_price_microlamports,
         track=[user],
         network_label=network_label,
+        program="pumpfun",
+        instruction="sell",
     )
 
     derive_only_receipt: Receipt | None = None

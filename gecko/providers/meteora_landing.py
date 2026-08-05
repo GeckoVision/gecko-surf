@@ -260,6 +260,8 @@ def simulate_swap_landing(
         track=[user],
         network_label=network_label,
         postlude_ixs=postlude_ixs,
+        program="meteora",
+        instruction="swap",
     )
 
     derive_only_receipt: Receipt | None = None
