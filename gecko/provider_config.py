@@ -19,12 +19,15 @@ from .pda import (
     PdaSeed,
     ResolverPdaSeedNode,
     VariablePdaSeedNode,
+    b58_encode,
 )
 
 __all__ = [
     "ConfigError",
     "seed_from_spec",
     "node_from_spec",
+    "seed_to_spec",
+    "node_to_spec",
     "SpecSource",
     "ProgramSpec",
     "ApiConfig",
@@ -108,6 +111,65 @@ def node_from_spec(name: str, spec: dict) -> PdaNode:
     """Deserialize a PDA recipe (``{"program_id", "seeds": [...]}``) into a PdaNode."""
     seeds = tuple(seed_from_spec(s) for s in spec["seeds"])
     return PdaNode(name, seeds, program_id=spec["program_id"])
+
+
+def seed_to_spec(seed: PdaSeed) -> dict:
+    """Serialize one pda seed node back to the wire form ``seed_from_spec`` reads.
+
+    The exact inverse — ``seed_from_spec(seed_to_spec(s)) == s`` — so a GENERATED
+    config (the auto-comprehend path) is byte-comparable with a packaged
+    hand-authored one and loads through the same single code path.
+    """
+    if isinstance(seed, ConstantPdaSeedNode):
+        if seed.encoding == "utf8":
+            return {
+                "kind": "constant",
+                "value": seed.value.decode("utf-8"),
+                "encoding": "utf8",
+            }
+        if seed.encoding == "pubkey":
+            return {
+                "kind": "constant",
+                "value": b58_encode(seed.value),
+                "encoding": "pubkey",
+            }
+        return {"kind": "constant", "value": list(seed.value), "encoding": "bytes"}
+    if isinstance(seed, VariablePdaSeedNode):
+        spec: dict = {
+            "kind": "variable",
+            "name": seed.name,
+            "source": seed.source,
+            "encoding": seed.encoding,
+        }
+        if seed.width is not None:
+            spec["width"] = seed.width
+        return spec
+    if isinstance(seed, OrderedPairPdaSeedNode):
+        return {
+            "kind": "ordered_pair",
+            "left": seed.left,
+            "right": seed.right,
+            "select": seed.select,
+        }
+    if isinstance(seed, ResolverPdaSeedNode):
+        spec = {
+            "kind": "resolver",
+            "name": seed.name,
+            "depends_on": list(seed.depends_on),
+            "reason": seed.reason,
+        }
+        if seed.resolve is not None:
+            spec["resolve"] = dict(seed.resolve)
+        return spec
+    raise ConfigError(f"cannot serialize seed of type {type(seed).__name__}")
+
+
+def node_to_spec(node: PdaNode) -> dict:
+    """Serialize a PdaNode to the recipe wire form (inverse of ``node_from_spec``)."""
+    return {
+        "program_id": node.program_id,
+        "seeds": [seed_to_spec(s) for s in node.seeds],
+    }
 
 
 # --- config models (dataclasses, not pydantic — base install stays dep-light) ---
