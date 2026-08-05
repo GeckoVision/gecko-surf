@@ -18,6 +18,9 @@
 
 ## View 1 — Context engineering (the memory substrate)
 
+![Gecko context engineering — semantic, procedural, episodic, working memory](assets/architecture-context.png)
+
+
 Gecko is **not the agent** — it is the memory-and-context substrate *under* other
 people's agents. Every block of the canonical agent-memory architecture exists here,
 and the three that differ from the textbook are the product.
@@ -61,6 +64,9 @@ procedural memory as **typed plans** a builder can execute, not text an LLM re-r
 ---
 
 ## View 2 — The full architecture (sources → knowledge → action)
+
+![Gecko full architecture — untrusted sources → provenance knowledge → verified action](assets/architecture.png)
+
 
 ```mermaid
 flowchart TB
@@ -116,6 +122,9 @@ Building and signing belong to compose partners — that is the design, not a ga
 ---
 
 ## View 3 — The on-chain action path (the proven loop)
+
+![The proven on-chain loop — intent → derive → build → simulate → receipt → sign](assets/architecture-onchain.png)
+
 
 ```mermaid
 sequenceDiagram

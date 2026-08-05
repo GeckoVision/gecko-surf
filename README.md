@@ -81,6 +81,34 @@ Gecko replaces the guess with a graph:
 - **Auth is invisible to the agent** — keys injected at call time from your keychain.
   The model never sees a credential.
 
+## Under the hood
+
+Most agent-tool layers are thin wrappers. Gecko is a memory substrate, and three of
+its design choices are deliberately different from the textbook:
+
+| Choice | Why it matters |
+|---|---|
+| **Deterministic semantic memory** — lexical retrieval, no vector DB | the graph never "approximately" remembers; BM25 and vectors sit behind evidence gates |
+| **Self-generated episodic memory** — categorical outcomes + a drift series | Gecko re-simulates to create its own episodes; no dependence on your data plane, no payloads stored |
+| **Typed procedural memory** — plans as executable JSON | landing plans and derive orders a builder can run; text loses the join, ours can't |
+
+And the depth is measured, not asserted:
+
+- **The overlay artifact.** For every auto-comprehended program, Gecko emits the exact
+  list of facts that could **not** be derived from any public surface
+  ([`overlays/`](gecko/providers/configs/orquestra/overlays/)) — the value of
+  comprehension, quantified per program.
+- **Seven security layers, fail-closed:** spec sanitizer · per-tool quarantine · image
+  Skill Guard · SSRF netguard · out-of-band auth anchoring · verdict signing gate · an
+  AST-enforced never-sign boundary.
+- **The numbers:** 2,400+ tests · 4 mainnet programs derivation-proven · 2 live
+  receipt-pairs · −77%/−89% measured context cuts · a 4,500-program catalog listed ·
+  0 auth headers exposed across 14 real specs.
+
+**Explore it interactively:** [full pipeline](docs/assets/architecture.html) ·
+[context engineering](docs/assets/architecture-context.html) ·
+[the on-chain loop](docs/assets/architecture-onchain.html) · [the map](docs/architecture.md)
+
 ## Proof, not promises
 
 Live, on a mainnet fork, $0:
