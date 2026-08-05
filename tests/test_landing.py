@@ -257,9 +257,11 @@ def test_no_sign_or_broadcast_path_in_landing_layer() -> None:
         root / "pump_curve.py",
         root / "meteora_math.py",
         root / "metadao_state.py",
+        root / "ore_state.py",
         root / "providers" / "pumpfun_landing.py",
         root / "providers" / "meteora_landing.py",
         root / "providers" / "metadao_landing.py",
+        root / "providers" / "ore_landing.py",
         root / "providers" / "landing_record.py",
     ]
     forbidden = {

@@ -1,5 +1,5 @@
 {
-  "notes": "ORE V3 (regolith-labs/ore), a Steel-framework program (no Anchor IDL — seeds live in source). Singletons config/board/treasury are const-only; automation/miner bind `authority` (NOT the tx signer — an automation bot signs for a different authority); round's id is read from board/miner data (resolver). The `stake` account is CPI'd across a program boundary and belongs to the SEPARATE ore-stake program — its owner is stakecNP..., not ORE. Recipes cross-verified against regolith-labs/ore@master + real mainnet accounts.",
+  "notes": "ORE V3 (regolith-labs/ore), a Steel-framework program (no Anchor IDL — seeds live in source). Singletons config/board/treasury are const-only; automation/miner bind `authority`, which is NOT always the tx signer — claimOre/claimSol seed miner by the SIGNER and assert miner.authority == signer, while deploy/checkpoint take a SEPARATE authority account and seed miner by IT. The claim flow is wired (plan_claim -> claimOre): 11 accounts, payout in ORE base units at ELEVEN decimals, recipient is the signer's ORE ATA which the PROGRAM creates if empty (no prelude needed), and treasury_tokens is the treasury PDA's ATA (a two-step derivation no surface expresses). Two live comprehension gaps, both measured: (1) claimOre carries an OPTIONAL `bps` arg in source (ClaimORE { bps: [u8;8] }; omitted data = 100%) that the shipped idl.json and Orquestra both declare as args:[] — /build returns data '04' even when bps is passed, so a partial-claim ask silently becomes a full claim; 6 of the last 7 real mainnet claimOre instructions carried that arg. (2) checkpoint — claim's precondition — takes 8 accounts on mainnet (193/193 sampled) including the separate `authority` + `automation`, but the surface declares 6. The `stake` account is CPI'd across a program boundary and belongs to the SEPARATE ore-stake program — its owner is stakecNP..., not ORE. Naming gotcha (wire-verified): this Orquestra project speaks camelCase account AND instruction names (claimOre, treasuryTokens, oreProgram) — unlike the pump/meteora projects' snake_case. Recipes cross-verified against regolith-labs/ore@master + real mainnet accounts.",
   "include": [
     "config",
     "board",
@@ -7,7 +7,9 @@
     "automation",
     "miner",
     "round",
-    "stake"
+    "stake",
+    "recipient",
+    "treasury_tokens"
   ],
   "pdas": {
     "automation": {
@@ -75,12 +77,63 @@
           "encoding": "pubkey"
         }
       ]
+    },
+    "recipient": {
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "signer",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "treasury_tokens": {
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "treasury",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
     }
   },
   "why": {
     "automation": "the seed is an authority ARGUMENT, not the tx signer account: an automation bot signs for a different authority (the exact confusion upstream fixed in ore-cli PR #150); the Orquestra-synthesized IDL binds it to 'signer'",
-    "miner": "same authority-vs-signer distinction as automation — the IDL's 'signer' binding is misleading for bot flows",
+    "miner": "authority-vs-signer is INSTRUCTION-DEPENDENT, and the surface states it as a single fact. deploy/checkpoint take a SEPARATE authority account and seed the miner by IT (the confusion upstream fixed in ore-cli PR #150); claimOre/claimSol seed by the SIGNER and additionally assert miner.authority == signer, so claiming for another authority is impossible rather than differently-derived.",
     "round": "geometry vs state: source recovers the shape (['round', id u64 LE]) but the id's VALUE is board.round_id / miner.round_id read from account data — not a free-choice argument, so it stays an honest resolver",
-    "stake": "cross-program: the stake account is CPI'd into the SEPARATE ore-stake program (stakecNP...); the Orquestra-synthesized IDL derives it under ORE's own id — a plausible-but-wrong address"
-  }
+    "stake": "cross-program: the stake account is CPI'd into the SEPARATE ore-stake program (stakecNP...); the Orquestra-synthesized IDL derives it under ORE's own id — a plausible-but-wrong address",
+    "recipient": "the claimer's ORE associated-token account. The live instruction surface reports pda: null for it AND drops the `address` the shipped idl.json carries for the mint, so an agent reading the surface alone can resolve neither. claim_ore creates it if empty (payer = signer), so it needs no prelude — source-verified.",
+    "treasury_tokens": "the treasury PDA's OWN ORE ATA — a two-step derivation (treasury = PDA(['treasury'], ORE), then ATA(treasury, mint)) that no IDL/llms.txt surface expresses; the live surface reports pda: null."
+  },
+  "intents": [
+    "plan_claim"
+  ]
 }

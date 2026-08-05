@@ -44,6 +44,7 @@ __all__ = [
     "orquestra_instruction_to_solders",
     "simulate_landing_bundle",
     "with_remaining_accounts",
+    "with_writable_accounts",
     "wrap_sol_ixs",
 ]
 
@@ -242,6 +243,39 @@ def with_remaining_accounts(
         instruction.program_id,
         bytes(instruction.data),
         list(instruction.accounts) + extra,
+    )
+
+
+def with_writable_accounts(
+    instruction: Any, writable: Sequence[str]
+) -> tuple[Any, tuple[str, ...]]:
+    """Return ``(instruction, corrected)`` with every account in ``writable`` marked
+    writable, plus the accounts whose flag actually changed.
+
+    The comprehension gap this closes: an IDL can declare an account read-only that the
+    DEPLOYED program passes on to a CPI as writable. Solana rejects that at the inner
+    invoke ("writable privilege escalated"), *after* the instruction has already done its
+    work — so it is invisible to anything short of a simulation. Gecko recovers the true
+    metas from source and reconciles them here.
+
+    Deliberately narrow: it only WIDENS writability. It never adds ``is_signer`` — Gecko
+    does not get to decide who signs — and never touches the program id or the data.
+    """
+    from solders.instruction import AccountMeta, Instruction
+
+    wanted = set(writable)
+    corrected: list[str] = []
+    metas = []
+    for meta in instruction.accounts:
+        key = str(meta.pubkey)
+        if key in wanted and not meta.is_writable:
+            corrected.append(key)
+            metas.append(AccountMeta(meta.pubkey, meta.is_signer, True))
+        else:
+            metas.append(meta)
+    return (
+        Instruction(instruction.program_id, bytes(instruction.data), metas),
+        tuple(corrected),
     )
 
 

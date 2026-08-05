@@ -15,7 +15,10 @@
 {"intent": "add liquidity to a meteora pool", "gold_program": "meteora", "gold_instruction": "add_liquidity", "note": "NOT wired — expected coverage_gap"}
 {"intent": "stake my tokens on ore", "gold_program": "ore", "gold_instruction": null, "note": "surface-only program; gold = its surface card"}
 {"intent": "mine ore and claim the rewards", "gold_program": "ore", "gold_instruction": null, "note": "mining vocabulary"}
-{"intent": "claim my mining rewards from the board", "gold_program": "ore", "gold_instruction": null, "note": "program NOT named; 'claim' collides with metadao"}
+{"intent": "claim my mining rewards from the board", "gold_program": "ore", "gold_instruction": "claimOre", "note": "program NOT named; 'claim' collides with metadao. plan_claim wired this sprint"}
+{"intent": "claim my ore mining rewards", "gold_program": "ore", "gold_instruction": "claimOre", "note": "the showcase claim phrasing"}
+{"intent": "harvest the tokens my miner has earned", "gold_program": "ore", "gold_instruction": "claimOre", "note": "true paraphrase — 'harvest'/'earned' share no verb with the card"}
+{"intent": "collect accrued ore rewards into my wallet", "gold_program": "ore", "gold_instruction": "claimOre", "note": "'collect'/'accrued' phrasing; 'wallet' collides with the out-of-scope transfer row"}
 {"intent": "participate in the metadao ico", "gold_program": "metadao_ico", "gold_instruction": "fund", "note": "participating in an ICO = funding it; plan_fund wired this sprint"}
 {"intent": "fund a launchpad token launch", "gold_program": "metadao_ico", "gold_instruction": "fund", "note": "launchpad vocabulary; was a surface gold before plan_fund was wired"}
 {"intent": "commit usdc to a metadao launch before it closes", "gold_program": "metadao_ico", "gold_instruction": "fund", "note": "contribution phrasing + the usdc/window vocabulary the fund card carries"}
