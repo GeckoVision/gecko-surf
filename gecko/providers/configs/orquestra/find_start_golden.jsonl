@@ -1,0 +1,25 @@
+{"intent": "buy this token on pump and hold it", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "the showcase phrasing"}
+{"intent": "ape into a pump fun memecoin", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "slang; 'pump fun' split into two tokens"}
+{"intent": "purchase some of that new memecoin before it bonds", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "true paraphrase — no verb/noun shared with the card"}
+{"intent": "get me half a sol worth of this bonding curve token", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "mechanism phrasing (bonding curve), no 'buy'/'pump'"}
+{"intent": "snipe a fresh pump launch", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "'launch' collides with metadao vocabulary"}
+{"intent": "market buy the token everyone is aping into", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "trader phrasing"}
+{"intent": "buy the dip on pumpfun", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "program named as one word"}
+{"intent": "sell my pump tokens back to the curve", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "sell is NOT wired — expected coverage_gap"}
+{"intent": "dump this memecoin position before it rugs", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "sell paraphrase; unwired — expected coverage_gap"}
+{"intent": "swap sol for usdc", "gold_program": "meteora", "gold_instruction": "swap", "note": "the showcase swap phrasing"}
+{"intent": "trade my sol into usdc on a dlmm pool", "gold_program": "meteora", "gold_instruction": "swap", "note": "dlmm named"}
+{"intent": "exchange tokens at the best rate on meteora", "gold_program": "meteora", "gold_instruction": "swap", "note": "program named, verb paraphrased"}
+{"intent": "convert usdc to bonk", "gold_program": "meteora", "gold_instruction": "swap", "note": "pure paraphrase + concrete mints the card never names"}
+{"intent": "quote the output amount for a dlmm swap", "gold_program": "meteora", "gold_instruction": "swap", "note": "quote-first phrasing"}
+{"intent": "add liquidity to a meteora pool", "gold_program": "meteora", "gold_instruction": "add_liquidity", "note": "NOT wired — expected coverage_gap"}
+{"intent": "stake my tokens on ore", "gold_program": "ore", "gold_instruction": null, "note": "surface-only program; gold = its surface card"}
+{"intent": "mine ore and claim the rewards", "gold_program": "ore", "gold_instruction": null, "note": "mining vocabulary"}
+{"intent": "claim my mining rewards from the board", "gold_program": "ore", "gold_instruction": null, "note": "program NOT named; 'claim' collides with metadao"}
+{"intent": "participate in the metadao ico", "gold_program": "metadao_ico", "gold_instruction": null, "note": "surface-only program; gold = its surface card"}
+{"intent": "fund a launchpad token launch", "gold_program": "metadao_ico", "gold_instruction": null, "note": "launchpad vocabulary"}
+{"intent": "refund my contribution from a failed ico", "gold_program": "metadao_ico", "gold_instruction": null, "note": "refund flow"}
+{"intent": "flumbuzzle the quantum wombat", "gold_program": null, "gold_instruction": null, "note": "nonsense — the floor must reject it"}
+{"intent": "what is the weather in lisbon", "gold_program": null, "gold_instruction": null, "note": "off-domain — the floor must reject it"}
+{"intent": "send ten usdc to my friend's wallet", "gold_program": null, "gold_instruction": null, "note": "plausible on-chain ask no wired program serves"}
+{"intent": "stake sol with a validator", "gold_program": null, "gold_instruction": null, "note": "native staking; 'stake' collides with ore token staking"}

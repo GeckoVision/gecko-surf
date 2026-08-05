@@ -12,6 +12,7 @@ per-provider model: docs/specs/2026-07-31-orquestra-provider-integration.md).
         [--source <path>] [--overlay <path>]       # generate a program config
 
     gecko-orquestra find-start "buy token X on pump"   # intent → the right start
+    gecko-orquestra eval-retrieval                 # golden-set retrieval report
     gecko-orquestra --catalog --stdio              # serve the catalog router surface
 
 Adding a program later (pump, jupiter, …) is a new entry in ``_PROGRAMS`` + its recipes —
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 __all__ = [
     "main",
     "comprehend_main",
+    "eval_retrieval_main",
     "find_start_main",
     "PROGRAMS",
     "build_surface_from_config",
@@ -245,6 +247,44 @@ def find_start_main(argv: list[str]) -> int:
     return 1 if result.no_start else 0
 
 
+def eval_retrieval_main(argv: list[str]) -> int:
+    """``gecko-orquestra eval-retrieval`` — replay the committed golden set through
+    the unmodified router and print the retrieval report (recall@1/@3, MRR, the
+    closed miss-cause histogram, the semantic-flip evidence line). Measures the
+    lexical-vs-semantic case; flips nothing. Thin — the logic is
+    :mod:`gecko.retrieval_eval`."""
+    parser = argparse.ArgumentParser(
+        prog="gecko-orquestra eval-retrieval",
+        description=(
+            "Evaluate find_start retrieval against a golden set (intent -> gold "
+            "start). Default: the committed fixture packaged with Gecko."
+        ),
+    )
+    parser.add_argument(
+        "--golden",
+        default=None,
+        metavar="PATH",
+        help="override the committed golden JSONL fixture",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="classification threshold: gold within top-k = hit (default 3)",
+    )
+    args = parser.parse_args(argv)
+
+    from ..retrieval_eval import GoldenSetError, evaluate_golden, format_report
+
+    try:
+        report = evaluate_golden(args.golden, k=args.k)
+    except (GoldenSetError, OSError) as exc:
+        print(f"eval-retrieval: {exc}", file=sys.stderr)
+        return 2
+    sys.stdout.write(format_report(report))
+    return 0
+
+
 def comprehend_main(argv: list[str], *, client: Any = None) -> int:
     """``gecko-orquestra comprehend`` — auto-comprehend-on-pick.
 
@@ -343,6 +383,8 @@ def main(argv: list[str] | None = None) -> int:
         return comprehend_main(args_list[1:])
     if args_list and args_list[0] == "find-start":
         return find_start_main(args_list[1:])
+    if args_list and args_list[0] == "eval-retrieval":
+        return eval_retrieval_main(args_list[1:])
     parser = argparse.ArgumentParser(
         prog="gecko-orquestra",
         description="Serve an Orquestra program's front-door surface over MCP (keyless).",

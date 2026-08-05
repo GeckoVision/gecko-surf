@@ -45,9 +45,13 @@ __all__ = [
     "DeriveStep",
     "StartPoint",
     "CatalogCandidate",
+    "CandidateRecord",
+    "FloorKind",
+    "MissCause",
     "MissRecord",
     "MissLogger",
     "FindStartResult",
+    "candidate_name",
     "find_start",
     "format_result",
     "jsonl_miss_logger",
@@ -158,15 +162,68 @@ class CatalogCandidate:
     comprehend_first: dict[str, str]
 
 
+# What the caller was actually served: genuine ``start``/``surface`` points, or
+# only below-floor GUESSES. A caller proceeding on a "guess" record is the failure
+# mode recall metrics never see — this makes it countable.
+FloorKind = Literal["start", "guess"]
+
+# The CLOSED miss-cause vocabulary (single source of truth — the eval runner and
+# every consumer import it from here, never redeclare):
+#   hit              — the gold start ranked within top-k
+#   no_content_tokens — the intent carried no content-bearing terms
+#   coverage_gap     — the gold program/instruction is NOT wired (argues for
+#                      wiring more programs, NOT for a semantic retriever)
+#   vocabulary_gap   — gold IS wired but shares zero terms with its card
+#   misrank          — gold IS wired, overlap > 0, yet ranked below top-k
+#   false_accept     — a deliberately out-of-scope intent cleared the floor
+#                      (precision/floor evidence, not ranking evidence)
+# Only vocabulary_gap + misrank count as evidence FOR the semantic flip.
+MissCause = Literal[
+    "hit",
+    "no_content_tokens",
+    "coverage_gap",
+    "vocabulary_gap",
+    "misrank",
+    "false_accept",
+]
+
+
+def candidate_name(program: str, instruction: str | None) -> str:
+    """The control-plane-safe display name of a candidate — program/instruction
+    names only, never intent text."""
+    return f"{program}/{instruction}" if instruction else program
+
+
+@dataclass(frozen=True)
+class CandidateRecord:
+    """One served candidate, reduced to control-plane-safe fields: the program/
+    instruction NAME and its lexical score — never the intent text."""
+
+    name: str
+    score: int
+    kind: StartKind
+
+
 @dataclass(frozen=True)
 class MissRecord:
-    """A CATEGORICAL retrieval-miss record — counts only, NEVER the intent text
-    (it could carry user data; control-plane rules). Feeds the lexical-vs-semantic
-    evidence gate."""
+    """A CATEGORICAL retrieval record — names, scores, and counts only, NEVER the
+    intent text (it could carry user data; control-plane rules). Feeds the
+    lexical-vs-semantic evidence gate.
+
+    v2 adds the gold-free ranking fields (``top_candidates``/``margin``/``floor``
+    — program/instruction names are control-plane-safe) plus two eval-only fields
+    (``gold_rank``/``miss_cause``) populated exclusively by
+    :mod:`gecko.retrieval_eval` against the committed golden set; in production
+    they stay ``None``."""
 
     intent_term_count: int
     matched_score: int
     wired_program_count: int
+    top_candidates: tuple[CandidateRecord, ...] = ()
+    margin: int = 0  # top1 − top2 score; 0 when fewer than two candidates
+    floor: FloorKind = "guess"
+    gold_rank: int | None = None  # eval-only
+    miss_cause: MissCause | None = None  # eval-only
 
 
 MissLogger = Callable[[MissRecord], None]
@@ -575,18 +632,32 @@ def find_start(
         program_hint=program if hint_unwired else None,
     )
 
-    def _miss(top_score: int) -> None:
+    def _miss(top_score: int, served: Sequence[StartPoint]) -> None:
         if on_miss is not None:
+            candidates = tuple(
+                CandidateRecord(
+                    name=candidate_name(p.program, p.instruction),
+                    score=p.score,
+                    kind=p.kind,
+                )
+                for p in served
+            )
+            margin = (
+                candidates[0].score - candidates[1].score if len(candidates) > 1 else 0
+            )
             on_miss(
                 MissRecord(
                     intent_term_count=len(q_tokens),
                     matched_score=top_score,
                     wired_program_count=len(wired_programs),
+                    top_candidates=candidates,
+                    margin=margin,
+                    floor="guess",  # every miss serves guesses (or nothing) — countable
                 )
             )
 
     if not q_tokens:
-        _miss(0)
+        _miss(0, ())
         return FindStartResult(
             starts=(),
             catalog=candidates,
@@ -594,7 +665,7 @@ def find_start(
             note="the intent carried no content-bearing terms — nothing to route",
         )
     if hint_unwired:
-        _miss(0)
+        _miss(0, ())
         note = f"program {program!r} is not wired; " + (
             "closest catalog matches below — comprehend first (the D-A path)"
             if candidates
@@ -626,11 +697,11 @@ def find_start(
         )
 
     # below the floor: honest no-start; the fallback candidates are labeled GUESSES
-    _miss(0)
     guesses = tuple(
         _start_point(by_op[id(se.entry.operation)], 0, (), kind="guess")
         for se in scored
     )
+    _miss(0, guesses)
     return FindStartResult(
         starts=guesses,
         catalog=candidates,

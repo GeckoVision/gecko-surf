@@ -239,11 +239,26 @@ def test_miss_logging_is_off_by_default_and_categorical_when_on(
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert set(record) == {
+        # v1 fields — kept, back-compat
         "intent_term_count",
         "matched_score",
         "wired_program_count",
+        # v2 — gold-free ranking fields (names/scores only)
+        "top_candidates",
+        "margin",
+        "floor",
+        # v2 — eval-only fields, None in production
+        "gold_rank",
+        "miss_cause",
     }
-    assert all(isinstance(v, int) for v in record.values())
+    assert record["floor"] == "guess"
+    assert record["gold_rank"] is None
+    assert record["miss_cause"] is None
+    # the served GUESSES ride along as program/instruction NAMES + scores
+    assert record["top_candidates"]
+    assert all(
+        c["kind"] == "guess" and c["score"] == 0 for c in record["top_candidates"]
+    )
     # NEVER the intent text (it could carry user data — control-plane rules)
     assert "wombat" not in log.read_text(encoding="utf-8")
 
@@ -261,6 +276,15 @@ def test_miss_record_counts_are_sane() -> None:
     assert record.intent_term_count == 3  # 'the' is a stopword
     assert record.matched_score == 0
     assert record.wired_program_count == 4
+    assert record.margin == 0  # all fallback guesses score 0
+
+
+def test_empty_intent_miss_record_serves_no_candidates() -> None:
+    records: list[MissRecord] = []
+    find_start("please do it for me", on_miss=records.append)
+    (record,) = records
+    assert record.top_candidates == ()
+    assert record.floor == "guess"  # nothing above the floor was served
 
 
 # --- rendering + serialization --------------------------------------------------
