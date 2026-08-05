@@ -5,8 +5,8 @@
   "program": {
     "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
     "orquestra_project": "krhmrxpy2fgwn3q0whic7",
-    "intents": [],
-    "notes": "MetaDAO launchpad_v7 (the ICO/launch program): initialize_launch -> start_launch -> fund -> complete/close -> claim/refund. Orquestra's PDA Finder reports 'No PDA accounts found in this IDL' for this program — its Anchor-IDL generator drops EVERY seed because none are declared in IDL pda.seeds; they exist only as #[account(seeds=...)] in v07 source. Gecko recovers them from source. (Version gotcha: Orquestra labels this 'IDL v8' — its own upload counter — but the program is v07_launchpad, NOT v08 moonDJU...; recipes verified against v07 + real mainnet accounts.) Follow-ons needing new seed kinds: token_metadata (constant-pubkey Metaplex seed + cross-program owner), the SPL ATA vaults, and complete_launch's caller-supplied foreign programs (DAMM v2/Squads/Futarchy).",
+    "intents": ["plan_fund"],
+    "notes": "MetaDAO launchpad_v7 (the ICO/launch program): initialize_launch -> start_launch -> fund -> complete/close -> claim/refund. Orquestra's PDA Finder reports 'No PDA accounts found in this IDL' for this program — its Anchor-IDL generator drops EVERY seed because none are declared in IDL pda.seeds; they exist only as #[account(seeds=...)] in v07 source. Gecko recovers them from source. (Version gotcha: Orquestra labels this 'IDL v8' — its own upload counter — but the program is v07_launchpad, NOT v08 moonDJU...; recipes verified against v07 + real mainnet accounts.) plan_fund is wired: fund contributes USDC (amount in 6-decimal base units) to a Live launch; funding_record is init_if_needed in the fund instruction itself (payer funds the rent — no separate init call), the USDC vault is READ from the launch account (has_one = launch_quote_vault), and the token program is pinned to classic SPL Token by source (Program<'info, Token>). Naming gotcha: this Orquestra project speaks the IDL's camelCase account names (fundingRecord, launchQuoteVault, ...) — unlike the pump/meteora projects' snake_case — so /build payloads must match exactly. Follow-ons needing new seed kinds: token_metadata (constant-pubkey Metaplex seed + cross-program owner) and complete_launch's caller-supplied foreign programs (DAMM v2/Squads/Futarchy).",
     "pdas": {
       "launch": {
         "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
@@ -28,6 +28,20 @@
           {"kind": "constant", "value": "funding_record", "encoding": "utf8"},
           {"kind": "variable", "name": "launch", "source": "account", "encoding": "pubkey"},
           {"kind": "variable", "name": "funder", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "event_authority": {
+        "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
+        "seeds": [
+          {"kind": "constant", "value": "__event_authority", "encoding": "utf8"}
+        ]
+      },
+      "funder_quote_account": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {"kind": "variable", "name": "owner", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "token_program", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
         ]
       }
     }

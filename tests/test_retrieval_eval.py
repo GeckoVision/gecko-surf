@@ -29,7 +29,7 @@ from gecko.retrieval_eval import (
 
 def test_committed_golden_set_loads_and_is_small() -> None:
     rows = load_golden(default_golden_text())
-    assert 15 <= len(rows) <= 25  # small, reviewable — a fixture, not a corpus
+    assert 15 <= len(rows) <= 30  # small, reviewable — a fixture, not a corpus
     # it covers every wired program AND deliberately-out-of-scope intents
     programs = {r.gold_program for r in rows}
     assert {"pumpfun", "meteora", "ore", "metadao_ico", None} <= programs
@@ -174,11 +174,20 @@ def test_evaluate_golden_pins_the_showcase_rows() -> None:
     assert showcase.gold_rank == 1
     assert showcase.top1_name == "pumpfun/buy"
 
-    # a true paraphrase with concrete mints the card never names: the gold is
-    # wired, the vocabulary just doesn't reach it — real flip evidence
+    # a true paraphrase with concrete mints the gold card never names: the gold is
+    # wired, the vocabulary just doesn't reach it — real flip evidence. Since the
+    # metadao fund card was wired, its "usdc" vocabulary clears the floor here with
+    # a WRONG start (floor="start", top1 != gold) — stronger flip evidence than the
+    # old below-floor guess, and exactly what the record makes countable.
     paraphrase = by_intent["convert usdc to bonk"]
     assert paraphrase.cause == "vocabulary_gap"
-    assert paraphrase.floor == "guess"
+    assert paraphrase.floor == "start"
+    assert paraphrase.top1_name != "meteora/swap"
+
+    # the fund rows wired this sprint route to the new start (was a coverage gap)
+    fund = by_intent["fund a launchpad token launch"]
+    assert fund.cause == "hit"
+    assert fund.top1_name == "metadao_ico/fund"
 
     # sell is not wired: a coverage gap, which argues for wiring — not vectors
     sell = by_intent["sell my pump tokens back to the curve"]
