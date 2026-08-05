@@ -1,16 +1,42 @@
 [project]
 name = "gecko-surf"
 version = "0.9.5"
-description = "Make any API agent-usable without integration code. V1: comprehension layer — turn a human-shaped OpenAPI surface into question-shaped, first-call-correct agent tools. (Working name; rename on brand pick.)"
+description = "The knowledge graph for APIs your agent can trust — map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves."
+keywords = [
+    "mcp", "model-context-protocol", "ai-agents", "agent-tools", "llm-tools",
+    "openapi", "api-integration", "knowledge-graph", "agent-security",
+    "solana", "anchor", "first-call-correct",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
 # README becomes the PyPI long-description; it carries the `mcp-name:` marker the
 # MCP Registry matches to prove PyPI ownership. Without this, the description is empty.
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+
 # keyring is a BASE dependency (decision #4): the credential resolver's KeyringBackend is
 # the default secure store, so a plain install must be able to `import keyring` — the
 # env-var fallback stays, but the OS-keychain path is no longer an opt-in extra.
 dependencies = ["pyyaml>=6.0", "keyring>=25"]
+
+[project.urls]
+Homepage = "https://geckovision.tech"
+Documentation = "https://docs.geckovision.tech"
+Repository = "https://github.com/GeckoVision/gecko-surf"
+Issues = "https://github.com/GeckoVision/gecko-surf/issues"
+Changelog = "https://github.com/GeckoVision/gecko-surf/blob/main/CHANGELOG.md"
 
 # `uvx gecko ...` (dist: gecko-surf). Thin subcommand dispatcher (serve/test/
 # from-docs); a bare `gecko <spec>` still serves. `python -m gecko.serve` also works

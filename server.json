@@ -1,21 +1,26 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "tech.geckovision/surf",
-  "description": "Point Gecko at an OpenAPI spec; get first-call-correct, auth-hidden agent tools.",
+  "description": "The knowledge graph for APIs your agent can trust \u2014 first-call-correct, auth-hidden agent tools from any OpenAPI or Solana program.",
   "repository": {
     "url": "https://github.com/GeckoVision/gecko-surf",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.9.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "gecko-surf",
-      "version": "0.2.0",
-      "transport": { "type": "stdio" }
+      "version": "0.9.5",
+      "transport": {
+        "type": "stdio"
+      }
     }
   ],
   "remotes": [
-    { "type": "streamable-http", "url": "https://mcp.geckovision.tech/mcp" }
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.geckovision.tech/mcp"
+    }
   ]
 }
