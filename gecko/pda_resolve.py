@@ -89,8 +89,14 @@ def read_account_owner(
     Used to resolve seeds like a mint's ``token_program`` (a Token vs Token-2022
     mint is distinguished by its owner). Raises :class:`ResolveError` if the account
     does not exist.
+
+    ``encoding="base64"`` is explicit even though only ``owner`` is read: with no
+    encoding the RPC defaults to base58, and several mainnet providers reject that for
+    any account over 128 bytes ("Encoded binary (base 58) data should be less than 128
+    bytes"). A Token-2022 mint with extensions is routinely over that, so the default
+    turned an owner lookup into a hard failure on exactly the mints Pump uses.
     """
-    value = _account_value(address, None, rpc_url=rpc_url, rpc_call=rpc_call)
+    value = _account_value(address, "base64", rpc_url=rpc_url, rpc_call=rpc_call)
     owner = value.get("owner")
     if not isinstance(owner, str):
         raise ResolveError(f"account {address} has no owner in getAccountInfo result")

@@ -29,7 +29,7 @@ from gecko.retrieval_eval import (
 
 def test_committed_golden_set_loads_and_is_small() -> None:
     rows = load_golden(default_golden_text())
-    assert 15 <= len(rows) <= 30  # small, reviewable — a fixture, not a corpus
+    assert 15 <= len(rows) <= 40  # small, reviewable — a fixture, not a corpus
     # it covers every wired program AND deliberately-out-of-scope intents
     programs = {r.gold_program for r in rows}
     assert {"pumpfun", "meteora", "ore", "metadao_ico", None} <= programs
@@ -37,8 +37,12 @@ def test_committed_golden_set_loads_and_is_small() -> None:
 
 def test_golden_set_includes_unwired_golds_for_coverage_gap_rows() -> None:
     rows = load_golden(default_golden_text())
-    unwired = [r for r in rows if r.gold_instruction in {"sell", "add_liquidity"}]
-    assert unwired  # sell/add_liquidity are NOT wired — they pin coverage_gap
+    # pump `sell` was wired this sprint (it used to sit here alongside add_liquidity);
+    # meteora add_liquidity is still unwired and keeps the coverage_gap cause honest —
+    # the set must always carry at least one gold nothing serves, or the eval stops
+    # being able to tell "we retrieve badly" from "we haven't built it".
+    unwired = [r for r in rows if r.gold_instruction == "add_liquidity"]
+    assert unwired
 
 
 # --- golden-set validation (committed data still fails loud) ---------------------
@@ -189,9 +193,19 @@ def test_evaluate_golden_pins_the_showcase_rows() -> None:
     assert fund.cause == "hit"
     assert fund.top1_name == "metadao_ico/fund"
 
-    # sell is not wired: a coverage gap, which argues for wiring — not vectors
+    # the sell rows wired this sprint route to the new start (both were coverage gaps)
     sell = by_intent["sell my pump tokens back to the curve"]
-    assert sell.cause == "coverage_gap"
+    assert sell.cause == "hit"
+    assert sell.top1_name == "pumpfun/sell"
+    # …including the paraphrase that shares no verb with the card
+    dump = by_intent["dump this memecoin position before it rugs"]
+    assert dump.cause == "hit"
+    assert dump.top1_name == "pumpfun/sell"
+
+    # meteora add_liquidity is still unwired: a coverage gap, which argues for wiring —
+    # not for vectors. The eval must keep at least one of these to stay honest.
+    unwired = by_intent["add liquidity to a meteora pool"]
+    assert unwired.cause == "coverage_gap"
 
     nonsense = by_intent["flumbuzzle the quantum wombat"]
     assert nonsense.cause == "hit"  # the floor honestly rejected it

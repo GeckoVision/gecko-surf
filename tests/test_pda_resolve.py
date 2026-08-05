@@ -94,6 +94,18 @@ def test_read_account_owner_returns_owner() -> None:
     assert read_account_owner(MINT, rpc_call=rpc) == TOKEN_2022_PROGRAM
 
 
+def test_read_account_owner_asks_for_base64_encoding() -> None:
+    """Regression: with no encoding the RPC defaults to base58, and mainnet providers
+    reject that above 128 bytes ("Encoded binary (base 58) data should be less than 128
+    bytes"). A Token-2022 mint with extensions is routinely larger, so an owner lookup —
+    which does not even read the data — used to hard-fail on exactly the mints Pump
+    trades. Only the owner is used; the encoding just has to be one the RPC will serve."""
+    rpc = _fake_rpc(owner=TOKEN_2022_PROGRAM)
+    read_account_owner(MINT, rpc_call=rpc)
+    assert rpc.calls[0][0] == "getAccountInfo"  # type: ignore[attr-defined]
+    assert rpc.calls[0][1] == [MINT, {"encoding": "base64"}]  # type: ignore[attr-defined]
+
+
 def test_read_missing_account_raises() -> None:
     def rpc(_url: str, _method: str, _params: list[Any]) -> dict[str, Any]:
         return {"result": {"value": None}}

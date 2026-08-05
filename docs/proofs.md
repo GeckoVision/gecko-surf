@@ -1,7 +1,10 @@
 # Live proofs — the E2E side-by-sides, verbatim
 
-The four landing-orchestrator numbers the architecture cites (pump `86,669 CU`,
-Meteora `81,964 CU`, MetaDAO `44,476 CU`, ORE `41,023 CU`) come from real env-gated E2E runs. This file is their durable
+The five landing-orchestrator numbers the architecture cites (pump buy `86,669 CU`,
+Meteora `81,964 CU`, MetaDAO `44,476 CU`, ORE `41,023 CU`, pump sell `50,783 CU`) come
+from real env-gated E2E runs. With pump `sell` wired, **all four target programs have at
+least one runnable executable intent** and pump has the full round-trip (buy → sell).
+This file is their durable
 record: the verbatim output, the date, and exactly how to re-run each. Honesty
 labels: every run is a **surfpool mainnet fork** (a mainnet-backed state snapshot —
 **NOT mainnet**), simulation only (`sigVerify:false`), $0, nothing signed or
@@ -150,6 +153,68 @@ Re-run (needs `surfpool` on PATH + a mainnet RPC; discovery is automatic, or pin
 ```bash
 GECKO_SIMULATE_E2E=1 uv run pytest \
   tests/test_ore_claim_landing.py::test_claim_that_passes_e2e_side_by_side -s
+```
+
+## Pump.fun `sell` — naive builder instruction ❌ 6074 → Gecko landing bundle ✅ 50,783 CU
+
+Run 2026-08-05 (PR for `feat/pump-sell-flow`): real Orquestra `/build`, surfpool mainnet
+fork, real mint, and a holder **discovered at run time** (`getTokenLargestAccounts` →
+first owner that is on-curve *and* whose token account is its canonical ATA; a sell cannot
+be simulated from a wallet that holds nothing, and the test skips rather than fake one).
+
+This is the "the shape lives in PROSE" case. The shipped IDL and the live builder surface
+both list **14** accounts for `sell`; the only hint about the rest is the instruction's
+English doc-comment — *"For cashback coins, pass as remaining_accounts:
+[0] user_volume_accumulator, [1] bonding_curve_v2"*. The real instruction is **16
+accounts** for a normal coin and **17** for a cashback coin, and which one you need is a
+STATE read (`BondingCurve.is_cashback_coin`, bool @ data offset 82), not a caller choice.
+Like ORE, the naive bundle is not a near-miss: it runs the token `TransferChecked` and
+*then* reverts.
+
+There is **no ATA prelude** here, and that is the honest answer rather than an omission —
+the seller already holds the token, so `associated_user` exists; and the curve pays out
+native lamports, so there is no wSOL wrap either. The whole prelude is ComputeBudget.
+
+Verbatim verdict block (`test_sell_that_passes_e2e_side_by_side`):
+
+```
+=== pump sell: naive derive-only vs GECKO landing bundle ===
+holder discovered at run time: 2sGTGW2EavV6mZ8irHiV5TsKpR3vnGiMcACNJgD6dFQq (balance 2,833,920,475,107)
+❌ NAIVE (builder's 14-account sell) — EXPECTED revert, this is the gap: custom_program_error:6074 (6074)
+✅ GECKO landing bundle — PASSES: 50,783 CU
+RESULT: the naive path reverts on mainnet; the Gecko bundle lands — caught for $0 before any spend.
+--- details ---
+shape read from BondingCurve.is_cashback_coin@82: non-cashback (16)
+amount=28339204751 base_sol_output=801481 min_sol_output=761406 cu_limit=60939
+```
+
+The naive log tail names the gap exactly:
+
+```
+Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb invoke [2]
+Program log: Instruction: TransferChecked
+Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success
+Program log: AnchorError thrown in programs/pump/src/sell.rs:126. Error Code: InvalidBondingCurveV2. Error Number: 6074. Error Message: bonding_curve_v2 remaining account is missing or invalid.
+Program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P failed: custom program error: 0x17ba
+```
+
+Two more measured facts ride along. `min_sol_output` is **not** the buy formula reversed:
+the sell quote is `amount * virtual_sol_reserves // (virtual_token_reserves + amount)`
+(denominator ADDS the input, no `+1`, no `real_token_reserves` cap) and the program
+*subtracts* the protocol + creator fee from the proceeds, so the slippage guard must
+shrink the floor where a buy's pads the ceiling — source:
+`@pump-fun/pump-sdk@1.36.0 src/bondingCurve.ts getSellSolAmountFromTokenAmount(Quote)`.
+And **mayhem-mode** coins (`is_mayhem_mode` @ offset 81) are FLAGGED, not claimed: on the
+one mainnet mayhem sell inspected, the account in the `bonding_curve_v2` slot did not
+match the standard `["bonding-curve-v2", mint]` derivation.
+
+Re-run (needs `surfpool` on PATH + a mainnet RPC; holder discovery is automatic,
+`GECKO_E2E_SELL_MINT` / `GECKO_E2E_FEE_RECIPIENT` optional overrides; skips with the exact
+reason if no usable holder exists):
+
+```bash
+GECKO_SIMULATE_E2E=1 uv run pytest \
+  tests/test_pump_sell_landing.py::test_sell_that_passes_e2e_side_by_side -s
 ```
 
 ## Recording an outcome from a re-run (opt-in)
