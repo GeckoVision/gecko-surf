@@ -25,6 +25,7 @@ __all__ = [
     "RpcCall",
     "RpcError",
     "LOCAL_RPC",
+    "user_agent",
     "validate_rpc_url",
     "default_rpc_call",
 ]
@@ -43,7 +44,13 @@ LOCAL_RPC = "http://127.0.0.1:8899"
 _USER_AGENT_FALLBACK = "gecko-surf"
 
 
-def _user_agent() -> str:
+def user_agent() -> str:
+    """The honest ``gecko-surf/<version>`` agent string every Gecko HTTP client sends.
+
+    Public because it is the shared CDN-bot-check posture: any module doing
+    control-plane HTTP (RPC, the Orquestra catalog client) reuses this rather than
+    re-inventing a UA — one signature, one place to reason about it.
+    """
     try:
         from importlib.metadata import version
 
@@ -85,7 +92,7 @@ def _http_post_json(url: str, body: bytes) -> dict[str, Any]:
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": _user_agent()},
+        headers={"Content-Type": "application/json", "User-Agent": user_agent()},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - scheme validated
         return json.loads(resp.read())  # type: ignore[no-any-return]
