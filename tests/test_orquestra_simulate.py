@@ -31,7 +31,13 @@ def _plan() -> dict[str, Any]:
 def test_pumpfun_surface_lists_simulate_tool() -> None:
     surface = build_pumpfun_surface()
     names = {t["name"] for t in surface.list_tools()}
-    assert names == {"get_program_graph", "derive_pda", "plan_buy", "simulate"}
+    assert names == {
+        "get_program_graph",
+        "derive_pda",
+        "plan_buy",
+        "plan_sell",
+        "simulate",
+    }
 
 
 def test_simulate_tool_schema() -> None:

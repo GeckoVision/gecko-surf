@@ -129,6 +129,7 @@ Live, on a mainnet fork, $0:
 | Case | Naive path | Gecko |
 |---|---|---|
 | Pump.fun buy | ❌ reverts — `AccountNotInitialized (3012)` | ✅ lands — 86,669 CU |
+| Pump.fun sell | ❌ transfers the tokens, then reverts — `InvalidBondingCurveV2 (6074)` | ✅ lands — 50,783 CU |
 | Meteora DLMM swap | ❌ reverts — derive-only, no ATA/wrap/bin-array preludes | ✅ wrap → swap → unwrap — 81,964 CU |
 | Meteora pool derivation | ❌ stale 3-seed scheme → the wrong pool, silently | ✅ correct 4-seed derivation, differential-proven |
 | Docs-only API (no spec) | agent invents endpoints | ✅ draft spec recovered, verified `VERIFIED/REFUTED` |

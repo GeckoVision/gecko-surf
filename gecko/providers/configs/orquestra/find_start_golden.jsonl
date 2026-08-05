@@ -5,8 +5,11 @@
 {"intent": "snipe a fresh pump launch", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "'launch' collides with metadao vocabulary"}
 {"intent": "market buy the token everyone is aping into", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "trader phrasing"}
 {"intent": "buy the dip on pumpfun", "gold_program": "pumpfun", "gold_instruction": "buy", "note": "program named as one word"}
-{"intent": "sell my pump tokens back to the curve", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "sell is NOT wired — expected coverage_gap"}
-{"intent": "dump this memecoin position before it rugs", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "sell paraphrase; unwired — expected coverage_gap"}
+{"intent": "sell my pump tokens back to the curve", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "the showcase sell phrasing; plan_sell wired this sprint (was a coverage_gap)"}
+{"intent": "dump this memecoin position before it rugs", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "sell paraphrase — no verb shared with the card; plan_sell wired this sprint (was a coverage_gap)"}
+{"intent": "exit my position in this bonding curve token", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "'exit' phrasing + mechanism noun shared with the buy card — must not land on buy"}
+{"intent": "cash out of that pumpfun coin for sol", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "'cash out' + 'for sol'; 'sol' collides with the meteora swap vocabulary"}
+{"intent": "unload half my bag before it dumps", "gold_program": "pumpfun", "gold_instruction": "sell", "note": "pure trader slang — no program named, no verb/noun shared with any card"}
 {"intent": "swap sol for usdc", "gold_program": "meteora", "gold_instruction": "swap", "note": "the showcase swap phrasing"}
 {"intent": "trade my sol into usdc on a dlmm pool", "gold_program": "meteora", "gold_instruction": "swap", "note": "dlmm named"}
 {"intent": "exchange tokens at the best rate on meteora", "gold_program": "meteora", "gold_instruction": "swap", "note": "program named, verb paraphrased"}
