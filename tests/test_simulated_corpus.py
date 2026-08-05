@@ -17,6 +17,7 @@ import pytest
 from gecko.corpus import (
     NETWORKS,
     REVERT_CLASSES,
+    SEED_KIND_TOKENS,
     SIM_STATUSES,
     SIMULATED_ALLOWED_KEYS,
     CorpusError,
@@ -169,25 +170,31 @@ def test_record_simulated_segregates_and_leaks_nothing(tmp_path) -> None:
 def test_recipe_hash_stable_across_ordering_and_resolved_values() -> None:
     # The hash takes NAMES only, so two runs of the same intent (accounts in any order,
     # resolved to different pubkeys per user) fingerprint identically.
+    # NOTE: fixtures moved to the closed SEED_KIND_TOKENS vocabulary ("account:pubkey",
+    # not the old free-form "account:mint") when the structural input guard landed.
     h1 = recipe_hash(
         program_id="P",
         instruction="buy",
         account_names=["user", "pool", "mint"],
         arg_names=["amount", "max_sol"],
-        seed_recipes={"pool": ["account:mint"]},
+        seed_recipes={"pool": ["const:utf8", "account:pubkey"]},
     )
     h2 = recipe_hash(
         program_id="P",
         instruction="buy",
         account_names=["mint", "pool", "user"],  # different order
         arg_names=["max_sol", "amount"],
-        seed_recipes={"pool": ["account:mint"]},
+        seed_recipes={"pool": ["const:utf8", "account:pubkey"]},
     )
     assert h1 == h2
 
 
 def test_recipe_hash_distinct_across_instruction_and_program() -> None:
-    base = dict(account_names=["user"], arg_names=["amount"], seed_recipes={"x": ["k"]})
+    base = dict(
+        account_names=["user"],
+        arg_names=["amount"],
+        seed_recipes={"x": ["const:utf8"]},
+    )
     h = recipe_hash(program_id="P", instruction="buy", **base)  # type: ignore[arg-type]
     assert recipe_hash(program_id="P", instruction="sell", **base) != h  # type: ignore[arg-type]
     assert recipe_hash(program_id="Q", instruction="buy", **base) != h  # type: ignore[arg-type]
@@ -198,10 +205,107 @@ def test_recipe_hash_distinct_across_instruction_and_program() -> None:
             instruction="buy",
             account_names=["user"],
             arg_names=["amount"],
-            seed_recipes={"x": ["k2"]},
+            seed_recipes={"x": ["resolver"]},
         )
         != h
     )
+
+
+# --- recipe_hash input guard: values-free by construction (defi-security follow-up) ----
+# A hash over low-cardinality secret-adjacent inputs is a dictionary-attack surface, so a
+# resolved pubkey/amount/secret must be REJECTED at the boundary — and the raised message
+# must never echo the offending value (an exception message is a log line waiting to happen).
+
+# A realistic resolved address (base58 alphabet, pubkey length) — must never be hashable
+# as a "name". Distinct from CANARY_PUBKEY, which is Receipt-side.
+RESOLVED_PUBKEY = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+SECRET_ARG = (
+    "sk-AAAAABBBBBCCCCCDDDDDEEEEE"  # OpenAI-shaped, trips looks_like_secret_value
+)
+
+
+def _well_formed_kwargs() -> dict:
+    return dict(
+        program_id="PUMPProgram1111111111111111111111111111111",
+        instruction="buy",
+        account_names=["user", "pool", "mint"],
+        arg_names=["amount", "max_sol"],
+        seed_recipes={"pool": ["const:utf8", "account:pubkey"], "vault": ["resolver"]},
+    )
+
+
+def test_recipe_hash_pinned_for_well_formed_input() -> None:
+    # The guard must not perturb the fingerprint of well-formed input: sha256 over the
+    # sorted-JSON structural fingerprint, pinned so a refactor can't silently reshape it
+    # (a reshaped hash would break every drift series keyed on it).
+    assert (
+        recipe_hash(**_well_formed_kwargs())
+        == "3c3d610a2d51f9bbea1b5128c6caf99bbd5b88c32fff23aca38786ec264e92bf"
+    )
+
+
+def test_recipe_hash_rejects_pubkey_as_account_name() -> None:
+    kwargs = _well_formed_kwargs()
+    kwargs["account_names"] = ["user", RESOLVED_PUBKEY]
+    with pytest.raises(CorpusError) as excinfo:
+        recipe_hash(**kwargs)
+    assert RESOLVED_PUBKEY not in str(excinfo.value)  # redacted
+
+
+def test_recipe_hash_rejects_secret_shaped_arg_name() -> None:
+    kwargs = _well_formed_kwargs()
+    kwargs["arg_names"] = [SECRET_ARG]
+    with pytest.raises(CorpusError) as excinfo:
+        recipe_hash(**kwargs)
+    assert SECRET_ARG not in str(excinfo.value)  # redacted
+
+
+def test_recipe_hash_rejects_resolved_address_in_seed_recipes() -> None:
+    # A resolved base58 address is not in the closed kind vocabulary — structurally
+    # impossible to smuggle in as a "kind".
+    kwargs = _well_formed_kwargs()
+    kwargs["seed_recipes"] = {"pool": [RESOLVED_PUBKEY]}
+    with pytest.raises(CorpusError) as excinfo:
+        recipe_hash(**kwargs)
+    assert RESOLVED_PUBKEY not in str(excinfo.value)  # redacted
+    assert RESOLVED_PUBKEY not in SEED_KIND_TOKENS
+
+
+def test_recipe_hash_rejects_pubkey_as_seed_recipes_key() -> None:
+    kwargs = _well_formed_kwargs()
+    kwargs["seed_recipes"] = {RESOLVED_PUBKEY: ["resolver"]}
+    with pytest.raises(CorpusError) as excinfo:
+        recipe_hash(**kwargs)
+    assert RESOLVED_PUBKEY not in str(excinfo.value)  # redacted
+
+
+def test_recipe_hash_rejects_over_long_name() -> None:
+    overlong = "a_" * 40  # 80 chars — beyond any identifier, below secret patterns
+    kwargs = _well_formed_kwargs()
+    kwargs["account_names"] = [overlong]
+    with pytest.raises(CorpusError) as excinfo:
+        recipe_hash(**kwargs)
+    assert overlong not in str(excinfo.value)  # redacted
+
+
+def test_recipe_hash_rejects_off_vocabulary_kind_and_bare_string_recipe() -> None:
+    kwargs = _well_formed_kwargs()
+    kwargs["seed_recipes"] = {"pool": ["definitely_not_a_kind"]}
+    with pytest.raises(CorpusError):
+        recipe_hash(**kwargs)
+    # a bare string is Sequence[str] too — must be rejected, not iterated as chars
+    kwargs["seed_recipes"] = {"pool": "resolver"}
+    with pytest.raises(CorpusError):
+        recipe_hash(**kwargs)
+
+
+def test_seed_kind_tokens_is_closed_and_kind_shaped() -> None:
+    # every token is short and kind-shaped; none could hold a resolved address
+    assert "resolver" in SEED_KIND_TOKENS
+    assert "const:utf8" in SEED_KIND_TOKENS
+    assert "account:pubkey" in SEED_KIND_TOKENS
+    assert "ordered_pair:max" in SEED_KIND_TOKENS
+    assert all(len(token) <= 32 for token in SEED_KIND_TOKENS)
 
 
 # --- revert_family split (shared vocab, single source of truth) ------------------------

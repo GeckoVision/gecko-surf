@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
 
 from .caller import CallError
+from .pda import SeedEncoding, SeedSource
 from .sanitize import looks_like_secret_value
 from .simulate import REVERT_FAMILIES, Receipt, revert_family
 
@@ -559,13 +561,101 @@ def simulated_sibling(path: str | Path) -> Path:
     return Path(path).with_name("simulated.jsonl")
 
 
+# --- recipe_hash input guard: values-free by CONSTRUCTION, not convention --------------
+# The defi-security finding on the D2 tier: recipe_hash sha256's caller-supplied names and
+# recipe descriptors, and a hash over low-cardinality secret-adjacent inputs is a
+# dictionary-attack surface — so a resolved pubkey/amount must be REJECTED at the boundary,
+# not merely documented away. Mirrors ``_leak_sink_is_valid`` (the same file's precedent for
+# guarding the one record field derived from request data). All guards fail CLOSED, and the
+# error messages never echo the offending input (redaction — an exception message is a log
+# line waiting to happen).
+
+# A plan NAME is a short identifier ("user", "bonding_curve"), never a value. 64 chars is
+# generous for any IDL/source identifier while staying far below secret/address lengths.
+_MAX_PLAN_NAME = 64
+
+# The base58 alphabet at pubkey length (32–44 chars covers every 32-byte Solana address).
+# ``looks_like_secret_value`` only catches base58 at SECRET-KEY length (~88), so a public
+# address passed as a "name" needs its own shape check — an address is exactly the
+# low-cardinality-guessable input the audit flagged.
+_BASE58_ADDRESS_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
+
+# The CLOSED vocabulary of seed-KIND descriptors a recipe may contain — built from the
+# pda.py node model (the single source of truth for seed shapes: SeedEncoding ×
+# SeedSource, plus the ordered-pair and resolver nodes). A resolved address is not in this
+# set, so it is structurally impossible to smuggle one in as a "kind".
+SEED_KIND_TOKENS: frozenset[str] = frozenset(
+    {f"const:{encoding}" for encoding in get_args(SeedEncoding)}
+    | {
+        f"{source}:{encoding}"
+        for source in get_args(SeedSource)
+        for encoding in get_args(SeedEncoding)
+    }
+    | {"ordered_pair:min", "ordered_pair:max", "resolver"}
+)
+
+
+def _guard_plan_name(entry: object, field: str) -> str:
+    """Admit only a short identifier-shaped NAME; raise ``CorpusError`` otherwise.
+
+    Fail-closed order: type/emptiness, length cap, secret shape, address shape. The
+    message names the FIELD, never the value (redaction)."""
+    if not isinstance(entry, str) or not entry:
+        raise CorpusError(f"{field}: entry must be a non-empty string (redacted)")
+    if len(entry) > _MAX_PLAN_NAME:
+        raise CorpusError(
+            f"{field}: entry exceeds {_MAX_PLAN_NAME} chars — "
+            "not an identifier-shaped name (redacted)"
+        )
+    if looks_like_secret_value(entry):
+        raise CorpusError(
+            f"{field}: entry is secret-shaped — a value, not a name (redacted)"
+        )
+    if _BASE58_ADDRESS_RE.fullmatch(entry):
+        raise CorpusError(
+            f"{field}: entry is base58-address-shaped — "
+            "a resolved pubkey, not a name (redacted)"
+        )
+    return entry
+
+
+def _guard_seed_recipes(
+    seed_recipes: Mapping[str, Sequence[str]],
+) -> dict[str, list[str]]:
+    """Validate + canonicalize the recipe mapping: keys are guarded names, values are
+    ordered lists of tokens from the CLOSED ``SEED_KIND_TOKENS`` vocabulary. Seed order
+    is derivation-significant, so value order is preserved (keys are sorted by the JSON
+    serializer)."""
+    if not isinstance(seed_recipes, Mapping):
+        raise CorpusError(
+            "seed_recipes must be a mapping of account name -> seed-kind tokens"
+        )
+    canonical: dict[str, list[str]] = {}
+    for account_name, kinds in seed_recipes.items():
+        _guard_plan_name(account_name, "seed_recipes key")
+        # A bare string is Sequence[str] too — reject it before it iterates as chars.
+        if isinstance(kinds, str) or not isinstance(kinds, (list, tuple)):
+            raise CorpusError(
+                f"seed_recipes[{account_name!r}] must be a list/tuple "
+                "of seed-kind tokens"
+            )
+        for kind in kinds:
+            if not isinstance(kind, str) or kind not in SEED_KIND_TOKENS:
+                raise CorpusError(
+                    f"seed_recipes[{account_name!r}]: seed kind not in the closed "
+                    "SEED_KIND_TOKENS vocabulary (redacted)"
+                )
+        canonical[account_name] = list(kinds)
+    return canonical
+
+
 def recipe_hash(
     *,
     program_id: str,
     instruction: str,
     account_names: Iterable[str],
     arg_names: Iterable[str],
-    seed_recipes: Any,
+    seed_recipes: Mapping[str, Sequence[str]],
 ) -> str:
     """The values-free structural fingerprint of a call plan (§3).
 
@@ -577,15 +667,21 @@ def recipe_hash(
     mint/user; a program upgrade that changes a PDA layout → a reverting sim on a STABLE
     hash (= drift), and a change in our RECOVERED recipe → a new hash.
 
-    Callers MUST pass names/kinds only. There is no pubkey/amount parameter here, so a
-    value physically cannot enter the fingerprint (the same boundary discipline as
-    ``outcome_from``)."""
+    Values-free by CONSTRUCTION: every account/arg name must be a short
+    identifier-shaped NAME (``_guard_plan_name`` — secret-shaped, base58-address-shaped,
+    and over-long entries raise ``CorpusError``), and ``seed_recipes`` values must come
+    from the closed ``SEED_KIND_TOKENS`` vocabulary. A resolved pubkey or amount cannot
+    enter the fingerprint without tripping the guard (the same boundary discipline as
+    ``outcome_from``). ``program_id`` is exempt: it is a public program address and is
+    persisted plaintext on the record itself."""
     fingerprint = {
         "program_id": program_id,
         "instruction": instruction,
-        "accounts": sorted(account_names),  # names, never pubkeys
-        "args": sorted(arg_names),  # names, never values
-        "seed_recipes": seed_recipes,  # seed-recipe KINDS, never derived addresses
+        # names, never pubkeys/values — each entry guarded before it can be hashed
+        "accounts": sorted(_guard_plan_name(n, "account_names") for n in account_names),
+        "args": sorted(_guard_plan_name(n, "arg_names") for n in arg_names),
+        # seed-recipe KIND tokens from the closed vocabulary, never derived addresses
+        "seed_recipes": _guard_seed_recipes(seed_recipes),
     }
     blob = json.dumps(fingerprint, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
