@@ -22,6 +22,14 @@ built transaction into one legible, honest verdict *before any money moves*.
 - It does **not predict price or slippage** — only whether the tx lands against a snapshot.
 - A fork/RPC result is **NOT mainnet** — the `network_label` says so; a surfpool-fork
   Receipt is never presented as mainnet truth.
+- It says **nothing about send-time blockhash validity** — the simulation uses
+  `replaceRecentBlockhash:true`, so the real transaction must take a fresh blockhash at
+  sign time (the builder/lander's job); a passing Receipt can still expire before it is
+  signed.
+- It does **not quote a priority fee** — `SetComputeUnitPrice` defaults to 0 in the
+  simulated bundle; landing under mainnet load needs a fee the operator (or builder)
+  supplies. The Receipt's `units_consumed` is the honest input for the CU *limit*, not
+  the price.
 - It **stores nothing** — the Receipt is returned to the caller and persisted nowhere
   (control-plane invariant #1). No payload, pubkey, or log line is written.
 - It **never signs and never broadcasts** — `simulateTransaction` only. No keypair, no

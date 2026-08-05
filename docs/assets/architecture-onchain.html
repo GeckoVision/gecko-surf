@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.13.0">
-  <title>Gecko — Full Architecture Diagram</title>
+  <title>Gecko — The Proven On-Chain Loop Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -4496,12 +4496,12 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>Gecko — Full Architecture</h1>
+        <h1>Gecko — The Proven On-Chain Loop</h1>
       </div>
-      <p class="subtitle">Untrusted surfaces → provenance knowledge → verified action. Gecko never builds the production tx, never signs.</p>
+      <p class="subtitle">Pump.fun buy, live on a mainnet fork: naive path ❌ 3012 · Gecko landing bundle ✅ 86,669 CU</p>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"comprehend-rail","label":"Comprehension rail","focus":["sources","gate","comprehend","knowledge","projection"],"note":"Everything ingested is untrusted until sanitized; knowledge carries provenance tags (extracted / recovered / flagged)."},{"id":"verify-rail","label":"Verify rail","focus":["agent","planner","builder","simulate","signgate","signer"],"note":"External builder builds; Gecko simulates to a Receipt. The gate is verdict-based today — message-hash binding is planned, not built."},{"id":"memory-loop","label":"Memory loop","focus":["simulate","corpusdrift","knowledge"],"note":"Every simulation outcome lands as a categorical record; the drift series feeds comprehension back — self-generated episodic memory."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"comprehend-plan","label":"Comprehend + plan","focus":["agent","gecko","fork"],"note":"Gecko derives the full account set — including accounts the IDL hides — and reads live state for sane args."},{"id":"build-verify","label":"Build + verify","focus":["gecko","builder","fork"],"note":"The external builder assembles the instruction; Gecko wraps unsigned preludes and simulates to a Receipt — never signs."},{"id":"receipt-sign","label":"Receipt → sign","focus":["fork","gecko","agent","signer"],"note":"Only a passing receipt reaches the signer; the naive path's 3012 revert is caught for $0."}]</script>
 
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
       <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
@@ -4544,9 +4544,9 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read">
-      <svg viewBox="0 0 1520 742" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
-        <title id="archify-diagram-title">Gecko — Full Architecture</title>
-        <desc id="archify-diagram-description">Untrusted surfaces → provenance knowledge → verified action. Gecko never builds the production tx, never signs.</desc>
+      <svg viewBox="0 0 900 820" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Gecko — The Proven On-Chain Loop</title>
+        <desc id="archify-diagram-description">Pump.fun buy, live on a mainnet fork: naive path ❌ 3012 · Gecko landing bundle ✅ 86,669 CU</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -4569,228 +4569,203 @@
         <!-- Background Grid -->
         <rect width="100%" height="100%" fill="url(#grid)" />
 
-        <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="260" y="110" width="1220" height="564" rx="12" class="c-region" stroke-width="1"/>
-        <text x="268" y="128" class="t-cloud" font-size="9" font-weight="600">Gecko control plane — stores surfaces + correctness metadata, never payloads</text>
+        <!-- Time Segments -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="0" x="48" y="150" width="804" height="180" rx="10" class="c-lane" stroke-width="1"/>
 
-        <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="sources" data-edge-to="gate" data-edge-key="0" data-edge-id="ingest-flow" data-composition-points="210,172;290,172" d="M 210 172 L 290 172" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="gate" data-edge-to="comprehend" data-edge-key="1" data-edge-id="gate-comprehend" data-composition-points="460,172;540,172" d="M 460 172 L 540 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="comprehend" data-edge-to="knowledge" data-edge-key="2" data-edge-id="comprehend-knowledge" data-composition-points="710,172;790,172" d="M 710 172 L 790 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="knowledge" data-edge-to="projection" data-edge-key="3" data-edge-id="knowledge-projection" data-composition-points="970,172;1050,172" d="M 970 172 L 1050 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="projection" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="projection-agent" data-composition-points="1200,172;1280,172" d="M 1200 172 L 1280 172" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="agent" data-edge-to="planner" data-edge-label="intent" data-edge-key="5" data-edge-id="agent-intent" data-composition-points="1350,204;1350,228;1381,228;1381,376;1365,376;1365,400" d="M 1350 204 L 1350 220 Q 1350 228 1358 228 L 1373 228 Q 1381 228 1381 236 L 1381 368 Q 1381 376 1373 376 L 1373 376 Q 1365 376 1365 384 L 1365 400" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="planner" data-edge-to="builder" data-edge-label="declared plan" data-edge-key="6" data-edge-id="plan-to-build" data-composition-points="1280,432;1160,432" d="M 1280 432 L 1160 432" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="builder" data-edge-to="simulate" data-edge-label="built ix" data-edge-key="7" data-edge-id="build-to-sim" data-composition-points="1010,432;910,432" d="M 1010 432 L 910 432" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="simulate" data-edge-to="signgate" data-edge-label="pass (verdict)" data-edge-key="8" data-edge-id="sim-to-gate" data-composition-points="740,432;620,432" d="M 740 432 L 620 432" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="signgate" data-edge-to="signer" data-edge-label="sign" data-edge-key="9" data-edge-id="gate-to-signer" data-composition-points="480,432;380,432" d="M 480 432 L 380 432" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="simulate" data-edge-to="corpusdrift" data-edge-label="outcome" data-edge-key="10" data-edge-id="sim-outcome" data-composition-points="825,464;825,590" d="M 825 464 L 825 590" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="corpusdrift" data-edge-to="knowledge" data-edge-label="drift" data-edge-key="11" data-edge-id="drift-back" data-composition-points="740,622;200,622;200,300;880,300;880,204" d="M 740 622 L 208 622 Q 200 622 200 614 L 200 308 Q 200 300 208 300 L 872 300 Q 880 300 880 292 L 880 204" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="1" x="48" y="350" width="804" height="210" rx="10" class="c-lane" stroke-width="1"/>
 
-        <!-- Components -->
-        <g id="node-sources" data-node-id="sources" data-node-label="Untrusted Sources" tabindex="0" role="button" aria-label="Focus Untrusted Sources, OpenAPI · IDL · 4,500-project catalog, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="OpenAPI · IDL · 4,500-project catalog" data-node-context="Architecture component">
-          <title>Untrusted Sources · OpenAPI · IDL · 4,500-project catalog · Architecture component</title>
-          <rect x="40" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="40" y="140" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 146) scale(0.6875)">
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="580" width="804" height="180" rx="10" class="c-lane" stroke-width="1"/>
+
+        <!-- Lifelines -->
+        <path d="M 62 142 L 62 755" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 170 142 L 170 755" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 278 142 L 278 755" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 386 142 L 386 755" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 494 142 L 494 755" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+
+        <!-- Activations -->
+        <rect x="165" y="185" width="10" height="545" rx="3" class="c-mask"/>
+        <rect x="165" y="185" width="10" height="545" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="273" y="380" width="10" height="50" rx="3" class="c-mask"/>
+        <rect x="273" y="380" width="10" height="50" rx="3" class="c-external" stroke-width="1"/>
+        <rect x="381" y="270" width="10" height="287" rx="3" class="c-mask"/>
+        <rect x="381" y="270" width="10" height="287" rx="3" class="c-database" stroke-width="1"/>
+        <rect x="489" y="663" width="10" height="37" rx="3" class="c-mask"/>
+        <rect x="489" y="663" width="10" height="37" rx="3" class="c-security" stroke-width="1"/>
+
+        <!-- Messages -->
+        <g data-edge-from="agent" data-edge-to="gecko" data-edge-label="buy token X on pump" data-edge-key="0" data-edge-id="intent">
+          <path data-composition-edge-from="agent" data-composition-edge-to="gecko" data-composition-edge-id="intent" data-composition-points="69,185;163,185" d="M 69 185 L 163 185" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="60.6" y="165" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="116" y="175" class="t-backend" font-size="9" text-anchor="middle">buy token X on pump</text>
+        </g>
+        </g>
+
+        <g data-edge-from="gecko" data-edge-to="fork" data-edge-label="derive full account set + read curve reserves" data-edge-key="1" data-edge-id="state-read">
+          <path data-composition-edge-from="gecko" data-composition-edge-to="fork" data-composition-edge-id="state-read" data-composition-points="177,275;379,275" d="M 177 275 L 379 275" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="155" y="255" width="246" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="265" class="t-backend" font-size="9" text-anchor="middle">derive full account set + read curve reserves</text>
+        </g>
+        </g>
+
+        <g data-edge-from="fork" data-edge-to="gecko" data-edge-label="max_sol_cost quoted" data-edge-key="2" data-edge-id="state-back">
+          <path data-composition-edge-from="fork" data-composition-edge-to="gecko" data-composition-edge-id="state-back" data-composition-points="379,312;177,312" d="M 379 312 L 177 312" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="222.6" y="292" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="302" class="t-muted" font-size="9" text-anchor="middle">max_sol_cost quoted</text>
+        </g>
+        </g>
+
+        <g data-edge-from="gecko" data-edge-to="builder" data-edge-label="declared plan" data-edge-key="3" data-edge-id="declared-plan">
+          <path data-composition-edge-from="gecko" data-composition-edge-to="builder" data-composition-edge-id="declared-plan" data-composition-points="177,385;271,385" d="M 177 385 L 271 385" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="184.2" y="365" width="79.60000000000001" height="16" rx="3" class="c-mask"/>
+          <text x="224" y="375" class="t-backend" font-size="9" text-anchor="middle">declared plan</text>
+        </g>
+        </g>
+
+        <g data-edge-from="builder" data-edge-to="gecko" data-edge-label="built instruction" data-edge-key="4" data-edge-id="built-ix">
+          <path data-composition-edge-from="builder" data-composition-edge-to="gecko" data-composition-edge-id="built-ix" data-composition-points="271,425;177,425" d="M 271 425 L 177 425" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="173.8" y="405" width="100.4" height="16" rx="3" class="c-mask"/>
+          <text x="224" y="415" class="t-muted" font-size="9" text-anchor="middle">built instruction</text>
+        </g>
+        </g>
+
+        <g data-edge-from="gecko" data-edge-to="fork" data-edge-label="read Global → recover hidden accounts" data-edge-key="5" data-edge-id="hidden-read">
+          <path data-composition-edge-from="gecko" data-composition-edge-to="fork" data-composition-edge-id="hidden-read" data-composition-points="177,462;379,462" d="M 177 462 L 379 462" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="175.8" y="442" width="204.4" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="452" class="t-backend" font-size="9" text-anchor="middle">read Global → recover hidden accounts</text>
+        </g>
+        </g>
+
+        <g data-edge-from="gecko" data-edge-to="fork" data-edge-label="unsigned bundle (ATA·CU preludes) → simulate" data-edge-key="6" data-edge-id="simulate">
+          <path data-composition-edge-from="gecko" data-composition-edge-to="fork" data-composition-edge-id="simulate" data-composition-points="177,512;379,512" d="M 177 512 L 379 512" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="157.6" y="492" width="240.8" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="502" class="t-backend" font-size="9" text-anchor="middle">unsigned bundle (ATA·CU preludes) → simulate</text>
+        </g>
+        </g>
+
+        <g data-edge-from="fork" data-edge-to="gecko" data-edge-label="✅ pass · 86,669 CU (naive: ❌ 3012)" data-edge-key="7" data-edge-id="receipt">
+          <path data-composition-edge-from="fork" data-composition-edge-to="gecko" data-composition-edge-id="receipt" data-composition-points="379,552;177,552" d="M 379 552 L 177 552" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="183.6" y="532" width="188.8" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="542" class="t-muted" font-size="9" text-anchor="middle">✅ pass · 86,669 CU (naive: ❌ 3012)</text>
+        </g>
+        </g>
+
+        <g data-edge-from="gecko" data-edge-to="agent" data-edge-label="receipt + landing plan" data-edge-key="8" data-edge-id="receipt-out">
+          <path data-composition-edge-from="gecko" data-composition-edge-to="agent" data-composition-edge-id="receipt-out" data-composition-points="163,615;69,615" d="M 163 615 L 69 615" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="52.8" y="595" width="126.4" height="16" rx="3" class="c-mask"/>
+          <text x="116" y="605" class="t-backend" font-size="9" text-anchor="middle">receipt + landing plan</text>
+        </g>
+        </g>
+
+        <g data-edge-from="agent" data-edge-to="signer" data-edge-label="sign (passing receipt only)" data-edge-key="9" data-edge-id="sign-req">
+          <path data-composition-edge-from="agent" data-composition-edge-to="signer" data-composition-edge-id="sign-req" data-composition-points="69,668;487,668" d="M 69 668 L 487 668" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <g data-detail="context">
+          <rect x="201.8" y="648" width="152.4" height="16" rx="3" class="c-mask"/>
+          <text x="278" y="658" class="t-security" font-size="9" text-anchor="middle">sign (passing receipt only)</text>
+        </g>
+        </g>
+
+        <!-- Segment Labels -->
+        <g data-graph-role="segment-label" data-segment-id="0">
+          <rect x="56" y="128" width="102.4" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="141" class="t-dim" font-size="9" font-weight="600">Comprehend + plan</text>
+        </g>
+        <g data-graph-role="segment-label" data-segment-id="1">
+          <rect x="56" y="328" width="97.2" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="341" class="t-dim" font-size="9" font-weight="600">Build + simulate</text>
+        </g>
+        <g data-graph-role="segment-label" data-segment-id="2">
+          <rect x="56" y="558" width="86.8" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="571" class="t-dim" font-size="9" font-weight="600">Receipt → sign</text>
+        </g>
+
+        <!-- Participants -->
+        <g id="node-agent" data-node-id="agent" data-node-label="Agent" tabindex="0" role="button" aria-label="Focus Agent, intent holder, Sequence participant" aria-pressed="false" data-node-kind="external" data-node-sublabel="intent holder" data-node-context="Sequence participant">
+          <title>Agent · intent holder · Sequence participant</title>
+          <rect x="19" y="72" width="86" height="54" rx="6" class="c-mask"/>
+          <rect x="19" y="72" width="86" height="54" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(25 78) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-detail-anchor x="125" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Untrusted Sources</text>
-        <text data-detail="context" x="125" y="186" class="t-muted" font-size="9" text-anchor="middle">OpenAPI · IDL · 4,500-project catalog</text>
+          <text data-detail-anchor x="62" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Agent</text>
+          <text data-detail="context" x="62" y="111" class="t-muted" font-size="7" text-anchor="middle">intent holder</text>
         </g>
 
-        <g id="node-gate" data-node-id="gate" data-node-label="Anti-Poison Gate" tabindex="0" role="button" aria-label="Focus Anti-Poison Gate, sanitize · quarantine · Skill Guard, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="security" data-node-sublabel="sanitize · quarantine · Skill Guard" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Anti-Poison Gate · sanitize · quarantine · Skill Guard · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="290" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="290" y="140" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(296 146) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-detail-anchor x="375" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Anti-Poison Gate</text>
-        <text data-detail="context" x="375" y="186" class="t-muted" font-size="9" text-anchor="middle">sanitize · quarantine · Skill Guard</text>
-        </g>
-
-        <g id="node-comprehend" data-node-id="comprehend" data-node-label="Comprehension" tabindex="0" role="button" aria-label="Focus Comprehension, ingest · seed recovery · overlays, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ingest · seed recovery · overlays" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Comprehension · ingest · seed recovery · overlays · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="540" y="140" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="540" y="140" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(546 146) scale(0.6875)">
+        <g id="node-gecko" data-node-id="gecko" data-node-label="Gecko" tabindex="0" role="button" aria-label="Focus Gecko, comprehend + verify, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="comprehend + verify" data-node-context="Sequence participant">
+          <title>Gecko · comprehend + verify · Sequence participant</title>
+          <rect x="127" y="72" width="86" height="54" rx="6" class="c-mask"/>
+          <rect x="127" y="72" width="86" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(133 78) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="625" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Comprehension</text>
-        <text data-detail="context" x="625" y="186" class="t-muted" font-size="9" text-anchor="middle">ingest · seed recovery · overlays</text>
+          <text data-detail-anchor x="170" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Gecko</text>
+          <text data-detail="context" x="170" y="111" class="t-muted" font-size="7" text-anchor="middle">comprehend + verify</text>
         </g>
 
-        <g id="node-knowledge" data-node-id="knowledge" data-node-label="Provenance Knowledge" tabindex="0" role="button" aria-label="Focus Provenance Knowledge, extracted / recovered / flagged, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="database" data-node-sublabel="extracted / recovered / flagged" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Provenance Knowledge · extracted / recovered / flagged · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="790" y="140" width="180" height="64" rx="6" class="c-mask"/>
-          <rect x="790" y="140" width="180" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(796 146) scale(0.6875)">
+        <g id="node-builder" data-node-id="builder" data-node-label="Orquestra" tabindex="0" role="button" aria-label="Focus Orquestra, /build (external), Sequence participant" aria-pressed="false" data-node-kind="external" data-node-sublabel="/build (external)" data-node-context="Sequence participant">
+          <title>Orquestra · /build (external) · Sequence participant</title>
+          <rect x="235" y="72" width="86" height="54" rx="6" class="c-mask"/>
+          <rect x="235" y="72" width="86" height="54" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(241 78) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-detail-anchor x="278" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Orquestra</text>
+          <text data-detail="context" x="278" y="111" class="t-muted" font-size="7" text-anchor="middle">/build (external)</text>
+        </g>
+
+        <g id="node-fork" data-node-id="fork" data-node-label="Mainnet Fork" tabindex="0" role="button" aria-label="Focus Mainnet Fork, surfpool · $0, Sequence participant" aria-pressed="false" data-node-kind="database" data-node-sublabel="surfpool · $0" data-node-context="Sequence participant">
+          <title>Mainnet Fork · surfpool · $0 · Sequence participant</title>
+          <rect x="343" y="72" width="86" height="54" rx="6" class="c-mask"/>
+          <rect x="343" y="72" width="86" height="54" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(349 78) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="880" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Provenance Knowledge</text>
-        <text data-detail="context" x="880" y="186" class="t-muted" font-size="9" text-anchor="middle">extracted / recovered / flagged</text>
+          <text data-detail-anchor x="386" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Mainnet Fork</text>
+          <text data-detail="context" x="386" y="111" class="t-muted" font-size="7" text-anchor="middle">surfpool · $0</text>
         </g>
 
-        <g id="node-projection" data-node-id="projection" data-node-label="Projection" tabindex="0" role="button" aria-label="Focus Projection, MCP · CLI · Scorecard, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="MCP · CLI · Scorecard" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Projection · MCP · CLI · Scorecard · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="1050" y="140" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1050" y="140" width="150" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(1056 146) scale(0.6875)">
-            <rect x="2" y="3" width="12" height="10" rx="2"/>
-            <path d="M2 6.5h12"/>
-            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
-            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
-          </g>
-          <text data-detail-anchor x="1125" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Projection</text>
-        <text data-detail="context" x="1125" y="186" class="t-muted" font-size="9" text-anchor="middle">MCP · CLI · Scorecard</text>
-        </g>
-
-        <g id="node-agent" data-node-id="agent" data-node-label="The Agent" tabindex="0" role="button" aria-label="Focus The Agent, intent in · context out, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="intent in · context out" data-node-context="Architecture component">
-          <title>The Agent · intent in · context out · Architecture component</title>
-          <rect x="1280" y="140" width="140" height="64" rx="6" class="c-mask"/>
-          <rect x="1280" y="140" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1286 146) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1350" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The Agent</text>
-        <text data-detail="context" x="1350" y="186" class="t-muted" font-size="9" text-anchor="middle">intent in · context out</text>
-        </g>
-
-        <g id="node-planner" data-node-id="planner" data-node-label="Planner" tabindex="0" role="button" aria-label="Focus Planner, account set · state reads · preludes, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="account set · state reads · preludes" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Planner · account set · state reads · preludes · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="1280" y="400" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="1280" y="400" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1286 406) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="1365" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Planner</text>
-        <text data-detail="context" x="1365" y="446" class="t-muted" font-size="9" text-anchor="middle">account set · state reads · preludes</text>
-        </g>
-
-        <g id="node-builder" data-node-id="builder" data-node-label="Orquestra /build" tabindex="0" role="button" aria-label="Focus Orquestra /build, external builder, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="external builder" data-node-context="Architecture component">
-          <title>Orquestra /build · external builder · Architecture component</title>
-          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1010" y="400" width="150" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1016 406) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1085" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Orquestra /build</text>
-        <text data-detail="context" x="1085" y="446" class="t-muted" font-size="9" text-anchor="middle">external builder</text>
-        </g>
-
-        <g id="node-simulate" data-node-id="simulate" data-node-label="Simulate → Receipt" tabindex="0" role="button" aria-label="Focus Simulate → Receipt, surfpool · $0 · never signs, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="backend" data-node-sublabel="surfpool · $0 · never signs" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Simulate → Receipt · surfpool · $0 · never signs · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="740" y="400" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="740" y="400" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(746 406) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="825" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Simulate → Receipt</text>
-        <text data-detail="context" x="825" y="446" class="t-muted" font-size="9" text-anchor="middle">surfpool · $0 · never signs</text>
-        </g>
-
-        <g id="node-signgate" data-node-id="signgate" data-node-label="Signing Gate" tabindex="0" role="button" aria-label="Focus Signing Gate, fail-closed, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="security" data-node-sublabel="fail-closed" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Signing Gate · fail-closed · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="480" y="400" width="140" height="64" rx="6" class="c-mask"/>
-          <rect x="480" y="400" width="140" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(486 406) scale(0.6875)">
+        <g id="node-signer" data-node-id="signer" data-node-label="Signer" tabindex="0" role="button" aria-label="Focus Signer, wallet / TEE — external, Sequence participant" aria-pressed="false" data-node-kind="security" data-node-sublabel="wallet / TEE — external" data-node-context="Sequence participant">
+          <title>Signer · wallet / TEE — external · Sequence participant</title>
+          <rect x="451" y="72" width="86" height="54" rx="6" class="c-mask"/>
+          <rect x="451" y="72" width="86" height="54" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(457 78) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-detail-anchor x="550" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signing Gate</text>
-        <text data-detail="context" x="550" y="446" class="t-muted" font-size="9" text-anchor="middle">fail-closed</text>
-        </g>
-
-        <g id="node-signer" data-node-id="signer" data-node-label="Signer" tabindex="0" role="button" aria-label="Focus Signer, wallet · TEE · founder, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="wallet · TEE · founder" data-node-context="Architecture component">
-          <title>Signer · wallet · TEE · founder · Architecture component</title>
-          <rect x="250" y="400" width="130" height="64" rx="6" class="c-mask"/>
-          <rect x="250" y="400" width="130" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(256 406) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="315" y="430" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signer</text>
-        <text data-detail="context" x="315" y="446" class="t-muted" font-size="9" text-anchor="middle">wallet · TEE · founder</text>
-        </g>
-
-        <g id="node-corpusdrift" data-node-id="corpusdrift" data-node-label="Corpus + Drift" tabindex="0" role="button" aria-label="Focus Corpus + Drift, categorical only, Gecko control plane — stores surfaces + correctness metadata, never payloads" aria-pressed="false" data-node-kind="database" data-node-sublabel="categorical only" data-node-context="Gecko control plane — stores surfaces + correctness metadata, never payloads">
-          <title>Corpus + Drift · categorical only · Gecko control plane — stores surfaces + correctness metadata, never payloads</title>
-          <rect x="740" y="590" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="740" y="590" width="170" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(746 596) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-detail-anchor x="825" y="620" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Corpus + Drift</text>
-        <text data-detail="context" x="825" y="636" class="t-muted" font-size="9" text-anchor="middle">categorical only</text>
-        </g>
-
-        <!-- Connection labels -->
-
-
-
-
-        <g data-detail="context" data-edge-from="projection" data-edge-to="agent" data-edge-label="context" data-edge-key="4" data-edge-id="projection-agent">
-          <rect x="1218.2" y="152" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="1240" y="162" class="t-backend" font-size="8" text-anchor="middle">context</text>
-        </g>
-        <g data-detail="context" data-edge-from="agent" data-edge-to="planner" data-edge-label="intent" data-edge-key="5" data-edge-id="agent-intent">
-          <rect x="1346.1" y="208" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="1365.5" y="218" class="t-muted" font-size="8" text-anchor="middle">intent</text>
-        </g>
-        <g data-detail="context" data-edge-from="planner" data-edge-to="builder" data-edge-label="declared plan" data-edge-key="6" data-edge-id="plan-to-build">
-          <rect x="1183.8" y="412" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="1220" y="422" class="t-backend" font-size="8" text-anchor="middle">declared plan</text>
-        </g>
-        <g data-detail="context" data-edge-from="builder" data-edge-to="simulate" data-edge-label="built ix" data-edge-key="7" data-edge-id="build-to-sim">
-          <rect x="935.8" y="412" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="960" y="422" class="t-backend" font-size="8" text-anchor="middle">built ix</text>
-        </g>
-        <g data-detail="context" data-edge-from="simulate" data-edge-to="signgate" data-edge-label="pass (verdict)" data-edge-key="8" data-edge-id="sim-to-gate">
-          <rect x="641.4" y="412" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="680" y="422" class="t-security" font-size="8" text-anchor="middle">pass (verdict)</text>
-        </g>
-        <g data-detail="context" data-edge-from="signgate" data-edge-to="signer" data-edge-label="sign" data-edge-key="9" data-edge-id="gate-to-signer">
-          <rect x="415" y="412" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="430" y="422" class="t-security" font-size="8" text-anchor="middle">sign</text>
-        </g>
-        <g data-detail="context" data-edge-from="simulate" data-edge-to="corpusdrift" data-edge-label="outcome" data-edge-key="10" data-edge-id="sim-outcome">
-          <rect x="803.2" y="484" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="825" y="494" class="t-messagebus" font-size="8" text-anchor="middle">outcome</text>
-        </g>
-        <g data-detail="context" data-edge-from="corpusdrift" data-edge-to="knowledge" data-edge-label="drift" data-edge-key="11" data-edge-id="drift-back">
-          <rect x="183" y="441" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="200" y="451" class="t-messagebus" font-size="8" text-anchor="middle">drift</text>
+          <text data-detail-anchor x="494" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Signer</text>
+          <text data-detail="context" x="494" y="111" class="t-muted" font-size="7" text-anchor="middle">wallet / TEE — external</text>
         </g>
 
         <!-- Legend -->
-        <g data-legend data-legend-bridge>
-          <text x="40" y="706" class="t-primary" font-size="10" font-weight="600">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="726" data-legend-width="82">
-            <rect x="40" y="718" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-            <text x="61" y="726" class="t-muted" font-size="8">Frontend</text>
+        <g data-legend>
+          <text x="40" y="746" class="t-primary" font-size="10" font-weight="600">Legend</text>
+          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="766" data-legend-width="78">
+            <path d="M 40 763 L 74 763" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+            <text x="83" y="766" class="t-muted" font-size="8">request</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="144" data-legend-baseline="726" data-legend-width="77">
-            <rect x="144" y="718" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="165" y="726" class="t-muted" font-size="8">Backend</text>
+          <g data-legend-semantic-kind="return" data-legend-x="140" data-legend-baseline="766" data-legend-width="73">
+            <path d="M 140 763 L 174 763" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+            <text x="183" y="766" class="t-muted" font-size="8">return</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="243" data-legend-baseline="726" data-legend-width="82">
-            <rect x="243" y="718" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="264" y="726" class="t-muted" font-size="8">Database</text>
+          <g data-legend-semantic-kind="security" data-legend-x="235" data-legend-baseline="766" data-legend-width="83">
+            <path d="M 235 763 L 269 763" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+            <text x="278" y="766" class="t-muted" font-size="8">security</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="347" data-legend-baseline="726" data-legend-width="82">
-            <rect x="347" y="718" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-            <text x="368" y="726" class="t-muted" font-size="8">Security</text>
-          </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="451" data-legend-baseline="726" data-legend-width="82">
-            <rect x="451" y="718" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-            <text x="472" y="726" class="t-muted" font-size="8">External</text>
+          <g data-legend-semantic-kind="default" data-legend-x="340" data-legend-baseline="766" data-legend-width="118">
+            <path d="M 340 763 L 374 763" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+            <text x="383" y="766" class="t-muted" font-size="8">default message</text>
           </g>
         </g>
       </svg>
@@ -4976,46 +4951,12 @@
 
     <!-- Info Cards -->
     <div class="cards">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot cyan"></div>
-          <h3>Comprehension rail</h3>
-        </div>
-        <ul>
-          <li>&bull; Seed recovery beats the IDL (#4057)</li>
-          <li>&bull; Auto-comprehend + measured overlays</li>
-          <li>&bull; Every edge provenance-tagged</li>
-        </ul>
-      </div>
 
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot emerald"></div>
-          <h3>Verify rail — proven live</h3>
-        </div>
-        <ul>
-          <li>&bull; pump buy: naive ❌3012 → Gecko ✅ 86,669 CU</li>
-          <li>&bull; Meteora swap: wrap→swap→unwrap ✅ 81,964 CU</li>
-          <li>&bull; Receipt before money moves, $0</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot rose"></div>
-          <h3>Hard boundaries</h3>
-        </div>
-        <ul>
-          <li>&bull; Never signs, never broadcasts</li>
-          <li>&bull; Builder + signer are compose partners</li>
-          <li>&bull; Control plane only — no payloads stored</li>
-        </ul>
-      </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      Architecture diagram &bull; Built with Archify<span class="no-print"> &bull; <a class="artifact-start-link" href="https://tt-a1i.github.io/archify/start.html?type=architecture&amp;source=artifact" target="_blank" rel="noopener noreferrer">Create yours &nearr;</a> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>[</kbd>/<kbd>]</kbd> views &bull; <kbd>P</kbd> play story &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
+      Sequence diagram &bull; Built with Archify<span class="no-print"> &bull; <a class="artifact-start-link" href="https://tt-a1i.github.io/archify/start.html?type=sequence&amp;source=artifact" target="_blank" rel="noopener noreferrer">Create yours &nearr;</a> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>[</kbd>/<kbd>]</kbd> views &bull; <kbd>P</kbd> play story &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
     </p>
   </div>
 
