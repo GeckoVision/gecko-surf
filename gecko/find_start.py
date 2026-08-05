@@ -205,6 +205,9 @@ class _Card:
     notes: str
     execute_url: str | None
     operation: Operation
+    # the program's wired plan-intent names (surface cards only — honesty: a
+    # surface card must not claim "no intent wired" when start points exist)
+    wired_intents: tuple[str, ...] = ()
 
 
 def _first_sentence(text: str) -> str:
@@ -264,6 +267,14 @@ def _wired_cards() -> list[_Card]:
             f"{base}/{program.orquestra_project}" if program.orquestra_project else None
         )
         notes = program.notes
+        # The program's recovered-knowledge notes are PROGRAM-level truths (a
+        # source-recovered root is recovered no matter which tool derives it), so
+        # the surface card carries the union of its intents' recovered maps —
+        # otherwise the same account would honestly read "recovered" on the intent
+        # card and misleadingly "extracted" on the surface card.
+        program_recovered: dict[str, str] = {}
+        for spec in specs.get(api_id, {}).values():
+            program_recovered.update(spec.recovered)
         # the program-surface card: derive_pda/get_program_graph is always a start
         cards.append(
             _Card(
@@ -275,7 +286,9 @@ def _wired_cards() -> list[_Card]:
                 inputs=(),
                 accounts=tuple(program.pdas),
                 pdas=dict(program.pdas),
-                spec=None,
+                spec=StartSpec(
+                    accounts=tuple(program.pdas), recovered=program_recovered
+                ),
                 notes=notes,
                 execute_url=project_base,
                 operation=_operation(
@@ -285,6 +298,7 @@ def _wired_cards() -> list[_Card]:
                     description=f"{notes} accounts: {' '.join(program.pdas)}",
                     tags=[api_id],
                 ),
+                wired_intents=tuple(program.intents),
             )
         )
         # one card per wired plan intent
@@ -292,8 +306,8 @@ def _wired_cards() -> list[_Card]:
             intent = intents.get(api_id, {}).get(name)
             if intent is None:
                 continue
-            spec = specs.get(api_id, {}).get(name)
-            accounts = spec.accounts if spec else tuple(program.pdas)
+            start_spec = specs.get(api_id, {}).get(name)
+            accounts = start_spec.accounts if start_spec else tuple(program.pdas)
             execute_url = (
                 f"{project_base}/instructions/{intent.instruction}/build"
                 if project_base
@@ -309,7 +323,7 @@ def _wired_cards() -> list[_Card]:
                     inputs=tuple(intent.inputs),
                     accounts=accounts,
                     pdas=dict(program.pdas),
-                    spec=spec,
+                    spec=start_spec,
                     notes=notes,
                     execute_url=execute_url,
                     operation=_operation(
@@ -455,11 +469,18 @@ def _start_point(
             "a closest candidate, not a start"
         )
     elif card.kind == "surface":
-        note = (
-            "no executable plan intent is wired for this program yet — start from "
-            "its surface tools (get_program_graph / derive_pda). "
-            + _first_sentence(card.notes)
-        )
+        if card.wired_intents:
+            note = (
+                f"this program's plan intents ({', '.join(card.wired_intents)}) are "
+                "separate start points; this entry is its raw surface "
+                "(get_program_graph / derive_pda). " + _first_sentence(card.notes)
+            )
+        else:
+            note = (
+                "no executable plan intent is wired for this program yet — start "
+                "from its surface tools (get_program_graph / derive_pda). "
+                + _first_sentence(card.notes)
+            )
     else:
         note = _first_sentence(card.notes)
     return StartPoint(

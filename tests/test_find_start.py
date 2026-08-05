@@ -150,6 +150,28 @@ def test_stopword_only_intent_routes_nothing() -> None:
     assert result.starts == ()
 
 
+def test_surface_card_of_a_program_with_intents_points_at_them() -> None:
+    """Honesty: pumpfun's surface card must not claim 'no intent wired'."""
+    result = find_start(PUMP_INTENT)
+    surface = next(
+        p for p in result.starts if p.kind == "surface" and p.program == "pumpfun"
+    )
+    assert "plan_buy" in surface.note
+    assert "no executable plan intent" not in surface.note
+
+
+def test_recovered_tags_are_program_level_truths() -> None:
+    """lb_pair is source-recovered no matter which card shows it — the surface
+    card must not downgrade it to 'extracted' while the intent card says
+    'recovered'."""
+    result = find_start("swap sol for usdc")
+    surface = next(
+        p for p in result.starts if p.kind == "surface" and p.program == "meteora"
+    )
+    lb_pair = next(s for s in surface.derive_plan if s.account == "lb_pair")
+    assert lb_pair.provenance == "recovered"
+
+
 # --- program hint ---------------------------------------------------------------
 
 
