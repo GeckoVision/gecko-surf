@@ -7,21 +7,29 @@ per-provider model: docs/specs/2026-07-31-orquestra-provider-integration.md).
     gecko-orquestra --program meteora --stdio      # add straight into Claude Code
     gecko-orquestra --program meteora              # or serve over HTTP
 
+    gecko-orquestra comprehend --list              # browse the Orquestra catalog
+    gecko-orquestra comprehend --project <slug> \\
+        [--source <path>] [--overlay <path>]       # generate a program config
+
 Adding a program later (pump, jupiter, …) is a new entry in ``_PROGRAMS`` + its recipes —
 not a new CLI. Keyless, control plane only: it derives the accounts and points at
-Orquestra's builder; it never proxies or signs.
+Orquestra's builder; it never proxies or signs. ``comprehend`` is the auto path that
+replaces hand-authoring those configs (:mod:`gecko.orquestra_comprehend`): the
+generated JSON goes to stdout (no file writes), the provenance report to stderr.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 from ..provider_config import load_packaged_provider, load_packaged_provider_base_url
 from .orquestra import Intent, OrquestraProgramSurface
 
-__all__ = ["main", "PROGRAMS", "build_surface_from_config"]
+__all__ = ["main", "comprehend_main", "PROGRAMS", "build_surface_from_config"]
 
 
 def build_surface_from_config(
@@ -119,8 +127,102 @@ def _add_serve_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def comprehend_main(argv: list[str], *, client: Any = None) -> int:
+    """``gecko-orquestra comprehend`` — auto-comprehend-on-pick.
+
+    ``--list`` browses the catalog; ``--project <slug>`` generates the program's
+    api-config JSON (stdout only — no file writes) with a per-PDA provenance
+    report on stderr. ``--source`` is the SOURCE-TRUST BOUNDARY: a local,
+    founder-curated file path only — this command never fetches program source
+    from GitHub or anywhere else. ``client`` is injectable for offline tests.
+    """
+    parser = argparse.ArgumentParser(
+        prog="gecko-orquestra comprehend",
+        description=(
+            "Generate a program config from an Orquestra project surface, merged "
+            "with caller-supplied source-recovered seeds + an explicit manual "
+            "overlay. Prints JSON to stdout; writes nothing."
+        ),
+    )
+    parser.add_argument("--list", action="store_true", help="list the catalog")
+    parser.add_argument("--page", type=int, default=1, help="catalog page (--list)")
+    parser.add_argument("--project", help="the Orquestra project slug to comprehend")
+    parser.add_argument(
+        "--api-id", default=None, help="api_id for the generated config (default: slug)"
+    )
+    parser.add_argument(
+        "--source",
+        default=None,
+        help=(
+            "LOCAL path to curated program source (trust boundary: never fetched "
+            "remotely) — recovers the seeds the IDL drops"
+        ),
+    )
+    parser.add_argument(
+        "--overlay",
+        default=None,
+        help="LOCAL path to a manual_overlay JSON (intents/notes/include/pdas/why)",
+    )
+    parser.add_argument(
+        "--base-url", default=None, help="override the Orquestra API base URL"
+    )
+    args = parser.parse_args(argv)
+
+    from ..orquestra_client import OrquestraClient, OrquestraClientError
+    from ..orquestra_comprehend import ComprehendError, comprehend_project
+
+    try:
+        if client is None:
+            client = OrquestraClient(base_url=args.base_url)
+
+        if args.list:
+            page = client.list_projects(page=args.page)
+            for project in page.projects:
+                print(f"{project.id}  {project.program_id}  {project.name}")
+            print(
+                f"page {page.page}/{page.total_pages} ({page.total} projects)",
+                file=sys.stderr,
+            )
+            return 0
+
+        if not args.project:
+            parser.error("either --project <slug> or --list is required")
+
+        surface = client.fetch_surface(args.project)
+        source = Path(args.source).read_text(encoding="utf-8") if args.source else None
+        overlay = (
+            json.loads(Path(args.overlay).read_text(encoding="utf-8"))
+            if args.overlay
+            else None
+        )
+        result = comprehend_project(
+            surface,
+            api_id=args.api_id or args.project,
+            source=source,
+            overlay=overlay,
+        )
+    except (OrquestraClientError, ComprehendError, OSError, ValueError) as exc:
+        print(f"gecko-orquestra comprehend: {exc}", file=sys.stderr)
+        return 2
+
+    json.dump(result.config, sys.stdout, indent=2, ensure_ascii=False)
+    print()
+    for name, prov in result.provenance.items():
+        flag = (
+            f"  FLAGGED (unresolved: {', '.join(prov.unresolved) or 'program id'})"
+            if prov.flagged
+            else ""
+        )
+        print(f"  {name}: {prov.tier}{flag}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry (``gecko-orquestra``): serve ``--program <name>`` over MCP. Needs [serve]."""
+    """CLI entry (``gecko-orquestra``): serve ``--program <name>`` over MCP (needs
+    [serve]), or ``comprehend`` to generate a program config (keyless, no deps)."""
+    args_list = list(argv) if argv is not None else sys.argv[1:]
+    if args_list and args_list[0] == "comprehend":
+        return comprehend_main(args_list[1:])
     parser = argparse.ArgumentParser(
         prog="gecko-orquestra",
         description="Serve an Orquestra program's front-door surface over MCP (keyless).",
@@ -132,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         help="which Orquestra program to serve",
     )
     _add_serve_args(parser)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args_list)
 
     surface = PROGRAMS[args.program]()
     return serve(surface, args, name=args.program)

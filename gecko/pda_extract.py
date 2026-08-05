@@ -32,6 +32,7 @@ from .pda import (
     ResolverPdaSeedNode,
     SeedEncoding,
     VariablePdaSeedNode,
+    b58_encode,
 )
 
 __all__ = ["extract_seed_consts", "from_source", "from_anchor_idl", "merge_pda_nodes"]
@@ -330,13 +331,21 @@ def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
     kind = seed.get("kind")
     if kind == "const":
         value = bytes(seed.get("value", []))
-        return ConstantPdaSeedNode(value, encoding=_encoding_for(value))
+        encoding = _encoding_for(value)
+        # A 32-byte non-printable const is a hardcoded pubkey (a program/account
+        # address baked into the seed, e.g. the fee program's target program id) —
+        # keep the pubkey provenance so it round-trips to base58, not a byte list.
+        if encoding == "bytes" and len(value) == 32:
+            encoding = "pubkey"
+        return ConstantPdaSeedNode(value, encoding=encoding)
     if kind == "account":
         path = str(seed.get("path", ""))
         if "." in path:  # a field read from another account's DATA — runtime value
-            head = path.split(".", 1)[0]
+            head, _, field = path.partition(".")
+            # named after the FIELD whose value fills the seed (`creator` for
+            # `bonding_curve.creator`), depending on the account it is read from.
             return ResolverPdaSeedNode(
-                name=head,
+                name=field.split(".", 1)[0] or head,
                 depends_on=(head,),
                 reason=f"account field seed {path!r} — runtime data",
             )
@@ -351,13 +360,44 @@ def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
     )
 
 
+def _idl_pda_program(
+    pda: dict[str, Any], pinned: dict[str, str], default: str | None
+) -> str | None:
+    """The program a PDA derives under, honoring the IDL's ``pda.program`` field.
+
+    Anchor 0.30 records cross-program PDAs (an ATA, a fee-program config) with a
+    ``program`` entry: ``const`` (the 32 program-id bytes inline) or ``account``
+    (derive under whatever program account is passed — resolvable only when the
+    IDL pins that account's ``address``). An unpinnable program yields ``None``
+    (the honest unknown; :func:`~gecko.pda.derive_pda` then demands an explicit
+    program), never a plausible-but-wrong default — deriving under the *owning*
+    program id when the real one is foreign is exactly the silent-wrong-address
+    class this module exists to kill.
+    """
+    prog = pda.get("program")
+    if not isinstance(prog, dict):
+        return default
+    kind = prog.get("kind")
+    if kind == "const":
+        value = bytes(prog.get("value", []))
+        return b58_encode(value) if len(value) == 32 else None
+    if kind == "account":
+        return pinned.get(str(prog.get("path", "")))
+    return None
+
+
 def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     """Anchor 0.30+ IDL -> ``{account_name: PdaNode}`` for every account that carries
     a ``pda.seeds`` block.
 
-    ``program_id`` is ``idl["address"]``. Arg seeds are encoded from each
-    instruction's ``args`` types; a seed that reads another account's field
-    (``path`` with a ``.``) is a runtime-data seed and becomes an honest resolver.
+    ``program_id`` is ``idl["address"]`` unless the account's ``pda.program``
+    entry says the PDA derives under a FOREIGN program (an ATA, a fee-program
+    config): a ``const`` program is decoded to its base58 id, an ``account``
+    program resolves through the instruction's pinned account addresses, and an
+    unpinnable one leaves ``program_id=None`` (honest unknown). Arg seeds are
+    encoded from each instruction's ``args`` types; a seed that reads another
+    account's field (``path`` with a ``.``) is a runtime-data seed and becomes an
+    honest resolver.
 
     Accounts whose ``pda`` block Anchor *dropped* (the #4057 case) are simply absent
     here — that gap is filled by :func:`merge_pda_nodes` from source recovery.
@@ -366,6 +406,13 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     nodes: dict[str, PdaNode] = {}
     for ix in idl.get("instructions", []):
         arg_types = {a.get("name"): a.get("type") for a in ix.get("args", [])}
+        # accounts whose address the IDL pins (e.g. a fee/metadata program passed as
+        # an account) — these resolve an `account`-kind pda.program to a real id.
+        pinned = {
+            str(a.get("name")): str(a.get("address"))
+            for a in ix.get("accounts", [])
+            if isinstance(a, dict) and a.get("address")
+        }
         for acct in ix.get("accounts", []):
             pda = acct.get("pda")
             name = acct.get("name")
@@ -373,7 +420,11 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
                 continue
             seeds = tuple(_idl_seed(s, arg_types) for s in pda.get("seeds", []))
             if seeds:
-                nodes[name] = PdaNode(name=name, seeds=seeds, program_id=program_id)
+                nodes[name] = PdaNode(
+                    name=name,
+                    seeds=seeds,
+                    program_id=_idl_pda_program(pda, pinned, program_id),
+                )
     return nodes
 
 

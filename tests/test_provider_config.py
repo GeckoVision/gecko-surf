@@ -6,13 +6,20 @@ docs/plans/2026-08-01-provider-control-panel-pr1-config-backbone.md.
 
 from __future__ import annotations
 
+import json
+from importlib import resources
+
+import pytest
+
 from gecko.pda import derive_pda
 from gecko.provider_config import (
     ConfigError,
     api_config_from_dict,
     load_packaged_provider,
     node_from_spec,
+    node_to_spec,
     seed_from_spec,
+    seed_to_spec,
 )
 
 METEORA = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
@@ -160,6 +167,62 @@ def test_resolver_seed_kind_is_honest_gap() -> None:
     assert isinstance(seed, ResolverPdaSeedNode)
     assert seed.depends_on == ("bonding_curve",)
     assert "creator" in seed.reason
+
+
+# -- serialization (the auto-comprehend emit path): spec -> node -> spec ----
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"kind": "constant", "value": "oracle", "encoding": "utf8"},
+        {
+            "kind": "constant",
+            "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "encoding": "pubkey",
+        },
+        {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"},
+        {
+            "kind": "variable",
+            "name": "bin_step",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2,
+        },
+        {
+            "kind": "ordered_pair",
+            "left": "token_x_mint",
+            "right": "token_y_mint",
+            "select": "min",
+        },
+        {
+            "kind": "resolver",
+            "name": "creator",
+            "depends_on": ["bonding_curve"],
+            "reason": "runtime data",
+            "resolve": {"read": "bonding_curve", "field_offset": 49},
+        },
+    ],
+    ids=["utf8", "pubkey", "variable", "int-width", "ordered-pair", "resolver"],
+)
+def test_seed_spec_round_trips_exactly(spec: dict) -> None:
+    """seed_to_spec is the exact inverse of seed_from_spec — a generated config is
+    byte-comparable with a hand-authored one."""
+    assert seed_to_spec(seed_from_spec(spec)) == spec
+
+
+def test_every_packaged_recipe_round_trips_exactly() -> None:
+    """The full packaged corpus round-trips: load each hand-authored recipe to a
+    PdaNode and serialize it back — the wire form must be identical."""
+    provider, _ = load_packaged_provider("orquestra")
+    for api_id in provider.apis:
+        anchor = resources.files("gecko.providers.configs").joinpath(
+            "orquestra", f"{api_id}.json"
+        )
+        raw = json.loads(anchor.read_text(encoding="utf-8"))
+        for name, spec in raw["program"]["pdas"].items():
+            node = node_from_spec(name, spec)
+            assert node_to_spec(node) == spec, f"{api_id}.{name} did not round-trip"
 
 
 def test_program_orquestra_project_is_optional() -> None:
