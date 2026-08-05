@@ -38,16 +38,14 @@ from typing import Any, Literal
 from .ingest import Operation, Param
 from .sanitize import key_is_dangerous
 
-# --- single source of truth for the graph's Literal types (CLAUDE.md) -----------
-# CLAIMED = an op asserted by an untrusted docs source (Context7 / from-docs) that has
-# NOT yet been checked against the live API. It is the entry point to the VAS verified-
-# against-reality tier: a CLAIMED op is lifted to a VerifyVerdict once reality answers.
-Provenance = Literal["EXTRACTED", "DECLARED", "INFERRED", "CLAIMED"]
+# The provenance ladders now live in gecko.provenance (single source of truth);
+# re-exported here so existing importers (`from gecko.graph import Provenance`)
+# keep working unchanged. The graph-local Literals stay local.
+from .provenance import Provenance, VerifyStatus
+
 Confidence = Literal["high", "low"]
 NodeKind = Literal["operation", "param", "field", "resource"]
 EdgeKind = Literal["consumes", "produces", "on", "feeds"]
-# the verified-against-reality verdict a replay lifts onto a CLAIMED op (VAS-1).
-VerifyStatus = Literal["VERIFIED", "REFUTED", "UNVERIFIED"]
 
 _MAX_LEAF_DEPTH = 6  # bound the response-schema walk (ingest already resolved $refs)
 _ID_TYPES = ("number", "string")  # a flow key must be id-shaped; drops bool/enum links

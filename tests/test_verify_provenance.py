@@ -48,16 +48,20 @@ def test_claimed_is_a_canonical_provenance_value() -> None:
 
 
 def test_provenance_is_single_source_of_truth() -> None:
-    # Consumers must import the canonical Literal, never redeclare a CLAIMED-bearing copy.
+    # Consumers must import the canonical Literal, never redeclare a CLAIMED-bearing
+    # copy. The canonical home is gecko/provenance.py (graph.py re-exports it for
+    # existing importers and may mention the value in prose).
     src = (graph.__file__ or "").rsplit("/", 1)[0]
     import pathlib
 
     hits = [
         p.name
         for p in pathlib.Path(src).glob("*.py")
-        if p.name != "graph.py" and "CLAIMED" in p.read_text()
+        if p.name not in ("provenance.py", "graph.py") and "CLAIMED" in p.read_text()
     ]
-    assert hits == [], f"CLAIMED redeclared/hardcoded outside graph.py: {hits}"
+    assert hits == [], (
+        f"CLAIMED redeclared/hardcoded outside gecko/provenance.py: {hits}"
+    )
 
 
 # --- the lift: an already-obtained outcome -> a verdict (no network) -----------------
