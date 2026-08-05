@@ -111,6 +111,12 @@ class OrquestraProgramSurface:
         ``feePayer``/``build_url``) can be simulated, not just pump. A supplied
         ``fee_recipient`` (pump's honest gap) is merged into ``accounts`` here; Gecko
         never guesses it. Uses the engine's default transport — never signs/broadcasts.
+
+        ``record_to`` is the D2 corpus opt-in — absent by default (nothing persisted).
+        When the agent explicitly supplies it, ONE categorical row (status / revert
+        family / units / slot / network category + the values-free ``recipe_hash``)
+        is appended to the path's ``simulated.jsonl`` sibling; a control-plane
+        violation surfaces as ``record_error`` alongside the Receipt.
         """
         plan = args.get("plan")
         if not isinstance(plan, Mapping):
@@ -132,11 +138,35 @@ class OrquestraProgramSurface:
             receipt = simulate(merged_plan, rpc_url=rpc_url, track=track)
         except (SimulateError, RpcError) as exc:
             return {"error": str(exc)}
-        return {
+        result = {
             "instruction": plan.get("instruction"),
             "receipt": asdict(receipt),
             "note": _SIMULATE_NOTE,
         }
+        record_to = args.get("record_to")
+        if isinstance(record_to, str) and record_to:
+            from ..corpus import CorpusError
+            from .landing_record import record_landing_outcome
+
+            plan_args = plan.get("args")
+            try:
+                record_landing_outcome(
+                    receipt,
+                    program_id=self.program_id,
+                    instruction=str(plan.get("instruction") or ""),
+                    account_names=accounts,
+                    arg_names=plan_args if isinstance(plan_args, Mapping) else {},
+                    pdas=self.pdas,
+                    network_label=receipt.network_label,
+                    rpc_url=rpc_url,
+                    rpc_call=None,
+                    record_to=record_to,
+                )
+            except CorpusError as exc:
+                # fail closed, visibly: the Receipt is still returned, but the
+                # control-plane violation is surfaced — never silently dropped.
+                result["record_error"] = str(exc)
+        return result
 
     def _derive_tool(self, account: str, bindings: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -209,7 +239,9 @@ _SIMULATE_TOOL = {
         "plan_* tool, with `fee_recipient` supplied), an `rpc_url` (surfpool fork or "
         "mainnet RPC), and optional `track` accounts for a SOL delta. Gecko simulates only "
         "— never signs or broadcasts; the Receipt is a fork/RPC snapshot, NOT mainnet or a "
-        "price prediction, and is stored nowhere."
+        "price prediction, and is stored nowhere. Optional `record_to`: opt in to append "
+        "ONE categorical outcome row (status/revert family/units/slot — never a pubkey, "
+        "amount, or log) to that path's simulated.jsonl for the drift series."
     ),
     "inputSchema": {
         "type": "object",
@@ -218,6 +250,13 @@ _SIMULATE_TOOL = {
             "rpc_url": {"type": "string"},
             "fee_recipient": {"type": "string"},
             "track": {"type": "array", "items": {"type": "string"}},
+            "record_to": {
+                "type": "string",
+                "description": (
+                    "opt-in corpus path: append one categorical SimulatedOutcome row "
+                    "to this path's simulated.jsonl sibling (default: record nothing)"
+                ),
+            },
         },
         "required": ["plan", "rpc_url"],
         "additionalProperties": False,

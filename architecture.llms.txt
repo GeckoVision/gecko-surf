@@ -61,7 +61,10 @@ simulation before execution, and never signs, never broadcasts, never stores pay
   empirically by a refuting Receipt, the liquidity-bitmap bin-array walk (the naive
   heuristic fabricates dead accounts).
 - The categorical corpus (observed / reported / synthetic / simulated tiers) + the
-  N-confirmed drift detector; values-free by construction (audited).
+  N-confirmed drift detector; values-free by construction (audited). The simulated
+  tier is wired end-to-end: the landing orchestrators and the `simulate` tool take an
+  explicit `record_to` opt-in (default: record nothing) and `gecko drift` reads the
+  series back — categorical rows only, never a pubkey/amount/log.
 - Anti-poisoning: sanitizer, per-tool quarantine, image Skill Guard (rendered-pixel
   payloads, encoded-content rescan), SSRF netguard, out-of-band auth-host anchoring,
   fail-closed signing gate. An AST-enforced boundary proves the landing layer contains

@@ -59,6 +59,7 @@ _SUBCOMMANDS = (
     "correlate",
     "index",
     "metrics",
+    "drift",
     "rm",
     "list",
     "doctor",
@@ -895,6 +896,76 @@ def _parse_kv(pairs: list[str]) -> dict[str, str]:
     return out
 
 
+def _cmd_drift(argv: list[str]) -> int:
+    """`gecko drift <path>` — read a simulated.jsonl and print N-confirmed drift.
+
+    Thin transport over ``gecko.drift.detect_drift``: parse the segregated
+    ``simulated.jsonl`` rows (fail-closed rehydration — a non-allowlisted or
+    off-vocabulary row is rejected, never defaulted), detect categorical class
+    changes per ``recipe_hash``, print them. Categorical output only. Exit codes:
+    0 = no drift, 1 = drift detected, 2 = unreadable input.
+    """
+    from .corpus import CorpusError, simulated_outcome_from_record, simulated_sibling
+    from .drift import detect_drift
+
+    p = argparse.ArgumentParser(
+        prog="gecko drift",
+        description=(
+            "Detect N-confirmed categorical outcome drift in a simulated corpus "
+            "(the D2 series: same recipe_hash, changed (status, revert_class) "
+            "across slots). Exit 0 = stable, 1 = drift detected."
+        ),
+    )
+    p.add_argument(
+        "path",
+        help=(
+            "A simulated.jsonl file, or a corpus path — its simulated.jsonl "
+            "sibling is read (the same routing record_simulated writes with)."
+        ),
+    )
+    p.add_argument(
+        "--n-confirm",
+        type=int,
+        default=2,
+        help="Distinct slots the new class must hold before it counts (default: 2).",
+    )
+    p.add_argument("--json", action="store_true", help="Emit the events as JSON.")
+    args = p.parse_args(argv)
+
+    path = Path(args.path)
+    if path.name != "simulated.jsonl":
+        path = simulated_sibling(path)
+    if not path.exists():
+        print(f"no simulated corpus at {path}", file=sys.stderr)
+        return 2
+    rows = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(simulated_outcome_from_record(json.loads(line)))
+    except (CorpusError, json.JSONDecodeError, TypeError) as exc:
+        print(f"unreadable simulated corpus: {exc}", file=sys.stderr)
+        return 2
+
+    events = detect_drift(rows, n_confirm=args.n_confirm)
+    if args.json:
+        from dataclasses import asdict
+
+        print(json.dumps([asdict(ev) for ev in events], indent=2))
+    else:
+        recipes = len({row.recipe_hash for row in rows})
+        if not events:
+            print(f"no drift detected ({len(rows)} row(s), {recipes} recipe(s))")
+        for ev in events:
+            print(
+                f"DRIFT {ev.recipe_hash[:12]} {ev.program_id} {ev.instruction}: "
+                f"{ev.from_class} -> {ev.to_class} "
+                f"(first seen slot {ev.first_seen_slot}, confirmed slot "
+                f"{ev.confirmed_slot}, {ev.confirmations} confirmation(s))"
+            )
+    return 1 if events else 0
+
+
 def _cmd_metrics(argv: list[str]) -> int:
     """`gecko metrics <spec>` — the Agent-Surface Report: comprehension, measured.
 
@@ -1382,6 +1453,7 @@ def _print_help() -> None:
         "  scan-image <path>  scan an image for an image-borne injection (Skill Guard)"
     )
     print("  scan-doc <path>    scan an untrusted doc/convention page (Skill Guard)")
+    print("  drift <path>       N-confirmed drift over a simulated.jsonl corpus")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -1749,6 +1821,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_index(rest)
     if cmd == "metrics":
         return _cmd_metrics(rest)
+    if cmd == "drift":
+        return _cmd_drift(rest)
     if cmd == "rm":
         return _cmd_rm(rest)
     if cmd == "list":

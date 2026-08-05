@@ -28,7 +28,16 @@ from pathlib import Path
 from typing import Any, Literal, get_args
 
 from .caller import CallError
-from .pda import SeedEncoding, SeedSource
+from .pda import (
+    ConstantPdaSeedNode,
+    OrderedPairPdaSeedNode,
+    PdaNode,
+    PdaSeed,
+    ResolverPdaSeedNode,
+    SeedEncoding,
+    SeedSource,
+    VariablePdaSeedNode,
+)
 from .sanitize import looks_like_secret_value
 from .simulate import REVERT_FAMILIES, Receipt, revert_family
 
@@ -595,6 +604,61 @@ SEED_KIND_TOKENS: frozenset[str] = frozenset(
 )
 
 
+def seed_kind_token(seed: PdaSeed) -> str:
+    """The closed kind token for one PDA seed node — derived MECHANICALLY from the
+    pda.py node model (the SSOT for seed shapes), never free text.
+
+    ``const:<encoding>`` / ``<source>:<encoding>`` / ``ordered_pair:<select>`` /
+    ``resolver`` — exactly the vocabulary ``SEED_KIND_TOKENS`` is built from, so the
+    output is guaranteed to pass ``_guard_seed_recipes``. An unknown node type fails
+    CLOSED (a new seed shape must be added to the vocabulary deliberately, in one
+    place, before it can be fingerprinted)."""
+    if isinstance(seed, ConstantPdaSeedNode):
+        return f"const:{seed.encoding}"
+    if isinstance(seed, VariablePdaSeedNode):
+        return f"{seed.source}:{seed.encoding}"
+    if isinstance(seed, OrderedPairPdaSeedNode):
+        return f"ordered_pair:{seed.select}"
+    if isinstance(seed, ResolverPdaSeedNode):
+        return "resolver"
+    raise CorpusError(
+        f"unknown PDA seed node type {type(seed).__name__} — "
+        "add its kind token to SEED_KIND_TOKENS before fingerprinting it"
+    )
+
+
+def seed_recipes_of(pdas: Mapping[str, PdaNode]) -> dict[str, list[str]]:
+    """Project a program's PDA graph into the values-free ``seed_recipes`` shape
+    ``recipe_hash`` takes: account NAME → ordered seed-KIND tokens.
+
+    The shared helper for the landing orchestrators (pump + Meteora derive their
+    fingerprint input from the SAME packaged ``ProgramSpec.pdas`` graph — no per-provider
+    duplication). Only kinds enter — a resolved pubkey/amount is not readable from a
+    :class:`~gecko.pda.PdaNode`, and the ``recipe_hash`` guard re-checks every token
+    against the closed vocabulary anyway (belt and suspenders)."""
+    return {
+        name: [seed_kind_token(seed) for seed in node.seeds]
+        for name, node in pdas.items()
+    }
+
+
+def network_category(label: str | None) -> str:
+    """Collapse a free-text ``network_label`` (the Receipt's honesty caveat) into the
+    CLOSED ``NETWORKS`` category — never the label itself (free text could carry a URL).
+
+    Checked in specificity order: a fork label routinely mentions mainnet ("surfpool
+    fork (mainnet-backed — NOT mainnet)"), so ``fork`` wins before ``mainnet``. Fails
+    CLOSED to ``other`` for anything unrecognized (including ``None``)."""
+    text = (label or "").lower()
+    if "fork" in text:
+        return "fork"
+    if "devnet" in text:
+        return "devnet"
+    if "mainnet" in text:
+        return "mainnet"
+    return "other"
+
+
 def _guard_plan_name(entry: object, field: str) -> str:
     """Admit only a short identifier-shaped NAME; raise ``CorpusError`` otherwise.
 
@@ -725,6 +789,26 @@ def simulated_outcome_from(
         source="simulated",
         tenancy=tenancy,
     )
+
+
+def simulated_outcome_from_record(record: Mapping[str, Any]) -> SimulatedOutcome:
+    """Rehydrate a persisted ``simulated.jsonl`` row back into a ``SimulatedOutcome`` —
+    the read side of ``to_simulated_record`` and the seam ``gecko drift`` reads through.
+
+    Fails CLOSED like ``outcome_from_record``: a non-allowlisted key (the shape a leaked
+    pubkey/log would take) is rejected before construction, and a truncated record is a
+    hard error, never silently defaulted. The closed-set axes are re-validated via
+    ``to_simulated_record`` so a hand-edited off-vocabulary row cannot enter a drift
+    series."""
+    assert_simulated_allowlisted(record)
+    missing = SIMULATED_ALLOWED_KEYS - set(record)
+    if missing:
+        raise CorpusError(
+            f"simulated record missing required key(s): {sorted(missing)}"
+        )
+    outcome = SimulatedOutcome(**{key: record[key] for key in SIMULATED_ALLOWED_KEYS})
+    to_simulated_record(outcome)  # closed-set gate; raises CorpusError on bad axes
+    return outcome
 
 
 def record_simulated(outcome: SimulatedOutcome, path: str | Path) -> None:
