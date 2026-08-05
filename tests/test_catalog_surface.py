@@ -143,7 +143,16 @@ def test_cli_find_start_log_misses_is_opt_in_and_categorical(
     find_start_main(["flumbuzzle the quantum wombat", "--log-misses", str(log)])
     capsys.readouterr()
     record = json.loads(log.read_text(encoding="utf-8").strip())
-    assert set(record) == {"intent_term_count", "matched_score", "wired_program_count"}
+    # v1 counts kept; v2 adds candidate NAMES/scores + floor (still categorical)
+    assert {
+        "intent_term_count",
+        "matched_score",
+        "wired_program_count",
+        "top_candidates",
+        "margin",
+        "floor",
+    } <= set(record)
+    assert record["floor"] == "guess"
     assert "wombat" not in log.read_text(encoding="utf-8")
 
 
