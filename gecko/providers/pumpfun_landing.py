@@ -52,16 +52,15 @@ from ..pump_curve import (
 )
 from ..rpc import _http_post_json, default_rpc_call, validate_rpc_url
 from ..simulate import Receipt
-from .pumpfun import _load_pumpfun_pdas, plan_buy
-
-# Global.buyback_fee_recipients is an [pubkey; 8] array at data offset 741 — computed from
-# the on-chain Global struct field order (8 disc + initialized + authority + fee_recipient +
-# 5×u64 + withdraw_authority + enable_migrate + 2×u64 + fee_recipients[7] + set/admin
-# creator authority + create_v2_enabled + whitelist_pda + reserved_fee_recipient +
-# mayhem_mode_enabled + reserved_fee_recipients[7] + is_cashback_enabled). LAYOUT-FRAGILE
-# by nature (this is exactly the drift the gap-map warns about) — the Receipt confirms it.
-_BUYBACK_RECIPIENTS_OFFSET = 741
-_BUYBACK_RECIPIENTS_COUNT = 8
+from .pumpfun import (
+    # The offsets + layout provenance live with the DECLARED surface (pumpfun.py), so the
+    # plan a consumer reads and the set this orchestrator assembles share one definition.
+    BUYBACK_FEE_RECIPIENTS_COUNT,
+    BUYBACK_FEE_RECIPIENTS_OFFSET,
+    _load_pumpfun_pdas,
+    buy_remaining_accounts,
+    plan_buy,
+)
 
 __all__ = [
     "BuyLandingError",
@@ -148,35 +147,15 @@ def _read_buyback_fee_recipients(
     from solders.pubkey import Pubkey
 
     raw = base64.b64decode(value["data"][0])
-    end = _BUYBACK_RECIPIENTS_OFFSET + 32 * _BUYBACK_RECIPIENTS_COUNT
+    end = BUYBACK_FEE_RECIPIENTS_OFFSET + 32 * BUYBACK_FEE_RECIPIENTS_COUNT
     if len(raw) < end:
         raise BuyLandingError(
-            f"Global data is {len(raw)} bytes — too short for buyback_fee_recipients @{_BUYBACK_RECIPIENTS_OFFSET}"
+            f"Global data is {len(raw)} bytes — too short for buyback_fee_recipients @{BUYBACK_FEE_RECIPIENTS_OFFSET}"
         )
     return [
         str(Pubkey.from_bytes(raw[off : off + 32]))
-        for off in range(_BUYBACK_RECIPIENTS_OFFSET, end, 32)
+        for off in range(BUYBACK_FEE_RECIPIENTS_OFFSET, end, 32)
     ]
-
-
-def _recover_hidden_remaining_accounts(
-    mint: str,
-    global_addr: str,
-    pdas: Mapping[str, Any],
-    *,
-    rpc_url: str,
-    rpc_call: RpcCall | None,
-) -> list[tuple[str, bool]]:
-    """Recover the two Class-1 hidden requirements a post-upgrade ``buy`` needs but the IDL
-    (and Orquestra's IDL-driven ``/build``) omit, in on-chain order: ``bonding_curve_v2``
-    (derived from ``["bonding-curve-v2", mint]``) then the 8 ``buyback_fee_recipients``
-    (read from ``Global``). Each ``(pubkey, is_writable)``, all writable / non-signer.
-    """
-    bonding_curve_v2 = derive_pda(pdas["bonding_curve_v2"], {"mint": mint}).address
-    buyback = _read_buyback_fee_recipients(
-        global_addr, rpc_url=rpc_url, rpc_call=rpc_call
-    )
-    return [(bonding_curve_v2, True)] + [(addr, True) for addr in buyback]
 
 
 def simulate_buy_landing(
@@ -234,7 +213,12 @@ def simulate_buy_landing(
     associated_user = accounts["associated_user"]
 
     # (3) Orquestra builds the `buy` instruction (its lane), fee_recipient filled.
-    build_accounts = {**accounts, "fee_recipient": fee_recipient}
+    # bonding_curve_v2 is stripped from the /build payload: /build is driven by the
+    # pre-upgrade IDL, which has no such named account — it travels as the first APPENDED
+    # remaining account instead (same 18-account truth, expressed the way the old builder
+    # consumes it, and exactly the shape the live Receipt passed with).
+    build_accounts = {k: v for k, v in accounts.items() if k != "bonding_curve_v2"}
+    build_accounts["fee_recipient"] = fee_recipient
     fetch = fetch_buy_instruction or (
         lambda a, ar, fp: _fetch_buy_instruction_default(
             a, ar, fp, build_url=plan["build_url"]
@@ -243,14 +227,19 @@ def simulate_buy_landing(
     buy_instruction = fetch(build_accounts, plan["args"], user)
     buy_ix = orquestra_instruction_to_solders(buy_instruction)
 
-    # (4) recover the Class-1 HIDDEN remaining accounts the IDL drops (bonding_curve_v2 +
-    # the 8 buyback_fee_recipients) and inject them into the buy — WITHOUT them a
-    # post-upgrade buy reverts (6074 InvalidBondingCurveV2 / 6062 BuybackFeeRecipientMissing),
-    # a gap no coding agent finds from the surface. These are DECLARED in landing_plan too.
-    remaining = _recover_hidden_remaining_accounts(
-        mint, accounts["global"], pdas, rpc_url=rpc_url, rpc_call=rpc_call
+    # (4) resolve + inject the Class-1 HIDDEN remaining accounts the IDL drops
+    # (bonding_curve_v2 — already derived by plan_buy — + the 8 buyback_fee_recipients read
+    # from Global) — WITHOUT them a post-upgrade buy reverts (6074 InvalidBondingCurveV2 /
+    # 6062 BuybackFeeRecipientMissing), a gap no coding agent finds from the surface. The
+    # set comes from buy_remaining_accounts, the SAME function plan_buy declares with — no
+    # drift between the declared plan and what the sim verifies.
+    buyback = _read_buyback_fee_recipients(
+        accounts["global"], rpc_url=rpc_url, rpc_call=rpc_call
     )
-    buy_ix_complete = with_remaining_accounts(buy_ix, remaining)
+    remaining = buy_remaining_accounts(accounts["bonding_curve_v2"], buyback)
+    buy_ix_complete = with_remaining_accounts(
+        buy_ix, [(entry["pubkey"], entry["isWritable"]) for entry in remaining]
+    )
 
     # (5) assemble the STANDARD ATA prelude around the completed buy and simulate → the a-ha.
     ata_ix = create_idempotent_ata_ix(
@@ -298,19 +287,20 @@ def simulate_buy_landing(
 
 
 def _declare_remaining_in_plan(
-    landing_plan: list[dict[str, Any]], remaining: list[tuple[str, bool]]
+    landing_plan: list[dict[str, Any]], remaining: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Attach the recovered hidden remaining accounts to the declared ``buy`` step, so the
-    real builder (Orquestra) and signer (1claw) include them in the signable tx."""
+    """Complete the declared ``buy`` step with the RESOLVED remaining-accounts set (the
+    exact list the simulated bundle injected — same ``buy_remaining_accounts`` output), so
+    the real builder (Orquestra) and signer (1claw) include them in the signable tx. The
+    plan's resolver-style ``remaining_accounts_unresolved`` recipe is dropped: resolved."""
     declared = [dict(step) for step in landing_plan]
     for step in declared:
         if step.get("kind") == "buy":
-            step["remaining_accounts"] = [
-                {"pubkey": pubkey, "isWritable": writable, "isSigner": False}
-                for pubkey, writable in remaining
-            ]
+            step["remaining_accounts"] = [dict(entry) for entry in remaining]
+            step.pop("remaining_accounts_unresolved", None)
             step["remaining_accounts_note"] = (
-                "Class-1 recovered: bonding_curve_v2 (seed ['bonding-curve-v2', mint]) then "
-                "the 8 Global.buyback_fee_recipients — remaining_accounts the IDL drops"
+                "RESOLVED: bonding_curve_v2 (seed ['bonding-curve-v2', mint]) then the 8 "
+                "Global.buyback_fee_recipients@741 — exactly the set the simulated bundle "
+                "injected (no drift between declare and verify)"
             )
     return declared

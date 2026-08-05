@@ -2,9 +2,12 @@
 
 Offline (Pattern B, $0): an injected ``rpc_call`` returns canned ``getAccountInfo`` for
 the TWO reads plan_buy makes — the mint's owner (→ token_program) and the bonding_curve
-account whose bytes [49:81] are the creator (→ creator_vault). The plan must assemble the
-15 accounts Gecko can supply first-call-correct, echo the args, set feePayer=user, point
-at Orquestra's buy builder — and flag ``fee_recipient`` as an honest gap (NOT guessed).
+account whose bytes [49:81] are the creator (→ creator_vault). The plan must declare the
+post-Apr-2026 18-account ``buy`` truth: assemble the 16 accounts Gecko can supply
+first-call-correct (incl. the purely-derived ``bonding_curve_v2``), echo the args, set
+feePayer=user, point at Orquestra's buy builder — and declare ``fee_recipient`` (regular,
+Global.fee_recipients[0]@162) and the appended buyback recipient (@741) as honest
+resolver-style gaps (NOT guessed).
 
 The real on-chain gate against a live surfpool mainnet fork is env-gated
 (GECKO_SURFPOOL_E2E=1) so the default suite stays offline and $0.
@@ -51,8 +54,13 @@ USER = "FFWtrEQ4B4PKQoVuHYzZq8FabGkVatYzDpEVHsK5rrhF"
 FEE_CONFIG = "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt"
 ASSOCIATED_USER = "CTAUKpZkmejuonDJnBRW43FMZx6WpkytQrF8Cty4GfVc"
 USER_VOLUME_ACCUMULATOR = "Dhmt8HLWC5KFC3t3RzLiFrqgJwxuR6EgiVssbF34g8CL"
+# bonding_curve_v2: pure derivation from ["bonding-curve-v2", mint] (independently verified
+# with solders). Lazily created on-chain — the ADDRESS, never existence, is the contract.
+BONDING_CURVE_V2 = "5VHjhM7qJfaKd9skGBkU1nZCZ9r8XnzEeJ6wNGtwddyq"
 
-# The 16 accounts a pump `buy` needs. Gecko supplies 15; fee_recipient is the honest gap.
+# The named accounts of the post-Apr-2026 18-account `buy` (16 original + bonding_curve_v2;
+# the 18th — the appended buyback recipient — is a declared read recipe, not a named
+# account). Gecko supplies 16; fee_recipient is the honest gap.
 _ALL_BUY_ACCOUNTS = {
     "global",
     "fee_recipient",
@@ -70,6 +78,7 @@ _ALL_BUY_ACCOUNTS = {
     "user_volume_accumulator",
     "fee_config",
     "fee_program",
+    "bonding_curve_v2",
 }
 
 
@@ -164,10 +173,11 @@ def test_plan_buy_flags_associated_user_ata_precondition() -> None:
     assert "associated_user" in plan["preconditions"]
 
 
-def test_plan_buy_resolves_fifteen_accounts_flags_fee_recipient() -> None:
+def test_plan_buy_resolves_sixteen_accounts_flags_fee_recipient() -> None:
     plan = _plan()
     accounts = plan["accounts"]
-    # 15 supplied, fee_recipient is the flagged gap → 15 + 1 = the full 16-account set.
+    # 16 supplied (incl. bonding_curve_v2), fee_recipient is the flagged gap → the full
+    # named set of the current program's 18-account buy.
     assert set(accounts) == _ALL_BUY_ACCOUNTS - {"fee_recipient"}
     assert "fee_recipient" in plan["unresolved"]
     assert "fee_recipient" not in accounts
@@ -188,6 +198,8 @@ def test_plan_buy_derives_the_known_addresses() -> None:
     assert accounts["creator_vault"] == CREATOR_VAULT
     assert accounts["event_authority"] == EVENT_AUTHORITY
     assert accounts["fee_config"] == FEE_CONFIG
+    # bonding_curve_v2 (post-Apr-2026 account #17): PURE derivation, address-correct
+    assert accounts["bonding_curve_v2"] == BONDING_CURVE_V2
     # token_program RESOLVED from the mint owner (Token-2022 for this fixture)
     assert accounts["token_program"] == TOKEN_2022_PROGRAM
     # constants
@@ -228,6 +240,61 @@ def test_plan_buy_makes_exactly_two_reads() -> None:
 def test_plan_buy_missing_binding_raises() -> None:
     with pytest.raises(ValueError):
         plan_buy({"mint": MINT, "user": USER}, rpc_call=_fake_rpc())
+
+
+# --- the post-Apr-2026 18-account truth is DECLARED, not orchestrator-only -----
+
+
+def test_fee_recipient_note_carries_the_empirical_recipe_not_the_refuted_41() -> None:
+    # The live Receipt established: `buy` accepts a REGULAR recipient — fee_recipients[0]
+    # @ offset 162; the @41 field is a BUYBACK recipient (reverted 6062). The declared
+    # note/recipe must carry the empirical truth, not the refuted "@41" guidance.
+    entry = _plan()["unresolved"]["fee_recipient"]
+    assert entry["resolve"] == {
+        "read": "global",
+        "field": "fee_recipients[0]",
+        "field_offset": 162,
+        "encoding": "pubkey",
+    }
+    assert "162" in entry["note"]
+    assert "REFUTED" in entry["note"]  # the old @41 guidance, named and refuted
+    assert "BUYBACK" in entry["note"]  # what @41 actually is
+
+
+def test_plan_declares_buyback_recipient_as_resolver_style_read_recipe() -> None:
+    # The appended buyback recipient (the 18th account) is declared the same honest way
+    # as creator_vault: a read recipe (Global.buyback_fee_recipients@741), never a guess.
+    entry = _plan()["unresolved"]["buyback_fee_recipient"]
+    assert entry["resolve"] == {
+        "read": "global",
+        "field": "buyback_fee_recipients",
+        "field_offset": 741,
+        "count": 8,
+        "encoding": "pubkey",
+    }
+    assert "bonding_curve_v2" in entry["note"]  # ordering: appended AFTER it
+
+
+def test_plan_flags_bonding_curve_v2_as_address_not_existence() -> None:
+    # bonding_curve_v2 is created lazily — for older mints the account may not exist yet.
+    # The declared contract is the ADDRESS; the plan must say so, never imply existence.
+    note = _plan()["preconditions"]["bonding_curve_v2"]
+    assert "ADDRESS" in note
+    assert "never existence" in note
+
+
+def test_landing_plan_buy_step_declares_the_appended_remaining_accounts() -> None:
+    # The declared buy step carries the concrete appended prefix (bonding_curve_v2) plus
+    # the resolver recipe for the buyback recipients — the same set the orchestrator
+    # assembles (see test_pump_buy_landing's no-drift guard).
+    plan = _plan()
+    buy = next(s for s in plan["landing_plan"] if s["kind"] == "buy")
+    assert buy["accounts"] == plan["accounts"]
+    assert buy["remaining_accounts"] == [
+        {"pubkey": BONDING_CURVE_V2, "isWritable": True, "isSigner": False}
+    ]
+    recipe = buy["remaining_accounts_unresolved"]["buyback_fee_recipient"]["resolve"]
+    assert (recipe["field_offset"], recipe["count"]) == (741, 8)
 
 
 # --- Task 3 (Path B): the self-serve simulate recipe block -------------------

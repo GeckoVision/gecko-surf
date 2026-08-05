@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from gecko.providers.pumpfun import buy_remaining_accounts, plan_buy
 from gecko.providers.pumpfun_landing import (
     BuyLandingError,
     simulate_buy_landing,
@@ -30,7 +31,9 @@ ASSOCIATED_USER = "CTAUKpZkmejuonDJnBRW43FMZx6WpkytQrF8Cty4GfVc"
 USER = "FFWtrEQ4B4PKQoVuHYzZq8FabGkVatYzDpEVHsK5rrhF"
 TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 GLOBAL = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
-# Global.fee_recipient @ data offset 41 (RPC-verified) — the authoritative gap-fill.
+# A valid pubkey standing in for fee_recipient in the canned offline sim (the fake RPC
+# accepts anything). LIVE, the E2E resolves a REGULAR recipient — Global.fee_recipients[0]
+# @ offset 162; the old "@41" guidance is refuted (@41 is a BUYBACK recipient, 6062).
 FEE_RECIPIENT = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
 
 # Real mainnet reserves (RPC-verified) so max_sol_cost is a known value: 1_000_000 units →
@@ -198,6 +201,55 @@ def test_result_declares_recovered_hidden_remaining_accounts() -> None:
     remaining = [r["pubkey"] for r in buy["remaining_accounts"]]
     assert remaining == [BONDING_CURVE_V2, *BUYBACK]
     assert all(r["isWritable"] and not r["isSigner"] for r in buy["remaining_accounts"])
+    # the resolver-style recipe plan_buy declares is RESOLVED here, so it is dropped
+    assert "remaining_accounts_unresolved" not in buy
+
+
+def test_declared_plan_and_orchestrator_assembly_do_not_drift() -> None:
+    """The no-drift guard: plan_buy's DECLARED buy step and the set simulate_buy_landing
+    actually assembles are the same truth — same named accounts, the declared concrete
+    prefix (bonding_curve_v2) is the orchestrator's prefix, and the orchestrator's full
+    set is exactly buy_remaining_accounts(bonding_curve_v2, <the declared @741 recipe
+    resolved>). If either side changes alone, this fails."""
+    value = {"err": None, "unitsConsumed": 80_000, "logs": []}
+    result = simulate_buy_landing(
+        _bindings(),
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_fake_rpc(value),
+        fetch_buy_instruction=lambda a, ar, fp: CANNED_BUY,
+        include_derive_only=False,
+    )
+    plan = plan_buy(
+        {
+            "mint": MINT,
+            "user": USER,
+            "amount": 1_000_000,
+            "max_sol_cost": result.max_sol_cost,
+            "track_volume": True,
+        },
+        rpc_call=_fake_rpc(value),
+    )
+    declared = next(s for s in plan["landing_plan"] if s["kind"] == "buy")
+    verified = next(s for s in result.landing_plan if s["kind"] == "buy")
+
+    # named accounts: identical (incl. bonding_curve_v2, the declared account #17)
+    assert verified["accounts"] == declared["accounts"]
+    # the declared concrete prefix IS the orchestrator's prefix …
+    prefix = declared["remaining_accounts"]
+    assert verified["remaining_accounts"][: len(prefix)] == prefix
+    # … and resolving the declared @741 recipe completes the exact orchestrator set,
+    # via the one shared assembly function (single source of truth).
+    recipe = declared["remaining_accounts_unresolved"]["buyback_fee_recipient"][
+        "resolve"
+    ]
+    assert (recipe["read"], recipe["field_offset"], recipe["count"]) == (
+        "global",
+        741,
+        8,
+    )
+    assert verified["remaining_accounts"] == buy_remaining_accounts(
+        BONDING_CURVE_V2, BUYBACK
+    )
 
 
 # --- env-gated real E2E: the side-by-side a-ha on a surfpool mainnet fork -----
@@ -242,25 +294,62 @@ def test_buy_that_passes_e2e_side_by_side() -> None:
 
     derive = result.derive_only_receipt
     land = result.landing_receipt
-    print("\n=== pump buy: derive-only vs Gecko-complete landing bundle ===")
+    assert derive is not None
+
+    # VERDICT FIRST — the naive line must not be readable as OUR failure: the revert is
+    # the expected, demonstrated gap; the Gecko bundle passing is the deliverable. The
+    # labels only claim what each receipt actually says (honesty over polish).
+    naive_code = _anchor_custom_code(derive.err)
+    naive_line = (
+        "❌ NAIVE (derive-only) — EXPECTED revert, this is the gap: "
+        f"{derive.revert_class}{f' ({naive_code})' if naive_code is not None else ''}"
+        if derive.status == "fail"
+        else f"NAIVE (derive-only) — status={derive.status} (a revert was expected; see logs)"
+    )
+    gecko_line = (
+        f"✅ GECKO landing bundle — PASSES: {land.units_consumed:,} CU"
+        if land.status == "pass" and land.units_consumed is not None
+        else f"GECKO landing bundle — status={land.status} revert_class={land.revert_class}"
+    )
+    print("\n=== pump buy: naive derive-only vs GECKO landing bundle ===")
+    print(naive_line)
+    print(gecko_line)
+    print(
+        "RESULT: the naive path reverts on mainnet; the Gecko bundle lands — "
+        "caught for $0 before any spend."
+    )
+
+    # full detail AFTER the verdict, for anyone auditing the run
+    print("--- details ---")
     print(
         f"base_sol_cost={result.base_sol_cost} max_sol_cost={result.max_sol_cost} "
         f"cu_limit={result.unit_limit}"
     )
     print(
-        f"DERIVE-ONLY (no ATA prelude): status={derive.status if derive else None} "
-        f"revert_class={derive.revert_class if derive else None}"
+        f"naive derive-only: status={derive.status} revert_class={derive.revert_class}"
     )
-    print(f"  logs_tail={list(derive.logs_tail) if derive else None}")
+    print(f"  logs_tail={list(derive.logs_tail)}")
     print(
-        f"GECKO-COMPLETE (landing bundle): status={land.status} "
-        f"units={land.units_consumed} revert_class={land.revert_class}"
+        f"gecko landing bundle: status={land.status} units={land.units_consumed} "
+        f"revert_class={land.revert_class}"
     )
     print(f"  logs_tail={list(land.logs_tail)}")
+    print(f"network: {land.network_label}")
 
     # the differential is the thesis: derive-only reverts on the buyer's ATA …
-    assert derive is not None
     assert derive.status == "fail"
     assert derive.revert_class == "account_error"
     # … and the assembled landing bundle lands.
     assert land.status == "pass"
+
+
+def _anchor_custom_code(err: object) -> int | None:
+    """The Anchor ``Custom`` code from a sim ``err`` (e.g. 3012), if present — printed so
+    the naive verdict line names the exact expected revert, never a fabricated number."""
+    if isinstance(err, dict):
+        instruction_error = err.get("InstructionError")
+        if isinstance(instruction_error, list) and len(instruction_error) == 2:
+            detail = instruction_error[1]
+            if isinstance(detail, dict) and isinstance(detail.get("Custom"), int):
+                return int(detail["Custom"])
+    return None

@@ -1,18 +1,23 @@
 """Pump.fun — the second Orquestra program instance (buy against a bonding curve).
 
 Where Meteora's star is deriving the helper-seeded root (``lb_pair``), Pump's is
-assembling a WHOLE instruction's account set first-call-correct: the 16 accounts a
-``buy`` needs, most of which an IDL/llms.txt cannot give you — the dotted-path
-``creator_vault`` (reads ``bonding_curve.creator``), the token program (read from the
-mint's owner, Token vs Token-2022), the two ATAs, the fee-program PDAs. Gecko derives
-and resolves every one it honestly can, then hands back the Orquestra ``/build`` payload.
+assembling a WHOLE instruction's account set first-call-correct: per the current
+(post-Apr-2026, BREAKING_FEE_RECIPIENT.md) program a ``buy`` is **18 accounts** — the 16
+original + ``bonding_curve_v2`` + a buyback fee recipient appended after it — most of
+which an IDL/llms.txt cannot give you: the dotted-path ``creator_vault`` (reads
+``bonding_curve.creator``), the token program (read from the mint's owner, Token vs
+Token-2022), the two ATAs, the fee-program PDAs, the upgrade-added accounts the
+pre-upgrade IDL drops entirely. Gecko derives and resolves every one it honestly can,
+then hands back the Orquestra ``/build`` payload.
 
-The honest gap: ``fee_recipient``. The on-chain ``Global`` account carries BOTH a single
-``fee_recipient`` pubkey field AND a ``fee_recipients: [pubkey; 7]`` array, populated on
-mainnet with *different* valid recipients. Which one ``buy`` validates against is not
-determinable from the surface, so ``plan_buy`` flags ``fee_recipient`` as unresolved
-(``UNRESOLVED``) rather than guess an offset — the caller / Orquestra ``/build`` supplies
-it. Honesty over a fabricated account (the whole differentiator over "read the IDL and hope").
+The honest gaps stay flagged, now with the recipes the live Receipt established
+empirically: ``fee_recipient`` = a REGULAR recipient (``Global.fee_recipients[0]`` @ data
+offset 162 — the old guidance pointing at the ``fee_recipient`` field @ offset 41 is
+REFUTED: @41 is a *buyback* recipient and using it reverts 6062), and the appended
+buyback recipient comes from ``Global.buyback_fee_recipients`` (``[pubkey; 8]`` @ offset
+741). ``plan_buy`` declares both as resolver-style entries (a read recipe, same honest
+pattern as ``creator_vault``) rather than hardcode pubkeys that can rotate. Honesty over
+a fabricated account (the whole differentiator over "read the IDL and hope").
 
 Run it (once its slug is served):
     claude mcp add orquestra-pumpfun -- \
@@ -21,7 +26,7 @@ Run it (once its slug is served):
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from ..landing import ASSOCIATED_TOKEN_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID
 from ..pda import derive_pda
@@ -35,7 +40,11 @@ __all__ = [
     "FEE_PROGRAM_ID",
     "SYSTEM_PROGRAM_ID",
     "BUILD_URL",
+    "FEE_RECIPIENTS_OFFSET",
+    "BUYBACK_FEE_RECIPIENTS_OFFSET",
+    "BUYBACK_FEE_RECIPIENTS_COUNT",
     "PUMPFUN_INTENTS",
+    "buy_remaining_accounts",
     "plan_buy",
     "build_pumpfun_surface",
 ]
@@ -47,14 +56,58 @@ FEE_PROGRAM_ID = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 BUILD_URL = "https://api.orquestra.dev/api/6i6q26bmm46b89xlxo1kv/instructions/buy/build"
 
-# Why fee_recipient is a flagged gap, not an auto-resolved account (see module docstring).
+# On-chain Global layout facts the live Receipt established empirically (the E2E landing
+# run) — LAYOUT-FRAGILE by nature (exactly the drift the gap-map warns about; the
+# env-gated E2E re-confirms them against the live program):
+# - Global.fee_recipients[0] @ data offset 162 is a REGULAR fee recipient `buy` accepts.
+# - Global.fee_recipient @ offset 41 is a BUYBACK recipient — passing it as the named
+#   fee_recipient reverted 6062, refuting the earlier "@41" guidance.
+# - Global.buyback_fee_recipients is a [pubkey; 8] array @ data offset 741 — computed from
+#   the on-chain Global struct field order (8 disc + initialized + authority +
+#   fee_recipient + 5×u64 + withdraw_authority + enable_migrate + 2×u64 +
+#   fee_recipients[7] + set/admin creator authority + create_v2_enabled + whitelist_pda +
+#   reserved_fee_recipient + mayhem_mode_enabled + reserved_fee_recipients[7] +
+#   is_cashback_enabled). A post-Apr-2026 buy needs one of them appended after
+#   bonding_curve_v2 (6062 BuybackFeeRecipientMissing otherwise).
+FEE_RECIPIENTS_OFFSET = 162
+BUYBACK_FEE_RECIPIENTS_OFFSET = 741
+BUYBACK_FEE_RECIPIENTS_COUNT = 8
+
+# Why fee_recipient is a flagged gap with a read recipe, never a hardcoded pubkey.
 _FEE_RECIPIENT_NOTE = (
     "Global carries BOTH a single `fee_recipient` pubkey field (data offset 41) AND a "
-    "`fee_recipients: [pubkey; 7]` array, populated on mainnet with different valid "
-    "recipients; which one `buy` validates against is not determinable from the surface. "
-    "Gecko will not guess — supply the authoritative fee_recipient to /build (a valid "
-    "current pump fee recipient, e.g. global.fee_recipient @ offset 41)."
+    "`fee_recipients` array (data offset 162), populated on mainnet with different valid "
+    "pubkeys. The live Receipt settled which one `buy` accepts empirically: a REGULAR "
+    "recipient — Global.fee_recipients[0] @ offset 162. The @41 field is a BUYBACK "
+    "recipient (passing it as fee_recipient reverted 6062), so earlier guidance pointing "
+    "at @41 is REFUTED. Gecko still will not hardcode a pubkey that can rotate: resolve "
+    "via the recipe here, or supply your own valid recipient to /build."
 )
+
+# The post-upgrade appended requirement, declared the same honest way as creator_vault:
+# a read recipe, never a guessed pubkey.
+_BUYBACK_RECIPIENT_NOTE = (
+    "Post-Apr-2026 program (BREAKING_FEE_RECIPIENT.md): `buy` also requires a BUYBACK fee "
+    "recipient appended AFTER bonding_curve_v2. The 8 valid pubkeys live in "
+    "Global.buyback_fee_recipients ([pubkey; 8] @ data offset 741) — read them and append "
+    "as remaining accounts (Gecko appends all 8; the live Receipt confirms that set "
+    "passes). Same honest pattern as creator_vault: a read recipe, never a guess."
+)
+
+
+def buy_remaining_accounts(
+    bonding_curve_v2: str, buyback_fee_recipients: Sequence[str] = ()
+) -> list[dict[str, Any]]:
+    """The ordered ``remaining_accounts`` a post-Apr-2026 ``buy`` appends:
+    ``bonding_curve_v2`` first, then the ``Global.buyback_fee_recipients`` — all writable,
+    non-signer. The SINGLE source of truth for the appended set: ``plan_buy`` declares it
+    (buyback pubkeys pending the Global read — see ``unresolved``) and
+    ``simulate_buy_landing`` injects exactly it. Refactor here, never in two places.
+    """
+    return [
+        {"pubkey": pubkey, "isWritable": True, "isSigner": False}
+        for pubkey in (bonding_curve_v2, *buyback_fee_recipients)
+    ]
 
 
 def _option_bool(value: Any) -> dict[str, bool]:
@@ -109,6 +162,28 @@ def _landing_plan(accounts: Mapping[str, str]) -> list[dict[str, Any]]:
             "kind": "buy",
             "program": PUMPFUN_PROGRAM_ID,
             "accounts": dict(accounts),
+            # The DECLARED appended set (single source of truth: buy_remaining_accounts).
+            # bonding_curve_v2 is concrete (pure derivation); the buyback recipients need
+            # the Global read — declared as a resolver-style recipe below, resolved (and
+            # this list completed) by simulate_buy_landing.
+            "remaining_accounts": buy_remaining_accounts(accounts["bonding_curve_v2"]),
+            "remaining_accounts_unresolved": {
+                "buyback_fee_recipient": {
+                    "note": _BUYBACK_RECIPIENT_NOTE,
+                    "resolve": {
+                        "read": "global",
+                        "field": "buyback_fee_recipients",
+                        "field_offset": BUYBACK_FEE_RECIPIENTS_OFFSET,
+                        "count": BUYBACK_FEE_RECIPIENTS_COUNT,
+                        "encoding": "pubkey",
+                    },
+                }
+            },
+            "remaining_accounts_note": (
+                "post-Apr-2026 program: append bonding_curve_v2 (lazily created — the "
+                "ADDRESS is what the instruction needs, the account may not exist yet) "
+                "then the Global.buyback_fee_recipients@741, all writable/non-signer"
+            ),
             "note": (
                 "Orquestra builds this instruction; fee_recipient is supplied at /build "
                 "(the honest gap) and max_sol_cost is the curve-quoted arg"
@@ -139,9 +214,15 @@ def plan_buy(
     control-plane reads happen (both public metadata, never stored): the mint's owner
     (→ ``token_program``) and ``bonding_curve.creator`` (→ ``creator_vault``).
 
-    ``fee_recipient`` is returned under ``unresolved`` — an honest gap, not a guess
-    (see the module docstring). The ``accounts`` dict therefore carries the 15 accounts
-    Gecko can supply first-call-correct; the caller/``/build`` adds ``fee_recipient``.
+    The ``accounts`` dict carries the 16 accounts Gecko can supply first-call-correct —
+    including ``bonding_curve_v2``, the account the post-Apr-2026 program added (a pure
+    derivation from ``["bonding-curve-v2", mint]``; lazily created on-chain, so for older
+    mints the account may not EXIST yet — the ADDRESS is what the instruction needs;
+    assert address-correct, never existence). The two remaining requirements of the full
+    18-account current-program set are declared under ``unresolved`` as resolver-style
+    read recipes, not guesses: ``fee_recipient`` (``Global.fee_recipients[0]`` @ 162 —
+    the Receipt-refuted @41 field is a buyback recipient) and the appended
+    ``buyback_fee_recipient`` (``Global.buyback_fee_recipients`` @ 741).
 
     The returned ``simulate`` block closes the loop two ways: Path B (self-serve — a dev
     fills ``fee_recipient``, POSTs ``build_url``, runs ``simulateTransaction``) or Path A
@@ -177,6 +258,9 @@ def plan_buy(
     creator_vault = resolve_pda(
         pdas, "creator_vault", {"mint": mint}, rpc_url=rpc_url, rpc_call=rpc_call
     ).address
+    # bonding_curve_v2 (post-Apr-2026): PURE derivation from ["bonding-curve-v2", mint] —
+    # no read; the account is lazily created, only its ADDRESS is required to be correct.
+    bonding_curve_v2 = derive_pda(pdas["bonding_curve_v2"], {"mint": mint}).address
     event_authority = derive_pda(pdas["event_authority"], {}).address
     global_volume_accumulator = derive_pda(
         pdas["global_volume_accumulator"], {}
@@ -202,12 +286,37 @@ def plan_buy(
         "program": PUMPFUN_PROGRAM_ID,
         "global_volume_accumulator": global_volume_accumulator,
         "user_volume_accumulator": user_volume_accumulator,
+        # Post-Apr-2026 account #17 — the pre-upgrade IDL (and Orquestra's /build) does
+        # not know it; builders append it as the first remaining account (see landing_plan).
+        "bonding_curve_v2": bonding_curve_v2,
     }
 
     return {
         "instruction": "buy",
         "accounts": accounts,
-        "unresolved": {"fee_recipient": _FEE_RECIPIENT_NOTE},
+        # The two honest gaps of the 18-account current-program set, each with the
+        # empirically-established read recipe (never a hardcoded, rotatable pubkey).
+        "unresolved": {
+            "fee_recipient": {
+                "note": _FEE_RECIPIENT_NOTE,
+                "resolve": {
+                    "read": "global",
+                    "field": "fee_recipients[0]",
+                    "field_offset": FEE_RECIPIENTS_OFFSET,
+                    "encoding": "pubkey",
+                },
+            },
+            "buyback_fee_recipient": {
+                "note": _BUYBACK_RECIPIENT_NOTE,
+                "resolve": {
+                    "read": "global",
+                    "field": "buyback_fee_recipients",
+                    "field_offset": BUYBACK_FEE_RECIPIENTS_OFFSET,
+                    "count": BUYBACK_FEE_RECIPIENTS_COUNT,
+                    "encoding": "pubkey",
+                },
+            },
+        },
         # A real buy reverts with AnchorError 3012 (associated_user AccountNotInitialized)
         # if the buyer doesn't already hold the token's ATA — the tx must be preceded by a
         # create-associated-token-account-idempotent instruction (or the buyer must own it).
@@ -216,7 +325,12 @@ def plan_buy(
             "associated_user": (
                 "must be an initialized ATA for (user, mint); if the buyer doesn't hold it, "
                 "prepend a createAssociatedTokenAccountIdempotent instruction before `buy`"
-            )
+            ),
+            "bonding_curve_v2": (
+                "created LAZILY by the program — for older mints the account may not "
+                "EXIST yet; `buy` needs the correct ADDRESS (seed ['bonding-curve-v2', "
+                "mint]), not an existing account. Assert address-correct, never existence."
+            ),
         },
         "args": {
             "amount": bindings["amount"],
@@ -262,10 +376,12 @@ _BUY = Intent(
     description=(
         "Plan a Pump.fun buy against a token's bonding curve. Give mint, user, amount, "
         "max_sol_cost and track_volume; Gecko resolves the token program from the mint "
-        "owner, derives every PDA/ATA a `buy` needs — including the dotted-path "
-        "creator_vault (bonding_curve.creator) an IDL drops — and points at Orquestra's "
-        "buy builder. One honest gap: fee_recipient (Global has both a single field and a "
-        "7-slot array of recipients) is left for you/`/build` to supply — Gecko won't guess."
+        "owner and derives every PDA/ATA of the current program's 18-account `buy` it "
+        "honestly can — including the dotted-path creator_vault (bonding_curve.creator) "
+        "an IDL drops and the post-Apr-2026 bonding_curve_v2. Two honest gaps are "
+        "declared as read recipes, never guessed: fee_recipient (a REGULAR recipient, "
+        "Global.fee_recipients[0] @ offset 162) and the appended buyback fee recipient "
+        "(Global.buyback_fee_recipients @ offset 741)."
     ),
     inputs=("mint", "user", "amount", "max_sol_cost", "track_volume"),
     plan=_buy_plan,
