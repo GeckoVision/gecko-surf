@@ -144,7 +144,7 @@ sequenceDiagram
     S-->>G: ✅ RECEIPT: pass, 86,669 CU<br/>(naive path: ❌ 3012 revert)
     G-->>A: receipt + landing_plan
     A->>W: sign (only a passing, bound receipt)
-    Note over G: outcome → corpus (categorical, opt-in wiring pending) → drift series
+    Note over G: outcome → corpus (categorical, opt-in `record_to`) → `gecko drift` series
 ```
 
 Live, verbatim: **pump buy** — naive ❌ `account_error (3012)` → Gecko bundle ✅
@@ -161,7 +161,7 @@ Live, verbatim: **pump buy** — naive ❌ `account_error (3012)` → Gecko bund
 | **Knowledge** | surface graph + VERIFIED/REFUTED · program graph + FLAGGED honesty · cross-API correlation (DECLARED-first) · one unified provenance module (`gecko/provenance.py`) | semantic tier (evidence-gated OFF) |
 | **Projection** | hosted + local MCP · question-shaped tools, auth invisible · scale-adaptive listing (defs on demand) · −77%/−89% context cuts (two real specs) · Scorecard/Playground · `find_start` intent router | public-docs refresh |
 | **Action/verify** | simulate→Receipt (pump + Meteora live proofs) · landing preludes · state-read args · never-sign AST boundary | pump `sell` round-trip · ORE claim / MetaDAO fund intents · hosted point-&-simulate |
-| **Memory** | categorical corpus (4 tiers) · N-confirmed drift detector · guarded recipe_hash | drift **scheduler** (cadence) · cross-customer pooling (consent-gated) |
+| **Memory** | categorical corpus (4 tiers) · N-confirmed drift detector · guarded recipe_hash · opt-in `record_to` wiring on the landing orchestrators + `gecko drift` reader | drift **scheduler** (cadence) · cross-customer pooling (consent-gated) |
 | **Security** | SSRF netguard · auth firewall (out-of-band anchor) · keyring/pointer secrets · signing gate v1 | `evaluate_tx` message-hash binding · 1claw TEE credential backend · x402 live billing |
 
 *Honest one-liner: the engine and the proofs are real; the breadth (catalog scale), the

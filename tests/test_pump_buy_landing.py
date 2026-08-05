@@ -252,6 +252,105 @@ def test_declared_plan_and_orchestrator_assembly_do_not_drift() -> None:
     )
 
 
+# --- the D2 corpus opt-in (task #85): record_to wiring on the orchestrator ------------
+
+
+def test_record_to_default_none_writes_nothing(tmp_path, monkeypatch) -> None:
+    # Default behavior is byte-identical to before the wiring: nothing persisted.
+    monkeypatch.chdir(tmp_path)
+    simulate_buy_landing(
+        _bindings(),
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_fake_rpc({"err": None, "unitsConsumed": 50_000, "logs": []}),
+        fetch_buy_instruction=lambda a, ar, fp: CANNED_BUY,
+        include_derive_only=False,
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_record_to_appends_one_allowlisted_row_with_stable_hash(tmp_path) -> None:
+    import json
+
+    from gecko.corpus import SIMULATED_ALLOWED_KEYS
+
+    corpus = tmp_path / "corpus.jsonl"
+    value = {"err": None, "unitsConsumed": 50_000, "logs": ["Program success"]}
+    # Two runs of the SAME intent with DIFFERENT resolved values (another user →
+    # different associated_user / user_volume_accumulator pubkeys throughout).
+    other_user = "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV"
+    for user in (USER, other_user):
+        simulate_buy_landing(
+            {**_bindings(), "user": user},
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=_fake_rpc(value),
+            fetch_buy_instruction=lambda a, ar, fp: CANNED_BUY,
+            include_derive_only=False,
+            record_to=corpus,
+        )
+    sibling = tmp_path / "simulated.jsonl"
+    assert sibling.exists()
+    assert not corpus.exists()  # segregated: never the main (wire-only) corpus
+    rows = [json.loads(line) for line in sibling.read_text().splitlines()]
+    assert len(rows) == 2  # exactly one row per opted-in run
+    for row in rows:
+        assert set(row) == SIMULATED_ALLOWED_KEYS
+        assert row["status"] == "pass"
+        assert row["instruction"] == "buy"
+        assert row["source"] == "simulated"
+    # the drift key: same plan SHAPE → identical hash despite different resolved pubkeys
+    assert rows[0]["recipe_hash"] == rows[1]["recipe_hash"]
+
+
+def test_orchestrator_recorded_row_is_values_free() -> None:
+    # The orchestrator-level canary (not just the unit-level one in
+    # test_simulated_corpus): a landing run whose sim response carries canary VALUES
+    # (a pubkey, an amount, log lines) must record a row containing NONE of them —
+    # nor any resolved pubkey/amount from the run's own inputs.
+    import json
+    import tempfile
+    from pathlib import Path as _Path
+
+    canary_amount = 987_654_321
+    canary_value = {
+        "err": {"InstructionError": [0, {"Custom": 3012}], "leaked": USER},
+        "unitsConsumed": 50_000,
+        "logs": [
+            f"Program log: transferred {canary_amount} to {USER}",
+            "Program failed",
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus = _Path(tmp) / "corpus.jsonl"
+        result = simulate_buy_landing(
+            {**_bindings(), "amount": canary_amount},
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=_fake_rpc(canary_value),
+            fetch_buy_instruction=lambda a, ar, fp: CANNED_BUY,
+            include_derive_only=False,
+            record_to=corpus,
+        )
+        raw = (_Path(tmp) / "simulated.jsonl").read_text()
+    # the Receipt itself still carries the values (for the human caller) …
+    assert result.landing_receipt.status == "fail"
+    # … but the persisted row carries none of them: no pubkey, amount, or log text
+    for canary in (
+        USER,
+        MINT,
+        BONDING_CURVE,
+        FEE_RECIPIENT,
+        str(canary_amount),
+        "transferred",
+        "leaked",
+        "Program log",
+        "http://127.0.0.1:8899",
+    ):
+        assert canary not in raw
+    row = json.loads(raw.strip())
+    # categorical only: family + public code split, never the raw err/logs
+    assert row["status"] == "fail"
+    assert row["revert_class"] in {"account_error", "custom_program_error"}
+
+
 # --- env-gated real E2E: the side-by-side a-ha on a surfpool mainnet fork -----
 
 

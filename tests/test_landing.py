@@ -258,6 +258,7 @@ def test_no_sign_or_broadcast_path_in_landing_layer() -> None:
         root / "meteora_math.py",
         root / "providers" / "pumpfun_landing.py",
         root / "providers" / "meteora_landing.py",
+        root / "providers" / "landing_record.py",
     ]
     forbidden = {
         "sendTransaction",

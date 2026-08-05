@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import urllib.error
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import base64
@@ -52,7 +53,9 @@ from ..pump_curve import (
 )
 from ..rpc import _http_post_json, default_rpc_call, validate_rpc_url
 from ..simulate import Receipt
+from .landing_record import record_landing_outcome
 from .pumpfun import (
+    PUMPFUN_PROGRAM_ID,
     # The offsets + layout provenance live with the DECLARED surface (pumpfun.py), so the
     # plan a consumer reads and the set this orchestrator assembles share one definition.
     BUYBACK_FEE_RECIPIENTS_COUNT,
@@ -168,6 +171,7 @@ def simulate_buy_landing(
     include_derive_only: bool = True,
     fetch_buy_instruction: FetchBuyInstruction | None = None,
     network_label: str | None = None,
+    record_to: str | Path | None = None,
 ) -> BuyLandingResult:
     """Assemble the Pump.fun landing bundle and simulate it → a :class:`BuyLandingResult`.
 
@@ -175,6 +179,13 @@ def simulate_buy_landing(
     (``max_sol_cost`` is quoted from the curve, NOT taken as input). Reads are control-plane
     only; the unsigned bundle is simulated, never sent. Both the RPC and the Orquestra build
     are injectable, so the whole path is falsifiable offline.
+
+    ``record_to`` is the D2 corpus opt-in — OFF by default (None = today's behavior,
+    nothing persisted). When set, ONE categorical ``SimulatedOutcome`` row for the
+    landing Receipt is appended to the path's segregated ``simulated.jsonl`` sibling
+    (:func:`gecko.providers.landing_record.record_landing_outcome`): status / revert
+    family / units / slot / network category + a values-free structural ``recipe_hash``
+    — never a pubkey, amount, or log line.
     """
     required = ("mint", "user", "amount", "fee_recipient", "track_volume")
     missing = [k for k in required if k not in bindings]
@@ -273,6 +284,23 @@ def simulate_buy_landing(
             unit_price_microlamports=unit_price_microlamports,
             track=[user],
             network_label=network_label,
+        )
+
+    # (6) the D2 corpus opt-in: categorical outcome → segregated simulated.jsonl. The
+    # fingerprint reads the plan's NAMES + the packaged seed-KIND graph, never the
+    # resolved accounts above. Explicit opt-in only — record_to=None persists nothing.
+    if record_to is not None:
+        record_landing_outcome(
+            landing_receipt,
+            program_id=PUMPFUN_PROGRAM_ID,
+            instruction="buy",
+            account_names=accounts,
+            arg_names=plan["args"],
+            pdas=pdas,
+            network_label=network_label,
+            rpc_url=rpc_url,
+            rpc_call=rpc_call,
+            record_to=record_to,
         )
 
     landing_plan = _declare_remaining_in_plan(plan["landing_plan"], remaining)

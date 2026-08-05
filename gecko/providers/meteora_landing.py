@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import urllib.error
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..landing import (
@@ -52,7 +53,8 @@ from ..meteora_math import DEFAULT_SLIPPAGE_BPS
 from ..pda_testkit import LOCAL_RPC, RpcCall
 from ..rpc import _http_post_json, validate_rpc_url
 from ..simulate import Receipt
-from .meteora import plan_swap
+from .landing_record import record_landing_outcome
+from .meteora import METEORA_PROGRAM_ID, _load_meteora_pdas, plan_swap
 
 __all__ = [
     "FetchSwapInstruction",
@@ -158,6 +160,7 @@ def simulate_swap_landing(
     include_derive_only: bool = True,
     fetch_swap_instruction: FetchSwapInstruction | None = None,
     network_label: str | None = None,
+    record_to: str | Path | None = None,
 ) -> SwapLandingResult:
     """Assemble the Meteora swap landing bundle and simulate it → a
     :class:`SwapLandingResult`.
@@ -167,6 +170,13 @@ def simulate_swap_landing(
     taken as input). Reads are control-plane only; the unsigned bundle is simulated,
     never sent. Both the RPC and the Orquestra build are injectable, so the whole path
     is falsifiable offline.
+
+    ``record_to`` is the D2 corpus opt-in — OFF by default (None = today's behavior,
+    nothing persisted). When set, ONE categorical ``SimulatedOutcome`` row for the
+    landing Receipt is appended to the path's segregated ``simulated.jsonl`` sibling
+    (:func:`gecko.providers.landing_record.record_landing_outcome`): status / revert
+    family / units / slot / network category + a values-free structural ``recipe_hash``
+    — never a pubkey, amount, or log line.
     """
     required = (
         "input_mint",
@@ -265,6 +275,23 @@ def simulate_swap_landing(
             unit_price_microlamports=unit_price_microlamports,
             track=[user],
             network_label=network_label,
+        )
+
+    # (5) the D2 corpus opt-in: categorical outcome → segregated simulated.jsonl. The
+    # fingerprint reads the plan's NAMES + the packaged seed-KIND graph, never the
+    # resolved accounts above. Explicit opt-in only — record_to=None persists nothing.
+    if record_to is not None:
+        record_landing_outcome(
+            landing_receipt,
+            program_id=METEORA_PROGRAM_ID,
+            instruction="swap",
+            account_names=accounts,
+            arg_names=plan["args"],
+            pdas=_load_meteora_pdas(),
+            network_label=network_label,
+            rpc_url=rpc_url,
+            rpc_call=rpc_call,
+            record_to=record_to,
         )
 
     return SwapLandingResult(

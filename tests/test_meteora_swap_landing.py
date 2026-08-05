@@ -308,7 +308,51 @@ def test_derive_only_receipt_is_the_raw_build() -> None:
     assert result.derive_only_receipt.revert_class == "account_error"
 
 
-# --- env-gated real E2E: the side-by-side a-ha on a surfpool mainnet fork -----
+# --- the D2 corpus opt-in (task #85): record_to wiring on the orchestrator ------------
+
+
+def test_record_to_default_none_writes_nothing(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    simulate_swap_landing(
+        _bindings(),
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_fake_rpc(PASS_VALUE),
+        fetch_swap_instruction=lambda a, ar, fp: _canned_swap(dict(a)),
+        include_derive_only=False,
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_record_to_appends_one_categorical_swap_row(tmp_path) -> None:
+    import json
+
+    from gecko.corpus import SIMULATED_ALLOWED_KEYS
+    from gecko.providers.meteora import METEORA_PROGRAM_ID as PROGRAM
+
+    corpus = tmp_path / "corpus.jsonl"
+    result = simulate_swap_landing(
+        _bindings(),
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_fake_rpc(PASS_VALUE),
+        fetch_swap_instruction=lambda a, ar, fp: _canned_swap(dict(a)),
+        include_derive_only=False,
+        record_to=corpus,
+    )
+    sibling = tmp_path / "simulated.jsonl"
+    raw = sibling.read_text()
+    rows = [json.loads(line) for line in raw.splitlines()]
+    assert len(rows) == 1  # exactly one row for the opted-in run
+    row = rows[0]
+    assert set(row) == SIMULATED_ALLOWED_KEYS
+    assert row["instruction"] == "swap"
+    assert row["program_id"] == PROGRAM
+    assert row["status"] == "pass"
+    assert row["source"] == "simulated"
+    # values-free: no resolved account or bin_array pubkey persisted (the amount
+    # canary is covered digit-collision-safely in the pump orchestrator canary test)
+    assert result.min_amount_out > 0
+    for canary in (USER, CURRENT_POOL, *result.bin_arrays):
+        assert canary not in raw
 
 
 @pytest.mark.skipif(
