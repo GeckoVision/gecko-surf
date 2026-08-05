@@ -1,23 +1,36 @@
-# gecko-surf
+<p align="center">
+  <img src="docs/assets/banner.jpg" alt="Gecko — the web wasn't built for agents. Yet." width="100%">
+</p>
+
+<h1 align="center">The knowledge graph for APIs your agent can trust</h1>
+
+<p align="center">
+  Open-source. Runs on your machine. One command maps any API — even the messy, paywalled,<br>
+  or on-chain ones — into a verified graph your agent <b>traverses instead of guessing</b>.<br>
+  Every action can be simulated to a <b>receipt</b> before money moves.
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+"></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/surface-MCP-D97757.svg" alt="MCP"></a>
+  <a href="#development"><img src="https://img.shields.io/badge/tests-2400%2B%20passing-2E7D32.svg" alt="tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg" alt="Apache 2.0"></a>
+  <a href="https://x402.org/"><img src="https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg" alt="x402"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start"><b>Quickstart</b></a> ·
+  <a href="https://docs.geckovision.tech"><b>Docs</b></a> ·
+  <a href="docs/architecture.md"><b>Architecture</b></a> ·
+  <a href="#faq"><b>FAQ</b></a> ·
+  <a href="SECURITY.md"><b>Security</b></a>
+</p>
 
 <!-- mcp-name: tech.geckovision/surf -->
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
-[![uv](https://img.shields.io/badge/uv-managed-DE5FE9.svg)](https://docs.astral.sh/uv/)
-[![Claude Code](https://img.shields.io/badge/surface-MCP-D97757.svg)](https://modelcontextprotocol.io/)
-[![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-2400%2B%20passing-2E7D32.svg)](#development)
-
-> **The knowledge graph for APIs your agent can trust.**
-> Open-source. Runs on your machine. One command maps any API — even the messy,
-> paywalled, or on-chain ones — into a verified graph your agent **traverses instead
-> of guessing**. Every action can be simulated to a **receipt** before money moves.
-> Built for the calls your agent must not get wrong.
-
-<p align="center">
-  <img src="docs/assets/architecture.png" alt="Gecko architecture — untrusted surfaces → provenance knowledge graph → verified action (simulate → receipt → external signer)" width="860">
-</p>
+> **Built for the calls your agent must not get wrong.** Two axes, either one qualifies:
+> a **messy surface** (paywalled, drifting, undocumented, on-chain) or a **high-stakes
+> action** (your agent runs unattended with credentials or money).
 
 ## Quick start
 
@@ -145,6 +158,10 @@ Gecko recovers the seeds the IDL drops, plans the full instruction, Orquestra bu
 it, and the receipt says whether it lands — before any signature.
 
 ## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.png" alt="Gecko architecture — untrusted surfaces → provenance knowledge graph → verified action (simulate → receipt → external signer)" width="860">
+</p>
 
 **Control plane, never data plane.** Gecko stores surfaces + correctness metadata —
 never response payloads, user data, or secrets.
