@@ -1,0 +1,111 @@
+{
+  "intents": [
+    "plan_buy"
+  ],
+  "notes": "Pump.fun bonding-curve program. 'Swap' = buy/sell against a per-mint bonding curve; executes via the wired Orquestra project's /instructions/buy/build. Recipes from pump-fun/pump-public-docs idl/pump.json, cross-verified against real mainnet accounts. Pump tokens may be Token-2022; the ATA recipes are parameterized on token_program, which Gecko resolves from the mint owner (read_account_owner). Post-Apr-2026 program (BREAKING_FEE_RECIPIENT.md): a buy is 18 accounts — the 16 original + bonding_curve_v2 (seed ['bonding-curve-v2', mint]; created LAZILY, the ADDRESS is what the instruction needs — assert address-correct, never existence) + a buyback fee recipient from Global.buyback_fee_recipients ([pubkey;8] @ data offset 741) appended after it. fee_recipient is NOT modelled as a PDA/resolver: the live simulate Receipt established empirically that `buy` accepts a REGULAR recipient — Global.fee_recipients[0] @ data offset 162 — while the single `fee_recipient` field @ offset 41 is a BUYBACK recipient (passing it reverted 6062; earlier '@41' guidance refuted), so plan_buy declares fee_recipient as unresolved with the @162 read recipe rather than hardcode a rotatable pubkey. fee_config = PDA under the fee program pfeeUxB6...; associated_user = the buyer's ATA.",
+  "include": [
+    "global",
+    "mint_authority",
+    "event_authority",
+    "global_volume_accumulator",
+    "bonding_curve",
+    "bonding_curve_v2",
+    "user_volume_accumulator",
+    "creator_vault",
+    "associated_bonding_curve",
+    "associated_user",
+    "fee_config"
+  ],
+  "pdas": {
+    "bonding_curve_v2": {
+      "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "bonding-curve-v2",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "creator_vault": {
+      "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "creator-vault",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "resolver",
+          "name": "creator",
+          "depends_on": [
+            "bonding_curve"
+          ],
+          "reason": "seed is bonding_curve.data.creator — fetch the bonding_curve account + Anchor-decode its creator field; the dotted-path seed a naive IDL->derivation drops (#4057)",
+          "resolve": {
+            "read": "bonding_curve",
+            "field_offset": 49
+          }
+        }
+      ]
+    },
+    "associated_bonding_curve": {
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "owner",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "associated_user": {
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "owner",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    }
+  },
+  "why": {
+    "bonding_curve_v2": "hidden account: required post-Apr-2026 but the IDL never names it (it travels only as a remaining_accounts entry mentioned in doc text); seed verified against pump-public-docs + mainnet",
+    "creator_vault": "the surface honestly flags the seed (bonding_curve.creator is runtime data); the @49 read recipe that RESOLVES it came from Anchor-decoding the BondingCurve layout, not from the surface",
+    "associated_bonding_curve": "generic ATA parameterization: the IDL binds the owner seed to the literal bonding_curve account; re-parameterized on 'owner' so one recipe serves every ATA derivation",
+    "associated_user": "the buyer's ATA — the IDL carries no pda block for it at all; hand-modelled under the SPL Associated Token program"
+  }
+}

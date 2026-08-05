@@ -1,0 +1,86 @@
+{
+  "notes": "ORE V3 (regolith-labs/ore), a Steel-framework program (no Anchor IDL — seeds live in source). Singletons config/board/treasury are const-only; automation/miner bind `authority` (NOT the tx signer — an automation bot signs for a different authority); round's id is read from board/miner data (resolver). The `stake` account is CPI'd across a program boundary and belongs to the SEPARATE ore-stake program — its owner is stakecNP..., not ORE. Recipes cross-verified against regolith-labs/ore@master + real mainnet accounts.",
+  "include": [
+    "config",
+    "board",
+    "treasury",
+    "automation",
+    "miner",
+    "round",
+    "stake"
+  ],
+  "pdas": {
+    "automation": {
+      "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "automation",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "authority",
+          "source": "argument",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "miner": {
+      "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "miner",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "authority",
+          "source": "argument",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "round": {
+      "program_id": "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "round",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "resolver",
+          "name": "round_id",
+          "depends_on": [
+            "board"
+          ],
+          "reason": "seed is board.round_id (deploy/reset) or miner.round_id (checkpoint) read from account data — not a free-choice argument"
+        }
+      ]
+    },
+    "stake": {
+      "program_id": "stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "stake",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "signer",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    }
+  },
+  "why": {
+    "automation": "the seed is an authority ARGUMENT, not the tx signer account: an automation bot signs for a different authority (the exact confusion upstream fixed in ore-cli PR #150); the Orquestra-synthesized IDL binds it to 'signer'",
+    "miner": "same authority-vs-signer distinction as automation — the IDL's 'signer' binding is misleading for bot flows",
+    "round": "geometry vs state: source recovers the shape (['round', id u64 LE]) but the id's VALUE is board.round_id / miner.round_id read from account data — not a free-choice argument, so it stays an honest resolver",
+    "stake": "cross-program: the stake account is CPI'd into the SEPARATE ore-stake program (stakecNP...); the Orquestra-synthesized IDL derives it under ORE's own id — a plausible-but-wrong address"
+  }
+}
