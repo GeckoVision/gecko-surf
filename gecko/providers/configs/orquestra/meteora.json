@@ -29,7 +29,37 @@
           {"kind": "constant", "value": "oracle", "encoding": "utf8"},
           {"kind": "variable", "name": "lb_pair", "source": "account", "encoding": "pubkey"}
         ]
+      },
+      "bin_array": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "constant", "value": "bin_array", "encoding": "utf8"},
+          {"kind": "variable", "name": "lb_pair", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "index", "source": "argument", "encoding": "le", "width": 8}
+        ]
+      },
+      "bin_array_bitmap_extension": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "constant", "value": "bitmap", "encoding": "utf8"},
+          {"kind": "variable", "name": "lb_pair", "source": "account", "encoding": "pubkey"}
+        ]
+      },
+      "event_authority": {
+        "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        "seeds": [
+          {"kind": "constant", "value": "__event_authority", "encoding": "utf8"}
+        ]
+      },
+      "user_token": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {"kind": "variable", "name": "owner", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "token_program", "source": "account", "encoding": "pubkey"},
+          {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
+        ]
       }
-    }
+    },
+    "notes": "Meteora DLMM. The swap's bin_array PDAs travel as remaining_accounts the IDL never names: seed ['bin_array', lb_pair, index(i64 LE)] (MeteoraAg/dlmm-sdk commons/src/pda.rs::derive_bin_array_pda + seeds.rs BIN_ARRAY), index = floor(bin_id / 70) (bin_array.rs::bin_id_to_bin_array_index, MAX_BIN_PER_ARRAY=70). Which indexes a swap needs comes from lb_pair.active_id + the pool's liquidity bitmap (quote.rs::get_bin_array_pubkeys_for_swap) — a LIVE STATE read, not geometry; plan_swap performs it. The index is SIGNED (negative below price 1.0). bin_array_bitmap_extension = ['bitmap', lb_pair] (optional swap account; holds liquidity flags beyond array index +/-512)."
   }
 }

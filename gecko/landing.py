@@ -32,16 +32,19 @@ from .simulate import BuiltTx, Receipt, simulate
 __all__ = [
     "ASSOCIATED_TOKEN_PROGRAM_ID",
     "COMPUTE_BUDGET_PROGRAM_ID",
+    "NATIVE_SOL_MINT",
     "SYSTEM_PROGRAM_ID",
     "TOKEN_2022_PROGRAM_ID",
     "TOKEN_PROGRAM_ID",
     "LandingError",
     "assemble_unsigned_tx",
+    "close_account_ix",
     "compute_budget_ixs",
     "create_idempotent_ata_ix",
     "orquestra_instruction_to_solders",
     "simulate_landing_bundle",
     "with_remaining_accounts",
+    "wrap_sol_ixs",
 ]
 
 COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
@@ -49,12 +52,20 @@ ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+# The native-SOL sentinel mint: a pool/instruction whose leg is this mint moves SOL as
+# wrapped SOL, so the landing bundle needs wrap (transfer + SyncNative) / CloseAccount.
+NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112"
 
 # ComputeBudget instruction discriminators (first data byte).
 _CU_SET_LIMIT = 2  # SetComputeUnitLimit(u32 units)
 _CU_SET_PRICE = 3  # SetComputeUnitPrice(u64 micro-lamports)
 # Associated-Token-Account program instruction discriminator.
 _ATA_CREATE_IDEMPOTENT = 1  # CreateIdempotent (0 = Create, 2 = RecoverNested)
+# System program instruction index (u32 LE).
+_SYSTEM_TRANSFER = 2  # Transfer { lamports: u64 }
+# SPL-Token program instruction discriminators (first data byte).
+_TOKEN_CLOSE_ACCOUNT = 9  # CloseAccount
+_TOKEN_SYNC_NATIVE = 17  # SyncNative
 
 # The default max CU limit for the first (learning) pass — Solana's per-tx cap. A bare
 # probe sim reports units_consumed; the second pass sets the real limit from that.
@@ -126,6 +137,47 @@ def create_idempotent_ata_ix(
         bytes([_ATA_CREATE_IDEMPOTENT]),
         metas,
     )
+
+
+def wrap_sol_ixs(owner: str, wsol_ata: str, lamports: int) -> list[Any]:
+    """The wSOL wrap prelude pair: a System ``Transfer`` of ``lamports`` into the
+    owner's wSOL ATA, then SPL-Token ``SyncNative`` so the token balance reflects
+    them. Standard public instructions; the ATA itself is created separately with
+    :func:`create_idempotent_ata_ix` (native SOL is always classic SPL-Token, never
+    Token-2022). Raises on a non-positive amount — a zero wrap is a caller bug.
+    """
+    from solders.instruction import AccountMeta, Instruction
+
+    if lamports <= 0:
+        raise LandingError(f"wrap_sol_ixs needs a positive lamports, got {lamports}")
+    transfer = Instruction(
+        _pubkey(SYSTEM_PROGRAM_ID),
+        struct.pack("<IQ", _SYSTEM_TRANSFER, lamports),
+        [
+            AccountMeta(_pubkey(owner), True, True),  # funding account (signer)
+            AccountMeta(_pubkey(wsol_ata), False, True),
+        ],
+    )
+    sync_native = Instruction(
+        _pubkey(TOKEN_PROGRAM_ID),
+        bytes([_TOKEN_SYNC_NATIVE]),
+        [AccountMeta(_pubkey(wsol_ata), False, True)],
+    )
+    return [transfer, sync_native]
+
+
+def close_account_ix(account: str, destination: str, owner: str) -> Any:
+    """SPL-Token ``CloseAccount`` — closes ``account`` and sends its lamports (for a
+    wSOL ATA: the unwrapped SOL plus the rent) to ``destination``. The unwrap half of
+    a SOL-leg landing bundle, placed AFTER the program instruction."""
+    from solders.instruction import AccountMeta, Instruction
+
+    metas = [
+        AccountMeta(_pubkey(account), False, True),
+        AccountMeta(_pubkey(destination), False, True),
+        AccountMeta(_pubkey(owner), True, False),  # close authority (signer)
+    ]
+    return Instruction(_pubkey(TOKEN_PROGRAM_ID), bytes([_TOKEN_CLOSE_ACCOUNT]), metas)
 
 
 def orquestra_instruction_to_solders(instruction: Mapping[str, Any]) -> Any:
@@ -223,20 +275,28 @@ def simulate_landing_bundle(
     unit_price_microlamports: int = 0,
     track: Sequence[str] = (),
     network_label: str | None = None,
+    postlude_ixs: Sequence[Any] = (),
 ) -> tuple[Receipt, int]:
-    """Two-pass simulate the bundle ``[compute_budget..., *prelude_ixs, program_ix]``.
+    """Two-pass simulate ``[compute_budget..., *prelude_ixs, program_ix, *postlude_ixs]``.
 
-    Pass 1 uses a generous CU limit to learn ``units_consumed``; pass 2 sets the limit to
-    ``units × 1.2`` (+ the priority-fee price if given) and returns that Receipt plus the
-    chosen limit. If pass 1 does not pass (or reports no units), it is returned as-is with
-    the max limit — the honest verdict, no second guess. ``simulateTransaction`` only; the
-    unsigned tx is never sent.
+    ``postlude_ixs`` run AFTER the program instruction — e.g. the wSOL ``CloseAccount``
+    unwrap of a SOL-leg swap. Pass 1 uses a generous CU limit to learn
+    ``units_consumed``; pass 2 sets the limit to ``units × 1.2`` (+ the priority-fee
+    price if given) and returns that Receipt plus the chosen limit. If pass 1 does not
+    pass (or reports no units), it is returned as-is with the max limit — the honest
+    verdict, no second guess. ``simulateTransaction`` only; the unsigned tx is never
+    sent.
     """
     kwargs: dict[str, Any] = {"rpc_url": rpc_url, "rpc_call": rpc_call, "track": track}
     if network_label is not None:
         kwargs["network_label"] = network_label
 
-    first_ixs = [*compute_budget_ixs(_MAX_UNIT_LIMIT), *prelude_ixs, program_ix]
+    first_ixs = [
+        *compute_budget_ixs(_MAX_UNIT_LIMIT),
+        *prelude_ixs,
+        program_ix,
+        *postlude_ixs,
+    ]
     first = simulate(
         {},
         build_call=lambda _plan: assemble_unsigned_tx(first_ixs, fee_payer),
@@ -250,6 +310,7 @@ def simulate_landing_bundle(
         *compute_budget_ixs(limit, unit_price_microlamports),
         *prelude_ixs,
         program_ix,
+        *postlude_ixs,
     ]
     second = simulate(
         {},
