@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.10.1 — 2026-08-06
+
+### Fixed
+- **`gecko prove` crashed in the published binary.** Every packaged-config read went
+  through a multi-argument `joinpath`, which works from source but raises
+  `TypeError: MultiplexedPath.joinpath() takes 2 positional arguments but 3 were given`
+  inside a PyInstaller binary — so 0.10.0 shipped with the new command broken while the
+  full suite passed. One segment per call now.
+
+  **The gap was the test surface, not the code.** Nothing exercised the frozen artifact,
+  so the one environment users actually get was the one nothing looked at. Added a fake
+  that reproduces `MultiplexedPath`'s one-segment constraint, plus a guard asserting the
+  fake still rejects the broken call — a fake that quietly accepted two segments would
+  pass against the very bug it exists to catch.
+
 ## 0.10.0 — 2026-08-06
 
 The release where a verified plan became a landed transaction.

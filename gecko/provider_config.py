@@ -288,7 +288,15 @@ def provider_config_from_dict(data: dict) -> ProviderConfig:
 
 
 def _read_json(provider: str, filename: str) -> dict:
-    anchor = resources.files("gecko.providers.configs").joinpath(provider, filename)
+    # One segment per joinpath call, deliberately. Inside a PyInstaller binary the
+    # package resolves to a `MultiplexedPath`, whose `joinpath` accepts exactly ONE
+    # segment — the multi-arg form works from source and raises
+    # `TypeError: takes 2 positional arguments but 3 were given` once frozen. Every
+    # packaged-config read goes through here, so the multi-arg form broke `gecko prove`
+    # in the published binary while every test passed from source.
+    anchor = (
+        resources.files("gecko.providers.configs").joinpath(provider).joinpath(filename)
+    )
     return json.loads(anchor.read_text(encoding="utf-8"))
 
 
