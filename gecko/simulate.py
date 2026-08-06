@@ -113,6 +113,13 @@ class Receipt:
     tokens_received: int | None
     logs_tail: tuple[str, ...]
     network_label: str
+    #: sha256 over the transaction's MESSAGE — what makes this Receipt attest THIS
+    #: transaction rather than "some plan like it". ``None`` when the tx could not be
+    #: decoded locally; a caller that needs the binding must treat that as a refusal.
+    message_binding: str | None = None
+    #: How much of the message the binding covers. ``structural`` omits the blockhash,
+    #: which is the honest ceiling while we simulate with ``replaceRecentBlockhash``.
+    binding_strength: str | None = None
 
 
 def _custom_code(err: Any) -> int | None:
@@ -234,6 +241,7 @@ def simulate(
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
     network_label: str = _DEFAULT_NETWORK_LABEL,
+    replace_blockhash: bool = True,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
 
@@ -260,11 +268,34 @@ def simulate(
     sim_config: dict[str, Any] = {
         "encoding": built.encoding,
         "sigVerify": False,
-        "replaceRecentBlockhash": True,
+        # Replacing the blockhash is right for a plan-shaped check and wrong for a
+        # pre-signature one: the simulation then ran against a DIFFERENT message than the
+        # one that would be signed, so the receipt can only bind structurally. Pass
+        # replace_blockhash=False with a real, fresh blockhash to earn an `exact` binding
+        # — and inherit its ~150-slot expiry along with it.
+        "replaceRecentBlockhash": replace_blockhash,
         "commitment": "processed",
     }
     if tracked:
         sim_config["accounts"] = {"encoding": "base64", "addresses": tracked}
+
+    # Bind the Receipt to the exact message being simulated, so a signer can later prove
+    # the transaction in front of it is this one. Best-effort: a builder we cannot decode
+    # yields no binding, and `evaluate_tx` refuses on a missing binding rather than
+    # assuming — never the reverse.
+    binding: str | None = None
+    strength: str | None = None
+    try:
+        from .txbind import message_binding as _bind
+
+        from .txbind import BindingStrength
+
+        chosen: BindingStrength = "structural" if replace_blockhash else "exact"
+        strength = chosen
+        binding = _bind(built.tx, encoding=built.encoding, strength=chosen)
+    except Exception:  # noqa: BLE001 - a binding we cannot compute is absent, not fatal
+        binding = None
+        strength = None
 
     sim = call(rpc_url, "simulateTransaction", [built.tx, sim_config])
     value = (sim.get("result") or {}).get("value") or {}
@@ -296,4 +327,6 @@ def simulate(
         tokens_received=tokens_received,
         logs_tail=tuple(logs[-12:]),
         network_label=network_label,
+        message_binding=binding,
+        binding_strength=strength,
     )
