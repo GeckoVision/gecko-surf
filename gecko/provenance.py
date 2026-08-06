@@ -59,4 +59,15 @@ CrossApiProvenance = Literal["DECLARED", "INFERRED"]
 # --- program surface ladder -----------------------------------------------------
 ProgramProvenanceTier = Literal["extracted", "recovered", "manual"]
 
-AccountProvenance = Literal["extracted", "recovered", "flagged"]
+# ``cross_surface`` is the fourth account origin and the only one that cannot come from
+# any program artifact: an account supplied by a DIFFERENT surface at request time.
+#
+# Jupiter is the case that forced it. The program surface names 9 accounts for `route`;
+# the instruction that actually lands carries 25, because the other 16 are the AMM legs
+# of whichever route the aggregator's HTTP API picked at that instant. No IDL can hold
+# them — not because the IDL is deficient, but because the value does not exist until an
+# unrelated surface answers. Labelling them `extracted` would claim the program declared
+# them; labelling them `recovered` would claim we derived them from source. Neither is
+# true, and an account whose origin we cannot state honestly is exactly the kind of thing
+# this ladder exists to prevent.
+AccountProvenance = Literal["extracted", "recovered", "cross_surface", "flagged"]

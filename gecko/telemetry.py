@@ -227,14 +227,23 @@ def read_or_create_install_id(path: str | Path | None = None) -> str:
     new_id = str(uuid.uuid4())
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Exclusive create: whoever wins writes; everyone else falls through to re-read.
-        with open(target, "x", encoding="utf-8") as handle:
-            handle.write(new_id + "\n")
-        return new_id
-    except FileExistsError:
-        # Another process created it between our read and our write — theirs is the
-        # identity for this machine.
-        return _read() or new_id
+        # Write the id to a private temp file FIRST, then publish it with an atomic link.
+        # An exclusive-create-then-write would still race: the loser can open the file in
+        # the window after creation but before the write and read it empty, then fall back
+        # to its own uuid — the same split identity, just harder to reproduce. Linking a
+        # fully-written file means the target is never observed incomplete. The staged
+        # name is keyed on the candidate id, not the pid — concurrent THREADS share a
+        # pid and would otherwise unlink each other's staging file.
+        staged = target.with_name(f"{target.name}.{new_id}.tmp")
+        staged.write_text(new_id + "\n", encoding="utf-8")
+        try:
+            os.link(staged, target)
+            return new_id
+        except FileExistsError:
+            # Another process published first — theirs is this machine's identity.
+            return _read() or new_id
+        finally:
+            staged.unlink(missing_ok=True)
     except OSError:
         logger.warning("could not persist install-id (ephemeral this run)")
         return new_id
