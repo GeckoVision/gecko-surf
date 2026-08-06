@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 
+from gecko.providers.cli import PROGRAMS
 from gecko.find_start import (
     FindStartResult,
     MissRecord,
@@ -164,7 +165,9 @@ def test_recovered_tags_are_program_level_truths() -> None:
     """lb_pair is source-recovered no matter which card shows it — the surface
     card must not downgrade it to 'extracted' while the intent card says
     'recovered'."""
-    result = find_start("swap sol for usdc")
+    # limit raised past the default: a fifth wired program pushes meteora's SURFACE
+    # card (its intent card ranks higher) out of the top 5.
+    result = find_start("swap sol for usdc", limit=12)
     surface = next(
         p for p in result.starts if p.kind == "surface" and p.program == "meteora"
     )
@@ -181,31 +184,35 @@ def test_wired_program_hint_narrows_the_search() -> None:
 
 
 def test_unwired_program_hint_returns_a_comprehend_pointer() -> None:
+    # Jupiter used to stand in for "unwired" here; it is wired now, so the fixture's
+    # PancakeSwap plays that role. The behaviour under test is unchanged.
     page = _fixture_client().list_projects(page=1)
-    result = find_start("swap tokens", program="Jupiter", catalog_pages=[page])
+    result = find_start("swap tokens", program="PancakeSwap", catalog_pages=[page])
     assert result.no_start
     assert "not wired" in result.note
     assert result.catalog  # the D-A path: comprehend first
     top = result.catalog[0]
-    assert "jupiter" in top.name.lower()
+    assert "pancakeswap" in top.name.lower()
     assert top.comprehend_first["tool"] == "comprehend_program"
     assert top.slug in top.comprehend_first["cli"]
 
 
 def test_catalog_candidates_ride_along_as_pointers_not_starts() -> None:
+    # An UNWIRED catalog entry (Jupiter itself is wired now, so this is a different
+    # aggregator) must ride along as a pointer and never outrank a wired start.
     projects = (
         ProjectInfo(
-            id="jup6slug",
-            name="Jupiter Aggregator",
-            program_id="JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+            id="raydslug",
+            name="Raydium AMM",
+            program_id="675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
             description="swap aggregator routing across pools",
         ),
     )
     page = ProjectCatalogPage(projects=projects, page=1, total_pages=1, total=1)
-    result = find_start("swap sol for usdc", catalog_pages=[page])
+    result = find_start("swap sol for usdc on meteora", catalog_pages=[page])
     assert not result.no_start  # the wired start still wins
     assert result.starts[0].program == "meteora"
-    assert [c.slug for c in result.catalog] == ["jup6slug"]
+    assert [c.slug for c in result.catalog] == ["raydslug"]
     assert "NOT yet comprehended" in result.catalog[0].comprehend_first["step"]
 
 
@@ -275,7 +282,7 @@ def test_miss_record_counts_are_sane() -> None:
     (record,) = records
     assert record.intent_term_count == 3  # 'the' is a stopword
     assert record.matched_score == 0
-    assert record.wired_program_count == 4
+    assert record.wired_program_count == len(PROGRAMS)
     assert record.margin == 0  # all fallback guesses score 0
 
 

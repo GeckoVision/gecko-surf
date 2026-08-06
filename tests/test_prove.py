@@ -221,3 +221,44 @@ def test_catalog_pointers_are_offered_when_nothing_is_wired() -> None:
     )
 
     assert "kamino" in "\n".join(format_proof(result))
+
+
+# --------------------------------------------------------------------------- #
+# The floor — refusing to guess is a feature, and it is regression-tested live.
+# --------------------------------------------------------------------------- #
+def test_a_single_shared_noun_does_not_produce_a_runnable_start() -> None:
+    """Observed live before the fix: "get me out of hyUSD into USDC" routed to
+    metadao/fund on the single word "usdc", score 2, and was served as a plan to RUN.
+    A term that names no program and no action is not evidence."""
+    from gecko.find_start import find_start
+
+    result = find_start("get me out of hyUSD into USDC")
+
+    assert result.no_start
+    # Surface cards may still ride along ("this program is plausibly relevant"); what
+    # must NOT appear is a runnable start.
+    assert not any(start.kind == "start" for start in result.starts)
+
+
+def test_naming_the_action_still_routes() -> None:
+    """The floor must not become a wall — an intent that names a real action routes."""
+    from gecko.find_start import find_start
+
+    result = find_start("route a swap out of hyUSD")
+
+    assert not result.no_start
+    assert result.starts[0].kind == "start"
+    assert result.starts[0].program == "jupiter"
+
+
+def test_the_other_wired_programs_still_route() -> None:
+    from gecko.find_start import find_start
+
+    for intent, program in (
+        ("buy this token on pump.fun", "pumpfun"),
+        ("swap wsol to usdc on meteora", "meteora"),
+        ("claim my ore rewards", "ore"),
+    ):
+        result = find_start(intent)
+        assert not result.no_start, intent
+        assert result.starts[0].program == program, intent

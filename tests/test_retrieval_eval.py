@@ -178,14 +178,18 @@ def test_evaluate_golden_pins_the_showcase_rows() -> None:
     assert showcase.gold_rank == 1
     assert showcase.top1_name == "pumpfun/buy"
 
-    # a true paraphrase with concrete mints the gold card never names: the gold is
-    # wired, the vocabulary just doesn't reach it — real flip evidence. Since the
-    # metadao fund card was wired, its "usdc" vocabulary clears the floor here with
-    # a WRONG start (floor="start", top1 != gold) — stronger flip evidence than the
-    # old below-floor guess, and exactly what the record makes countable.
+    # A true paraphrase with concrete mints the gold card never names: the gold is
+    # wired, the vocabulary just doesn't reach it — real flip evidence.
+    #
+    # This row used to assert floor == "start", pinning a DEFECT as expected behaviour:
+    # metadao/fund's "usdc" vocabulary cleared the old floor and was served as a plan to
+    # RUN, with top1 != gold. A single shared noun that names neither a program nor an
+    # action is not evidence, so the floor now demotes it to a guess. The vocabulary gap
+    # is unchanged and still countable — what changed is that we no longer hand back a
+    # wrong runnable start while we have it.
     paraphrase = by_intent["convert usdc to bonk"]
     assert paraphrase.cause == "vocabulary_gap"
-    assert paraphrase.floor == "start"
+    assert paraphrase.floor == "guess"
     assert paraphrase.top1_name != "meteora/swap"
 
     # the fund rows wired this sprint route to the new start (was a coverage gap)
@@ -243,7 +247,11 @@ def test_below_floor_rows_are_marked_guess_floor() -> None:
         record = outcome.record
         assert record.floor in {"start", "guess"}
         if record.floor == "guess":
-            assert all(c.kind == "guess" for c in record.top_candidates)
+            # No RUNNABLE candidate survived the floor. A `surface` card may still ride
+            # along — it says "this program is plausibly relevant, start from its derive
+            # tools", which is a hedge, not a plan, so it carries none of the risk the
+            # floor exists to prevent.
+            assert all(c.kind != "start" for c in record.top_candidates)
 
 
 def test_evaluate_golden_accepts_a_custom_fixture(tmp_path: Path) -> None:

@@ -509,6 +509,41 @@ def _card_terms(card: _Card) -> set[str]:
     )
 
 
+def _distinguishing_terms(q_tokens: set[str], cards: Sequence["_Card"]) -> set[str]:
+    """Query terms that actually narrow the field.
+
+    A term present in most cards cannot select between them. "usdc" appears in nearly
+    every program's prose, so matching on it alone is not evidence that THIS program is
+    the right one — and a single such overlap was enough to promote a card to a runnable
+    start (observed live: "get me out of hyUSD into USDC" routed to metadao/fund on a
+    score of 2, matching "usdc" and nothing else).
+
+    Document frequency settles it deterministically, with no vectors and no model: a term
+    carried by more than half the cards is incidental; the rest are distinguishing. The
+    threshold is a property of the corpus, not a tuned constant — as more programs are
+    wired, terms that used to distinguish stop doing so on their own, which is correct.
+    """
+    if not cards:
+        return set()
+    frequency: dict[str, int] = {}
+    for card in cards:
+        for term in _card_terms(card) & q_tokens:
+            frequency[term] = frequency.get(term, 0) + 1
+    ceiling = len(cards) / 2
+    return {term for term, count in frequency.items() if count <= ceiling}
+
+
+def _identity_terms(card: "_Card") -> set[str]:
+    """The terms that NAME this card — its program and its instruction.
+
+    Matching one of these is direct evidence the caller meant this program or this
+    action. Matching only surrounding prose is not: every DeFi program's description
+    mentions tokens, swaps and USDC.
+    """
+    parts = [card.api_id, card.instruction or "", card.intent_name or ""]
+    return _tokens(" ".join(parts))
+
+
 def _start_point(
     card: _Card, score: int, why: tuple[str, ...], kind: StartKind
 ) -> StartPoint:
@@ -679,12 +714,44 @@ def find_start(
     )
     genuine = [se for se in scored if not se.is_fallback]
     if genuine:
+        # The scorer's fallback flag is not a floor: a single incidental token overlap
+        # clears it, and the result was presented as a RUNNABLE start. Require the match
+        # to rest on at least one term that actually narrows the field; a card matched
+        # only on terms everything shares is demoted to a guess, which is what it is.
+        distinguishing = _distinguishing_terms(q_tokens, cards)
         points = []
         for se in genuine:
             card = by_op[id(se.entry.operation)]
             why = tuple(sorted(q_tokens & _card_terms(card)))
-            points.append(_start_point(card, se.score, why, kind=card.kind))
+            matched = set(why)
+            # A runnable start needs evidence the caller meant THIS program: either the
+            # match names the program or its instruction, or it rests on two independent
+            # distinguishing terms. One shared noun is not evidence — "get me out of
+            # hyUSD into USDC" matched metadao/fund on the single word "usdc" and was
+            # served as a plan to run.
+            named = bool(matched & _identity_terms(card))
+            corroborated = len(matched & distinguishing) >= 2
+            # Only RUNNABLE cards are gated. A `surface` card already says "start from
+            # this program's derive tools", which is a hedge, not a plan — demoting it
+            # would erase the useful middle answer ("this program is plausibly relevant")
+            # without preventing any harm.
+            gated = card.kind == "start" and not (named or corroborated)
+            kind = "guess" if gated else card.kind
+            points.append(_start_point(card, se.score, why, kind=kind))
         points.sort(key=lambda p: (-p.score, _KIND_RANK[p.kind], p.program))
+        if not any(point.kind == "start" for point in points):
+            _miss(max((p.score for p in points), default=0), tuple(points))
+            return FindStartResult(
+                starts=tuple(points),
+                catalog=candidates,
+                no_start=True,
+                note=(
+                    "no start found — nothing matched a term naming a wired program "
+                    "or its instruction, and no candidate was corroborated by two "
+                    "distinguishing terms. The entries below are closest candidates "
+                    "(GUESSES), not starts."
+                ),
+            )
         return FindStartResult(
             starts=tuple(points),
             catalog=candidates,

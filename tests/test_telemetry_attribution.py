@@ -179,3 +179,41 @@ def test_stored_rows_reclassify_on_read() -> None:
     }
 
     assert reclassify_client(stored) == "client"
+
+
+def test_serve_never_declares_a_local_identity(sink: Any, monkeypatch: Any) -> None:
+    """`gecko serve` is the SAME entry point that runs the hosted surface. Declaring an
+    identity before dispatch would stamp the server's own machine id onto every visitor's
+    event and collapse every user into one — worse than counting nothing."""
+    from gecko import cli
+
+    events.set_local_install_id(None)
+    monkeypatch.setattr(cli.serve, "main", lambda *_a, **_kw: 0)
+
+    cli.main(["serve", "https://example.com/openapi.json"])
+
+    assert events.local_install_id() is None
+
+
+def test_a_local_command_does_declare_one(sink: Any, monkeypatch: Any) -> None:
+    from gecko import cli
+
+    events.set_local_install_id(None)
+    monkeypatch.setattr(cli, "_cmd_list", lambda *_a, **_kw: 0)
+
+    cli.main(["list"])
+
+    assert events.local_install_id() is not None
+
+
+def test_an_explicit_none_install_id_is_honoured(sink: Any) -> None:
+    """The server forwards whatever the visitor's handshake carried — usually nothing.
+    Treating that explicit None as 'unset' let the server's own id ride out on other
+    people's traffic whenever anything earlier in the process had declared one."""
+    events.set_local_install_id("the-servers-own-machine")
+
+    events.emit_surf_event(
+        "surf.connect", surface_id="gecko", client="claude-code/1", install_id=None
+    )
+
+    assert sink[0].get("install_id") is None

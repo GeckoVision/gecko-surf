@@ -517,7 +517,13 @@ def emit_surf_event(
     #    local client. An explicit caller-supplied value always wins (the onboard ping
     #    passes its own), and a server process never declared one, so this is a no-op
     #    there.
-    if _LOCAL_INSTALL_ID is not None and fields.get("install_id") is None:
+    # Note the membership test, not a None check. A caller that passes install_id
+    # EXPLICITLY — including an explicit None — has stated the identity for this event,
+    # and the server does exactly that: it forwards whatever the visitor's handshake
+    # carried, which is usually nothing. Treating that None as "unset" let the server's
+    # own machine id ride out on other people's traffic whenever anything earlier in the
+    # process had declared one. An explicit value always wins.
+    if _LOCAL_INSTALL_ID is not None and "install_id" not in fields:
         fields["install_id"] = _LOCAL_INSTALL_ID
     # 1. Validate + build — ALWAYS runs, so a disallowed field is a build break in
     #    dev/CI even when no sink is configured.

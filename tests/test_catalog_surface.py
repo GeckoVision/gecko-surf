@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from gecko.providers.cli import PROGRAMS
 from gecko.orquestra_client import OrquestraClient
 from gecko.providers.catalog_surface import OrquestraCatalogSurface
 from gecko.providers.cli import find_start_main, main
@@ -77,7 +78,9 @@ def test_find_start_tool_requires_an_intent() -> None:
 def test_list_programs_returns_wired_plus_the_paginated_catalog() -> None:
     out = _surface().call_tool("list_programs", {"page": 1})
     wired = {w["program"] for w in out["wired"]}
-    assert wired == {"meteora", "pumpfun", "ore", "metadao_ico"}
+    # Kept in lockstep with the registry so wiring a program without listing it
+    # here fails loudly rather than drifting silently.
+    assert wired == set(PROGRAMS)
     assert out["catalog"]["page"] == 1
     assert out["catalog"]["total_pages"] == 225  # the real catalog is paginated
     assert out["catalog"]["total"] == 4500

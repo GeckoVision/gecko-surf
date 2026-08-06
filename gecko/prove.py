@@ -213,9 +213,25 @@ def format_proof(result: ProveResult, *, show_accounts: int = 0) -> Iterable[str
         return
 
     start = result.start
+    considered = result.routing.starts
+
+    # Show the FIELD, not just the winner. "It picked route" is a claim; "it picked
+    # route over these six, and here is the score and the reason for each" is the
+    # mechanism. A reader who cannot see what was rejected cannot tell selection from
+    # luck — and the runners-up are also where a wrong answer would be visible.
+    if len(considered) > 1:
+        yield f"  considered {len(considered)} candidates across the wired programs:"
+        for point in considered[:6]:
+            mark = "→" if point is start else " "
+            name = f"{point.program}/{point.instruction or '—'}"
+            tag = "" if point.kind == "start" else f"  ({point.kind})"
+            terms = ", ".join(point.why[:3])
+            yield f"    {mark} {name:<24} {point.score:>2}  {terms}{tag}"
+        yield ""
+
     yield f"  → {start.program}/{start.instruction or '—'}   score {start.score}"
     for why in start.why[:2]:
-        yield f"    {why}"
+        yield f'    matched on "{why}"'
     yield ""
 
     counts = result.provenance_counts

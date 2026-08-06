@@ -76,6 +76,7 @@ def build_surface_from_config(
 
 def intent_registries() -> dict[str, dict[str, Intent]]:
     """api_id → the intent registry supplying that program's plan callables."""
+    from .jupiter import JUPITER_INTENTS
     from .metadao import METADAO_INTENTS
     from .meteora import METEORA_INTENTS
     from .ore import ORE_INTENTS
@@ -86,11 +87,13 @@ def intent_registries() -> dict[str, dict[str, Intent]]:
         "pumpfun": PUMPFUN_INTENTS,
         "ore": ORE_INTENTS,
         "metadao_ico": METADAO_INTENTS,
+        "jupiter": JUPITER_INTENTS,
     }
 
 
 def start_specs() -> dict[str, dict[str, "StartSpec"]]:
     """api_id → intent name → its declarative StartSpec (what find_start routes to)."""
+    from .jupiter import JUPITER_STARTS
     from .metadao import METADAO_STARTS
     from .meteora import METEORA_STARTS
     from .ore import ORE_STARTS
@@ -101,6 +104,7 @@ def start_specs() -> dict[str, dict[str, "StartSpec"]]:
         "pumpfun": PUMPFUN_STARTS,
         "ore": ORE_STARTS,
         "metadao_ico": METADAO_STARTS,
+        "jupiter": JUPITER_STARTS,
     }
 
 
