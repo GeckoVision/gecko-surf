@@ -1,0 +1,28 @@
+{
+  "api_id": "jupiter",
+  "kind": "program",
+  "spec_source": {
+    "type": "program",
+    "value": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+  },
+  "program": {
+    "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    "orquestra_project": "1y8gp8l6eixrl0ume2bzwo",
+    "intents": [
+      "plan_route"
+    ],
+    "pdas": {
+      "event_authority": {
+        "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "__event_authority",
+            "encoding": "utf8"
+          }
+        ]
+      }
+    },
+    "notes": "Jupiter aggregator. The route legs are supplied by the HTTP quote surface at request time and cannot appear in any IDL."
+  }
+}

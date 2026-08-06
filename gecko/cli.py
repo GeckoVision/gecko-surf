@@ -1909,16 +1909,21 @@ def _cmd_keys(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Declare this process a LOCAL client so every usage event it emits is
-    # attributable to one install instead of landing anonymous. Wired at the CLI
-    # entry point ONLY — library and hosted-server processes never declare one, so
-    # the server can never stamp its own id on other people's traffic. Best-effort:
-    # an unwritable home must never stop the CLI from running.
-    try:
-        events.set_local_install_id(telemetry.read_or_create_install_id())
-    except Exception:  # noqa: BLE001 - identity is metadata, never a hard dependency
-        pass
     cmd, rest = _default_to_serve(argv)
+
+    # Declare this process a LOCAL client so every usage event it emits is attributable
+    # to one install instead of landing anonymous.
+    #
+    # Explicitly NOT for `serve`. `gecko serve` is the same entry point that runs the
+    # HOSTED surface, so declaring an identity before dispatch would stamp the server's
+    # own machine id onto every visitor's event and collapse every user into one — the
+    # precise failure this seam exists to prevent, and worse than counting nothing.
+    # Identity is declared for local, single-operator commands only.
+    if cmd != "serve":
+        try:
+            events.set_local_install_id(telemetry.read_or_create_install_id())
+        except Exception:  # noqa: BLE001 - identity is metadata, never a hard dependency
+            pass
     if cmd == "version":
         # Same source of truth as doctor: the installed package version.
         print(f"gecko {__version__}")

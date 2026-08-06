@@ -39,6 +39,13 @@ _SERVABLE = {
         "bindings": {},
         "address": "9c9X7aDRAF41faiDs94ELjT19UrGnn72wBW9hPsS4Awy",
     },
+    "jupiter": {
+        "program_id": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+        "slug": "1y8gp8l6eixrl0ume2bzwo",
+        "account": "event_authority",
+        "bindings": {},
+        "address": "D8cy77BBepLMngZx6ZukaTff5hCt1HrWyKk3Hnd9oitf",
+    },
     "metadao_ico": {
         "program_id": "moontUzsdepotRGe5xsfip7vLPTJnVuafqdUWexVnPM",
         "slug": "krhmrxpy2fgwn3q0whic7",
@@ -49,8 +56,9 @@ _SERVABLE = {
 }
 
 
-def test_registry_has_all_four_programs() -> None:
-    # Meteora plus the three wired this sprint (pumpfun/ore/metadao_ico).
+def test_registry_matches_the_servable_set() -> None:
+    # Every wired program must be servable — the registry and the fixture set
+    # are kept in lockstep so adding one without a smoke fixture fails here.
     assert set(PROGRAMS) == set(_SERVABLE)
 
 
