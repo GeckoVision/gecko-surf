@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+## 0.10.0 — 2026-08-06
+
+The release where a verified plan became a landed transaction.
+
+### Added
+- **`gecko prove "<intent>"` — a sentence in, a receipt out.** Routes an intent to the
+  right call, shows the candidate field it searched (scores, matched terms, and what was
+  demoted to a guess), lists the account set with provenance, simulates, prints the
+  receipt. Exit `0` lands / `1` routed but fails / `2` nothing routed.
+- **`gecko watch <plan.json>` — drift as CI.** Re-simulates the calls a team depends on
+  on an interval and reports N-confirmed drift. Exit `1` on confirmed drift, or on a
+  target that has been unrunnable for N consecutive passes — a call that can no longer be
+  *built* is not a lesser break than one that reverts.
+- **`evaluate_tx` — the receipt bound to the message a signer will sign.** Hashes the
+  MESSAGE, not the transaction, so the binding survives signing. Two strengths, named
+  honestly: `structural` (blockhash normalised out — what a simulation with
+  `replaceRecentBlockhash` can truthfully claim) and `exact` (the whole message,
+  available with a real blockhash, expiring with it). Fail-closed throughout.
+- **Versioned (v0) transactions + address-lookup-table resolution.** A legacy message caps
+  out near 35 accounts and 1232 bytes; a multi-hop aggregator route exceeds that routinely.
+- **Real blockhash and priority-fee helpers** (`latest_blockhash`,
+  `priority_fee_microlamports`) — the two things a replaced-blockhash simulation never
+  needed and a real send cannot do without.
+- **Jupiter as a program surface**, and a fourth account provenance tier:
+  **`cross_surface`**, for accounts supplied by a *different* surface at request time. The
+  program surface declares 9 accounts for `route`; the instruction that lands carries 25.
+  The other 16 are route legs that exist in no IDL — not a deficient IDL, *any* IDL.
+- **Runnable landing flows** for Pump.fun buy/sell, Meteora swap, ORE claim and MetaDAO
+  fund, each proven on a mainnet fork.
+
+### Fixed
+- **Usage was unattributable.** `install_id` rode on `surf.onboard` alone, so the events
+  that prove value carried no identity; a TOCTOU race minted a fresh id per process; and
+  `gecko serve` — the same entry point as the hosted server — declared a local identity,
+  which would have stamped the server's own id onto every visitor's traffic.
+- **The retrieval floor had no teeth.** A single incidental token overlap produced a
+  *runnable* start. A runnable start now needs a term that names the program or its
+  instruction, or two independent distinguishing terms.
+
+### Notes
+- Derivation is proven on five program surfaces, not "any Solana program".
+- Drift detection is opt-in: `gecko watch` runs when you run it. There is no hosted
+  scheduler.
+
 ## 0.9.5 — 2026-07-31
 
 ### Fixed
