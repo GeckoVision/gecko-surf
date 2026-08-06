@@ -53,7 +53,10 @@ def call(params: dict) -> tuple[int, str]:
 # ---------------------------------------------------------------- scene 1
 out(f"{BOLD}GECKO — WHAT AN ASSISTANT CAN'T DO ALONE{RESET}", pause=0.6)
 out()
-out(f"{BOLD}User:{RESET} Get me a quote for 1 SOL to USDC, half a percent slippage.", pause=1.0)
+out(
+    f"{BOLD}User:{RESET} Get me a quote for 1 SOL to USDC, half a percent slippage.",
+    pause=1.0,
+)
 out()
 out("On its own, an assistant writes the call the sentence describes:", pause=0.7)
 out(f"{CYAN}$ GET /quote?inputMint=SOL&outputMint=USDC&amount=1{RESET}", 0.02)
@@ -70,7 +73,9 @@ clear()
 # ---------------------------------------------------------------- scene 2
 out(f"{BOLD}Same sentence. Now the API is behind Gecko.{RESET}", pause=0.7)
 out()
-out("Gecko read the surface first, so the call carries what the API expects:", pause=0.8)
+out(
+    "Gecko read the surface first, so the call carries what the API expects:", pause=0.8
+)
 put()
 put("   inputMint   So1111…1112     SOL's mint address")
 put("   outputMint  EPjFWd…TDt1v    USDC's mint address")
@@ -90,7 +95,10 @@ status, body = call(
 q = json.loads(body)
 out_usdc = int(q["outAmount"]) / 1e6
 put(f"{GREEN}✓ HTTP {status}{RESET}  →  {out_usdc:,.2f} USDC", pause=0.5)
-put(f"  price impact {q.get('priceImpactPct', '?')} · {len(q.get('routePlan', []))} hop · first try", pause=1.5)
+put(
+    f"  price impact {q.get('priceImpactPct', '?')} · {len(q.get('routePlan', []))} hop · first try",
+    pause=1.5,
+)
 
 clear()
 

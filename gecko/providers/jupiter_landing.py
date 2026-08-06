@@ -318,9 +318,7 @@ def simulate_route_landing(
     user = str(bindings["user"])
 
     swap_ix = jupiter_instruction_to_solders(plan["swap_instruction"])
-    prelude = [
-        jupiter_instruction_to_solders(ix) for ix in plan["setup_instructions"]
-    ]
+    prelude = [jupiter_instruction_to_solders(ix) for ix in plan["setup_instructions"]]
 
     landing_receipt, unit_limit = _simulate_landing_bundle(
         swap_ix,
