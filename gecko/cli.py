@@ -45,6 +45,7 @@ from .netguard import UnsafeUrlError, validate_public_url
 
 _SUBCOMMANDS = (
     "add",
+    "prove",
     "watch",
     "login",
     "connect",
@@ -981,6 +982,61 @@ def _cmd_watch(argv: list[str]) -> int:
     return 1 if drifted else 0
 
 
+def _cmd_prove(argv: list[str]) -> int:
+    """`gecko prove "<intent>"` — a sentence in, a receipt out.
+
+    Thin transport over ``gecko.prove``: parse args, run it, print what the module
+    formats. Exit codes: 0 = the call was proven to land, 1 = it was routed but did not
+    pass, 2 = nothing could be routed.
+    """
+    from .prove import format_proof, prove
+    from .rpc import LOCAL_RPC
+
+    p = argparse.ArgumentParser(
+        prog="gecko prove",
+        description=(
+            "Route an intent to the right call, show what the call needs and where "
+            "each account came from, and simulate it before anything is signed. "
+            "$0, unsigned, on a fork. Exit 0 = lands, 1 = routed but does not pass."
+        ),
+    )
+    p.add_argument("intent", help="What you want to do, in plain language.")
+    p.add_argument(
+        "--bind",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="An input the call needs (repeatable), e.g. --bind user=<pubkey>.",
+    )
+    p.add_argument("--rpc-url", default=LOCAL_RPC, help="RPC to simulate against.")
+    p.add_argument(
+        "--accounts",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Also list the first N accounts with their provenance.",
+    )
+    args = p.parse_args(argv)
+
+    bindings: dict[str, Any] = {}
+    for pair in args.bind:
+        key, _, value = pair.partition("=")
+        if not key or not _:
+            print(f"error: --bind expects KEY=VALUE, got {pair!r}", file=sys.stderr)
+            return 2
+        bindings[key] = int(value) if value.isdigit() else value
+
+    result = prove(args.intent, bindings=bindings, rpc_url=args.rpc_url)
+    for line in format_proof(result, show_accounts=args.accounts):
+        print(line)
+
+    if result.start is None:
+        return 2
+    if result.receipt is None or result.receipt.status != "pass":
+        return 1
+    return 0
+
+
 def _cmd_drift(argv: list[str]) -> int:
     """`gecko drift <path>` — read a simulated.jsonl and print N-confirmed drift.
 
@@ -1538,6 +1594,10 @@ def _print_help() -> None:
         "  scan-image <path>  scan an image for an image-borne injection (Skill Guard)"
     )
     print("  scan-doc <path>    scan an untrusted doc/convention page (Skill Guard)")
+    print(
+        '  prove "<intent>"   route an intent -> the call -> a receipt ($0, unsigned)'
+    )
+    print("  watch <plan>       re-simulate a watch plan on a schedule (CI)")
     print("  drift <path>       N-confirmed drift over a simulated.jsonl corpus")
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
@@ -1873,6 +1933,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_keys(rest)
     if cmd == "watch":
         return _cmd_watch(rest)
+    if cmd == "prove":
+        return _cmd_prove(rest)
     if cmd == "serve":
         # Wire the real first-run ping transport ONLY here (mirrors _cmd_add): the
         # CLI is default-on; library/test calls of serve.main stay network-silent.
