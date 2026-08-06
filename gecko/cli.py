@@ -45,6 +45,7 @@ from .netguard import UnsafeUrlError, validate_public_url
 
 _SUBCOMMANDS = (
     "add",
+    "watch",
     "login",
     "connect",
     "keys",
@@ -896,6 +897,88 @@ def _parse_kv(pairs: list[str]) -> dict[str, str]:
             if name and entity:
                 out[name] = entity
     return out
+
+
+def _cmd_watch(argv: list[str]) -> int:
+    """`gecko watch <plan.json>` — re-simulate a watch plan on a schedule.
+
+    The scheduler half of drift: `gecko drift` reads a series someone else produced,
+    `gecko watch` produces it. Thin transport over ``gecko.drift_watch`` — parse args,
+    load the plan, run passes, print what the module formats. Exit codes: 0 = ran clean,
+    1 = drift confirmed, 2 = the plan could not be read or every target failed.
+    """
+    from .drift_watch import (
+        WatchError,
+        confirm_unavailable,
+        format_run,
+        load_plan,
+        run_once,
+        watch,
+    )
+
+    p = argparse.ArgumentParser(
+        prog="gecko watch",
+        description=(
+            "Re-simulate the calls in a watch plan and report N-confirmed drift. "
+            "Every pass is simulateTransaction on an unsigned tx — $0, never signs, "
+            "never broadcasts. Exit 0 = stable, 1 = drift confirmed."
+        ),
+    )
+    p.add_argument(
+        "plan", help="A watch-plan JSON file (local config; never transmitted)."
+    )
+    p.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single pass and exit, instead of watching on the plan's interval.",
+    )
+    p.add_argument(
+        "--passes",
+        type=int,
+        default=None,
+        help="Stop after N passes (default: run until interrupted).",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        plan = load_plan(args.plan)
+    except WatchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    drifted = False
+    try:
+        if args.once:
+            runs = [run_once(plan)]
+            for line in format_run(runs[0]):
+                print(line)
+        else:
+
+            def _report(run: Any) -> None:
+                for line in format_run(run):
+                    print(line)
+
+            runs = watch(plan, passes=args.passes, on_run=_report)
+    except KeyboardInterrupt:
+        print("\nstopped", file=sys.stderr)
+        return 0
+
+    if not runs:
+        return 0
+
+    # A call that can no longer be ASSEMBLED never reaches the simulator, so it records
+    # no series row and detect_drift is structurally blind to it. Confirm it the same
+    # way — by repetition across passes — and treat it as just as important: a call you
+    # depend on that cannot be built is not a lesser break than one that reverts.
+    stale = confirm_unavailable(runs, n_confirm=plan.n_confirm)
+    for label in stale:
+        print(f"  BROKEN  {label}: unrunnable for {plan.n_confirm} consecutive passes")
+
+    drifted = bool(stale) or any(run.events for run in runs)
+    if all(not r.ok for r in runs[-1].results):
+        print("error: no target could be simulated", file=sys.stderr)
+        return 2
+    return 1 if drifted else 0
 
 
 def _cmd_drift(argv: list[str]) -> int:
@@ -1788,6 +1871,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_connect(rest)
     if cmd == "keys":
         return _cmd_keys(rest)
+    if cmd == "watch":
+        return _cmd_watch(rest)
     if cmd == "serve":
         # Wire the real first-run ping transport ONLY here (mirrors _cmd_add): the
         # CLI is default-on; library/test calls of serve.main stay network-silent.
