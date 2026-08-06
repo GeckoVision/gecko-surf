@@ -51,7 +51,9 @@ def _rpc(rpc_url: str, method: str, params: list) -> dict:
 
     if method == "getAccountInfo":
         params = list(params)
-        opts = dict(params[1]) if len(params) > 1 and isinstance(params[1], dict) else {}
+        opts = (
+            dict(params[1]) if len(params) > 1 and isinstance(params[1], dict) else {}
+        )
         opts["encoding"] = "base64"
         params = [params[0], opts]
     return default_rpc_call(rpc_url, method, params)
@@ -80,8 +82,14 @@ BINDINGS = {
 }
 
 # ---------------------------------------------------------------- scene 1
-out(f"{BOLD}A coding assistant, on its own, buying a token on Pump.fun.{RESET}", pause=0.5)
-out("It reads the surface, assembles the call, and does the only thing it can:", pause=0.7)
+out(
+    f"{BOLD}A coding assistant, on its own, buying a token on Pump.fun.{RESET}",
+    pause=0.5,
+)
+out(
+    "It reads the surface, assembles the call, and does the only thing it can:",
+    pause=0.7,
+)
 out("it tries.", pause=0.8)
 out()
 out(f"{CYAN}$ # the call an assistant builds by itself{RESET}", 0.02)
@@ -93,7 +101,10 @@ put(f"{RED}✗ REVERT{RESET}  {naive.revert_class}", pause=0.4)
 for line in naive.logs_tail[-2:]:
     put(f"  {line[:76]}", pause=0.3)
 put()
-put(f"{YELLOW}Nothing here was done wrong. It just had no way to try first.{RESET}", pause=1.6)
+put(
+    f"{YELLOW}Nothing here was done wrong. It just had no way to try first.{RESET}",
+    pause=1.6,
+)
 
 clear()
 
@@ -104,8 +115,11 @@ put("  1. an account whose address lives inside another account's data")
 put("  2. an account that appears only at runtime, never in the schema")
 put("  3. which of several valid values this program accepts today", pause=1.4)
 put()
-out(f"{CYAN}$ gecko orquestra find-start \"buy this token on pump\"{RESET}", 0.02)
-put(f"{GREEN}→ pumpfun/buy{RESET}  — every account carries where it came from:", pause=0.4)
+out(f'{CYAN}$ gecko orquestra find-start "buy this token on pump"{RESET}', 0.02)
+put(
+    f"{GREEN}→ pumpfun/buy{RESET}  — every account carries where it came from:",
+    pause=0.4,
+)
 put("   creator_vault      [recovered]  read from on-chain state")
 put("   bonding_curve_v2   [recovered]  recovered from source")
 put("   fee_recipient      [FLAGGED]    unknown — flagged, never guessed", pause=1.6)
@@ -134,7 +148,10 @@ put(
 )
 put(f"  {result.landing_receipt.network_label}", pause=0.6)
 put()
-put(f"{YELLOW}It couldn't have known. Now it can check — before spending.{RESET}", pause=1.6)
+put(
+    f"{YELLOW}It couldn't have known. Now it can check — before spending.{RESET}",
+    pause=1.6,
+)
 put()
 put(f"{BOLD}Built for the calls your agent must not get wrong.{RESET}")
 put(f"{CYAN}npx @geckovision/gecko{RESET}", pause=2.2)
