@@ -1,6 +1,6 @@
 {
   "name": "@geckovision/gecko",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "The knowledge graph for APIs your agent can trust \u2014 map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves.",
   "keywords": [
     "gecko",
