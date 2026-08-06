@@ -231,3 +231,92 @@ def test_the_binding_survives_a_dataclass_replace() -> None:
     receipt = _receipt(message_binding(tx), "structural")
 
     assert evaluate_tx(tx, dataclasses.replace(receipt, units_consumed=1)).approved
+
+
+# --------------------------------------------------------------------------- #
+# v0 + a real blockhash — what makes an `exact` binding reachable.
+# --------------------------------------------------------------------------- #
+def test_a_lookup_table_produces_a_versioned_message() -> None:
+    """A legacy message caps out near 35 accounts and 1232 bytes; a multi-hop route
+    exceeds that routinely. Anything carrying tables must compile as v0 or it won't fit."""
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.instruction import Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    table = AddressLookupTableAccount(
+        key=Pubkey.from_string(USDC), addresses=[Pubkey.from_string(OTHER)]
+    )
+
+    built = assemble_unsigned_tx(
+        [Instruction(program, b"x", [])], PAYER, lookup_tables=[table]
+    )
+
+    from gecko.txbind import _decode, _message_of
+
+    _message, version = _message_of(_decode(built.tx, "base64"))
+    assert version == "v0"
+
+
+def test_a_legacy_and_a_v0_message_never_share_a_binding() -> None:
+    """The version is folded into the digest, so two messages with identical contents but
+    different wire formats cannot be mistaken for one another."""
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.instruction import Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    instructions = [Instruction(program, b"same", [])]
+    table = AddressLookupTableAccount(
+        key=Pubkey.from_string(USDC), addresses=[Pubkey.from_string(OTHER)]
+    )
+
+    legacy = assemble_unsigned_tx(instructions, PAYER)
+    versioned = assemble_unsigned_tx(instructions, PAYER, lookup_tables=[table])
+
+    assert message_binding(legacy.tx) != message_binding(versioned.tx)
+
+
+def test_a_real_blockhash_changes_only_the_exact_binding() -> None:
+    """Structural is blockhash-blind BY DESIGN — that is what makes it stable across the
+    substitution simulateTransaction performs. Exact is not."""
+    from solders.instruction import Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    instructions = [Instruction(program, b"x", [])]
+    hash_a = "11111111111111111111111111111111"
+    hash_b = "So11111111111111111111111111111111111111112"
+
+    a = assemble_unsigned_tx(instructions, PAYER, blockhash=hash_a)
+    b = assemble_unsigned_tx(instructions, PAYER, blockhash=hash_b)
+
+    assert message_binding(a.tx, strength="structural") == message_binding(
+        b.tx, strength="structural"
+    )
+    assert message_binding(a.tx, strength="exact") != message_binding(
+        b.tx, strength="exact"
+    )
+
+
+def test_simulating_without_replacement_earns_an_exact_binding() -> None:
+    from gecko.simulate import BuiltTx, simulate
+
+    tx = _memo(b"water")
+    seen: dict = {}
+
+    def fake_rpc(_url: str, _method: str, params: list) -> dict:
+        seen.update(params[1])
+        return {"result": {"value": {"err": None, "unitsConsumed": 1, "logs": []}}}
+
+    receipt = simulate(
+        {},
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=fake_rpc,
+        build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        replace_blockhash=False,
+    )
+
+    assert seen["replaceRecentBlockhash"] is False
+    assert receipt.binding_strength == "exact"
+    assert evaluate_tx(tx, receipt, require="exact").approved

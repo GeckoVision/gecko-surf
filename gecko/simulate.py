@@ -241,6 +241,7 @@ def simulate(
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
     network_label: str = _DEFAULT_NETWORK_LABEL,
+    replace_blockhash: bool = True,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
 
@@ -267,7 +268,12 @@ def simulate(
     sim_config: dict[str, Any] = {
         "encoding": built.encoding,
         "sigVerify": False,
-        "replaceRecentBlockhash": True,
+        # Replacing the blockhash is right for a plan-shaped check and wrong for a
+        # pre-signature one: the simulation then ran against a DIFFERENT message than the
+        # one that would be signed, so the receipt can only bind structurally. Pass
+        # replace_blockhash=False with a real, fresh blockhash to earn an `exact` binding
+        # — and inherit its ~150-slot expiry along with it.
+        "replaceRecentBlockhash": replace_blockhash,
         "commitment": "processed",
     }
     if tracked:
@@ -282,10 +288,14 @@ def simulate(
     try:
         from .txbind import message_binding as _bind
 
-        binding = _bind(built.tx, encoding=built.encoding, strength="structural")
-        strength = "structural"
+        from .txbind import BindingStrength
+
+        chosen: BindingStrength = "structural" if replace_blockhash else "exact"
+        strength = chosen
+        binding = _bind(built.tx, encoding=built.encoding, strength=chosen)
     except Exception:  # noqa: BLE001 - a binding we cannot compute is absent, not fatal
         binding = None
+        strength = None
 
     sim = call(rpc_url, "simulateTransaction", [built.tx, sim_config])
     value = (sim.get("result") or {}).get("value") or {}

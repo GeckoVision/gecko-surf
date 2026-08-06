@@ -27,7 +27,7 @@ import struct
 from typing import Any, Mapping, Sequence
 
 from .events import emit_surf_event
-from .rpc import RpcCall
+from .rpc import RpcCall, default_rpc_call
 from .simulate import BuiltTx, Receipt, simulate
 
 __all__ = [
@@ -280,24 +280,140 @@ def with_writable_accounts(
     )
 
 
-def assemble_unsigned_tx(instructions: Sequence[Any], fee_payer: str) -> BuiltTx:
-    """Assemble an ordered list of instructions into a legacy UNSIGNED transaction.
+def fetch_lookup_tables(
+    addresses: Sequence[str], *, rpc_url: str, rpc_call: RpcCall | None = None
+) -> list[Any]:
+    """Read address-lookup tables from chain so a v0 message can resolve against them.
 
-    A placeholder (all-zero) blockhash is used because ``simulateTransaction`` is called
-    with ``replaceRecentBlockhash:true`` — the Receipt therefore attests nothing about a
-    land-time blockhash. The tx is ``new_unsigned`` (signature slots are all zero); it can
-    ONLY be simulated, never sent. Returns a base64 :class:`BuiltTx`.
+    An ALT is what lets a transaction reference more accounts than a legacy message can
+    hold. An aggregator hands back the TABLE ADDRESSES, not their contents, so the
+    addresses inside have to be read before anything can be compiled — which is another
+    instance of the same lesson this repo keeps meeting: the surface names a pointer, and
+    the value lives somewhere else.
+
+    A table that cannot be read is an error, never a silent omission: compiling without it
+    would produce a transaction that references accounts the runtime cannot resolve.
+    """
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.pubkey import Pubkey
+
+    call = rpc_call or default_rpc_call
+    tables: list[Any] = []
+    for address in addresses:
+        response = call(rpc_url, "getAccountInfo", [address, {"encoding": "base64"}])
+        value = (response.get("result") or {}).get("value")
+        if not (isinstance(value, dict) and isinstance(value.get("data"), list)):
+            raise LandingError(f"lookup table {address[:8]}… could not be read")
+        raw = base64.b64decode(value["data"][0])
+        # Layout: 56-byte header, then a packed array of 32-byte addresses.
+        body = raw[56:]
+        if len(body) % 32:
+            raise LandingError(
+                f"lookup table {address[:8]}… has a ragged address array"
+            )
+        tables.append(
+            AddressLookupTableAccount(
+                key=Pubkey.from_string(address),
+                addresses=[
+                    Pubkey.from_bytes(body[i : i + 32]) for i in range(0, len(body), 32)
+                ],
+            )
+        )
+    return tables
+
+
+def assemble_unsigned_tx(
+    instructions: Sequence[Any],
+    fee_payer: str,
+    *,
+    blockhash: str | None = None,
+    lookup_tables: Sequence[Any] = (),
+) -> BuiltTx:
+    """Assemble instructions into an UNSIGNED transaction — legacy, or v0 when needed.
+
+    ``blockhash`` defaults to the all-zero placeholder, because ``simulateTransaction`` is
+    called with ``replaceRecentBlockhash:true`` and a Receipt therefore attests nothing
+    about a land-time blockhash. Pass a REAL blockhash (and simulate without replacement)
+    when the receipt needs to bind one — that is the difference between a `structural` and
+    an `exact` binding, and it starts expiring the moment it is fetched.
+
+    ``lookup_tables`` switches the output to a **versioned (v0)** message. A legacy message
+    caps out around 35 accounts and 1232 bytes; a multi-hop aggregator route exceeds that
+    routinely, so anything carrying tables must be compiled as v0 or it simply will not fit.
+
+    The transaction is unsigned — signature slots are all zero — so it can ONLY be
+    simulated, never sent. Returns a base64 :class:`BuiltTx`.
     """
     from solders.hash import Hash
-    from solders.message import Message
-    from solders.transaction import Transaction
+    from solders.message import Message, MessageV0
+    from solders.null_signer import NullSigner
+    from solders.transaction import Transaction, VersionedTransaction
 
-    message = Message.new_with_blockhash(
-        list(instructions), _pubkey(fee_payer), Hash.default()
-    )
-    unsigned = Transaction.new_unsigned(message)
-    raw = bytes(unsigned)
-    return BuiltTx(tx=base64.b64encode(raw).decode(), encoding="base64")
+    recent = Hash.from_string(blockhash) if blockhash else Hash.default()
+    payer = _pubkey(fee_payer)
+
+    if lookup_tables:
+        message = MessageV0.try_compile(
+            payer, list(instructions), list(lookup_tables), recent
+        )
+        # NullSigner keeps the signature slot present but zeroed: the shape a signer
+        # expects, with nothing signed. Gecko holds no key and produces none.
+        unsigned = VersionedTransaction(message, [NullSigner(payer)])
+    else:
+        legacy = Message.new_with_blockhash(list(instructions), payer, recent)
+        unsigned = Transaction.new_unsigned(legacy)  # type: ignore[assignment]
+
+    return BuiltTx(tx=base64.b64encode(bytes(unsigned)).decode(), encoding="base64")
+
+
+def latest_blockhash(rpc_url: str, rpc_call: RpcCall | None = None) -> tuple[str, int]:
+    """The current blockhash and its last valid block height.
+
+    Returned as a pair so a caller can reason about the deadline rather than discovering
+    it at send time: a blockhash is valid for roughly 150 slots (about a minute), and that
+    window is the clock on the whole verify-then-sign sequence.
+    """
+    call = rpc_call or default_rpc_call
+    response = call(rpc_url, "getLatestBlockhash", [{"commitment": "finalized"}])
+    value = (response.get("result") or {}).get("value") or {}
+    blockhash = value.get("blockhash")
+    height = value.get("lastValidBlockHeight")
+    if not isinstance(blockhash, str) or not isinstance(height, int):
+        raise LandingError("RPC returned no usable blockhash")
+    return blockhash, height
+
+
+def priority_fee_microlamports(
+    accounts: Sequence[str],
+    *,
+    rpc_url: str,
+    rpc_call: RpcCall | None = None,
+    percentile: float = 0.75,
+) -> int:
+    """A priority fee derived from what recently landed for these accounts.
+
+    Our default of zero is correct for simulation and wrong for mainnet: under contention a
+    zero-priority transaction may simply never land, and "the simulation passed" says
+    nothing about whether a validator will pick it up. Best-effort — an RPC that does not
+    answer yields 0 rather than blocking the caller, since a missing fee estimate must not
+    look like a failed plan.
+    """
+    call = rpc_call or default_rpc_call
+    try:
+        response = call(rpc_url, "getRecentPrioritizationFees", [list(accounts)])
+        fees = [
+            entry["prioritizationFee"]
+            for entry in (response.get("result") or [])
+            if isinstance(entry, dict)
+            and isinstance(entry.get("prioritizationFee"), int)
+        ]
+    except Exception:  # noqa: BLE001 - an estimate is an enrichment, never a gate
+        return 0
+    paying = sorted(fee for fee in fees if fee > 0)
+    if not paying:
+        return 0
+    index = min(len(paying) - 1, int(len(paying) * percentile))
+    return int(paying[index])
 
 
 def simulate_landing_bundle(
