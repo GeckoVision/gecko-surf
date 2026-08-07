@@ -51,6 +51,7 @@ from .http_server import (
 from .examples.ore import build_ore_surface
 from .jito_surface import build_jito_surface
 from .mcp_server import McpSurface
+from .providers.catalog_surface import OrquestraCatalogSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
 from .registry.wiring import build_keystore_from_env
@@ -202,6 +203,18 @@ def assert_paid_surfaces_are_gated(
     raise GateStanceError(message)
 
 
+ORQUESTRA_CATALOG_PAGES_ENV = "GECKO_ORQUESTRA_CATALOG_PAGES"
+
+
+def _orquestra_catalog_pages() -> int:
+    """Live catalog pages the hosted find_start may pull per call. 0 (the default) keeps
+    the public surface offline — see the call site for why that is deliberate."""
+    try:
+        return max(0, int(os.environ.get(ORQUESTRA_CATALOG_PAGES_ENV, "") or 0))
+    except ValueError:
+        return 0
+
+
 def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     """The surfaces this host serves over MCP — factored out of ``main()`` so tests
     can build the exact list ``_registry_store`` sees, without starting a server."""
@@ -298,6 +311,23 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     # loses. Keyless, control-plane only (computes addresses; never signs, no key). Public
     # demo surface — NOT gated. Agent adds <host>/ore/mcp and derives ORE's PDAs live.
     surfaces.append(("ore", build_ore_surface()))
+    # Orquestra CATALOG — the router itself as a front door: find_start (plain intent ->
+    # the exact starting point), list_programs, comprehend_program. This is the surface a
+    # hosted chat client wants, because the exploration problem is what an agent actually
+    # has: 40+ instructions across N programs and no idea which one to begin at.
+    #
+    # find_start_pages=0 ON PURPOSE. The default (1) makes one upstream GET to the
+    # Orquestra catalog per call — on a public keyless endpoint that turns any anonymous
+    # caller into outbound traffic against a PARTNER's API, which is not ours to spend.
+    # Offline it answers from the wired programs' packaged configs: deterministic, fast,
+    # and it cannot be used to amplify. Raise via GECKO_ORQUESTRA_CATALOG_PAGES only with
+    # a rate limit in front.
+    surfaces.append(
+        (
+            "orquestra",
+            OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
+        )
+    )
     # Refugios (shelters) — comprehended with the publishable apikey injected as a
     # static header. Passed as a CLIENT (not a bare spec) so the multi-surface builder
     # uses its session; the key is invisible to the agent.
