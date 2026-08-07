@@ -51,6 +51,15 @@ logger = logging.getLogger("gecko.http_server")
 
 DEFAULT_SERVER_NAME = "gecko"
 MCP_PATH = "/mcp"
+#: The DEPRECATED two-endpoint MCP transport, mounted ALONGSIDE Streamable HTTP.
+#:
+#: Not nostalgia — distribution. The hosted chat products (Grok, ChatGPT, Claude on the
+#: web) accept a remote MCP server through this shape, so without it Gecko simply cannot
+#: be added inside the window where people already are. Streamable HTTP stays the default
+#: and is what `/mcp` serves; these two routes are an additional door onto the SAME
+#: server object, so a client that speaks either spec gets identical tools.
+SSE_PATH = "/sse"
+SSE_MESSAGE_PATH = "/messages/"
 
 # The 'submit your API' front doors: a human/agent HTTP POST and an agent MCP tool.
 COMPREHEND_PATH = "/comprehend"
@@ -786,14 +795,53 @@ def build_http_app(
 
             artifact_routes.append(Route("/" + rel, endpoint=_artifact_endpoint))
 
+    sse_routes = _sse_routes(server, gate)
+
     return Starlette(
         routes=[
             Route("/healthz", endpoint=_healthz),
             *artifact_routes,
             Route(MCP_PATH, endpoint=mcp_app),
+            *sse_routes,
         ],
         lifespan=lambda _app: manager.run(),
     )
+
+
+def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
+    """The legacy HTTP+SSE transport, as two routes onto the same MCP server.
+
+    `GET /sse` opens the event stream; the client POSTs its own messages to the session
+    URL the stream hands back. That two-endpoint shape is what the hosted chat clients
+    speak, and it is why this exists — Streamable HTTP remains the default at `/mcp`.
+
+    Returns an empty list if the transport is unavailable, so an older `mcp` never stops
+    the server booting: losing the extra door must not close the main one.
+    """
+    try:
+        from mcp.server.sse import SseServerTransport
+        from starlette.responses import Response as _Response
+        from starlette.routing import Mount as _Mount
+        from starlette.routing import Route as _Route
+    except Exception:  # noqa: BLE001 - optional door; absence is not an error
+        return []
+
+    transport = SseServerTransport(SSE_MESSAGE_PATH)
+
+    async def _handle_sse(request: Any) -> Any:
+        async with transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            await server.run(
+                read_stream, write_stream, server.create_initialization_options()
+            )
+        return _Response()
+
+    endpoint = _handle_sse if gate is None else _GeckoKeyGateASGI(_handle_sse, gate)
+    return [
+        _Route(SSE_PATH, endpoint=endpoint),
+        _Mount(SSE_MESSAGE_PATH, app=transport.handle_post_message),
+    ]
 
 
 def build_multi_surface_app(
