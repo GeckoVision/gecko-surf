@@ -14,10 +14,16 @@ Two modes, one code path (invariant #3):
   comes off the wire. Every op is honestly **UNVERIFIED** — the offline, $0,
   falsifiable baseline. A recorded 200 is NEVER overclaimed as VERIFIED (the honesty
   flag lives in ``verdict_from_replay``: only ``source == "observed"`` can VERIFY/REFUTE).
-* ``live``: the real upstream is called. A 2xx/3xx VERIFIES the op; a 404 (or any 4xx/5xx)
-  REFUTES it — the fabricated-endpoint case (a docs source asserting an endpoint the API
-  does not serve). If the surface degrades live→recorded (quarantine / no injectable auth),
-  the actual mode is synthetic and the op stays UNVERIFIED (honest "no access").
+* ``live``: the real upstream is called. A 2xx/3xx VERIFIES the op; a 404/405/410 REFUTES
+  it — the fabricated-endpoint case (a docs source asserting an endpoint the API does not
+  serve) — but ONLY when nothing about the call was invented. Every required path/query
+  param this module could not ground in the spec's own example or the DECLARED
+  value-domain registry is reported by ``validator.synthesized_route_args``, and its
+  presence downgrades any error status to UNVERIFIED (``no-real-argument:<param>``): "my
+  made-up id is not a real entity" is NOT "your endpoint does not exist", and publishing
+  the second when we only observed the first defames a real company. If the surface
+  degrades live→recorded (quarantine / no injectable auth), the actual mode is synthetic
+  and the op stays UNVERIFIED (honest "no access").
 
 Control plane only (invariant #1): the returned report carries op ids + verdict STATUS +
 BASIS strings + a provenance category + counts. It never carries a response body, an arg
@@ -38,7 +44,7 @@ from . import corpus
 from .caller import CallError
 from .graph import VerifyStatus, op_provenance
 from .modes import CallMode
-from .validator import example_args, verdict_from_replay
+from .validator import example_args, synthesized_route_args, verdict_from_replay
 
 if TYPE_CHECKING:
     from .client import AgentApiClient
@@ -171,7 +177,13 @@ def verify_docs(
         outcome = (
             captured if captured is not None else _replay_outcome(client, tool, mode)
         )
-        verdict = verdict_from_replay(outcome)
+        # Which required path/query args were INVENTED by us (no spec example, no declared
+        # value domain). Read off the TOOL DEF, so it holds for a fresh replay and for a
+        # pre-captured outcome alike — the same synthesis produced both calls. This is what
+        # keeps "no real argument" from being published as "no such endpoint".
+        verdict = verdict_from_replay(
+            outcome, synthesized_args=synthesized_route_args(tool)
+        )
 
         # Attach the verdict to the op node. Node is frozen because its identity (the
         # content hash) is derived from the SHAPE; ``verify`` is deliberately excluded

@@ -14,8 +14,10 @@ Honesty is law (Pattern B — every test is offline, $0, no network):
   * Precedence: shipped ``example`` > canonical-from-declared-entity > placeholder.
 
 The flagship proof is Pegana ``by-mint`` (ships NO example on ``{mint}``): with the mint
-value domain DECLARED it goes REFUTED(placeholder-404) → VERIFIED(canonical-mint-200),
+value domain DECLARED it goes UNVERIFIED(placeholder-404) → VERIFIED(canonical-mint-200),
 proven with an injected fake transport that answers 200 iff the canonical mint is in the URL.
+(The un-declared placeholder-404 case is UNVERIFIED, never REFUTED — a made-up argument is
+not evidence that the endpoint is missing; see ``tests/test_verify_false_refute.py``.)
 """
 
 from __future__ import annotations
@@ -127,9 +129,16 @@ def test_pegana_by_mint_verifies_when_the_mint_domain_is_declared() -> None:
         assert result["report"][op_id]["basis"] == ["replay:200"]
 
 
-def test_pegana_by_mint_is_refuted_by_the_placeholder_without_the_declaration() -> None:
-    # the pre-fix behaviour, pinned: the placeholder 404s → the REAL endpoint is falsely
-    # REFUTED. This is the artifact the declaration removes (not a spec problem).
+def test_pegana_by_mint_is_unverified_not_refuted_without_the_declaration() -> None:
+    """Without the declaration the placeholder still 404s — but that is a missing ASSET,
+    not a missing ENDPOINT, so the honest verdict is UNVERIFIED naming the param we could
+    not ground.
+
+    This test previously asserted REFUTED (the falsely-accusing behaviour it was written to
+    document). That verdict published "this documented endpoint does not exist" about an
+    endpoint that answers 200 with a real mint — see ``tests/test_verify_false_refute.py``
+    for the full rule. The declaration now upgrades UNVERIFIED → VERIFIED rather than
+    REFUTED → VERIFIED."""
     client = AgentApiClient(
         str(_PEGANA),
         base_url="https://api.pegana.xyz",
@@ -138,5 +147,8 @@ def test_pegana_by_mint_is_refuted_by_the_placeholder_without_the_declaration() 
     )
     result = verify.verify_docs(client, mode="live")
     for op_id in _BY_MINT_OPS:
-        assert result["report"][op_id]["status"] == "REFUTED"
-        assert result["report"][op_id]["basis"] == ["replay:404"]
+        assert result["report"][op_id]["status"] == "UNVERIFIED"
+        assert result["report"][op_id]["basis"] == [
+            "replay:404",
+            "no-real-argument:mint",
+        ]
