@@ -13,7 +13,10 @@ fail-closed seam as a poisoned spec.
 
 Graceful degradation: both extras are OPTIONAL and lazy-imported. With neither
 installed (the base install), :func:`ocr_text` returns ``""`` and
-:func:`extract_pillow_metadata` returns ``[]`` — nothing changes, nothing raises.
+:func:`extract_pillow_metadata` returns ``[]`` — nothing raises. It does NOT mean
+"nothing changes": those channels go unread, and the verdict says so
+(``channels_unavailable``, R9 below). Degrading quietly is what made a base
+install report the flagship GhostCommit image as CLEAN.
 
 Honesty ledger (what this module really does):
 
@@ -33,6 +36,24 @@ the L1 convention-text scan (``sanitize.scan_convention_text``) still catches th
 delivery file. base64/numeric-encoded payloads *inside* OCR'd text remain a named
 residual; the auth-host pin + recorded-mode scrub are the real containment. This
 module is a strong deterministic link, not the whole chain.
+
+**Coverage is reported separately from the verdict (R9).** A scan that could not
+run must not render as a scan that passed. ``tier`` answers *"what did I find in
+what I looked at"*; :attr:`ImageScanVerdict.channels_unavailable` answers *"where
+could I not look at all"*. They are ORTHOGONAL — a scan can find real poison in
+the metadata AND be unable to read the pixels — which is exactly why coverage is a
+field and not a fourth ``ImageTier`` value: a tier would force a lossy choice
+between reporting the finding and reporting the gap. It is also not ``review``:
+``review`` means "I found something a human should look at", and "I could not
+look" is not a finding. Tiering every unreadable-channel scan as ``review`` would
+make every ordinary image on a base install a finding, and a scanner that always
+says "look at this" gets ignored — alert fatigue is its own security failure.
+
+Residual this does NOT close: OCR that RAN but under-read. Tesseract returning no
+text is reported as coverage, yet a payload rendered in a font/contrast/layout it
+cannot resolve — but a vision model can — is still missed. ``channels_unavailable``
+claims the channel was *read*, never that it was read as well as the agent will
+read it.
 
 Control plane (invariant #1): the verdict carries channel names, rule names, and
 byte-counts — never the extracted payload text and never a decoded secret value.
@@ -85,6 +106,12 @@ _ANOMALY_SCAN_ERROR = "scan-error"
 
 _JPEG_SIGNATURE = b"\xff\xd8"
 
+#: Names of the channels whose readability depends on an OPTIONAL extra, and which
+#: are therefore reportable as unavailable. Control-plane safe: a bare channel name,
+#: never a path, a binary location, or any environment detail.
+CHANNEL_OCR = "ocr"
+CHANNEL_DEEP_METADATA = "deep-metadata"
+
 
 @dataclass(frozen=True)
 class TextChannel:
@@ -101,11 +128,25 @@ class ImageScanVerdict:
     ``basis`` names WHY (channel + rule, or a structural anomaly) — never the
     payload. ``channels_scanned`` counts the text channels (metadata + trailing
     bytes) actually run through the engine.
+
+    ``channels_unavailable`` names the channels that could NOT be read at all — the
+    optional extra is absent, the tesseract binary is missing, or the decoder refused
+    these particular bytes. This is COVERAGE, orthogonal to ``tier`` (see the module
+    docstring): a ``clean`` tier with a non-empty ``channels_unavailable`` means
+    "nothing found in what I could read", which is NOT the same claim as "nothing
+    there". Callers that render a verdict MUST NOT present an unqualified pass while
+    :attr:`complete` is False.
     """
 
     tier: ImageTier
     basis: tuple[str, ...]
     channels_scanned: int
+    channels_unavailable: tuple[str, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        """True when every channel was readable — i.e. the tier is the whole story."""
+        return not self.channels_unavailable
 
 
 # --- PNG parsing ---------------------------------------------------------------------
@@ -289,33 +330,73 @@ def _fmt_size(n: int) -> str:
 # --- L3: OCR the rendered pixels (opt-in [ocr] extra) --------------------------------
 
 
-def ocr_text(data: bytes) -> str:
-    """Recover the text rendered as *visible pixels* in an image (L3).
+def _read_rendered_text(data: bytes) -> str | None:
+    """THE OCR CAPABILITY SEAM. ``str`` == the channel was read (possibly to no text);
+    ``None`` == the channel could NOT be read at all.
 
-    Graceful-degradation contract: if ``pytesseract``/``PIL`` is not installed OR the
-    tesseract binary is absent (or the bytes are not a decodable image), return ``""``
-    — this function NEVER raises. So the base install, and any environment without the
-    ``[ocr]`` extra, are completely unaffected. Only when the extra is present does this
-    read the pixels; the recovered text is then scanned by the SAME injection engine.
+    That distinction is the whole of R9. The old contract collapsed both onto ``""``, so
+    "I OCR'd the pixels and they were clean" and "I have no OCR installed, I never looked
+    at the pixels" produced an identical, and identically-rendered, ``clean`` verdict —
+    on the one channel the GhostCommit attack actually uses.
+
+    ``None`` covers three genuinely-unread cases, all fail-closed:
+
+    * ``pytesseract`` / ``PIL`` not installed (no ``[ocr]`` extra) — the base install;
+    * the tesseract SYSTEM binary absent (``TesseractNotFoundError``);
+    * the decoder REFUSING these particular bytes — a crafted image, a
+      ``DecompressionBombError``, a tesseract crash. Per-image failure is a coverage gap
+      too: a binary being installed is not proof this image's pixels were read. This
+      mirrors the ``_ANOMALY_SCAN_ERROR`` treatment on the Pillow path.
+
+    Never raises: an untrusted-input parser that crashes comprehension is not an option.
     """
     try:
         import pytesseract
         from PIL import Image
     except ImportError:
-        return ""
+        return None
     try:
         with Image.open(io.BytesIO(data)) as img:
             recovered = pytesseract.image_to_string(img)
     except Exception:
-        # This function's contract is "never raises, return '' on failure". A broad
-        # catch is correct for an untrusted-input parser: OSError covers
-        # TesseractNotFoundError and PIL's UnidentifiedImageError / truncated-image
-        # OSError, ValueError covers bad modes, TesseractError a runtime failure — but
-        # Pillow also raises DecompressionBombError (a bare Exception subclass) on a
-        # crafted huge-dimension image, and that MUST NOT crash comprehension. OCR is
-        # best-effort; any failure degrades to "" (fail-closed is enforced upstream).
-        return ""
+        # Broad by contract. OSError covers TesseractNotFoundError and PIL's
+        # UnidentifiedImageError / truncated-image OSError, ValueError covers bad modes,
+        # TesseractError a runtime failure — but Pillow also raises DecompressionBombError
+        # (a bare Exception subclass) on a crafted huge-dimension image, and that MUST NOT
+        # crash comprehension. Degrade to "unread", never to a silent "read it, saw
+        # nothing".
+        return None
     return recovered or ""
+
+
+def _deep_metadata_available() -> bool:
+    """True when Pillow can walk the deep-metadata channel (the ``[imagescan]`` extra).
+
+    Absent, the PNG ``eXIf`` chunk and the EXIF sub-IFD go unread: the stdlib L2 walk
+    covers only PNG ``tEXt``/``iTXt``/``zTXt`` and JPEG ``COM``/``APPn``.
+    ``test_pillow_extracts_exif_usercomment_injection`` proves an injection lives in that
+    gap, so it is a genuinely unreadable channel and is named as one.
+    """
+    try:
+        from PIL import ExifTags, Image  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def ocr_text(data: bytes) -> str:
+    """Recover the text rendered as *visible pixels* in an image (L3).
+
+    Graceful-degradation contract, unchanged and public: if ``pytesseract``/``PIL`` is not
+    installed OR the tesseract binary is absent (or the bytes are not a decodable image),
+    return ``""`` — this function NEVER raises.
+
+    Because ``""`` cannot distinguish "read it, no text" from "could not read it", this is
+    NOT what :func:`scan_image` uses to decide coverage; it calls
+    :func:`_read_rendered_text` and reports the difference. Use that seam, not this one,
+    when the answer feeds a verdict.
+    """
+    return _read_rendered_text(data) or ""
 
 
 # --- L2 deep metadata via Pillow (opt-in [imagescan] extra) --------------------------
@@ -335,9 +416,43 @@ def _collect_exif_ifd(ifd: Any, prefix: str, channels: list[TextChannel]) -> Non
 
 def _looks_like_image(data: bytes) -> bool:
     """True when ``data`` carries a PNG/JPEG signature — i.e. it *claims* to be an
-    image. Only signatured-but-undecodable bytes count as a scan-error anomaly; random
-    non-image bytes are simply not an image (no anomaly)."""
+    image THIS MODULE'S PARSERS handle. Only signatured-but-undecodable bytes count as a
+    scan-error anomaly; random non-image bytes are simply not an image (no anomaly).
+
+    Scoped to the L2 parsers on purpose: this gates a review-tier anomaly, so widening it
+    would move tiers. Coverage uses :func:`_has_pixel_channel` instead.
+    """
     return data.startswith(_PNG_SIGNATURE) or data.startswith(_JPEG_SIGNATURE)
+
+
+#: Signatures of raster formats a vision-capable agent will happily render. Used ONLY to
+#: decide whether there are pixels that went unread — never to tier anything.
+_PIXEL_SIGNATURES = (
+    _PNG_SIGNATURE,
+    _JPEG_SIGNATURE,
+    b"GIF87a",
+    b"GIF89a",
+    b"BM",  # BMP
+    b"II\x2a\x00",  # TIFF little-endian
+    b"MM\x00\x2a",  # TIFF big-endian
+)
+
+
+def _has_pixel_channel(data: bytes) -> bool:
+    """True when ``data`` plausibly carries RENDERED PIXELS an agent could read.
+
+    Deliberately BROADER than :func:`_looks_like_image`. Coverage asks "are there pixels
+    here that went unread", which is not the same question as "can my PNG/JPEG parser read
+    this". A GIF/WebP/BMP/TIFF is unparsed by L2 yet renders perfectly for a vision-capable
+    agent, so an unreadable OCR channel on one is a real blind spot — reporting no gap
+    there would reintroduce the R9 defect one format sideways.
+
+    Narrower than "any bytes": something that is not an image has no pixel channel to be
+    unable to read, and a gap reported there would be noise that erodes the marker.
+    """
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return True
+    return data.startswith(_PIXEL_SIGNATURES)
 
 
 def _pillow_metadata(data: bytes) -> tuple[list[TextChannel], str | None]:
@@ -447,9 +562,9 @@ def _decode_hits(channel: str, text: str) -> list[str]:
 
 
 def scan_image(
-    data: bytes, *, ocr: Callable[[bytes], str] | None = None
+    data: bytes, *, ocr: Callable[[bytes], str | None] | None = None
 ) -> ImageScanVerdict:
-    """Deterministic verdict for one image (L2 + L3).
+    """Deterministic verdict for one image (L2 + L3), plus its COVERAGE.
 
     Every extracted channel — stdlib metadata (:func:`extract_text_channels`), the
     trailing-byte payload, Pillow deep metadata (:func:`extract_pillow_metadata`, when
@@ -458,14 +573,22 @@ def scan_image(
     ``poison`` (basis names the channel + rule). A structural anomaly with no hit →
     ``review``. Otherwise ``clean``.
 
+    Separately, any channel that could not be READ is named in
+    ``channels_unavailable`` (R9). The tier is never softened or hardened by a coverage
+    gap — a finding in a readable channel still stands, and an unreadable channel is
+    never spun into a finding — but the two facts are always both reported.
+
     The OCR seam is INJECTABLE: pass ``ocr=`` a callable for offline, tesseract-free
-    tests of the OCR-text → verdict wiring; it defaults to the real :func:`ocr_text`
-    (which returns ``""`` — a no-op — when the extra/binary is absent).
+    tests of the OCR-text → verdict wiring. It defaults to :func:`_read_rendered_text`.
+    The seam carries the capability answer too: return ``str`` for "I read the pixels"
+    (``""`` == read them, no text) and ``None`` for "I could not read them". A caller
+    that injects a reader is asserting the channel IS readable, so a ``str`` return
+    records no gap.
 
     ``looks_like_address_value`` is deliberately never invoked: a bare wallet address in
     metadata or OCR text is data, not a routing directive (base58 FP guard).
     """
-    ocr_fn = ocr if ocr is not None else ocr_text
+    ocr_fn = ocr if ocr is not None else _read_rendered_text
     channels = list(extract_text_channels(data))
     pillow_channels, scan_error = _pillow_metadata(data)
     channels.extend(pillow_channels)
@@ -493,19 +616,36 @@ def scan_image(
         hits.extend(_channel_hits(label, scan_text))
         hits.extend(_decode_hits(label, scan_text))
 
-    # L3: OCR the rendered pixels. In the base install / this env (no tesseract) the
-    # default ocr_fn returns "" here, so this is a no-op and the L2 verdict stands.
+    # Coverage: which channels could not be READ at all. Only meaningful for bytes that
+    # actually claim to be an image — non-image bytes have no pixel or metadata channel,
+    # so "could not read it" would be noise, not honesty (and the marker must keep
+    # meaning something). Same guard the Pillow scan-error anomaly already uses.
+    unavailable: list[str] = []
+
+    # L3: OCR the rendered pixels — the channel the GhostCommit payload lives in. ``None``
+    # means it was never read (no extra / no binary / decoder refused these bytes).
     recovered = ocr_fn(data)
-    if recovered:
+    if recovered is None:
+        if _has_pixel_channel(data):
+            unavailable.append(CHANNEL_OCR)
+    elif recovered:
         scanned += 1
         hits.extend(_ocr_hits(recovered))
         # The rendered pixels are the GhostCommit delivery channel; an encoded payload
         # there (base64/hex/rot13) is decoded + rescanned like any other channel.
         hits.extend(_decode_hits("ocr", recovered))
 
+    # Pillow ABSENT is a coverage gap (eXIf / EXIF sub-IFD unread). Pillow PRESENT but
+    # refusing these bytes is a finding, not a gap — already handled above as
+    # ``scan_error``. The two must not be conflated: one is "I have no eyes here", the
+    # other is "attacker bytes broke my eyes", and only the second is evidence.
+    if _has_pixel_channel(data) and not _deep_metadata_available():
+        unavailable.append(CHANNEL_DEEP_METADATA)
+
+    gaps = tuple(unavailable)
     if hits:
-        return ImageScanVerdict("poison", tuple(hits), scanned)
+        return ImageScanVerdict("poison", tuple(hits), scanned, gaps)
     if anomalies:
         basis = tuple(f"{a} → structural-anomaly" for a in anomalies)
-        return ImageScanVerdict("review", basis, scanned)
-    return ImageScanVerdict("clean", (), scanned)
+        return ImageScanVerdict("review", basis, scanned, gaps)
+    return ImageScanVerdict("clean", (), scanned, gaps)

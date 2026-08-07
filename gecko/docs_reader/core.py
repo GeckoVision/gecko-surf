@@ -94,6 +94,11 @@ def _apply_skill_guard(
     structural image anomaly, no injection hit) adds an ``x-review`` note. A clean page
     gets neither marker, so existing review-flag behaviour is unchanged (invariant: the
     engine decides trust — this only records WHY, never bypasses the quarantine seam).
+
+    A coverage gap adds ``x-scan-coverage`` — a THIRD, non-trust marker (R9). It records
+    which untrusted channel went unread so a comprehended surface can never silently imply
+    it was fully checked. It is deliberately not ``x-poison`` (nothing was found) and not
+    ``x-review`` (nothing is there for a human to look at) — those stay findings.
     """
     verdict = scan_doc_page(page_text, image_ocr=image_ocr)
     info = draft.setdefault("info", {})
@@ -102,6 +107,10 @@ def _apply_skill_guard(
     if verdict.review_basis:
         info["x-review"] = "Skill Guard image review: " + "; ".join(
             verdict.review_basis
+        )
+    if verdict.unavailable_channels:
+        info["x-scan-coverage"] = "Skill Guard could not scan: " + "; ".join(
+            verdict.unavailable_channels
         )
 
 

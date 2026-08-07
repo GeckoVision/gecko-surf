@@ -83,19 +83,28 @@ def test_looks_like_address_value_never_called_on_image_text(monkeypatch):
         imagescan.scan_image(_read(name))
 
 
-def test_build_spec_payload_is_clean_at_l2():
+def test_build_spec_payload_is_clean_at_l2_but_reports_the_unread_channel():
     """The flagship GhostCommit image: payload is rendered as PIXELS, with no
     metadata and no trailing bytes. L2 alone misses it — this documents why
-    PR3/OCR exists. Verdict is clean at L2."""
+    PR3/OCR exists. Verdict is clean at L2.
+
+    R9: the seam is now ``ocr=lambda _d: None`` ("could not read the pixels"), not
+    ``lambda _d: ""`` ("read the pixels, no text"). Those were the same value before, and
+    that conflation is precisely what let this image render as an unqualified CLEAN on a
+    base install. The tier assertion is unchanged; what is added is that the verdict now
+    also says the pixel channel went unread.
+    """
     data = _read("build_spec_payload.png")
     assert imagescan.find_trailing_bytes(data) is None
     channels = imagescan.extract_text_channels(data)
     for ch in channels:
         assert not sanitize.scan_text(ch.text)
-    # Force the no-OCR path so this stays deterministic whether or not tesseract is
-    # installed: L2 (metadata/trailing-bytes) alone misses the rendered-pixel payload.
-    # (With OCR present the same image verdicts POISON — see test_real_ocr_of_build_spec.)
-    assert imagescan.scan_image(data, ocr=lambda _d: "").tier == "clean"
+    # Force the unreadable-OCR path so this stays deterministic whether or not tesseract
+    # is installed. (With OCR present the same image verdicts POISON — see
+    # test_real_ocr_of_build_spec_is_poison.)
+    verdict = imagescan.scan_image(data, ocr=lambda _d: None)
+    assert verdict.tier == "clean"
+    assert imagescan.CHANNEL_OCR in verdict.channels_unavailable
 
 
 # --- extractor unit tests ------------------------------------------------------------
@@ -303,21 +312,26 @@ def test_ocr_channel_never_calls_looks_like_address_value(monkeypatch):
     assert verdict.tier == "clean"
 
 
-def test_ocr_text_returns_empty_when_tesseract_absent_graceful_degradation():
-    """GRACEFUL DEGRADATION (always runs): with no OCR extra/binary, real ``ocr_text``
-    returns "" and ``scan_image`` (no injected OCR) verdicts the flagship image clean at
-    L2 — BUT the L1 delivery file (``agents_delivery.md``) is already caught, so 'OCR
-    optional, delivery still caught' is test-backed. Asserts both facts; L1 internals are
-    covered in test_convention_scan.py, not re-tested here."""
+def test_graceful_degradation_never_raises_but_never_claims_a_clean_pixel_scan():
+    """GRACEFUL DEGRADATION (always runs), restated honestly.
+
+    Two contracts, and R9 is the line between them. Degradation is about not CRASHING:
+    with no extra/binary, ``ocr_text`` still returns "" and ``scan_image`` still produces
+    a verdict rather than raising. It is NOT a licence to claim the pixel channel was
+    clean — the same call now names ``ocr`` as unread. The L1 delivery file
+    (``agents_delivery.md``) is still caught either way, so "OCR optional, delivery still
+    caught" remains test-backed. L1 internals live in test_convention_scan.py.
+    """
     data = _read("build_spec_payload.png")
-    # Real OCR path, tesseract absent in this env → "" (never raises). Only assertable
-    # when the binary is genuinely absent; harmless (skipped) when it is present.
+    # Real OCR path, tesseract absent → "" (never raises). Only assertable when the
+    # binary is genuinely absent; harmless (skipped) when it is present.
     if shutil.which("tesseract") is None:
         assert imagescan.ocr_text(data) == ""
-    # The graceful-degradation contract: with OCR yielding nothing, L2 alone misses the
-    # rendered-pixel payload → clean. Force no-OCR so this holds regardless of tesseract.
-    assert imagescan.scan_image(data, ocr=lambda _d: "").tier == "clean"
-    # L1 already quarantines the delivery convention file.
+    # Forced-unreadable: still a verdict, still no crash — and now honest about coverage.
+    verdict = imagescan.scan_image(data, ocr=lambda _d: None)
+    assert verdict.tier == "clean"
+    assert verdict.complete is False
+    # L1 already quarantines the delivery convention file, with or without OCR.
     assert sanitize.scan_convention_text(_read_text("agents_delivery.md")) != []
 
 
@@ -416,3 +430,132 @@ def test_pillow_metadata_empty_for_bare_image():
 def test_pillow_metadata_empty_for_not_an_image():
     """Not-an-image bytes → [] (never raises), whether or not Pillow is installed."""
     assert imagescan.extract_pillow_metadata(b"not an image at all") == []
+
+
+# --- R9: a scan that COULD NOT RUN must not render as a scan that PASSED --------------
+#
+# The GhostCommit payload lives in RENDERED PIXELS. On a base install (no [ocr] extra /
+# no tesseract binary) the one channel that can see it is unreadable — yet scan_image
+# reported ``clean`` with an empty basis, indistinguishable from "I read the pixels and
+# they were fine". Coverage is now a first-class, ORTHOGONAL field on the verdict:
+# ``tier`` answers "what did I find in what I looked at", ``channels_unavailable``
+# answers "where could I not look at all".
+
+
+def test_unreadable_ocr_channel_is_a_coverage_gap_not_a_silent_clean():
+    """THE R9 REGRESSION. The flagship GhostCommit image, with the rendered-pixel channel
+    UNREADABLE (``ocr`` returns ``None`` == "could not read", the base-install state).
+
+    The tier stays ``clean`` — nothing was found in what was actually scanned, and making
+    this ``review`` would make EVERY ordinary image a finding (alert fatigue is its own
+    security failure). What must NOT happen is the verdict claiming complete coverage: the
+    gap is named, and ``complete`` is False, so no caller can render an unqualified pass.
+    """
+    data = _read("build_spec_payload.png")
+    verdict = imagescan.scan_image(data, ocr=lambda _d: None)
+
+    assert verdict.tier == "clean"  # honest about what was FOUND
+    assert verdict.complete is False  # honest about what was LOOKED AT
+    assert imagescan.CHANNEL_OCR in verdict.channels_unavailable
+
+
+def test_ocr_that_ran_and_found_no_text_is_not_a_gap():
+    """The two empty strings are NOT the same fact. ``""`` == "I read the pixels, there
+    was no text"; ``None`` == "I could not read the pixels". Only the latter is a gap —
+    otherwise every text-free image would be reported as unscanned, and the marker would
+    stop meaning anything.
+
+    Asserted per-channel, not via ``complete``: this suite runs on both a base and an
+    extras install, and on a base install ``deep-metadata`` is legitimately unavailable.
+    """
+    verdict = imagescan.scan_image(_read("clean_arch.png"), ocr=lambda _d: "")
+
+    assert verdict.tier == "clean"
+    assert imagescan.CHANNEL_OCR not in verdict.channels_unavailable
+
+
+def test_all_channels_readable_reports_complete_coverage(monkeypatch):
+    """FALSE-POSITIVE GUARD: with every channel readable, the verdict claims complete
+    coverage and carries no caveat. The naive form of this fix — treating zero channels,
+    or any base install, as inherently suspicious — would caveat every ordinary image."""
+    monkeypatch.setattr(imagescan, "_deep_metadata_available", lambda: True)
+    verdict = imagescan.scan_image(_read("clean_arch.png"), ocr=lambda _d: "")
+
+    assert verdict.tier == "clean"
+    assert verdict.complete is True
+    assert verdict.channels_unavailable == ()
+
+
+def test_coverage_gap_is_orthogonal_to_a_poison_finding():
+    """Why this is a FIELD and not a fourth ``ImageTier`` value: a scan can find real
+    poison in one channel AND be unable to read another, simultaneously. A tier value
+    would force a lossy choice between reporting the finding and reporting the gap."""
+    verdict = imagescan.scan_image(_read("poison_exif.png"), ocr=lambda _d: None)
+
+    assert verdict.tier == "poison"  # the finding is NOT suppressed by the gap
+    assert imagescan.CHANNEL_OCR in verdict.channels_unavailable  # nor the gap by it
+    assert verdict.complete is False
+
+
+def test_absent_pillow_makes_deep_metadata_a_named_gap(monkeypatch):
+    """Without Pillow the PNG ``eXIf`` chunk / EXIF sub-IFD is unread (stdlib L2 walks
+    only tEXt/iTXt/zTXt + JPEG COM/APPn) — ``test_pillow_extracts_exif_usercomment_injection``
+    proves an injection lives there that stdlib misses. That is a second unreadable
+    channel and must be named, not silently omitted."""
+    monkeypatch.setattr(imagescan, "_deep_metadata_available", lambda: False)
+    verdict = imagescan.scan_image(_read("clean_arch.png"), ocr=lambda _d: "")
+
+    assert verdict.tier == "clean"
+    assert imagescan.CHANNEL_DEEP_METADATA in verdict.channels_unavailable
+
+
+def test_real_ocr_failure_on_image_signatured_bytes_is_a_gap(monkeypatch):
+    """FAIL-CLOSED, per image: the binary being installed is not proof the channel was
+    read. An image the OCR decoder REFUSES (crafted bytes, a tesseract crash) leaves the
+    pixels unread — that must surface as a gap, mirroring the Pillow ``scan-error``
+    anomaly, never degrade to a silent ``clean``."""
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
+    verdict = imagescan.scan_image(_read("clean_arch.png"))
+
+    assert imagescan.CHANNEL_OCR in verdict.channels_unavailable
+
+
+def test_not_an_image_reports_no_coverage_gap():
+    """Bytes that are not an image have no pixel channel to read, so there is nothing
+    to be unable to read. Reporting a gap here would be noise, not honesty."""
+    verdict = imagescan.scan_image(b"not an image at all", ocr=lambda _d: None)
+
+    assert verdict.channels_unavailable == ()
+    assert verdict.complete is True
+
+
+def test_coverage_gap_carries_channel_names_only():
+    """Control plane (invariant #1): a gap names the CHANNEL, never a path, a binary
+    location, an environment detail, or any payload."""
+    verdict = imagescan.scan_image(_read("build_spec_payload.png"), ocr=lambda _d: None)
+
+    for name in verdict.channels_unavailable:
+        assert name in (imagescan.CHANNEL_OCR, imagescan.CHANNEL_DEEP_METADATA)
+
+
+def test_non_png_jpeg_image_still_reports_the_unread_pixel_channel():
+    """SELF-REFUTATION of this fix's first draft.
+
+    The coverage guard originally reused ``_looks_like_image`` (PNG/JPEG signatures — the
+    formats the L2 *parsers* handle). A GIF/WebP/BMP/TIFF therefore reported NO gap and
+    ``complete is True``, while a vision-capable agent renders it just fine: the fix would
+    have quietly reintroduced the exact defect it exists to close, one format sideways.
+
+    Coverage asks "are there pixels here that went unread", which is broader than "can my
+    PNG/JPEG parser read this". Kept separate from ``_looks_like_image`` on purpose — that
+    one gates a review-tier anomaly, and coverage must not be able to move a tier.
+    """
+    for name, header in (
+        ("gif", b"GIF89a" + b"\x00" * 16),
+        ("bmp", b"BM" + b"\x00" * 20),
+        ("webp", b"RIFF\x24\x00\x00\x00WEBPVP8 " + b"\x00" * 8),
+        ("tiff", b"II\x2a\x00" + b"\x00" * 16),
+    ):
+        verdict = imagescan.scan_image(header, ocr=lambda _d: None)
+        assert imagescan.CHANNEL_OCR in verdict.channels_unavailable, name
+        assert verdict.complete is False, name
