@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fixed
+- **A cyclic seed dependency was rendered as a confident derivation order.** When two
+  PDAs of an instruction seed from each other — or a PDA seeds from itself — the graph
+  cannot order them, but `_derivation_order` fell back to declaration order and emitted
+  it with `resolvable=True` and no marker. An orchestrator ingesting that derives `a`
+  first, which needs `b`, and fails at build time far from here. The loop was bounded
+  against hanging; nothing guarded against lying.
+
+  Now the residual of Kahn's algorithm is reported: the affected accounts stay in
+  `derivation_order` (dropping an account is the worse failure) but are each
+  `resolvable=False`, and `InstructionGraph.cycle` — carried into `to_json()` — names
+  them. `find_start` reads the same signal through the new
+  `derivation_order_with_cycle` seam and emits those accounts as **FLAGGED** steps with
+  the cycle members in the note, so they surface as honest gaps rather than plan
+  positions. No provenance value was added; `flagged` already existed for exactly this.
+
+  Measured: **0 of 11** wired start cards and **0 of 144** instructions across the four
+  packaged Orquestra IDLs contain a cycle, so no shipped plan changes. `find_start`
+  retrieval eval unchanged (recall@1 0.74, recall@3 0.89, MRR 0.81, 4/4 out-of-scope
+  rejections, 0 false accepts).
+
 ## 0.10.2 — 2026-08-06
 
 ### Fixed
