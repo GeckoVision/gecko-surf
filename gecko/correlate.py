@@ -17,9 +17,12 @@ The ladder (all deterministic; cross-API is effectively BINARY — §13.6):
                     high. Cross-API with a PROVIDER-only declaration -> candidate
                     (guardrail 3/4: an untrusted spec can't mint a cross-system
                     join). Intra-API -> plan-eligible.
-  tier 2 SIG        a shared discriminating pattern/enum/format corroborates a
-                    name match. **INTRA-API ONLY** — the §13.6 gate forbids a
+  tier 2 SIG        a shared discriminating pattern/format CORROBORATES a name
+                    match — the name match is REQUIRED, the signature only lifts
+                    a rung. **INTRA-API ONLY** — the §13.6 gate forbids a
                     cross-API signature from carrying a join (zero false-high).
+                    A shared enum is NOT corroboration (a bounded domain
+                    guarantees collisions), and neither is a shared ``date-time``.
   tier 1 NAME       same ``_entity_of``, id-shaped, not genericity-demoted.
                     Intra-API -> plan-eligible. Cross-API -> a **candidate**,
                     quarantined, NEVER auto-joined.
@@ -79,15 +82,16 @@ def _id_type(sig: str) -> str | None:
 
 def _sig_signal(a: str, b: str) -> str | None:
     """The named discriminating signal two signatures share (§13.1), or None. A
-    corroborator only — never a standalone cross-API basis (that's the §13.6 gate)."""
+    corroborator only — never a standalone basis, intra- OR cross-API.
+
+    There is no ``enum-eq`` rung: an enum is a bounded domain, so sharing one is
+    anti-evidence for a join (see ``graph._sig_corroborates``)."""
     if not _sig_corroborates(a, b):
         return None
-    _, fa, pa, ea = a.split("|")
-    _, fb, pb, eb = b.split("|")
+    _, _fa, pa, _ = a.split("|")
+    _, _fb, pb, _ = b.split("|")
     if pa and pa == pb:
         return "pattern-eq"
-    if ea and ea == eb:
-        return "enum-eq"
     return "format-eq"  # a shared discriminating format (uuid/uri/...)
 
 
@@ -262,16 +266,29 @@ def _score(src: Correland, dst: Correland) -> tuple[CorrelationBasis, bool] | No
             False,
         )
 
-    # tier 2 — signature corroboration, INTRA-API ONLY (the §13.6 gate).
+    # tier 2 — a NAME-ENTITY match CORROBORATED by the value-domain signature.
+    # INTRA-API only (the §13.6 gate), and the name match is REQUIRED: the signature is
+    # a corroborator, never a standalone join basis (charter invariant #5). Firing on
+    # the signature alone made 95% of every plan-eligible link on real specs a
+    # non-join-key — timestamps, money amounts, mode enums — because a shared value
+    # DOMAIN says two fields look alike, not that they are the same key. Without a name
+    # match this falls through to tier 1, which needs the same identity and so returns
+    # tier 0: no link, rather than a plausible one.
     sig = _sig_signal(src.sig, dst.sig)
-    if sig and not cross:
-        ent2: str | None = (
-            src.name_entity
-            if src.name_entity and src.name_entity == dst.name_entity
-            else None
+    if sig and not cross and src.name_entity and src.name_entity == dst.name_entity:
+        ent2 = src.name_entity
+        return (
+            _basis(
+                2,
+                "INFERRED",
+                src,
+                dst,
+                ent2,
+                (f"name-entity:{ent2}", sig),
+                "medium",
+            ),
+            True,
         )
-        signals2 = [sig] if ent2 is None else [f"name-entity:{ent2}", sig]
-        return _basis(2, "INFERRED", src, dst, ent2, tuple(signals2), "medium"), True
 
     # tier 1 — INFERRED name-entity match.
     if src.name_entity and src.name_entity == dst.name_entity:

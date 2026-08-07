@@ -15,6 +15,13 @@ can't clear it, cross-API ships DECLARED-only — a PRODUCT finding, surfaced.
 
 Offline, $0, deterministic, no model.
     uv run python scripts/two_api_probe.py <stripe.json> <adyen.json>
+
+HISTORICAL ARTIFACT — do not read as the current rules. This script carries its own
+copy of the §13.1 constants as they stood when the probe was run, and it needs spec
+files that are NOT committed, so it cannot be re-run as a regression. The engine's
+rules have since tightened (2026-08-06): a shared enum and a shared ``date-time`` no
+longer corroborate, and tier 2 requires a name-entity match. The committed,
+re-runnable measurement is ``tests/test_correlate_precision.py``.
 """
 
 from __future__ import annotations
