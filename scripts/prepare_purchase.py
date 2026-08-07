@@ -136,7 +136,31 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="Refuse if the account holds more than this — a spend ceiling, checked here.",
     )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help=(
+            "Prepare this many purchases, one at a time. Each round takes a FRESH "
+            "blockhash so every binding is exact; you sign each as it appears rather "
+            "than batching, because an exact binding that outlived its blockhash would "
+            "attest a message that can no longer land."
+        ),
+    )
+    parser.add_argument("--price-usdc", type=float, default=0.1)
     args = parser.parse_args(argv)
+
+    if args.count < 1:
+        print("STOP: --count must be at least 1.")
+        return 2
+    planned = args.count * args.price_usdc
+    if planned > args.max_usdc + 1e-9:
+        print(
+            f"STOP: {args.count} x {args.price_usdc} USDC = {planned:.2f}, over the "
+            f"--max-usdc ceiling of {args.max_usdc}."
+            "\nThe ceiling binds the WHOLE run, not one purchase — that is the point of it."
+        )
+        return 2
 
     ata = derive_ata(args.signer, USDC)
     balance = token_balance(ata, args.rpc_url)
@@ -156,6 +180,41 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if args.count > 1:
+        print(
+            f"\nplan            {args.count} purchases x {args.price_usdc} USDC "
+            f"= {planned:.2f} USDC total (ceiling {args.max_usdc})"
+        )
+
+    for round_number in range(1, args.count + 1):
+        if args.count > 1:
+            print(f"\n{'-' * 62}\n  ROUND {round_number} of {args.count}\n{'-' * 62}")
+        code = _prepare_one(args, ata)
+        if code != 0:
+            print(
+                f"\nSTOPPED at round {round_number} of {args.count}. Nothing further was "
+                "prepared.\nEarlier rounds you already signed are unaffected; this run "
+                "refuses to continue\npast a round it could not approve."
+            )
+            return code
+        if round_number < args.count:
+            # Deliberately blocking. Each round's binding is exact and expires with its
+            # blockhash, so preparing the next one before this one is signed would hand
+            # you a queue of transactions that quietly go stale while you click.
+            input(
+                "\n  Sign and broadcast the bytes above, then press Enter for the next "
+                "round. "
+            )
+    return 0
+
+
+def _prepare_one(args: argparse.Namespace, ata: str) -> int:
+    """One purchase: build, fetch a fresh blockhash and fee, simulate live, approve, stop.
+
+    Everything up to the signature and nothing past it. Returns 0 when the receipt
+    approved the exact bytes printed, non-zero otherwise — and a non-zero return stops
+    the whole run rather than moving on to the next round.
+    """
     built = build_instruction(args.signer, ata, args.product, args.table)
     serialized = built.get("serializedTransaction")
     if not serialized:
