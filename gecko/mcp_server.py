@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from collections.abc import Mapping
 from typing import Any
 
 from .client import AgentApiClient
@@ -47,6 +48,23 @@ from .search import project_hits
 
 logger = logging.getLogger("gecko.mcp_server")
 
+
+def _question_of(arguments: Mapping[str, Any]) -> str:
+    """The caller's question, under either name it may have used.
+
+    `search_capabilities` advertises ``query`` and `query_docs`/`find_start` advertise
+    ``intent`` — same concept, two spellings, on the same surface. An agent that learns
+    one and reuses it hits a validation error on its next call. Rather than rename a
+    published field (which breaks callers who got it right), both are accepted
+    everywhere and neither is required, so whichever the agent reaches for works.
+    """
+    for key in ("query", "intent"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 _SEARCH_TOOL = {
     "name": "search_capabilities",
     "description": "Find which endpoint/tool fits a natural-language intent. Returns ranked tool names you can then call.",
@@ -56,9 +74,19 @@ _SEARCH_TOOL = {
             "query": {
                 "type": "string",
                 "description": "What you want to do, in plain language.",
-            }
+            },
+            # `intent` is the same field under the name the sibling tools use. Two tools
+            # on ONE surface asking for a question under two names is a first-call
+            # failure we shipped in the product whose whole claim is first-call-correct:
+            # an agent that succeeds here with `query` then calls query_docs/find_start
+            # with `query` and gets a validation error. Accept both, keep `query`
+            # canonical (it is what the published schema has always advertised).
+            "intent": {
+                "type": "string",
+                "description": "Alias of `query` — same thing, either name works.",
+            },
         },
-        "required": ["query"],
+        "required": [],
     },
 }
 
@@ -77,9 +105,13 @@ _QUERY_DOCS_TOOL = {
             "intent": {
                 "type": "string",
                 "description": "What you were trying to do (or the error you hit), in plain language.",
-            }
+            },
+            "query": {
+                "type": "string",
+                "description": "Alias of `intent` — same thing, either name works.",
+            },
         },
-        "required": ["intent"],
+        "required": [],
     },
 }
 
@@ -326,7 +358,7 @@ class McpSurface:
         correlation token — it joins connect->call for the retention funnel and is
         sanitized by ``emit_surf_event``; it never touches the upstream call."""
         if name == "search_capabilities":
-            query = arguments.get("query", "")
+            query = _question_of(arguments)
             # Prefer the provenance-carrying substrate when the client offers it
             # (``AgentApiClient.search_ranked`` — a pure superset of ``search``): the top
             # hit's ``is_fallback`` feeds the genuine-hit gate below. Duck-typed clients
@@ -392,7 +424,7 @@ class McpSurface:
         # failed and rewrite. Sibling of get_capability — dispatched by name, resolved
         # in the package (docsearch), never reaching an upstream call.
         if name == "query_docs":
-            return self.query_docs(arguments.get("intent", ""))
+            return self.query_docs(_question_of(arguments))
 
         # The first-class "give me the graph" door: the deterministic call graph, SCOPED
         # (an op's neighbors + plan, or a summary) to bound tokens. Sibling of
