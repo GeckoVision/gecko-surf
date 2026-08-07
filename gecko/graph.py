@@ -56,14 +56,16 @@ _GENERIC_FLOOR = 4
 _GENERIC_FRAC = 0.03
 # formats that discriminate a value domain (§13.1). int32/int64 are NOT here on
 # purpose — every counter shares them; a shared int64 proves nothing (§13.6).
+# ``date-time`` is NOT here either, for the same reason one level down: a timestamp is
+# high-cardinality but it NAMES nothing (every API ships twenty of them), so equality of
+# format is the charter's "rarity is not distinctiveness" trap — it made every
+# ``detected_at`` corroborate every report date-range bound on the Pegana spec.
 # ``base58`` is a DERIVED domain (from an example shape / a "base58"/"mint address"
 # description hint) — a rare, high-entropy value domain that discriminates like a
 # declared pattern; folded into the format slot by ``_sig_of`` when no explicit format
 # is declared. It is a CORROBORATOR only — like every other signal here it never mints a
 # standalone cross-API join (the §13.6 gate lives in ``correlate._score``, untouched).
-_DISCRIMINATING_FMT = frozenset(
-    {"uuid", "uri", "email", "ipv4", "date-time", "currency", "base58"}
-)
+_DISCRIMINATING_FMT = frozenset({"uuid", "uri", "email", "ipv4", "currency", "base58"})
 # planning tiebreak rank: the §13.2 ladder, lower is preferred.
 _PROV_RANK = {"DECLARED": 0, "INFERRED": 1}
 
@@ -282,22 +284,27 @@ def _sig_of(
 
 
 def _sig_corroborates(a: str, b: str) -> bool:
-    """True iff two signatures share a DISCRIMINATING value-domain signal: equal
-    pattern, equal enum, or an equal discriminating format — same type required.
+    """True iff two signatures share a DISCRIMINATING value-domain signal: an equal
+    pattern or an equal discriminating format — same type required.
 
     This is the §13.6 role of the signature: a **corroborator** that strengthens an
     entity-name match (basis gains ``+sig``), never a standalone join basis. Bare
     same-type (both plain strings) is NOT corroboration — that's exactly the
-    signal-free case the two-API probe measured on real specs."""
+    signal-free case the two-API probe measured on real specs.
+
+    An equal ENUM is deliberately NOT corroboration, and the sign is the interesting
+    part: a join key needs high cardinality, and an enum is a *bounded* domain, so a
+    shared enum GUARANTEES collisions between values that are not the same thing. It is
+    anti-evidence for a join. (The enum hash stays in the signature — it still
+    identifies the constraint for drift/content-addressing; it just no longer votes.)
+    The enum slot is still read here so the signature layout stays explicit."""
     if not a or not b:
         return False
-    ta, fa, pa, ea = a.split("|")
-    tb, fb, pb, eb = b.split("|")
+    ta, fa, pa, _ea = a.split("|")
+    tb, fb, pb, _eb = b.split("|")
     if ta != tb:
         return False
     if pa and pa == pb:
-        return True
-    if ea and ea == eb:
         return True
     return bool(fa) and fa == fb and fa in _DISCRIMINATING_FMT
 
