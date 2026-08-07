@@ -12,16 +12,27 @@ Secret scanners do not look at pixels. Neither does a code review.
 ## Quick setup
 
 ```bash
-# the OCR extra is REQUIRED — see the warning below
-uv sync --extra ocr            # or: uv pip install 'gecko-surf[ocr]'
+uv sync --extra ocr        # or: uv pip install 'gecko-surf[ocr]'
+sudo apt install tesseract-ocr        # macOS: brew install tesseract
+```
 
+**Both steps.** The Python extra alone is not enough — OCR shells out to the `tesseract`
+binary, and without it the pixel channel cannot be read.
+
+```bash
 gecko scan-image  path/to/image.png     # an image from an untrusted source
 gecko scan-doc    path/to/page.md       # an untrusted docs / convention page
 ```
 
-Both are read-only and local. Nothing is uploaded, and the file is never modified.
+Read-only and local. Nothing is uploaded; the file is never modified.
 
-<!-- verified 2026-08-07 against tests/fixtures/imagescan/build_spec_payload.png -->
+## The three verdicts
+
+<!-- Verbatim output, captured 2026-08-07 against tests/fixtures/imagescan/. A PR that
+     changes a verdict header, an exit code or the tier vocabulary is moving these
+     claims — update them in the same PR. -->
+
+**POISON** — a payload was found. Exit **2**.
 
 ```
 POISON — quarantined (fail-closed: recorded-only until a human clears)
@@ -31,23 +42,26 @@ POISON — quarantined (fail-closed: recorded-only until a human clears)
     - ocr → follow_rendered_instructions
 ```
 
-## ⚠️ Install the OCR extra, or the scan lies to you
-
-**Without `--extra ocr` installed, the same poisoned file reports `CLEAN`.**
+**INCOMPLETE** — a channel could not be read, so no verdict is claimed for it. Exit **3**.
 
 ```
-CLEAN — no injection or exfil signal found
-  channels scanned: 0            <-- this is the real answer
+INCOMPLETE — a channel this attack class uses could not be read
+  channels scanned: 2
+  basis: (none)
+  could not scan:
+    - ocr: rendered pixels (the channel an image-borne injection is rendered INTO)
+           — install the [ocr] extra and the tesseract binary
+  no verdict is claimed for the channel(s) above.
 ```
 
-Pillow is an optional dependency. Absent it, L3 cannot run, zero channels are scanned,
-and the verdict prints as CLEAN. The count is honest; the word is not.
+**CLEAN** — every channel was read, nothing matched. Exit **0**. That header prints *only*
+when coverage is complete — enforced in the renderer, not left to a caveat someone skims.
 
-**Treat `channels scanned: 0` as "not scanned", never as "safe."** This is a known defect
-and it is the wrong default — a check that could not run must not render as a pass. See
-*Known gaps* below.
+> Exit **3** is deliberately distinct from **2**. "I could not evaluate this" and "I
+> evaluated it and it failed" need different responses, and `scan && deploy` must not pass
+> on something never checked. `--allow-missing-channels` buys back the zero exit and still
+> prints the gap: informed consent, not a mute.
 
----
 
 ## The three layers
 
@@ -60,15 +74,39 @@ and it is the wrong default — a check that could not run must not render as a 
 L2 and L3 both feed the same scanner and the same verdict. Encoded payloads
 (base64 / hex / rot13) are decoded and rescanned rather than passed over.
 
-## What a verdict means
+## What a verdict carries
 
-- **CLEAN** — every available channel was scanned and nothing matched. *Check the channel
-  count.*
-- **POISON** — quarantined **fail-closed**: the artifact is recorded but not usable until
-  a human clears it. Refusing is the default; nothing is silently sanitized and handed on.
-- **basis** — why. Signal names only (`exfil_encoded_target`,
-  `follow_rendered_instructions`), never the payload text, so reading a report cannot
-  re-deliver the attack.
+Two independent facts, deliberately separate fields rather than one tier:
+
+- **the finding** — `poison`, or nothing found
+- **the coverage** — which channels were read, and which could not be
+
+They are separate because a scan can find real poison in metadata **and** be unable to
+read the pixels. A single tier would force a lossy choice between reporting the finding
+and reporting the gap.
+
+`basis` names *why* — channel plus rule (`ocr → exfil_encoded_target`) — never the
+payload text, so reading a report cannot re-deliver the attack.
+
+POISON is **fail-closed**: the artifact is recorded but unusable until a human clears it.
+Nothing is silently sanitized and passed on.
+
+
+## Known gaps — hold us to these
+
+- **Coverage is not quality.** `channels_unavailable` says a channel was never read. It
+  cannot say a channel was read *well*. OCR that runs but under-reads — an unusual font,
+  low contrast, text rotated past what tesseract resolves but a vision model does not —
+  counts as covered, and is still a miss.
+- **A base install always exits 3**, because tesseract is a system package rather than a
+  Python dependency. Honest, and it has a cost: an exit code that always fires trains
+  people to pass `--allow-missing-channels` unconditionally in CI, at which point the
+  disclosure prints to a log nobody reads. Under review — the fix is either a pure-Python
+  fallback or opt-in strictness for the pipeline that cares, not a quieter default.
+- **Detection is pattern-based**, so a novel phrasing can pass. Widening the patterns
+  raises false positives, which is its own harm — a scanner people mute protects nobody.
+- **No scheduled re-scan.** An image that changes after you cleared it is not re-checked.
+
 
 ## Where it sits in the pipeline
 
@@ -78,20 +116,6 @@ a poisoned page cannot mint an agent-callable capability.
 
 This is a comprehension-native control, not a firewall. It is not watching your network;
 it is refusing to turn hostile text into something your agent can act on.
-
-## Known gaps — hold us to these
-
-- **`CLEAN` on zero channels is wrong** and is the most dangerous behaviour here. It
-  should read `UNSCANNED` / `INCONCLUSIVE` and exit non-zero. Until fixed, verify the
-  channel count yourself.
-- **OCR is best-effort.** Unusual fonts, low contrast, and rotated text reduce recall. A
-  CLEAN result on a scanned channel is evidence, not proof.
-- **Encoded text inside OCR'd text** is a named residual: we decode encodings we find in
-  extracted text, but OCR errors inside an encoded blob can defeat that.
-- **Detection is pattern-based**, so a sufficiently novel phrasing can pass. Widening the
-  patterns raises false positives, which is its own harm — a scanner people disable
-  protects nobody.
-- **No scheduled re-scan.** An image that changes after you cleared it is not re-checked.
 
 ## If you find a poisoned artifact
 
