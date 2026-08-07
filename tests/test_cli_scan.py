@@ -64,26 +64,79 @@ def test_scan_image_poison_exif_nonzero_exit(capsys) -> None:
     _assert_no_payload(out)
 
 
-def test_scan_image_clean_arch_exit_zero(capsys) -> None:
+def test_scan_image_clean_arch_full_coverage_exit_zero(capsys, monkeypatch) -> None:
+    """A clean image, every channel readable → a plain CLEAN and exit 0.
+
+    R9 made this test state its install: the assertion used to be unconditional, but on a
+    BASE install (no [ocr]/[imagescan] extras) this same image now exits
+    ``_SCAN_INCOMPLETE_EXIT`` — correctly, because that install cannot read the pixel or
+    deep-metadata channels of ANY image. Stubbing both readable pins the case this test is
+    actually about: complete coverage must still produce an uncaveated pass. That is the
+    false-positive guard — a scanner that caveats every result gets ignored.
+    """
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: "")
+    monkeypatch.setattr(imagescan, "_deep_metadata_available", lambda: True)
     rc = cli.main(["scan-image", str(_FIX / "clean_arch.png")])
     out = capsys.readouterr().out
     assert rc == 0
     assert "CLEAN" in out
+    assert "could not scan" not in out
 
 
-def test_scan_image_build_spec_clean_at_L2_without_ocr(capsys, monkeypatch) -> None:
-    # The flagship GhostCommit payload is rendered as VISIBLE PIXELS — no metadata,
-    # no trailing bytes. On the base/no-OCR path L2 sees nothing, so this is CLEAN
-    # and exits 0. WITH the `[ocr]` extra installed, L3 OCRs the pixels and this same
-    # image verdicts POISON (basis `ocr → follow+exfil`) — documenting that OCR is
-    # what closes this specific case. Force the no-OCR path (stub `ocr_text` → "") so
-    # the assertion is deterministic whether or not tesseract is installed here.
-    monkeypatch.setattr(imagescan, "ocr_text", lambda _d: "")
+def test_scan_image_build_spec_without_ocr_is_INCOMPLETE_never_clean(
+    capsys, monkeypatch
+) -> None:
+    """R9 REGRESSION (this test previously asserted the DEFECT — see the PR note).
+
+    The flagship GhostCommit payload is rendered as VISIBLE PIXELS: no metadata, no
+    trailing bytes. On a base install the rendered-pixel channel is UNREADABLE, so the
+    scanner has no basis for any verdict on the one channel this attack class uses. It
+    must NOT print CLEAN and must NOT exit 0 — a scan that could not run must not render
+    as a scan that passed. It says so, names the channel, and exits non-zero.
+    """
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
     rc = cli.main(["scan-image", str(_FIX / "build_spec_payload.png")])
     out = capsys.readouterr().out
-    assert rc == 0
-    assert "CLEAN" in out
+    assert rc == cli._SCAN_INCOMPLETE_EXIT
+    assert "CLEAN" not in out
+    assert "INCOMPLETE" in out
+    assert "ocr" in out
     _assert_no_payload(out)
+
+
+def test_scan_image_incomplete_scan_still_reports_what_it_DID_find(
+    capsys, monkeypatch
+) -> None:
+    """An unreadable channel must not swallow a real finding from a readable one. POISON
+    outranks INCOMPLETE (a found attack is actionable now) and keeps the exit-2 contract,
+    but the coverage gap is still printed — both facts are true and both are reported."""
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
+    rc = cli.main(["scan-image", str(_FIX / "poison_exif.png")])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "POISON" in out
+    assert "could not scan" in out
+    _assert_no_payload(out)
+
+
+def test_scan_image_allow_missing_channels_is_informed_consent_not_silence(
+    capsys, monkeypatch
+) -> None:
+    """The opt-out exists so the [ocr] extra is not de-facto mandatory — but it buys back
+    the zero exit ONLY, never the silence. The caveat is still printed, so the operator
+    who suppresses the exit code has still been told what was not scanned."""
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
+    rc = cli.main(
+        [
+            "scan-image",
+            str(_FIX / "build_spec_payload.png"),
+            "--allow-missing-channels",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "could not scan" in out
+    assert "ocr" in out
 
 
 def test_scan_image_missing_file_errors_cleanly(capsys) -> None:

@@ -60,10 +60,18 @@ class PageScanVerdict:
 
     ``poison_basis`` quarantines the surface with a visible reason; ``review_basis`` is a
     softer note (a structural image anomaly with no injection hit). Empty both == clean.
+
+    ``unavailable_channels`` is COVERAGE, deliberately a THIRD field rather than entries
+    folded into ``review_basis``: "I could not look" is not a finding, and mixing it into
+    the findings list would both inflate the review signal on every base install and make
+    a clean-page assertion depend on which extras happen to be installed. Empty
+    ``poison``/``review`` with a non-empty ``unavailable_channels`` means "nothing found
+    in what could be read" — never "nothing there".
     """
 
     poison_basis: tuple[str, ...]
     review_basis: tuple[str, ...]
+    unavailable_channels: tuple[str, ...] = ()
 
     @property
     def poisoned(self) -> bool:
@@ -86,16 +94,24 @@ def _iter_data_images(text: str) -> Iterator[bytes]:
 
 
 def scan_doc_page(
-    text: str, *, image_ocr: Callable[[bytes], str] | None = None
+    text: str, *, image_ocr: Callable[[bytes], str | None] | None = None
 ) -> PageScanVerdict:
     """Scan one untrusted doc page's text + inline images. Never raises.
 
     ``image_ocr`` is the injectable OCR seam threaded to :func:`imagescan.scan_image` — a
     fake for offline, tesseract-free tests of the OCR-text → verdict path; ``None`` uses
-    the real (opt-in, no-op when the extra is absent) OCR.
+    the real (opt-in) OCR. Returning ``None`` from the seam models a channel that could
+    not be read, which lands in ``unavailable_channels`` rather than in a basis.
+
+    Note the asymmetry with ``gecko scan-image``, which exits non-zero on an unreadable
+    channel: this seam's PRIMARY function — the L1 convention-text scan that catches the
+    GhostCommit delivery file — is always available, extras or not. An unreadable
+    embedded-image channel narrows coverage of a secondary channel; it does not mean the
+    page scan failed to run. So it is recorded, not escalated.
     """
     poison: list[str] = []
     review: list[str] = []
+    unavailable: list[str] = []
 
     # L1: the delivery file. Convention-text tells fold into the poison basis directly.
     poison.extend(
@@ -121,5 +137,11 @@ def scan_doc_page(
             poison.extend(f"image:{b}" for b in verdict.basis)
         elif verdict.tier == "review":
             review.extend(f"image:{b}" for b in verdict.basis)
+        # Coverage, kept out of both bases (see PageScanVerdict). De-duplicated: a page
+        # with twenty images and no OCR states the gap once, not twenty times.
+        for channel in verdict.channels_unavailable:
+            name = f"image:{channel}"
+            if name not in unavailable:
+                unavailable.append(name)
 
-    return PageScanVerdict(tuple(poison), tuple(review))
+    return PageScanVerdict(tuple(poison), tuple(review), tuple(unavailable))

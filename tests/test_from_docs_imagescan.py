@@ -192,3 +192,50 @@ def test_remote_image_url_is_not_fetched(tmp_path, monkeypatch) -> None:
 
     assert fetched == [source]  # only the page itself, never the image URL
     assert "x-poison" not in draft["info"]
+
+
+# --- R9: an embedded image whose pixel channel could not be read --------------------
+
+
+def test_unreadable_image_channel_is_recorded_as_a_coverage_gap(monkeypatch) -> None:
+    """The from-docs path is where this bites in production: a comprehended page embeds
+    an image, the base install cannot read its rendered pixels, and the surface used to
+    carry NO record of that. The gap is now named on the verdict (a distinct field, not
+    folded into ``review_basis`` — "I could not look" is not a finding)."""
+    from gecko import imagescan
+    from gecko.docs_reader import scan as scan_mod
+
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
+    verdict = scan_mod.scan_doc_page(f"docs\n\n![x]({_data_uri('clean_arch.png')})\n")
+
+    assert verdict.poison_basis == ()
+    assert verdict.review_basis == ()  # unchanged: a gap is not a finding
+    assert "image:ocr" in verdict.unavailable_channels
+
+
+def test_from_docs_stamps_the_coverage_gap_on_the_surface(
+    tmp_path, monkeypatch
+) -> None:
+    """The comprehended draft records WHICH untrusted channel went unscanned, so a
+    surface can never silently imply it was fully checked."""
+    from gecko import imagescan
+
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: None)
+    body = f"# Docs\n\n![arch]({_data_uri('clean_arch.png')})\n"
+    source = _write_md(tmp_path, "page.md", body)
+
+    info = core.from_docs(source).draft["info"]
+
+    assert "image:ocr" in info["x-scan-coverage"]
+    assert "x-poison" not in info
+
+
+def test_readable_image_channel_records_no_coverage_gap(monkeypatch) -> None:
+    """FALSE-POSITIVE GUARD: when the channel WAS read, no gap is recorded — the marker
+    must mean something, so it cannot appear on every comprehended page."""
+    verdict = scan_doc_page(
+        f"docs\n\n![x]({_data_uri('clean_arch.png')})\n", image_ocr=lambda _d: ""
+    )
+    # Asserted per-channel: this suite runs on both a base and an extras install, and on
+    # a base install ``deep-metadata`` is legitimately unavailable.
+    assert "image:ocr" not in verdict.unavailable_channels

@@ -654,22 +654,56 @@ def _cmd_from_docs(argv: list[str]) -> int:
 #: exit 0 (REVIEW is a soft "a human should look", not a hard block).
 _SCAN_POISON_EXIT = 2
 
+#: R9: a scan that COULD NOT RUN must not render as a scan that PASSED. When a channel
+#: an attack class actually uses was unreadable, there is no verdict to report on it —
+#: so the command does not report one. Distinct from POISON on purpose: 2 means "the
+#: scanner ran and found an attack", 3 means "the scanner could not run". Both are
+#: non-zero because `gecko scan-image x.png && deploy` must not pass on an unscanned
+#: channel; REVIEW stays 0 because REVIEW is a verdict, not a failure to produce one.
+_SCAN_INCOMPLETE_EXIT = 3
+
+#: What each unreadable channel means and how an operator restores it. Channel NAMES
+#: only (control plane) — never a probed path or binary location.
+_CHANNEL_REMEDIATION = {
+    "ocr": (
+        "rendered pixels (the channel an image-borne injection is rendered INTO) — "
+        "install the [ocr] extra and the tesseract binary"
+    ),
+    "deep-metadata": (
+        "EXIF / XMP / IPTC / ICC — install the [imagescan] extra "
+        "(stdlib PNG tEXt/iTXt/zTXt + JPEG COM/APPn were still scanned)"
+    ),
+}
+
 
 def _print_scan_verdict(
-    tier: str, basis: tuple[str, ...], *, channels_scanned: int | None = None
+    tier: str,
+    basis: tuple[str, ...],
+    *,
+    channels_scanned: int | None = None,
+    channels_unavailable: tuple[str, ...] = (),
 ) -> None:
     """Print one Skill Guard verdict, demo-legibly (Video 1 shows this).
 
-    Presentation only — the tiering and the basis are computed in the package. The
-    header names the tier; the basis lines name WHY (channel + rule, never the
-    payload). ``basis`` is already control-plane safe (name-only) by construction.
+    Presentation only — the tiering, the basis and the coverage are computed in the
+    package. The header names the tier; the basis lines name WHY (channel + rule, never
+    the payload); the coverage block names what could NOT be read.
+
+    The one presentation RULE this enforces (R9): the unqualified "CLEAN — no injection
+    or exfil signal found" header is printed only when coverage was complete. With a
+    channel unread, "no signal found" would be an over-claim — nothing was looked for
+    there — so the header states the gap instead. POISON still outranks it: a found
+    attack is actionable now, and the coverage block prints underneath it anyway.
     """
     headers = {
         "poison": "POISON — quarantined (fail-closed: recorded-only until a human clears)",
         "review": "REVIEW — flagged, a human should look",
         "clean": "CLEAN — no injection or exfil signal found",
     }
-    print(headers.get(tier, tier.upper()))
+    if channels_unavailable and tier != "poison":
+        print("INCOMPLETE — a channel this attack class uses could not be read")
+    else:
+        print(headers.get(tier, tier.upper()))
     if channels_scanned is not None:
         print(f"  channels scanned: {channels_scanned}")
     if basis:
@@ -678,6 +712,12 @@ def _print_scan_verdict(
             print(f"    - {reason}")
     else:
         print("  basis: (none)")
+    if channels_unavailable:
+        print("  could not scan:")
+        for channel in channels_unavailable:
+            detail = _CHANNEL_REMEDIATION.get(channel, "")
+            print(f"    - {channel}: {detail}" if detail else f"    - {channel}")
+        print("  no verdict is claimed for the channel(s) above.")
 
 
 def _cmd_scan_image(argv: list[str]) -> int:
@@ -685,16 +725,29 @@ def _cmd_scan_image(argv: list[str]) -> int:
 
     Thin transport: read the file bytes, hand them to ``imagescan.scan_image``
     (L2 stdlib metadata/trailing-bytes always; L3 OCR + Pillow deep metadata only
-    when those extras are present), print the verdict. Non-zero exit on POISON.
+    when those extras are present), print the verdict. Non-zero exit on POISON, and
+    (R9) on an INCOMPLETE scan — one where a channel could not be read at all.
+
+    ``--allow-missing-channels`` is informed consent, not a mute: it buys back the zero
+    exit for an operator who has accepted the residual, while the coverage block is still
+    printed. Without it, the [ocr] extra would be de-facto mandatory for a passing run;
+    with it, what is mandatory is only the acknowledgement.
     """
     p = argparse.ArgumentParser(
         prog="gecko scan-image",
         description="Scan an image for an image-borne injection (Skill Guard). L2 "
         "(stdlib metadata + trailing bytes) always runs; the [ocr] and [imagescan] "
         "extras add rendered-pixel OCR + deep metadata when installed. Exits "
-        f"{_SCAN_POISON_EXIT} on POISON, 0 on CLEAN/REVIEW.",
+        f"{_SCAN_POISON_EXIT} on POISON, {_SCAN_INCOMPLETE_EXIT} when a channel could "
+        "not be read at all, 0 on a complete CLEAN/REVIEW.",
     )
     p.add_argument("path", help="Path to a PNG/JPEG image file.")
+    p.add_argument(
+        "--allow-missing-channels",
+        action="store_true",
+        help="Exit 0 even when a channel could not be scanned. The coverage caveat is "
+        "still printed — this suppresses the exit code, never the disclosure.",
+    )
     args = p.parse_args(argv)
 
     from . import imagescan
@@ -708,9 +761,16 @@ def _cmd_scan_image(argv: list[str]) -> int:
     verdict = imagescan.scan_image(data)
     print(f"Gecko scan-image — {args.path}\n" + "=" * 56)
     _print_scan_verdict(
-        verdict.tier, verdict.basis, channels_scanned=verdict.channels_scanned
+        verdict.tier,
+        verdict.basis,
+        channels_scanned=verdict.channels_scanned,
+        channels_unavailable=verdict.channels_unavailable,
     )
-    return _SCAN_POISON_EXIT if verdict.tier == "poison" else 0
+    if verdict.tier == "poison":
+        return _SCAN_POISON_EXIT
+    if verdict.channels_unavailable and not args.allow_missing_channels:
+        return _SCAN_INCOMPLETE_EXIT
+    return 0
 
 
 def _cmd_scan_doc(argv: list[str]) -> int:
@@ -724,9 +784,16 @@ def _cmd_scan_doc(argv: list[str]) -> int:
         prog="gecko scan-doc",
         description="Scan an untrusted convention/doc page for a follow-rendered + "
         "exfil delivery (Skill Guard L1) and any inline data: image (L2/L3). Exits "
-        f"{_SCAN_POISON_EXIT} on POISON, 0 on CLEAN/REVIEW.",
+        f"{_SCAN_POISON_EXIT} on POISON, {_SCAN_INCOMPLETE_EXIT} when an embedded "
+        "image's channel could not be read at all, 0 on a complete CLEAN/REVIEW.",
     )
     p.add_argument("path", help="Path to a text/markdown doc file.")
+    p.add_argument(
+        "--allow-missing-channels",
+        action="store_true",
+        help="Exit 0 even when a channel could not be scanned. The coverage caveat is "
+        "still printed — this suppresses the exit code, never the disclosure.",
+    )
     args = p.parse_args(argv)
 
     from .docs_reader.scan import scan_doc_page
@@ -745,8 +812,17 @@ def _cmd_scan_doc(argv: list[str]) -> int:
     )
     basis = verdict.poison_basis or verdict.review_basis
     print(f"Gecko scan-doc — {args.path}\n" + "=" * 56)
-    _print_scan_verdict(tier, basis)
-    return _SCAN_POISON_EXIT if tier == "poison" else 0
+    _print_scan_verdict(tier, basis, channels_unavailable=verdict.unavailable_channels)
+    # Same rule as scan-image, and for the same reason: L1 catching the FLAGSHIP delivery
+    # file is not a guarantee it catches every delivery. An attacker who omits the L1
+    # tells and carries the whole payload in the embedded image defeats L1 exactly as it
+    # defeats L2 — so an unread image channel on this path is the same blind spot, and
+    # gets the same non-zero exit.
+    if tier == "poison":
+        return _SCAN_POISON_EXIT
+    if verdict.unavailable_channels and not args.allow_missing_channels:
+        return _SCAN_INCOMPLETE_EXIT
+    return 0
 
 
 def _cmd_graph(argv: list[str]) -> int:
