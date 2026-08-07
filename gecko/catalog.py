@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .ingest import Operation
+from .lexnorm import fold_tokens, normalize_query
 from .tools import tool_name
 
 _WORD = re.compile(r"[a-z0-9]+")
@@ -73,11 +74,38 @@ class CatalogEntry:
             ]
         )
 
+    def _folded_fields(self) -> tuple[set[str], set[str], set[str]]:
+        """The scored surface, folded. Derived on every call ON PURPOSE: ``_tokens`` is a
+        module global that callers (the retrieval-arms harness) swap at runtime to compare
+        tokenizers, and a per-entry cache would quietly serve one arm's vocabulary to the
+        next. The per-token fold is memoized in :mod:`gecko.lexnorm` instead, which is
+        stateless and cannot go stale."""
+        return (
+            fold_tokens(_tokens(self._haystack)),
+            fold_tokens(_tokens(self.operation.summary)),
+            fold_tokens(_tokens(self.operation.operation_id)),
+        )
+
+    def score_query(self, query: str) -> int:
+        """Score raw query TEXT — the honest entry point for a caller that has a
+        question rather than a token set (evals, introspection, this module's tests)."""
+        return self.score(_tokens(query))
+
     def score(self, query_tokens: set[str]) -> int:
+        """Overlap score against the folded surface, over the query's content terms.
+
+        Both normalizations are applied HERE rather than at the call site so every
+        caller — ``Catalog.search_scored``, ``find_start``, the retrieval evals — ranks
+        on the same vocabulary. Folding is idempotent, so a caller that already folded
+        (or already dropped stopwords) gets the identical result.
+        """
+        query_tokens = normalize_query(query_tokens)
         if not query_tokens:
+            # No content-bearing term survived (an all-stopword query). Scoring 0 is the
+            # honest answer: search_scored then serves the flagged never-empty prior
+            # instead of a "genuine" hit won on `is`/`this`.
             return 0
-        hay = _tokens(self._haystack)
-        summary = _tokens(self.operation.summary)
+        hay, summary, op_id = self._folded_fields()
         # The operationId is the op's OWN identity — its camelCase/snake sub-words
         # (list·assets) are what the intent that names this op overlaps. Counting that
         # overlap a second time (like the summary double-count) lets the op the query
@@ -86,7 +114,7 @@ class CatalogEntry:
         # but only `list_assets` has "assets" in its id, so it breaks the tie the right
         # way instead of losing on the alphabetical path fallback (Raff's repro). Bounded
         # by the id's token count, so it re-weights identity — never swamps the ranking.
-        op_id = _tokens(self.operation.operation_id)
+        #
         # summary + operationId matches count double (the most intent-bearing fields)
         return (
             len(query_tokens & hay)

@@ -39,12 +39,26 @@ def test_privy_is_the_scale_gate_set() -> None:
     )
 
 
-def test_bm25_lifts_recall_on_the_large_surface() -> None:
-    # The load-bearing measured claim: on the 159-op set BM25 beats the overlap baseline at
-    # recall@3, and never regresses recall@1/@3 — the payoff the gate predicted.
+def test_bm25_no_longer_leads_the_overlap_baseline_on_the_large_surface() -> None:
+    """RE-MEASURED. This test used to assert BM25 (arm C) beat the overlap baseline
+    (arm B) by >= 0.10 at recall@3 on the 159-op set — the payoff the op-count gate was
+    pre-committed for, and true when it was written (B: r@1 0.53 / r@3 0.67 / MRR 0.646
+    vs C: 0.67 / 0.80 / 0.746).
+
+    Adding morphological folding + the genericity floor to the overlap arm moved B to
+    r@1 0.73 / r@3 0.80 / MRR 0.794: it now TIES BM25 at recall@3 and LEADS it at
+    recall@1 and MRR. The old assertion is not a regression that needs fixing — it is a
+    claim the new measurement falsifies, so it is replaced by the claim the numbers now
+    support. What follows from it (whether the >50-op BM25 adoption gate still has a
+    premise) is an architecture call for staff-engineer, not something this test decides.
+    """
     privy = arms.run()["privy"]["arms"]
-    assert _recall(privy["C"], 3) >= _recall(privy["B"], 3) + 0.10
-    assert _recall(privy["C"], 1) >= _recall(privy["B"], 1)
+    assert _recall(privy["B"], 1) >= _recall(privy["C"], 1), (
+        "the folded+floored overlap arm must not fall behind BM25 at recall@1"
+    )
+    assert _recall(privy["B"], 3) >= _recall(privy["C"], 3), (
+        "…nor at recall@3 — if BM25 pulls ahead again, re-open the adoption gate"
+    )
 
 
 def test_bm25_preserves_oos_pass_rate_everywhere() -> None:

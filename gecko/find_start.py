@@ -33,6 +33,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 
 from .catalog import Catalog, _tokens
 from .ingest import Operation
+from .lexnorm import STOPWORDS, fold_tokens, normalize_query
 from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
 from .program_graph import derivation_order_for
@@ -65,13 +66,12 @@ MAX_CATALOG_TEXT_CHARS = 800
 # How many catalog candidates ride along with a result.
 CATALOG_CANDIDATE_LIMIT = 3
 
-# A small CLOSED stopword set applied to the QUERY only (catalog.py's scorer is
-# untouched): without it, "the"/"and" overlap every program's prose and a nonsense
-# intent would clear the floor on stopwords alone.
-_STOPWORDS = frozenset(
-    "a an and are as at be by can do for from how i in into is it me my of on or "
-    "our please some that the then this to want we what which with you your".split()
-)
+# The stopword set, applied to the QUERY: without it, "the"/"and" overlap every
+# program's prose and a nonsense intent would clear the floor on stopwords alone.
+# SINGLE SOURCE OF TRUTH — this module used to declare its own copy while the catalog
+# scorer had none, and the two diverging is precisely how function words came to decide
+# an API ranking (the measured Pegana `delete_sub` miss). Both read it from lexnorm now.
+_STOPWORDS = STOPWORDS
 
 StartKind = Literal["start", "surface", "guess"]
 
@@ -503,14 +503,26 @@ def _gaps_of(card: _Card, plan: tuple[DeriveStep, ...]) -> tuple[GapSpec, ...]:
 
 
 def _query_tokens(intent: str) -> set[str]:
-    return _tokens(intent[:MAX_INTENT_CHARS]) - _STOPWORDS
+    """Query terms on the SAME vocabulary the catalog scorer ranks with — folded and
+    floored. If these two ever drift apart, the identity/corroboration gates below stop
+    agreeing with the ranking they are gating (a card promoted on `depegs`~`depeg` could
+    be demoted for "not naming the program")."""
+    return normalize_query(_tokens(intent[:MAX_INTENT_CHARS]))
 
 
 def _card_terms(card: _Card) -> set[str]:
     op = card.operation
-    return _tokens(
-        " ".join(
-            [op.summary, op.description, op.path, " ".join(op.tags), op.operation_id]
+    return fold_tokens(
+        _tokens(
+            " ".join(
+                [
+                    op.summary,
+                    op.description,
+                    op.path,
+                    " ".join(op.tags),
+                    op.operation_id,
+                ]
+            )
         )
     )
 
@@ -547,7 +559,7 @@ def _identity_terms(card: "_Card") -> set[str]:
     mentions tokens, swaps and USDC.
     """
     parts = [card.api_id, card.instruction or "", card.intent_name or ""]
-    return _tokens(" ".join(parts))
+    return fold_tokens(_tokens(" ".join(parts)))
 
 
 def _start_point(
@@ -612,7 +624,7 @@ def _catalog_candidates(
             if project.program_id in wired_program_ids:
                 continue
             text = f"{project.name} {project.description}"[:MAX_CATALOG_TEXT_CHARS]
-            overlap = q_tokens & _tokens(text)
+            overlap = q_tokens & fold_tokens(_tokens(text))
             hint_match = bool(program_hint) and (
                 program_hint == project.id
                 or (program_hint or "").lower() in project.name.lower()
