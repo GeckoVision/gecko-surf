@@ -45,7 +45,9 @@ _PLAN_TOOL = {
         "Return the friction-free build plan for one instruction: which PDA accounts to "
         "derive, in dependency order, and what each is derived from (which accounts / "
         "args). Ask this before building a transaction — it tells you exactly what to "
-        "derive and supply, with no guessing."
+        "derive and supply, with no guessing. If no order exists (a seed-dependency "
+        "cycle), the affected accounts are listed under 'cycle' and each is marked "
+        "'unorderable' — do not derive those in the order shown."
     ),
     "inputSchema": {
         "type": "object",
@@ -131,12 +133,16 @@ class ProgramGraphSurface:
         # a compact, human-legible plan alongside the structured accounts
         steps = []
         by_name = {a["name"]: a for a in payload["accounts"]}
+        cycle = set(payload["cycle"])
         for account in payload["derivation_order"]:
             a = by_name.get(account, {})
             steps.append(
                 {
                     "account": account,
                     "resolvable": a.get("resolvable", True),
+                    # its position in this list is arbitrary — a seed-dependency
+                    # cycle means there is no order that works
+                    "unorderable": account in cycle,
                     "derive_from": a.get("derive_from", []),
                 }
             )

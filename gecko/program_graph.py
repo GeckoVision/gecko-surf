@@ -20,7 +20,7 @@ step, via :func:`gecko.pda.derive_pda`).
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .pda import (
@@ -39,6 +39,7 @@ __all__ = [
     "ProgramGraph",
     "build_program_graph",
     "derivation_order_for",
+    "derivation_order_with_cycle",
 ]
 
 
@@ -57,8 +58,9 @@ class SeedBinding:
 @dataclass(frozen=True)
 class AccountRef:
     """An account slot of an instruction. If it is a PDA, its derivation inputs are
-    bound to this instruction's accounts/args; if a seed couldn't be resolved, the
-    account is flagged ``resolvable=False`` (honest, not fabricated)."""
+    bound to this instruction's accounts/args; if a seed couldn't be resolved — or
+    the account sits in (or behind) a seed-dependency cycle — the account is flagged
+    ``resolvable=False`` (honest, not fabricated)."""
 
     name: str
     is_pda: bool
@@ -71,12 +73,21 @@ class AccountRef:
 @dataclass(frozen=True)
 class InstructionGraph:
     """One instruction: its args, its account slots, and the order in which the
-    agent must derive the PDA accounts (dependency-first)."""
+    agent must derive the PDA accounts (dependency-first).
+
+    ``cycle`` is the honest gap on the ORDER itself: the PDA accounts that could
+    not be topologically placed because they sit in a seed-dependency cycle, or
+    depend on one. They stay in ``derivation_order`` (dropping an account is the
+    worse failure — it fails at build/sign time, far from here) but their position
+    there is arbitrary, they are each ``resolvable=False``, and this field names
+    them. An empty tuple means the order is genuinely derivable end to end.
+    """
 
     name: str
     args: tuple[tuple[str, str], ...]  # (name, type)
     accounts: tuple[AccountRef, ...]
     derivation_order: tuple[str, ...]
+    cycle: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -84,6 +95,9 @@ class InstructionGraph:
             "args": [{"name": n, "type": t} for n, t in self.args],
             "accounts": [_account_to_json(a) for a in self.accounts],
             "derivation_order": list(self.derivation_order),
+            # always emitted, so a consumer cannot mistake "no cycle key" for
+            # "this producer does not report cycles"
+            "cycle": list(self.cycle),
         }
 
 
@@ -223,22 +237,25 @@ def _bind_seeds(
 
 def _derivation_order(
     pda_accounts: dict[str, AccountRef],
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Topologically order the PDA accounts so each is derived after any PDA it
     depends on (a seed bound to another PDA account in the same instruction).
 
-    Kahn's algorithm; a dependency cycle (shouldn't occur on-chain) falls back to a
-    stable declaration order for the remaining nodes rather than dropping them.
+    Returns ``(order, cycle)``. Kahn's algorithm; when it stalls, the residual is a
+    dependency cycle plus everything downstream of it. Those names are **not
+    dropped** — they are appended in declaration order so no account disappears from
+    the plan — but they are returned as ``cycle`` so the caller can flag them. A
+    plausible-looking order over an unorderable set is a lie, and lying here fails at
+    build time, far from here.
+
+    A self-seeded PDA (a seed bound to the account being derived) counts as a cycle:
+    its own address is an input to its own derivation, so it is un-derivable.
     """
     names = list(pda_accounts)
     deps: dict[str, set[str]] = {n: set() for n in names}
     for name, acct in pda_accounts.items():
         for b in acct.derive_from:
-            if (
-                b.kind == "account"
-                and b.bound_to in pda_accounts
-                and b.bound_to != name
-            ):
+            if b.kind == "account" and b.bound_to in pda_accounts:
                 deps[name].add(b.bound_to)
 
     order: list[str] = []
@@ -253,25 +270,27 @@ def _derivation_order(
                 order.append(n)
                 resolved.add(n)
                 progressed = True
-        if not progressed:  # cycle — append the rest in declaration order
-            for n in names:
-                if n not in resolved:
-                    order.append(n)
-                    resolved.add(n)
-            break
-    return tuple(order)
+        if not progressed:
+            blocked = [n for n in names if n not in resolved]
+            order.extend(blocked)
+            return tuple(order), tuple(blocked)
+    return tuple(order), ()
 
 
-def derivation_order_for(
+def derivation_order_with_cycle(
     pdas: dict[str, PdaNode], accounts: tuple[str, ...] | list[str]
-) -> tuple[str, ...]:
-    """Dependency-order a subset of a program's PDA accounts (the public seam
-    :mod:`gecko.find_start` uses for its derive plans).
+) -> tuple[tuple[str, ...], frozenset[str]]:
+    """Dependency-order a subset of a program's PDA accounts, **with the honest gap
+    on the order itself** (the public seam :mod:`gecko.find_start` uses).
 
     Reuses the same seed-binding + Kahn ordering as :func:`build_program_graph`:
     an account whose seed is bound to another listed account (a resolver's
     ``depends_on``, or a variable seed naming it) is derived after it. Names not
     present in ``pdas`` are kept in place (they are non-PDA slots, not dropped).
+
+    Returns ``(order, cycle)``. ``cycle`` names the accounts whose position in
+    ``order`` is arbitrary because they sit in, or behind, a seed-dependency cycle —
+    a caller must report those as gaps rather than derive them in the order given.
     """
     names = [a for a in accounts]
     listed = set(names)
@@ -286,13 +305,21 @@ def derivation_order_for(
             resolvable=node.resolvable,
             derive_from=_bind_seeds(node, listed, set()),
         )
-    ordered_pdas = _derivation_order(refs)
+    ordered_pdas, cycle = _derivation_order(refs)
     # merge: PDA accounts in dependency order, non-PDA names in declared position
     result: list[str] = []
     pda_iter = iter(ordered_pdas)
     for name in names:
         result.append(next(pda_iter) if name in refs else name)
-    return tuple(result)
+    return tuple(result), frozenset(cycle)
+
+
+def derivation_order_for(
+    pdas: dict[str, PdaNode], accounts: tuple[str, ...] | list[str]
+) -> tuple[str, ...]:
+    """The order alone. Prefer :func:`derivation_order_with_cycle` — a caller that
+    only takes the order cannot tell a derivable plan from an unorderable one."""
+    return derivation_order_with_cycle(pdas, accounts)[0]
 
 
 def build_program_graph(
@@ -362,12 +389,22 @@ def build_program_graph(
             accounts.append(ref)
             pda_accounts[name] = ref
 
+        order, cycle = _derivation_order(pda_accounts)
+        if cycle:
+            # an account that cannot be ordered cannot be derived — say so on the
+            # account, not only on the instruction
+            blocked = set(cycle)
+            accounts = [
+                replace(a, resolvable=False) if a.name in blocked else a
+                for a in accounts
+            ]
         instructions.append(
             InstructionGraph(
                 name=ix.get("name", ""),
                 args=arg_pairs,
                 accounts=tuple(accounts),
-                derivation_order=_derivation_order(pda_accounts),
+                derivation_order=order,
+                cycle=cycle,
             )
         )
 

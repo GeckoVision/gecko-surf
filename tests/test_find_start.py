@@ -328,3 +328,34 @@ def test_derivation_order_for_orders_dependents_after_roots() -> None:
     )
     assert ordered.index("bonding_curve") < ordered.index("creator_vault")
     assert set(ordered) == {"creator_vault", "global", "bonding_curve"}
+
+
+def test_derivation_order_with_cycle_reports_the_unorderable_accounts() -> None:
+    """The seam find_start uses must hand back the cycle, not just an order."""
+    from gecko.pda import PdaNode, VariablePdaSeedNode
+    from gecko.program_graph import derivation_order_with_cycle
+
+    pdas = {
+        "a": PdaNode("a", (VariablePdaSeedNode("b", "account", "pubkey"),), None),
+        "b": PdaNode("b", (VariablePdaSeedNode("a", "account", "pubkey"),), None),
+    }
+    ordered, cycle = derivation_order_with_cycle(pdas, ("a", "b"))
+    assert set(ordered) == {"a", "b"}  # never dropped
+    assert cycle == frozenset({"a", "b"})
+
+
+def test_a_cyclic_account_is_flagged_in_the_derive_plan() -> None:
+    """A cycle outranks every recipe: an account that cannot be ordered is a
+    FLAGGED gap, never a confident ``extracted``/``recovered`` step."""
+    from gecko.find_start import _account_step
+
+    step = _account_step(
+        "a",
+        None,
+        recovered={"a": "recovered from source"},
+        overlay_pdas=frozenset(),
+        overlay_why={},
+        cyclic=frozenset({"a", "b"}),
+    )
+    assert step.provenance == "flagged"
+    assert "cycle" in step.note and "a, b" in step.note

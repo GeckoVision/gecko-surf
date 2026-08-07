@@ -108,6 +108,82 @@ def test_both_joined_fills_dropped_recipe() -> None:
     assert config_acct.resolvable
 
 
+def _cycle_idl(accounts: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "address": ORE_PROGRAM,
+        "instructions": [{"name": "tangle", "accounts": accounts, "args": []}],
+    }
+
+
+def test_seed_dependency_cycle_is_flagged_not_rendered_as_a_plausible_order() -> None:
+    """Two PDAs that seed from each other cannot be derived at all. The order the
+    graph emits must not read as derivable: the cycle members are reported, and
+    every account in the cycle is ``resolvable=False``."""
+    idl = _cycle_idl(
+        [
+            {
+                "name": "a",
+                "pda": {"seeds": [{"kind": "account", "path": "b"}]},
+            },
+            {
+                "name": "b",
+                "pda": {"seeds": [{"kind": "account", "path": "a"}]},
+            },
+        ]
+    )
+    ix = build_program_graph(idl=idl).instructions[0]
+    accts = {a.name: a for a in ix.accounts}
+
+    assert ix.cycle == ("a", "b")  # the honest gap, named
+    assert accts["a"].resolvable is False
+    assert accts["b"].resolvable is False
+    # never dropped — an omitted account is the worse failure
+    assert set(ix.derivation_order) == {"a", "b"}
+
+
+def test_self_seeded_pda_is_flagged() -> None:
+    """A PDA whose own address is an input to its own derivation is un-derivable."""
+    idl = _cycle_idl(
+        [{"name": "a", "pda": {"seeds": [{"kind": "account", "path": "a"}]}}]
+    )
+    ix = build_program_graph(idl=idl).instructions[0]
+    assert ix.cycle == ("a",)
+    assert {a.name: a for a in ix.accounts}["a"].resolvable is False
+
+
+def test_an_account_blocked_by_a_cycle_is_flagged_too() -> None:
+    """A PDA seeded by a cycle member is equally un-derivable — reported, not ordered."""
+    idl = _cycle_idl(
+        [
+            {"name": "a", "pda": {"seeds": [{"kind": "account", "path": "b"}]}},
+            {"name": "b", "pda": {"seeds": [{"kind": "account", "path": "a"}]}},
+            {"name": "c", "pda": {"seeds": [{"kind": "account", "path": "a"}]}},
+        ]
+    )
+    ix = build_program_graph(idl=idl).instructions[0]
+    assert ix.cycle == ("a", "b", "c")
+    assert all(a.resolvable is False for a in ix.accounts if a.is_pda)
+
+
+def test_an_acyclic_instruction_reports_no_cycle() -> None:
+    graph = build_program_graph(idl=ANCHOR_IDL)
+    assert all(ix.cycle == () for ix in graph.instructions)
+
+
+def test_cycle_is_carried_into_the_json_payload() -> None:
+    """The orchestrator ingests JSON — the cycle must survive the boundary."""
+    idl = _cycle_idl(
+        [
+            {"name": "a", "pda": {"seeds": [{"kind": "account", "path": "b"}]}},
+            {"name": "b", "pda": {"seeds": [{"kind": "account", "path": "a"}]}},
+        ]
+    )
+    payload = json.loads(json.dumps(build_program_graph(idl=idl).to_json()))
+    ix = payload["instructions"][0]
+    assert ix["cycle"] == ["a", "b"]
+    assert all(a["resolvable"] is False for a in ix["accounts"])
+
+
 def test_to_json_is_serializable_and_complete() -> None:
     graph = build_program_graph(idl=ANCHOR_IDL, source=ORE_SOURCE)
     payload = graph.to_json()
