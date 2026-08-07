@@ -105,9 +105,18 @@ def test_single_surface_correlation_is_honest() -> None:
     assert x.cross_joins_plan_eligible == 0 and x.cross_joins_candidate == 0
     # the richer signature DOES self-declare value domains (corroborator only).
     assert x.self_declared_domains >= 1
-    assert (
-        "base58" in x.domains
-    )  # the Solana mint domain surfaces from name/description
+    # R2 (anti-poisoning): this used to assert ``"base58" in x.domains`` — the Solana
+    # mint domain recovered from Pegana's ``description`` prose. Prose is an
+    # attacker-controlled channel and it wrote into the same slot a declared ``format:``
+    # occupies, so it was removed. Pegana declares no ``example`` for ``mint``, so the
+    # derived mint domain is GONE from this surface: a real, measured recall cost, taken
+    # deliberately for precision (the same scan classified ``circulating_supply`` — a
+    # number — as a Solana address). Every domain reported here is now one the spec
+    # DECLARED, and none of them is marked derived.
+    assert "base58" not in x.domains, "prose must not mint a value domain"
+    assert all(not d.endswith("~") for d in x.domains), (
+        f"a DERIVED domain must be marked, and Pegana declares none: {x.domains}"
+    )
     assert x.id_shaped_join_fields > 0
     assert "corroborator" in x.provenance
 

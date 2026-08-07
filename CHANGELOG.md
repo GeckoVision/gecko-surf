@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Security
+- **Untrusted spec prose could mint a value domain that read as a declared `format:`.**
+  `graph._domain_signal` scanned a field's free-text `description` for
+  `"base58"` / `"pubkey"` / `"solana address"` and wrote `base58` into the signature's
+  **format** slot — the same slot a spec-declared `format:` occupies. Two failures, both
+  reachable from an ingested spec with no schema access at all:
+
+  1. **Basis laundering.** `correlate` reported the shared domain as `format-eq`, so a
+     guess derived from prose was indistinguishable from a fact the spec stated. That is
+     INFERRED reading as EXTRACTED one level below the ladder itself.
+  2. **Genericity escape.** `_demote_generic` quarantines **tier 1** only. A name common
+     enough to be genericity-demoted is correctly non-plan-eligible — until the domain
+     signal lifts the link to tier 2, where the demotion never runs. Measured: a
+     `sessionId` shared by 8 operations goes from **0 to 64 plan-eligible links on
+     description text alone**, and identically from a planted `example`.
+
+  The prose channel is removed: a curated keyword scan over untrusted free text is the
+  same best-effort class as the description injection scanner, and a best-effort text
+  signal must not write a slot that reads as a structural claim. It also misfired badly
+  on real input — across the committed fixtures **all 23 derivations (17 distinct graph
+  nodes) came from prose and none from an example**, including `circulating_supply` (a
+  number) and `pubkeys_b64` (a base64 blob) classified as Solana addresses,
+  `transaction_signature` on *Ethereum* endpoints, and `transaction_hash` landing in the
+  same domain as `input_token`.
+
+  Restricting the channel is not sufficient on its own — `example` is equally
+  attacker-controlled (`sanitize` deliberately does not address-scan hint channels), so
+  it reproduces the escalation exactly. Two further controls close it: a domain derived
+  from the surviving example-shape channel is **marked** (`base58~`, reported as
+  `format-eq~derived`) and can never corroborate a declared `base58`; and a derived
+  domain **cannot raise a link's tier**, so the genericity demotion always applies. A
+  spec-declared `format:`/`pattern:` still lifts a name match to tier 2 — asserted.
+
+  No provenance value was added; both ladders in `gecko/provenance.py` are unchanged.
+
+  Blast radius, measured before/after on the committed fixtures (privy 159 ops, pegana,
+  pegana_p0, txline): derived-domain nodes **17 → 0**; graph nodes, edges and `feeds`
+  edges **unchanged on every fixture** (privy 8171/11800/3704, pegana 292/352/90,
+  pegana_p0 360/432/104, txline 997/1134/147); `correlate` summaries **unchanged on every
+  fixture** (privy 2439/19, pegana 12/9 — the pinned R8 counts do not move). The
+  adversarial spec goes from 64 plan-eligible links to 0, by either channel. The one real
+  loss is
+  reporting: Pegana declares no `example` for `mint`, so `metrics.domains` no longer
+  lists `base58` for that surface. `find_start` retrieval eval unchanged (recall@1 0.74,
+  recall@3 0.89, MRR 0.81, 4/4 out-of-scope rejections, 0 false accepts).
+
 ### Fixed
 - **A cyclic seed dependency was rendered as a confident derivation order.** When two
   PDAs of an instruction seed from each other — or a PDA seeds from itself — the graph

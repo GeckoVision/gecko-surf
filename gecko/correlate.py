@@ -17,12 +17,18 @@ The ladder (all deterministic; cross-API is effectively BINARY — §13.6):
                     high. Cross-API with a PROVIDER-only declaration -> candidate
                     (guardrail 3/4: an untrusted spec can't mint a cross-system
                     join). Intra-API -> plan-eligible.
-  tier 2 SIG        a shared discriminating pattern/format CORROBORATES a name
-                    match — the name match is REQUIRED, the signature only lifts
-                    a rung. **INTRA-API ONLY** — the §13.6 gate forbids a
-                    cross-API signature from carrying a join (zero false-high).
-                    A shared enum is NOT corroboration (a bounded domain
-                    guarantees collisions), and neither is a shared ``date-time``.
+  tier 2 SIG        a shared discriminating pattern/format the SPEC DECLARED
+                    CORROBORATES a name match — the name match is REQUIRED, the
+                    signature only lifts a rung. **INTRA-API ONLY** — the §13.6
+                    gate forbids a cross-API signature from carrying a join (zero
+                    false-high). A shared enum is NOT corroboration (a bounded
+                    domain guarantees collisions), neither is a shared
+                    ``date-time``, and neither is a DERIVED value domain (R2): a
+                    domain Gecko recovered from an example's shape is recovered
+                    from the same untrusted text the name came from, so it cannot
+                    independently corroborate that name — and tier 2 is the one
+                    rung that escapes ``_demote_generic``. A derived domain rides
+                    along as a tier-1 signal named ``format-eq~derived``.
   tier 1 NAME       same ``_entity_of``, id-shaped, not genericity-demoted.
                     Intra-API -> plan-eligible. Cross-API -> a **candidate**,
                     quarantined, NEVER auto-joined.
@@ -49,6 +55,7 @@ from .graph import (
     _entity_of,
     _norm,
     _sig_corroborates,
+    is_derived_domain,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +74,12 @@ DeclaredSource = Literal["customer", "provider"]
 # graph._ID_TYPES / compose._ID_SIG_TYPES); a bool/enum can never be a join key.
 _ID_SIG_TYPES = ("string", "integer", "number")
 _CONF_RANK = {"high": 0, "medium": 1, "low": 2}
+
+#: The signal a shared DERIVED value domain earns (R2). Deliberately NOT ``format-eq``:
+#: that name means "the specs declared the same format", and a domain Gecko recovered
+#: from an example's shape has not been declared by anyone. It stays a visible
+#: corroborator on a tier-1 basis and is barred from lifting a link to tier 2.
+DERIVED_SIG_SIGNAL = "format-eq~derived"
 
 
 def _id_type(sig: str) -> str | None:
@@ -88,11 +101,18 @@ def _sig_signal(a: str, b: str) -> str | None:
     anti-evidence for a join (see ``graph._sig_corroborates``)."""
     if not _sig_corroborates(a, b):
         return None
-    _, _fa, pa, _ = a.split("|")
+    _, fa, pa, _ = a.split("|")
     _, _fb, pb, _ = b.split("|")
     if pa and pa == pb:
         return "pattern-eq"
-    return "format-eq"  # a shared discriminating format (uuid/uri/...)
+    if is_derived_domain(fa):
+        # R2: the domain was DERIVED from an example's shape, not declared by the spec.
+        # Reporting it as plain ``format-eq`` made a guess read exactly like a
+        # declaration — the ladder violation one level below the ladder.
+        return DERIVED_SIG_SIGNAL
+    return (
+        "format-eq"  # a shared discriminating format the spec DECLARED (uuid/uri/...)
+    )
 
 
 # --- the scorer's ONLY input: a control-plane-typed value object (guardrail 2) ---
@@ -274,8 +294,26 @@ def _score(src: Correland, dst: Correland) -> tuple[CorrelationBasis, bool] | No
     # DOMAIN says two fields look alike, not that they are the same key. Without a name
     # match this falls through to tier 1, which needs the same identity and so returns
     # tier 0: no link, rather than a plausible one.
+    #
+    # R2: the corroborator must be one the SPEC DECLARED (a ``format:``/``pattern:``).
+    # A DERIVED domain is barred from this rung, and the reason is not that it is
+    # low-quality evidence — it is that it is CIRCULAR and ATTACKER-CONTROLLED. The
+    # domain is recovered from the same untrusted spec text the name came from, so it
+    # cannot independently corroborate anything about that name; and tier 2 is the one
+    # rung that ESCAPES ``_demote_generic`` (which quarantines tier 1 only). Together
+    # that made an ingested spec able to buy plan-eligibility for a name the surface's
+    # own genericity rule had already rejected — measured 0 -> 64 plan-eligible links on
+    # a `sessionId` in 8 ops, from description text alone, and identically from a planted
+    # ``example``. A derived domain still rides along as a tier-1 signal (below), where
+    # the demotion applies and the basis says plainly that it was derived.
     sig = _sig_signal(src.sig, dst.sig)
-    if sig and not cross and src.name_entity and src.name_entity == dst.name_entity:
+    if (
+        sig is not None
+        and sig != DERIVED_SIG_SIGNAL
+        and not cross
+        and src.name_entity
+        and src.name_entity == dst.name_entity
+    ):
         ent2 = src.name_entity
         return (
             _basis(
