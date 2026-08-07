@@ -49,6 +49,32 @@ def error_schema(op: Any) -> dict[str, Any]:
     return response_schema(op, ("422", "400", "409", "default"))
 
 
+#: The schema keys through which the API itself (or the DECLARED-value-domain registry)
+#: GROUNDS an example. Anything outside them means the value below was INVENTED by us.
+_GROUNDING_KEYS = ("example", "default")
+
+
+def example_is_grounded(schema: Any) -> bool:
+    """Whether :func:`example_from_schema` fills this schema with a value someone
+    DECLARED — the spec's own ``example``/``default``/``enum``, or a registered canonical
+    for a declared value domain — rather than a placeholder we invented (``"sample"``,
+    ``0``, ``False``, the stock date-time).
+
+    This mirrors the precedence HEAD of :func:`example_from_schema` below; the two must
+    move together (every branch here is a branch there).
+
+    Why it exists: an error status is only attributable to the ENDPOINT when the argument
+    that produced it was real. A 404 on ``/assets/sample`` says nothing about
+    ``/assets/{symbol}`` — it says our made-up symbol is not an asset. ``verify-docs``
+    reads this to keep those two facts apart (see ``validator.verdict_from_replay``).
+    """
+    if not isinstance(schema, dict):
+        return False
+    if any(key in schema for key in _GROUNDING_KEYS) or schema.get("enum"):
+        return True
+    return canonical_example(schema.get(ENTITY_SCHEMA_KEY)) is not None
+
+
 def example_from_schema(schema: Any, _depth: int = 0) -> Any:
     if not isinstance(schema, dict) or _depth > _MAX_DEPTH:
         return None

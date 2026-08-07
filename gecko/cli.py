@@ -439,8 +439,14 @@ def _cmd_verify_docs(argv: list[str]) -> int:
     control-plane JSON report ({op_id: {status, basis, provenance}} + counts). Default
     recorded (offline, $0 — every op honestly UNVERIFIED); ``--live`` opts into real calls
     (2xx VERIFIES, a 404 on a doc-claimed endpoint REFUTES).
+
+    The DECLARED value-domain vocabulary is applied BY DEFAULT: the surface's stored
+    customer confirmations (``gecko graph confirm``) are loaded here and, with the spec's
+    own ``x-gecko`` hints (read inside the client), let example synthesis fill a REAL
+    argument for a known value domain instead of a placeholder that would 404 a healthy
+    endpoint. ``--confirm NAME=ENTITY`` declares one inline for this run.
     """
-    from . import verify as verify_mod
+    from . import hints as hints_mod, verify as verify_mod
 
     p = argparse.ArgumentParser(
         prog="gecko verify-docs",
@@ -460,6 +466,14 @@ def _cmd_verify_docs(argv: list[str]) -> int:
         default=None,
         help="Pin the live target host (needed when a local spec's server can't be trusted).",
     )
+    p.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        metavar="NAME=ENTITY",
+        help="Customer-CONFIRMED value-domain hint for a param, so verify can fill a REAL "
+        "argument instead of a placeholder (repeatable).",
+    )
     args = p.parse_args(argv)
     if _reject_unsafe(args.spec, "verify-docs"):
         return 2
@@ -476,7 +490,22 @@ def _cmd_verify_docs(argv: list[str]) -> int:
     # reads fire and auth-gated ops it cannot satisfy are honestly hidden. Recorded never
     # hits the wire, so the stub (byte-identical legacy behaviour) is fine there.
     session = public_session() if mode == "live" else stub_session()
-    client = AgentApiClient(spec, base_url=args.base_url, session=session)
+    # Stored confirmations first, this run's --confirm on top (an explicit flag wins), and
+    # both are passed at CONSTRUCTION — the canonical example is stamped during tool build,
+    # so a post-hoc merge would never reach example synthesis.
+    surface = onboard.safe_name(args.spec)
+    try:
+        declared = hints_mod.load_confirmed(surface)
+    except Exception:  # noqa: BLE001 - a corrupt local hint file must not stop verify
+        declared = {}
+    declared.update(_parse_kv(args.confirm))
+    client = AgentApiClient(
+        spec,
+        base_url=args.base_url,
+        session=session,
+        surface_id=surface,
+        declared_hints=declared or None,
+    )
     report = verify_mod.verify_docs(client, mode=mode)
     print(json.dumps(report, indent=2))
     return 0

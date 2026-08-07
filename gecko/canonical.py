@@ -31,11 +31,16 @@ ENTITY_SCHEMA_KEY = "x-gecko-entity"
 #: token-mint value domain. Registry metadata, never a response payload (invariant #1).
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
+#: USDC's ticker — the same real, public, permanent asset as :data:`USDC_MINT`, in the
+#: symbol value domain a surface uses when it addresses assets by ticker rather than mint.
+USDC_SYMBOL = "USDC"
+
 #: entity token (normalized) -> canonical example VALUE. Keyed on the ``graph._norm`` form
 #: so ``solana-token-mint``, ``solanatokenmint`` and ``SOLANA_TOKEN_MINT`` all resolve to
 #: the one canonical. Add an entity by adding ONE line.
 _CANONICAL: dict[str, str] = {
     "solanatokenmint": USDC_MINT,
+    "solanatokensymbol": USDC_SYMBOL,
 }
 
 

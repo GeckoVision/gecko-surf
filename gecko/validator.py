@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +19,59 @@ from . import corpus
 from .caller import CallError, build_request
 from .client import AgentApiClient
 from .graph import VerifyVerdict
-from .sample import example_from_schema
+from .sample import example_from_schema, example_is_grounded
+
+#: The only statuses that are EVIDENCE the documented operation is not there: the path is
+#: not served (404), the documented method is not served on it (405), or it was withdrawn
+#: (410). Every other error status proves the OPPOSITE — the server routed the request and
+#: then complained about it (400/422 = our arguments, 401/403 = access, 429 = rate, 5xx =
+#: the API broke) — so none of them may refute an endpoint's existence.
+_ABSENCE_STATUSES = frozenset({404, 405, 410})
+
+#: Pre-flight failures that are genuinely a broken CONTRACT (the documented inputs cannot
+#: be satisfied), as opposed to Gecko declining to make the call (``auth_host_blocked``) or
+#: the network failing (``timeout``) — those say nothing about the provider's docs.
+_CONTRACT_ERROR_CLASSES = frozenset(
+    {"missing_required_param", "malformed_request", "enum_reject"}
+)
+
+#: Where an argument participates in identifying the RESOURCE being addressed. A
+#: synthesized header/cookie/body value cannot be why the API answered "no such thing", so
+#: only these two locations gate the REFUTED verdict.
+_ROUTE_LOCATIONS = frozenset({"path", "query"})
 
 
-def verdict_from_replay(outcome: corpus.CallOutcome) -> VerifyVerdict:
+def synthesized_route_args(tool: Mapping[str, Any]) -> tuple[str, ...]:
+    """The required path/query params of ``tool`` that :func:`example_args` fills with a
+    placeholder WE invented (never one the spec or the value-domain registry declared).
+
+    These are the args that make an error status un-attributable to the endpoint: the call
+    asked for an entity that was never real. Returns sorted param NAMES only — control
+    plane, never a value (invariant #1).
+    """
+    schema = tool.get("inputSchema") or {}
+    props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    invoke = tool.get("_invoke") or {}
+    locations = invoke.get("param_locations") or {}
+    # the agent-facing key may be a sanitized alias (e.g. JSON:API ``filter[user]``);
+    # param_locations is keyed on the REAL name, so translate before looking it up.
+    aliases = invoke.get("arg_aliases") or {}
+    ungrounded: list[str] = []
+    for key in props:
+        if key == "body" or key not in required:
+            continue
+        real = str(aliases.get(key, key))
+        if locations.get(real) not in _ROUTE_LOCATIONS:
+            continue
+        if not example_is_grounded(props[key]):
+            ungrounded.append(real)
+    return tuple(sorted(ungrounded))
+
+
+def verdict_from_replay(
+    outcome: corpus.CallOutcome, *, synthesized_args: Sequence[str] = ()
+) -> VerifyVerdict:
     """Lift an already-obtained capture outcome into a verified-against-reality verdict.
 
     Pure and offline: it maps a ``CallOutcome`` that ``_capture`` / a live call already
@@ -31,23 +81,52 @@ def verdict_from_replay(outcome: corpus.CallOutcome) -> VerifyVerdict:
     Only a status that came off the wire (``source == "observed"``) can VERIFY or REFUTE a
     claim. Recorded/synthetic/probe runs fabricate their status, so per the milestone's
     honesty flag they stay UNVERIFIED — a recorded 200 is never overclaimed as VERIFIED.
+
+    **REFUTED means "this endpoint is not there", and nothing else.** That verdict names a
+    real company's API as broken, so it is issued only on evidence of ABSENCE
+    (:data:`_ABSENCE_STATUSES`) AND only when nothing about the call was made up:
+    ``synthesized_args`` (from :func:`synthesized_route_args`) lists the required path/query
+    params we filled with an invented placeholder, and any of them turns the verdict into
+    UNVERIFIED with a basis naming the param we could not ground. A 404 on
+    ``/assets/sample`` is not a missing endpoint — it is a missing *asset*. Under-claiming
+    is deliberate here: a missed refutation costs us a data point, a false one defames a
+    partner.
     """
     if outcome.source != "observed":
         return VerifyVerdict(status="UNVERIFIED", basis=("no-access:recorded-only",))
     status = outcome.status
     if status is None:
-        # Live-intent but the request never reached the wire: the claim's contract is
-        # wrong (a missing/invalid required input caught pre-flight). The error_class is a
+        # Live-intent but the request never reached the wire. Only a genuine contract
+        # failure (the documented inputs cannot be satisfied) refutes; a refusal on OUR
+        # side or a transport failure is honestly "not checked". The error_class is a
         # category name, never a value — control-plane safe to name in the basis.
+        if outcome.error_class in _CONTRACT_ERROR_CLASSES:
+            return VerifyVerdict(
+                status="REFUTED", basis=(f"contract-mismatch:{outcome.error_class}",)
+            )
         return VerifyVerdict(
-            status="REFUTED", basis=(f"contract-mismatch:{outcome.error_class}",)
+            status="UNVERIFIED", basis=(f"no-access:{outcome.error_class}",)
         )
     if 200 <= status < 400:
         return VerifyVerdict(
             status="VERIFIED", basis=(f"replay:{status}",), shape_ok=True
         )
-    # 404 and every other 4xx/5xx refute the claimed operation.
-    return VerifyVerdict(status="REFUTED", basis=(f"replay:{status}",))
+    if synthesized_args:
+        # We could not verify: the call named an entity we invented, so the API's refusal
+        # is about the ARGUMENT, not the endpoint. The basis says exactly which param.
+        return VerifyVerdict(
+            status="UNVERIFIED",
+            basis=(
+                f"replay:{status}",
+                *(f"no-real-argument:{name}" for name in synthesized_args),
+            ),
+        )
+    if status in _ABSENCE_STATUSES:
+        return VerifyVerdict(status="REFUTED", basis=(f"replay:{status}",))
+    # The endpoint answered — it exists, we just learned nothing about the claim.
+    return VerifyVerdict(
+        status="UNVERIFIED", basis=(f"replay:{status}", "no-evidence:endpoint-answered")
+    )
 
 
 def example_args(tool: dict[str, Any]) -> dict[str, Any]:

@@ -11,8 +11,9 @@ never touch the network. They assert:
   * the five core read tools are present and shaped right (path params named correctly,
     NO auth header ever exposed — Pegana's reads need none);
   * the recorded verify path yields a sane, control-plane-clean verdict object; and
-  * a Pattern-B observed 200 VERIFIES / an observed 404 REFUTES the same op offline
-    (the falsifiable hinge — flip the status and the verdict flips).
+  * a Pattern-B observed 200 VERIFIES the same op offline, and an observed 404 on a call
+    whose argument WE invented drops it to UNVERIFIED — never REFUTED (the falsifiable
+    hinge — flip the status and the verdict flips, but a false accusation is impossible).
 """
 
 from __future__ import annotations
@@ -129,9 +130,15 @@ def _observed(client: AgentApiClient, op_id: str, status: int) -> corpus.CallOut
     )
 
 
-def test_observed_200_verifies_and_404_refutes_offline() -> None:
+def test_observed_200_verifies_and_404_is_not_a_refutation_offline() -> None:
     """Pattern B, falsifiable: a real 200 replayed offline VERIFIES the `state` read; flip
-    it to 404 and the SAME op REFUTES. No network — the status is the only input."""
+    it to 404 and the SAME op drops to UNVERIFIED. No network — the status is the only input.
+
+    The 404 half of this test used to assert REFUTED. It must not: ``/v1/assets/{symbol}/
+    state`` ships no example for ``symbol``, so the replay asks for an asset we invented —
+    the API answering "no such asset" is not evidence the endpoint is gone (it returns 200
+    for ``USDC``). Publishing REFUTED there accused a healthy partner API of being broken.
+    """
     client = _client()
 
     ok = verify.verify_docs(
@@ -143,7 +150,8 @@ def test_observed_200_verifies_and_404_refutes_offline() -> None:
     gone = verify.verify_docs(
         client, mode="recorded", outcomes={"state": _observed(client, "state", 404)}
     )
-    assert gone["report"]["state"]["status"] == "REFUTED"
+    assert gone["report"]["state"]["status"] == "UNVERIFIED"
+    assert gone["report"]["state"]["basis"] == ["replay:404", "no-real-argument:symbol"]
 
 
 def test_mutating_ops_never_probed_live_is_moot_here_but_guarded() -> None:
