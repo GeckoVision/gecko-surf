@@ -11,6 +11,17 @@ on:
   push:
     tags:
       - "v*"
+  # Manual escape hatch. On 2026-08-06 a GitHub Actions incident stopped scheduling
+  # TAG events entirely — the tag pushed fine, the run was simply never created, twice —
+  # while push and pull_request events kept working. With only a tag trigger there was no
+  # way to ship at all.
+  #
+  # Run it from the Actions tab (or `gh workflow run release.yaml --ref vX.Y.Z`) with the
+  # TAG selected as the ref: every step already derives what it needs from
+  # GITHUB_REF_NAME, so a dispatch against the tag behaves identically to the push that
+  # would have created it. Dispatching against a branch would produce a nonsense version
+  # and is not supported.
+  workflow_dispatch:
 
 jobs:
   build:
