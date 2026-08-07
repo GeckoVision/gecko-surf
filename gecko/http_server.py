@@ -1159,6 +1159,15 @@ def build_multi_surface_app(
         # check (Pattern B): httpx/fetch follow by default, but the founder confirms it.
         return RedirectResponse(url=f"/{META_SURFACE_NAME}{MCP_PATH}", status_code=307)
 
+    async def _sse_root_redirect(_request: Any) -> Any:
+        # Same failure as the bare /mcp above, one transport over. A hosted chat product
+        # asks for "the SSE endpoint", the person pastes the host, and /sse 404s with
+        # nothing pointing onward — the surfaces only exist at /{name}/sse. 307 to the
+        # meta front door. The stream itself is unaffected: the `endpoint` event it then
+        # emits carries an ABSOLUTE path (/gecko/messages/?session_id=...), so the
+        # client's POST half lands on the mount directly and needs no alias of its own.
+        return RedirectResponse(url=f"/{META_SURFACE_NAME}{SSE_PATH}", status_code=307)
+
     async def _well_known_gecko(request: Request) -> Any:
         # Host-level discovery — the SAME content _index returns (surfaces + submit door).
         return JSONResponse(index if _sees_gated(request.scope) else _public_index)
@@ -1309,6 +1318,9 @@ def build_multi_surface_app(
         Route(LOGIN_VERIFY_PATH, endpoint=_login_verify, methods=["POST"]),
         # Root /mcp alias -> the meta front door (was 404; conventional default path).
         Route(MCP_PATH, endpoint=_mcp_root_redirect, methods=["GET", "POST"]),
+        # Root /sse alias -> the meta front door (SSE is GET-only; its POST half is
+        # the absolute /{name}/messages/ path the stream hands back).
+        Route(SSE_PATH, endpoint=_sse_root_redirect, methods=["GET"]),
         # Host-level discovery the public app serves at the root (per-surface artifacts
         # live inside each mount; these are the WHOLE-HOST manifests a root probe hits).
         Route("/.well-known/gecko.json", endpoint=_well_known_gecko),

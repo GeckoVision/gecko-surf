@@ -67,3 +67,38 @@ def test_losing_the_extra_door_never_closes_the_main_one(monkeypatch: Any) -> No
 
     assert http_server.MCP_PATH.rstrip("/") in paths
     assert http_server.SSE_PATH.rstrip("/") not in paths
+
+
+def _multi_app() -> Any:
+    """The hosted shape: surfaces mounted under one host, which is what
+    mcp.geckovision.tech actually serves — the per-surface app is only ever a mount."""
+    from gecko.client import AgentApiClient
+    from gecko.ingest import load_spec
+
+    spec = load_spec("gecko/examples/jupiter_swap_openapi.json")
+    return http_server.build_multi_surface_app([("jupiter", AgentApiClient(spec))])
+
+
+def test_the_root_sse_url_points_somewhere() -> None:
+    """A hosted chat product asks for "the SSE endpoint" and the person pastes the host.
+    Bare /sse must not dead-end — that 404 is a silent onboarding failure, the same one
+    the bare /mcp alias already exists to prevent."""
+    from starlette.testclient import TestClient
+
+    response = TestClient(_multi_app()).get(
+        http_server.SSE_PATH, follow_redirects=False
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"].endswith(
+        f"/{http_server.META_SURFACE_NAME}{http_server.SSE_PATH}"
+    )
+
+
+def test_the_alias_never_replaces_a_surfaces_own_door() -> None:
+    """The alias is a convenience, not the transport. Each surface stays mounted, and
+    the meta surface the alias points at has to actually be there."""
+    mounted = {(getattr(r, "path", "") or "").rstrip("/") for r in _multi_app().routes}
+
+    assert "/jupiter" in mounted
+    assert f"/{http_server.META_SURFACE_NAME}" in mounted
