@@ -262,3 +262,84 @@ def test_the_other_wired_programs_still_route() -> None:
         result = find_start(intent)
         assert not result.no_start, intent
         assert result.starts[0].program == program, intent
+
+
+# --- the failure line a stranger actually reads -----------------------------------
+
+
+def test_an_unreachable_rpc_names_the_url_and_the_next_action() -> None:
+    """The first wall a new user hits. `prove` defaults to a LOCAL fork, so a machine
+    without one used to get "could not run (RpcError)" — no cause, no next action, and no
+    hint an RPC was even involved. In our flagship command."""
+    from gecko.prove import _run_failure
+    from gecko.rpc import LOCAL_RPC, RpcError
+
+    line = _run_failure(RpcError("connection refused"), LOCAL_RPC)
+
+    assert LOCAL_RPC in line
+    assert "--rpc-url" in line
+    assert "local fork default" in line
+
+
+def test_it_says_the_routing_still_worked() -> None:
+    """Routing is the part that DID succeed. A failure line that reads like total failure
+    sends someone away from a command that just answered most of their question."""
+    from gecko.prove import _run_failure
+    from gecko.rpc import RpcError
+
+    assert "routing above is complete" in _run_failure(RpcError("connection refused"))
+
+
+def test_a_node_that_answered_with_an_error_reads_differently() -> None:
+    """ "Nothing is listening" and "the node rejected your transaction" need opposite next
+    actions, so they must not collapse into one message."""
+    from gecko.prove import _run_failure
+    from gecko.rpc import RpcError
+
+    line = _run_failure(
+        RpcError("JSON-RPC simulateTransaction failed: code=-32602 too large")
+    )
+
+    assert "RPC refused the simulation" in line
+    assert "code=-32602" in line
+    assert "--rpc-url" not in line
+
+
+def test_an_unknown_exception_still_degrades_to_its_class() -> None:
+    """RpcError is surfaced because it is DOCUMENTED to be payload-free. An arbitrary
+    exception has made no such promise, so the redaction must still apply to it."""
+    from gecko.prove import _run_failure
+
+    assert (
+        _run_failure(ValueError("secret-token-abc123")) == "could not run (ValueError)"
+    )
+    assert "abc123" not in _run_failure(ValueError("secret-token-abc123"))
+
+
+def test_the_real_unreachable_case_is_not_an_rpcerror() -> None:
+    """Found by running the command with no RPC: the stdlib raises a bare `URLError`,
+    which escapes the RpcError wrapper. The first version of this fix matched on the
+    class, looked right, and would have fixed nothing."""
+    from urllib.error import URLError
+
+    from gecko.prove import _run_failure
+    from gecko.rpc import LOCAL_RPC
+
+    line = _run_failure(URLError("[Errno 111] Connection refused"), LOCAL_RPC)
+
+    assert LOCAL_RPC in line
+    assert "--rpc-url" in line
+
+
+def test_the_unreachable_branch_echoes_nothing() -> None:
+    """That branch fires for ANY exception class, so it must not echo the message — the
+    text is ours and the exception is only a signal. This is what keeps the redaction
+    invariant intact while still being useful."""
+    from gecko.prove import _run_failure
+
+    line = _run_failure(
+        RuntimeError("connection refused to https://user:sekret@rpc.x"), "http://a"
+    )
+
+    assert "sekret" not in line
+    assert "no RPC at http://a" in line

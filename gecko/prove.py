@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from .find_start import FindStartResult, StartPoint, find_start
-from .rpc import LOCAL_RPC, RpcCall
+from .rpc import LOCAL_RPC, RpcCall, RpcError
 from .simulate import Receipt
 
 __all__ = ["ProofError", "ProveResult", "format_proof", "prove"]
@@ -120,18 +120,72 @@ def _accounts_of(result: Any, start: StartPoint) -> tuple[tuple[str, str], ...]:
     return tuple((step.account, step.provenance) for step in start.derive_plan)
 
 
-def _run_failure(exc: BaseException) -> str:
+def _run_failure(exc: BaseException, rpc_url: str = LOCAL_RPC) -> str:
     """Why a run did not produce a receipt, without echoing a payload.
 
     An orchestrator's own "needs X" message names the missing bindings and is the most
     useful thing we can say, so it is surfaced verbatim when it is short and shaped like a
-    requirement. Anything else degrades to the exception class — never the message, which
-    could carry a value.
+    requirement.
+
+    ``RpcError`` is surfaced too, and that is deliberate rather than a relaxation: it is
+    documented (``rpc.RpcError``) to carry ONLY the method plus the JSON-RPC code/message
+    — the params body, which is where a serialized transaction would live, is never
+    echoed into it. Degrading it to a class name threw away the one line that tells a
+    caller what to do, to protect against a payload that cannot be in there.
+
+    The unreachable-RPC case gets the whole answer, because it is the first wall a new
+    user hits: ``prove`` defaults to a LOCAL fork, and a machine without one got
+    "could not run (RpcError)" — no cause, no next action, no hint that an RPC was even
+    involved. Routing still worked; only the receipt is missing. Say exactly that.
+
+    Anything else still degrades to the exception class — an unknown exception type has
+    made no promise about what its message contains.
     """
     message = str(exc)
     if len(message) <= 120 and ("needs" in message or "missing" in message):
         return message
+    # Matched on the MESSAGE, not the class, and found by running this as a stranger:
+    # the real unreachable-RPC case raises `urllib.error.URLError`, which escapes the
+    # `RpcError` wrapper entirely. An isinstance check here looked right and fixed
+    # nothing. Nothing is echoed on this branch — the message is a signal, the text is
+    # ours — so it stays safe for an arbitrary exception class.
+    if _looks_unreachable(message):
+        where = "the local fork default" if rpc_url == LOCAL_RPC else "this RPC"
+        return (
+            f"no RPC at {rpc_url} ({where}) — routing above is complete; only the "
+            f"receipt needs one. Start a fork, or pass --rpc-url <your-endpoint>."
+        )
+    if isinstance(exc, RpcError):
+        # Echoing is safe ONLY here: RpcError is documented to carry the method plus the
+        # JSON-RPC code/message and never the params body.
+        return f"RPC refused the simulation: {message}"
     return f"could not run ({type(exc).__name__})"
+
+
+#: Transport-level failures, as opposed to an RPC that answered with an ``error`` field.
+#: Matched on the message because the stdlib raises several unrelated classes here
+#: (URLError, ConnectionRefusedError, socket.timeout) and they do NOT all arrive wrapped
+#: — verified by running the command with no RPC, which raises a bare URLError.
+_UNREACHABLE_MARKERS = (
+    "refused",
+    "unreachable",
+    "timed out",
+    "timeout",
+    "not known",
+    "no route",
+    "failed to establish",
+    "connection reset",
+)
+
+
+def _looks_unreachable(message: str) -> bool:
+    """True when the RPC could not be reached at all, rather than answering with an error.
+
+    The distinction is the whole point of the message: "nothing is listening" and "the
+    node rejected your transaction" need opposite next actions from the caller.
+    """
+    lowered = message.lower()
+    return any(marker in lowered for marker in _UNREACHABLE_MARKERS)
 
 
 def prove(
@@ -189,7 +243,7 @@ def prove(
             start=start,
             accounts=tuple((s.account, s.provenance) for s in start.derive_plan),
             receipt=None,
-            reason=_run_failure(exc),
+            reason=_run_failure(exc, rpc_url),
         )
 
     return ProveResult(
