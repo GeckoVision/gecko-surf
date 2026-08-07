@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Security
+- **An account nothing knew about was reported as a fact the surface stated.**
+  `find_start._account_step` ended in
+  `return DeriveStep(account=name, provenance="extracted")` for any account it held no
+  knowledge of. `extracted` means "straight off the surface" — an affirmative claim — so
+  absence of knowledge and a real IDL-declared account produced the same answer, and a
+  typo in a hand-authored `StartSpec.accounts` shipped as a confident spec-stated step:
+
+  ```python
+  _account_step("totally_made_up_account", None, recovered={}, overlay_pdas=frozenset(),
+                overlay_why={})
+  # -> DeriveStep(account='totally_made_up_account', provenance='extracted', note='')
+  ```
+
+  `extracted` is now EARNED. It requires positive evidence in one of exactly two forms:
+  the packaged program config holds a PDA node for the name (the IDL states the recipe),
+  or the intent's `StartSpec` lists it in the new `surface_named` field — an affirmative,
+  reviewed claim that the program artifact names this plain non-PDA slot (a token program
+  id, the signer, a mint, the program id itself). Anything else is **FLAGGED**, with a
+  note saying so, and is never dropped from the plan.
+
+  No provenance value was added; both ladders in `gecko/provenance.py` are unchanged.
+
+  Measured before/after across all 11 wired start cards: the histogram is **identical**
+  (`extracted` 35, `recovered` 42, `flagged` 9). Nothing wired today was actually unknown
+  — 27 of the 35 `extracted` accounts carry a config PDA node and the other 8 are
+  Jupiter's declared route slots, now stated explicitly. The defect was the DEFAULT, and
+  the default is what changed; the visible difference appears the first time a phantom
+  name is authored, which is now a test. `find_start` retrieval eval unchanged (recall@1
+  0.74, recall@3 0.89, MRR 0.81, 4/4 out-of-scope rejections, 0 false accepts).
+
+  On W3c (`cross_surface` unreachable from `find_start`): measured, the two code paths
+  already **agree**. `jupiter_landing._label_provenance` labels the 9
+  `DECLARED_ROUTE_ACCOUNTS` `extracted` (bar the event authority, `recovered`) — the same
+  answer `find_start` gives, now asserted by a test that reads the landing orchestrator's
+  own list. The 16 `cross_surface` accounts are the AMM route legs, which are absent from
+  the derive plan because they do not exist until the aggregator's HTTP quote answers.
+  Declaring them on a `StartSpec` would fabricate accounts at plan time, so `StartSpec`
+  deliberately gained no `cross_surface` field.
+
 ### Fixed
 - **A cyclic seed dependency was rendered as a confident derivation order.** When two
   PDAs of an instruction seed from each other — or a PDA seeds from itself — the graph

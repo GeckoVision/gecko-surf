@@ -111,6 +111,18 @@ class StartSpec:
     recovered: Mapping[str, str] = field(default_factory=dict)
     gaps: tuple[GapSpec, ...] = ()
     preludes: tuple[PreludeSpec, ...] = ()
+    #: Accounts the PROGRAM SURFACE names but declares no PDA recipe for — the plain
+    #: caller-supplied slots (a token program id, the signer, a mint, the program id
+    #: itself). They carry no node in the packaged config, so without this they would be
+    #: indistinguishable from a name nothing has ever heard of.
+    #:
+    #: This exists because ``extracted`` must be EARNED (R3). ``_account_step`` used to
+    #: fall through to ``extracted`` for any unknown string, so a typo in ``accounts``
+    #: shipped as a confident "the surface stated this". Listing an account here is an
+    #: affirmative, reviewed claim that the program artifact names it — the same trust
+    #: class as ``recovered`` above, and asserted against the landing orchestrator in
+    #: ``tests/test_derive_plan_provenance.py``. Absence means FLAGGED, never ``extracted``.
+    surface_named: tuple[str, ...] = ()
 
 
 # --- results ---------------------------------------------------------------------
@@ -414,11 +426,20 @@ def _account_step(
     overlay_pdas: frozenset[str],
     overlay_why: Mapping[str, str],
     cyclic: frozenset[str] = frozenset(),
+    surface_named: frozenset[str] = frozenset(),
 ) -> DeriveStep:
     """Tag one account. FLAGGED wins (a resolver seed with no declared read recipe
     is an unresolved gap regardless of how the recipe was obtained); ``recovered``
-    marks source/overlay-rescued knowledge or a declared read recipe; everything
-    straight off the surface stays ``extracted``.
+    marks source/overlay-rescued knowledge or a declared read recipe.
+
+    ``extracted`` is EARNED, never a fallthrough (R3). It requires positive evidence that
+    the surface actually named this account, in one of exactly two forms: the packaged
+    config holds a PDA node for it (the IDL states the recipe), or the intent's
+    ``StartSpec`` lists it in ``surface_named`` (a plain non-PDA slot the artifact names).
+    Anything else is an honest FLAGGED gap. Before R3 the terminal branch returned
+    ``extracted`` for any string whatsoever, so "the surface stated this" and "we hold
+    nothing for this name" were the same answer, and a typo in a hand-authored
+    ``StartSpec.accounts`` shipped as a confident spec-stated step.
 
     A ``cyclic`` account outranks all of that: however good its recipe, it cannot be
     placed in a derivation order, so the plan reports a gap rather than a position."""
@@ -468,7 +489,17 @@ def _account_step(
             note="a declared control-plane read recipe resolves this seed at plan time",
             resolver=resolver_note,
         )
-    return DeriveStep(account=name, provenance="extracted")
+    if node is not None or name in surface_named:
+        return DeriveStep(account=name, provenance="extracted")
+    return DeriveStep(
+        account=name,
+        provenance="flagged",
+        note=(
+            "no recipe and not named by the surface — nothing in the packaged program "
+            "config or this intent's declared account set accounts for this name, so "
+            "the plan reports a gap rather than claiming the surface stated it"
+        ),
+    )
 
 
 def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
@@ -477,6 +508,7 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
     overlay_why_raw = overlay.get("why") or {}
     overlay_why = {str(k): str(v) for k, v in overlay_why_raw.items()}
     recovered = card.spec.recovered if card.spec else {}
+    surface_named = frozenset(card.spec.surface_named if card.spec else ())
     ordered, cyclic = derivation_order_with_cycle(card.pdas, card.accounts)
     steps = [
         _account_step(
@@ -486,6 +518,7 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
             overlay_pdas=overlay_pdas,
             overlay_why=overlay_why,
             cyclic=cyclic,
+            surface_named=surface_named,
         )
         for name in ordered
     ]

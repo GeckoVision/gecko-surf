@@ -68,9 +68,18 @@ JUPITER_INTENTS: dict[str, Intent] = {_ROUTE.name: _ROUTE}
 #: the surface drops; the cross-surface accounts are deliberately NOT listed as derivable
 #: — they cannot be known before the quote, and promising them here would be a lie the
 #: derive plan then has to break.
+#:
+#: `surface_named` is the R3 half: Jupiter's config holds a PDA recipe for exactly one of
+#: these accounts (`event_authority`), so without an affirmative declaration the other
+#: eight would be indistinguishable from a name nothing has heard of and would flag. They
+#: are not gaps — the program surface names them; they are simply plain caller-supplied
+#: slots with no PDA derivation. `DECLARED_ROUTE_ACCOUNTS` is the same list
+#: `jupiter_landing._label_provenance` treats as the authority for `extracted`, so the
+#: two code paths now read one source and cannot drift apart.
 JUPITER_STARTS: dict[str, StartSpec] = {
     "plan_route": StartSpec(
         accounts=tuple(DECLARED_ROUTE_ACCOUNTS),
+        surface_named=tuple(DECLARED_ROUTE_ACCOUNTS),
         recovered={
             "event_authority": (
                 "Anchor's event-authority PDA. Orquestra reports `pda: null` for it — "
