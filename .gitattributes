@@ -1,0 +1,10 @@
+# CHANGELOG.md collided three times in one day, and every collision was the same
+# non-conflict: two independent entries added at the top of Unreleased by two PRs that
+# touched no common code. `union` keeps both sides instead of stopping the merge.
+#
+# It is the right strategy HERE and would be wrong almost anywhere else: union never
+# reports a conflict, so on a file where two edits can genuinely contradict each other it
+# would silently ship both. A changelog is append-only prose — two entries are additive by
+# construction — so there is nothing for it to hide. Ordering may need a cosmetic
+# touch-up afterwards; that is not a lost change.
+CHANGELOG.md merge=union
