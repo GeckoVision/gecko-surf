@@ -292,8 +292,14 @@ def _packaged_overlay(api_id: str) -> dict[str, Any]:
     """The packaged manual overlay for a program ({} when absent) — the explicit
     beyond-the-surface knowledge whose ``why`` map powers ``recovered`` notes."""
     try:
-        anchor = resources.files("gecko.providers.configs").joinpath(
-            "orquestra", "overlays", f"{api_id}.json"
+        # One segment per call — see the note in provider_config._read_json. Inside a
+        # PyInstaller binary this resolves to a MultiplexedPath, whose joinpath takes
+        # exactly ONE segment; the multi-arg form raises only once frozen.
+        anchor = (
+            resources.files("gecko.providers.configs")
+            .joinpath("orquestra")
+            .joinpath("overlays")
+            .joinpath(f"{api_id}.json")
         )
         data = json.loads(anchor.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
