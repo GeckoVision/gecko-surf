@@ -1,0 +1,111 @@
+[
+ {
+  "intent": "buy this token on pump.fun",
+  "expected": "pumpfun/buy",
+  "routed": "pumpfun/buy",
+  "score": 9,
+  "accounts": 12,
+  "provenance": {
+   "extracted": 6,
+   "recovered": 4,
+   "flagged": 2
+  },
+  "matched": true
+ },
+ {
+  "intent": "sell my pump.fun position",
+  "expected": "pumpfun/sell",
+  "routed": "pumpfun/sell",
+  "score": 9,
+  "accounts": 12,
+  "provenance": {
+   "extracted": 5,
+   "recovered": 4,
+   "flagged": 3
+  },
+  "matched": true
+ },
+ {
+  "intent": "swap wsol to usdc on meteora",
+  "expected": "meteora/swap",
+  "routed": "meteora/swap",
+  "score": 5,
+  "accounts": 6,
+  "provenance": {
+   "recovered": 3,
+   "extracted": 3
+  },
+  "matched": true
+ },
+ {
+  "intent": "route a swap out of hyUSD",
+  "expected": "jupiter/route",
+  "routed": "jupiter/route",
+  "score": 5,
+  "accounts": 9,
+  "provenance": {
+   "extracted": 8,
+   "recovered": 1
+  },
+  "matched": true
+ },
+ {
+  "intent": "claim my ore rewards",
+  "expected": "ore/claimOre",
+  "routed": "ore/claimOre",
+  "score": 7,
+  "accounts": 9,
+  "provenance": {
+   "recovered": 6,
+   "flagged": 3
+  },
+  "matched": true
+ },
+ {
+  "intent": "fund a metadao launch",
+  "expected": "metadao_ico/fund",
+  "routed": "metadao_ico/fund",
+  "score": 7,
+  "accounts": 5,
+  "provenance": {
+   "recovered": 5
+  },
+  "matched": true
+ },
+ {
+  "intent": "get me out of hyUSD into USDC",
+  "expected": null,
+  "routed": null,
+  "score": null,
+  "accounts": null,
+  "provenance": {},
+  "matched": true
+ },
+ {
+  "intent": "move my money somewhere safer",
+  "expected": null,
+  "routed": null,
+  "score": null,
+  "accounts": null,
+  "provenance": {},
+  "matched": true
+ },
+ {
+  "intent": "do the thing with the tokens",
+  "expected": null,
+  "routed": null,
+  "score": null,
+  "accounts": null,
+  "provenance": {},
+  "matched": true
+ },
+ {
+  "intent": "what is my balance",
+  "expected": null,
+  "routed": null,
+  "score": null,
+  "accounts": null,
+  "provenance": {},
+  "matched": true
+ }
+]
