@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.10.2 — 2026-08-06
+
+### Fixed
+- **`gecko prove` was STILL broken in 0.10.1.** The 0.10.1 fix patched one multi-argument
+  `joinpath`; a second one in `find_start._packaged_overlay` spanned three lines, so the
+  regex sweep that "confirmed the tree was clean" never saw it. Both are one segment per
+  call now.
+
+  Two point fixes in a row is a signal to stop fixing points, so the guard is now
+  structural: a test walks the package AST and fails on **any** `joinpath` with more than
+  one argument. A new call site now fails in CI rather than in someone's terminal — which
+  is where both of these were found, by running the published binary.
+
 ## 0.10.1 — 2026-08-06
 
 ### Fixed

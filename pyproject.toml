@@ -1,6 +1,6 @@
 [project]
 name = "gecko-surf"
-version = "0.10.1"
+version = "0.10.2"
 description = "The knowledge graph for APIs your agent can trust — map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves."
 keywords = [
     "mcp", "model-context-protocol", "ai-agents", "agent-tools", "llm-tools",
