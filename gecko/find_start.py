@@ -36,7 +36,7 @@ from .ingest import Operation
 from .lexnorm import STOPWORDS, fold_tokens, normalize_query
 from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
-from .program_graph import derivation_order_for
+from .program_graph import derivation_order_with_cycle
 from .provenance import AccountProvenance
 
 __all__ = [
@@ -413,11 +413,26 @@ def _account_step(
     recovered: Mapping[str, str],
     overlay_pdas: frozenset[str],
     overlay_why: Mapping[str, str],
+    cyclic: frozenset[str] = frozenset(),
 ) -> DeriveStep:
     """Tag one account. FLAGGED wins (a resolver seed with no declared read recipe
     is an unresolved gap regardless of how the recipe was obtained); ``recovered``
     marks source/overlay-rescued knowledge or a declared read recipe; everything
-    straight off the surface stays ``extracted``."""
+    straight off the surface stays ``extracted``.
+
+    A ``cyclic`` account outranks all of that: however good its recipe, it cannot be
+    placed in a derivation order, so the plan reports a gap rather than a position."""
+    if name in cyclic:
+        members = ", ".join(sorted(cyclic))
+        return DeriveStep(
+            account=name,
+            provenance="flagged",
+            note=(
+                "unorderable: seed-dependency cycle among "
+                f"{members} — this account's derivation depends on itself, "
+                "directly or through another account of this instruction"
+            ),
+        )
     resolver_seeds = node.unresolved_seeds if node is not None else ()
     resolver_note = (
         "; ".join(s.reason for s in resolver_seeds) if resolver_seeds else None
@@ -462,7 +477,7 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
     overlay_why_raw = overlay.get("why") or {}
     overlay_why = {str(k): str(v) for k, v in overlay_why_raw.items()}
     recovered = card.spec.recovered if card.spec else {}
-    ordered = derivation_order_for(card.pdas, card.accounts)
+    ordered, cyclic = derivation_order_with_cycle(card.pdas, card.accounts)
     steps = [
         _account_step(
             name,
@@ -470,6 +485,7 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
             recovered=recovered,
             overlay_pdas=overlay_pdas,
             overlay_why=overlay_why,
+            cyclic=cyclic,
         )
         for name in ordered
     ]

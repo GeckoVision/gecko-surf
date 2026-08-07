@@ -79,6 +79,36 @@ def test_plan_instruction_returns_ordered_plan() -> None:
     assert planned == {"round", "miner"}
 
 
+def test_plan_marks_a_cyclic_step_unorderable() -> None:
+    """The agent-facing plan must not present an arbitrary position as a real one."""
+    from gecko.program_graph import build_program_graph
+
+    idl = {
+        "address": ORE_PROGRAM,
+        "instructions": [
+            {
+                "name": "tangle",
+                "args": [],
+                "accounts": [
+                    {"name": "a", "pda": {"seeds": [{"kind": "account", "path": "b"}]}},
+                    {"name": "b", "pda": {"seeds": [{"kind": "account", "path": "a"}]}},
+                ],
+            }
+        ],
+    }
+    surface = ProgramGraphSurface(build_program_graph(idl=idl))
+    plan = surface.call_tool("plan_instruction", {"instruction": "tangle"})
+    assert plan["cycle"] == ["a", "b"]
+    assert all(s["unorderable"] is True for s in plan["plan"])
+    assert all(s["resolvable"] is False for s in plan["plan"])
+
+
+def test_plan_of_an_acyclic_instruction_is_orderable() -> None:
+    plan = _surface().call_tool("plan_instruction", {"instruction": "open_round"})
+    assert plan["cycle"] == []
+    assert all(s["unorderable"] is False for s in plan["plan"])
+
+
 def test_plan_unknown_instruction_lists_available() -> None:
     out = _surface().call_tool("plan_instruction", {"instruction": "nope"})
     assert "error" in out
