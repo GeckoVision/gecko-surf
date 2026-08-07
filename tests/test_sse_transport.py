@@ -102,3 +102,79 @@ def test_the_alias_never_replaces_a_surfaces_own_door() -> None:
 
     assert "/jupiter" in mounted
     assert f"/{http_server.META_SURFACE_NAME}" in mounted
+
+
+def test_a_stuck_client_cannot_pin_every_connection_slot(monkeypatch: Any) -> None:
+    """The cap is per REAL client IP. Held open, SSE is a socket per client — the failure
+    we bound here is usually accidental (one client that never disconnects), not hostile."""
+    monkeypatch.setenv(http_server.SSE_MAX_STREAMS_PER_IP_ENV, "2")
+
+    assert http_server._sse_limit(http_server.SSE_MAX_STREAMS_PER_IP_ENV, 4) == 2
+
+
+def test_a_typo_in_the_deploy_env_never_disables_a_cap(monkeypatch: Any) -> None:
+    """`GECKO_SSE_MAX_STREAMS_PER_IP=four` must fall back to the default, not to
+    unlimited — a limit that silently turns itself off is worse than no limit."""
+    monkeypatch.setenv(http_server.SSE_MAX_STREAMS_PER_IP_ENV, "four")
+
+    assert http_server._sse_limit(http_server.SSE_MAX_STREAMS_PER_IP_ENV, 4) == 4
+
+
+def test_a_cap_can_be_turned_off_deliberately(monkeypatch: Any) -> None:
+    """0 means unlimited, for local dev. Explicit, unlike the typo above."""
+    monkeypatch.setenv(http_server.SSE_MAX_STREAM_SECONDS_ENV, "0")
+
+    assert http_server._sse_limit(http_server.SSE_MAX_STREAM_SECONDS_ENV, 1800) == 0
+
+
+def test_a_negative_cap_is_clamped_not_inverted(monkeypatch: Any) -> None:
+    monkeypatch.setenv(http_server.SSE_MAX_STREAMS_PER_IP_ENV, "-5")
+
+    assert http_server._sse_limit(http_server.SSE_MAX_STREAMS_PER_IP_ENV, 4) == 0
+
+
+def test_a_client_at_its_cap_is_refused() -> None:
+    """The cap exists because SSE holds a socket per client. The failure it bounds is
+    usually accidental — one client that never disconnects — not hostile."""
+    live: dict[str, int] = {}
+
+    taken = [http_server._sse_try_acquire(live, "1.2.3.4", 2) for _ in range(3)]
+
+    assert taken == [True, True, False]
+    assert live["1.2.3.4"] == 2
+
+
+def test_one_clients_cap_never_blocks_another() -> None:
+    """Behind the ALB this only holds because uvicorn resolves X-Forwarded-For into
+    client.host — otherwise every caller shares one address and one heavy user would
+    lock out the world."""
+    live: dict[str, int] = {}
+    http_server._sse_try_acquire(live, "1.1.1.1", 1)
+
+    assert http_server._sse_try_acquire(live, "2.2.2.2", 1) is True
+
+
+def test_a_vanished_client_gives_its_slot_back() -> None:
+    """A leaked count starves that IP into permanent 429s — the outage would arrive
+    hours later, looking nothing like its cause."""
+    live: dict[str, int] = {}
+    http_server._sse_try_acquire(live, "1.2.3.4", 2)
+    http_server._sse_release(live, "1.2.3.4")
+
+    assert http_server._sse_try_acquire(live, "1.2.3.4", 2) is True
+
+
+def test_the_slot_map_cannot_grow_without_bound() -> None:
+    """Every distinct IP would otherwise leave a permanent key behind — a slow leak on
+    a public endpoint that sees thousands of crawler IPs."""
+    live: dict[str, int] = {}
+    http_server._sse_try_acquire(live, "1.2.3.4", 2)
+    http_server._sse_release(live, "1.2.3.4")
+
+    assert live == {}
+
+
+def test_a_zero_cap_lets_everything_through() -> None:
+    live: dict[str, int] = {}
+
+    assert all(http_server._sse_try_acquire(live, "1.2.3.4", 0) for _ in range(50))

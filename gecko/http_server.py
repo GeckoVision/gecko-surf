@@ -61,6 +61,55 @@ MCP_PATH = "/mcp"
 SSE_PATH = "/sse"
 SSE_MESSAGE_PATH = "/messages/"
 
+#: SSE holds a socket open per client, where Streamable HTTP is stateless POSTs — so an
+#: open, unauthenticated, long-lived door is a cheap way to pin every connection slot on
+#: the task. Usually not malice: one stuck client that never disconnects does it by
+#: accident. These two caps bound that. ``0`` disables a cap (local dev).
+#: The per-IP key is the REAL client IP: uvicorn runs with ``proxy_headers=True``, so it
+#: has already resolved the ALB's ``X-Forwarded-For`` into ``client.host``. Without that
+#: every caller would share the ALB's address and one cap would lock out everyone.
+SSE_MAX_STREAMS_PER_IP_ENV = "GECKO_SSE_MAX_STREAMS_PER_IP"
+SSE_MAX_STREAM_SECONDS_ENV = "GECKO_SSE_MAX_STREAM_SECONDS"
+_SSE_DEFAULT_MAX_STREAMS_PER_IP = 4
+_SSE_DEFAULT_MAX_STREAM_SECONDS = (
+    1800  # 30 min; a real session reconnects, a leak does not
+)
+
+
+def _sse_try_acquire(live: dict[str, int], ip: str, cap: int) -> bool:
+    """Claim a stream slot for ``ip``. False means the caller is at its cap.
+
+    Synchronous by design: the read and the write happen with no ``await`` between
+    them, so two concurrent handlers cannot both observe a free slot and both take it.
+    ``cap`` of 0 disables the limit.
+    """
+    if cap and live.get(ip, 0) >= cap:
+        return False
+    live[ip] = live.get(ip, 0) + 1
+    return True
+
+
+def _sse_release(live: dict[str, int], ip: str) -> None:
+    """Give the slot back, dropping the key at zero so the map cannot grow without
+    bound. Must run even when the client vanishes mid-stream — a leaked count would
+    slowly starve that IP into permanent 429s."""
+    remaining = live.get(ip, 1) - 1
+    if remaining > 0:
+        live[ip] = remaining
+    else:
+        live.pop(ip, None)
+
+
+def _sse_limit(env_name: str, default: int) -> int:
+    """Read a cap from the environment, falling back to the default on anything
+    unparseable — a typo in a deploy env must not silently disable a limit."""
+    try:
+        value = int(os.environ.get(env_name, "") or default)
+    except ValueError:
+        return default
+    return max(value, 0)
+
+
 # The 'submit your API' front doors: a human/agent HTTP POST and an agent MCP tool.
 COMPREHEND_PATH = "/comprehend"
 META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
@@ -819,6 +868,8 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
     the server booting: losing the extra door must not close the main one.
     """
     try:
+        import anyio
+
         from mcp.server.sse import SseServerTransport
         from starlette.responses import Response as _Response
         from starlette.routing import Mount as _Mount
@@ -828,13 +879,39 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
 
     transport = SseServerTransport(SSE_MESSAGE_PATH)
 
+    max_per_ip = _sse_limit(SSE_MAX_STREAMS_PER_IP_ENV, _SSE_DEFAULT_MAX_STREAMS_PER_IP)
+    max_seconds = _sse_limit(
+        SSE_MAX_STREAM_SECONDS_ENV, _SSE_DEFAULT_MAX_STREAM_SECONDS
+    )
+    # Live stream count per client IP. A plain dict needs no lock: the check and the
+    # increment below sit in one synchronous block with no `await` between them, so no
+    # other task can interleave and both slip past a full cap.
+    live: dict[str, int] = {}
+
     async def _handle_sse(request: Any) -> Any:
-        async with transport.connect_sse(
-            request.scope, request.receive, request._send
-        ) as (read_stream, write_stream):
-            await server.run(
-                read_stream, write_stream, server.create_initialization_options()
+        ip = request.client.host if request.client else "unknown"
+        if not _sse_try_acquire(live, ip, max_per_ip):
+            # 429, not a silent drop: a real client backs off and retries, and the
+            # rejection is countable rather than looking like a server fault.
+            return _Response(
+                "too many concurrent streams",
+                status_code=429,
+                headers={"Retry-After": "30"},
             )
+        try:
+            async with transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as (read_stream, write_stream):
+                options = server.create_initialization_options()
+                if max_seconds:
+                    # move_on_after, not fail_after: at the lifetime cap the stream
+                    # closes normally instead of raising into the client's face.
+                    with anyio.move_on_after(max_seconds):
+                        await server.run(read_stream, write_stream, options)
+                else:
+                    await server.run(read_stream, write_stream, options)
+        finally:
+            _sse_release(live, ip)
         return _Response()
 
     endpoint = _handle_sse if gate is None else _GeckoKeyGateASGI(_handle_sse, gate)
