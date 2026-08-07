@@ -237,6 +237,23 @@ def test_bare_id_query_param_is_not_scoped_by_the_path() -> None:
     assert [e.basis for e in g.feeds_into(id_param, high_only=False)] == []
 
 
+def test_query_id_keeps_its_rare_key_edge_when_the_producer_is_untitled() -> None:
+    """The removal guard. Scoping the PRODUCER unconditionally — the obvious
+    one-line form of this fix — would give an untitled `id` field the entity
+    `customer` while a QUERY `id` still has none, so the pair would match neither
+    rule 1 (needs both) nor rule 3 (needs neither), and this existing
+    `rare-key:id` edge would silently VANISH. Rule 1b is a separate branch gated on
+    `is_path` precisely so a recall change can only ever ADMIT."""
+    spec = _rest_spec(get_path="/lookup", id_in="query", title=None)
+    g = build_graph(extract_operations(spec))
+    id_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "getCustomer" and n.name == "id"
+    )
+    assert [e.basis for e in g.feeds_into(id_param, high_only=False)] == ["rare-key:id"]
+
+
 def test_scoped_id_admits_exactly_this_much_on_the_shipped_fixtures() -> None:
     """Rule 1b is a RECALL change: it can only admit, so what it admits has to be
     pinned. These are the four committed specs, measured. A future widening has to
