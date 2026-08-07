@@ -733,9 +733,11 @@ def build_graph(
     # frequency tables for genericity demotion (from the graph itself, no stoplist)
     produced_by: dict[str, set[str]] = defaultdict(set)
     consumed_by: dict[str, set[str]] = defaultdict(set)
-    # producers[name] -> [(op_id, field_name, parent, id_type, sig)], first per name/op
-    producers: dict[str, list[tuple[str, str, str | None, str, str]]] = defaultdict(
-        list
+    # producers[name] -> [(op_id, field_name, parent, id_type, sig, resource_noun)],
+    # first per name/op. The producing op's resource noun rides along so a bare `id`
+    # with no parent object title can still be scoped to the resource it belongs to.
+    producers: dict[str, list[tuple[str, str, str | None, str, str, str | None]]] = (
+        defaultdict(list)
     )
     # declared_producers[entity] -> [(op_id, field_name, parent, id_type)]
     declared_producers: dict[str, list[tuple[str, str, str | None, str]]] = defaultdict(
@@ -783,7 +785,7 @@ def build_graph(
             n = _norm(fname)
             produced_by[n].add(oid)
             if n not in seen_here:
-                producers[n].append((oid, fname, parent, ftype, fsig))
+                producers[n].append((oid, fname, parent, ftype, fsig, noun))
                 seen_here.add(n)
             d_ent = decl.get(n)
             # a declared join key must still be id-shaped — an explicit hint on a
@@ -835,21 +837,50 @@ def build_graph(
                 continue
             is_path = f"{{{p.name}}}" in op.path
             # param entity: an id-suffix name, or a bare path param scoped by its own
-            # name / the path's resource noun.
-            p_ent = (
-                _entity_of(p.name)
-                or (n if is_path else None)
-                or (rnoun if is_path else None)
-            )
+            # name. (A third `rnoun` term used to sit here and was unreachable — `n` is
+            # always truthy for a real param, so the `or` chain never fell through to
+            # it. The resource noun now scopes the bare-`id` case in rule 1b below,
+            # where it can actually be compared against the producer's scope.)
+            p_ent = _entity_of(p.name) or (n if is_path else None)
             p_sig = _sig_of(
                 p.schema, name=p.name, description=p.description, example=p.example
             )
-            for src_op, fld, parent, ftype, fsig in producers[n]:
+            for src_op, fld, parent, ftype, fsig, src_noun in producers[n]:
                 if src_op == oid:
                     continue
                 f_ent = _entity_of(fld, parent)
                 src_field_id = f"{ns}{_field_id(f'op:{src_op}', fld, parent)}"
                 dst_param_id = f"{ns}{_param_id(_op_id(op), p)}"
+                if n == "id":
+                    # rule 1b: the bare-`id` REST chain (`GET /customers` ->
+                    # `GET /customers/{id}`). Neither side's NAME carries an entity,
+                    # so scope each by the RESOURCE its operation names — the response
+                    # object's title on the producer (falling back to the producing
+                    # path's noun), the consuming path's noun on the consumer. Only a
+                    # PATH param is scoped this way: a query `id` says nothing about
+                    # which resource the id belongs to, so it falls through to the
+                    # rules below unchanged.
+                    f_scope = f_ent or src_noun
+                    p_scope = rnoun if is_path else None
+                    if f_scope and p_scope:
+                        # scoped on both sides: either the resources match (a join) or
+                        # they don't (a different resource — never a join). Decided
+                        # here; the name-equality rules below cannot improve on it.
+                        if f_scope == p_scope and ftype in _ID_TYPES:
+                            basis = f"scoped-id:{f_scope}"
+                            if _sig_corroborates(fsig, p_sig):
+                                basis += "+sig"
+                            edges.append(
+                                Edge(
+                                    "feeds",
+                                    src_field_id,
+                                    dst_param_id,
+                                    "INFERRED",
+                                    basis,
+                                    "high",
+                                )
+                            )
+                        continue
                 if f_ent and p_ent:
                     # rule 1: entity match — entity ids are the spine, exempt from
                     # genericity (the entity scope already prevents over-linking).

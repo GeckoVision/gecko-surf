@@ -121,6 +121,158 @@ def test_real_entity_key_still_links_when_generic_names_are_demoted() -> None:
     assert p.explain[0].basis == "entity:order" and p.explain[0].confidence == "high"
 
 
+# --- the bare-`id` REST chain (rule 1b, scoped-id) -------------------------------
+def _rest_spec(
+    *,
+    list_path: str = "/customers",
+    get_path: str = "/customers/{id}",
+    title: str | None = "Customer",
+    id_in: str = "path",
+) -> dict:
+    """The canonical two-call REST surface: a list op producing `id`, and a get op
+    consuming `id`. ``title`` None = a bare untitled response object."""
+    item: dict = {"type": "object", "properties": {"id": {"type": "string"}}}
+    if title:
+        item["title"] = title
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            list_path: {
+                "get": {
+                    "operationId": "listCustomers",
+                    "responses": {
+                        "200": {
+                            "description": "",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type": "array", "items": item}
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            get_path: {
+                "get": {
+                    "operationId": "getCustomer",
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": id_in,
+                            "required": True,
+                            "schema": {"type": "string"},
+                        }
+                    ],
+                    "responses": {"200": {"description": ""}},
+                }
+            },
+        },
+    }
+
+
+def test_bare_id_rest_chain_links_on_the_resource_noun() -> None:
+    """`GET /customers` -> `GET /customers/{id}`: the most common chain in REST.
+    Neither side's NAME carries an entity (`id` is bare), so each is scoped by the
+    resource its operation names — the response object's title on the producer, the
+    path's resource noun on the consumer."""
+    g = build_graph(extract_operations(_rest_spec()))
+    id_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "getCustomer" and n.name == "id"
+    )
+    fed = g.feeds_into(id_param, high_only=True)
+    assert len(fed) == 1
+    e = fed[0]
+    assert e.provenance == "INFERRED"  # never EXTRACTED — this is a derived join
+    assert e.basis == "scoped-id:customer"  # the entity is IN the basis, auditable
+    assert e.confidence == "high"
+
+    p = plan(g, "getCustomer", set())
+    assert p is not None
+    assert p.steps[0].operation_id == "listCustomers"
+    assert p.explain[0].param == "id"
+    assert p.explain[0].basis == "scoped-id:customer"
+
+
+def test_bare_id_links_when_the_producer_object_is_untitled() -> None:
+    """Same chain, but the list response object carries no title — the producer is
+    then scoped by ITS path's resource noun instead."""
+    g = build_graph(extract_operations(_rest_spec(title=None)))
+    id_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "getCustomer" and n.name == "id"
+    )
+    fed = g.feeds_into(id_param, high_only=True)
+    assert [e.basis for e in fed] == ["scoped-id:customer"]
+
+
+def test_bare_id_does_not_link_across_two_different_resources() -> None:
+    """The scope is the whole point: a `Customer.id` must not feed `/orders/{id}`.
+    Without the scoping this rule would be the widest over-linker in the graph."""
+    spec = _rest_spec(get_path="/orders/{id}")
+    g = build_graph(extract_operations(spec))
+    id_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "getCustomer" and n.name == "id"
+    )
+    assert g.feeds_into(id_param, high_only=False) == []
+    assert plan(g, "getCustomer", set()) is None
+
+
+def test_bare_id_query_param_is_not_scoped_by_the_path() -> None:
+    """A QUERY `id` is not the resource's own key — `GET /customers?id=` says
+    nothing about which resource that id belongs to. It keeps the old behaviour
+    (no scoped edge), so this change cannot admit a join the path never asserted."""
+    spec = _rest_spec(get_path="/lookup", id_in="query")
+    g = build_graph(extract_operations(spec))
+    id_param = next(
+        n.id
+        for n in g.nodes
+        if n.kind == "param" and n.owner == "getCustomer" and n.name == "id"
+    )
+    assert [e.basis for e in g.feeds_into(id_param, high_only=False)] == []
+
+
+def test_scoped_id_admits_exactly_this_much_on_the_shipped_fixtures() -> None:
+    """Rule 1b is a RECALL change: it can only admit, so what it admits has to be
+    pinned. These are the four committed specs, measured. A future widening has to
+    move these numbers in the same commit and say why."""
+    expected = {
+        "pegana_openapi.json": 3,
+        "pegana_p0_openapi.json": 3,
+        "golden/privy_openapi.json": 0,  # privy's bare-`id` producers all carry titles
+        "txline_openapi.yaml": 0,
+    }
+    got = {}
+    for name in expected:
+        g = _graph(FIX / name)
+        got[name] = len(
+            [
+                e
+                for e in g.edges
+                if e.kind == "feeds" and e.basis.startswith("scoped-id:")
+            ]
+        )
+    assert got == expected
+
+    # and the three on pegana are the real webhook chain, not near-misses
+    g = _graph(FIX / "pegana_openapi.json")
+    scoped = sorted(
+        (g._by_id[e.src].owner, g._by_id[e.dst].owner)
+        for e in g.edges
+        if e.kind == "feeds" and e.basis.startswith("scoped-id:")
+    )
+    assert scoped == [
+        ("list_webhooks", "delete_webhook"),
+        ("list_webhooks", "patch_webhook"),
+        ("patch_webhook", "delete_webhook"),
+    ]
+
+
 # --- entity-branch id-shape filter (§12 bug a) ----------------------------------
 def test_boolean_field_named_paid_mints_no_high_feeds_edge() -> None:
     """The ``endswith('id')`` entity heuristic misfires on English words (``paid``

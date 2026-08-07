@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed
+- **The most common chain in REST produced no edge.** `GET /customers` →
+  `GET /customers/{id}` yielded zero `feeds` edges and no plan. A bare `id` carries no
+  entity on either side, and the consumer-side `or` chain resolved a path param named
+  `id` to the entity `"id"` — which never matches the producer's `"customer"`. The
+  `rnoun` term meant to fix that sat third in the chain and was structurally
+  unreachable, and the `scoped-id:` basis it was supposed to mint appeared in no test
+  and no output.
+
+  New rule 1b scopes both sides by the RESOURCE the operation names — the response
+  object's title on the producer (falling back to the producing path's noun), the
+  consuming path's noun on the consumer — and mints an INFERRED edge with basis
+  `scoped-id:<entity>`. The scope is the control: a `Customer.id` does not feed
+  `/orders/{id}`. Only a PATH param is scoped this way; a query `id` says nothing about
+  which resource it belongs to, so it falls through to the existing rules unchanged.
+
+  Measured across every committed spec (`scoped-id` edges admitted / edges removed):
+  pegana **+3 / 0**, pegana_p0 **+3 / 0**, privy **+0 / 0**, txline **+0 / 0**, and
+  +0 / 0 on the six smaller fixtures. All three pegana edges are the real webhook
+  chain (`list_webhooks.id` → `delete_webhook{id}`, → `patch_webhook{id}`,
+  `patch_webhook.id` → `delete_webhook{id}`); pegana gains two plans, both sourced
+  from the `GET`. `find_start` retrieval eval unchanged (recall@1 0.74, recall@3 0.89,
+  MRR 0.81, 4/4 out-of-scope rejected, 0 false accepts).
+
 ## 0.10.2 — 2026-08-06
 
 ### Fixed
