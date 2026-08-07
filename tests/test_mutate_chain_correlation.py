@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from gecko.access import public_session
-from gecko.correlate import correlate_surfaces
+from gecko.correlate import DERIVED_SIG_SIGNAL, correlate_surfaces
 from gecko.surface import Surface
 from gecko.vindex import value_domain_index
 
@@ -69,12 +69,19 @@ def test_response_field_feeds_body_field_is_found_as_declared() -> None:
 
 def test_the_base58_example_corroborates_the_join() -> None:
     """The enrichment: the base58 example (declared via the ``examples`` list) reaches the
-    value-domain signature on BOTH sides, so the join carries a ``format-eq`` corroborator
-    — proof the producer/consumer surface got richer, not just wider."""
+    value-domain signature on BOTH sides, so the join carries a value-domain corroborator
+    — proof the producer/consumer surface got richer, not just wider.
+
+    R2 changed the signal NAME, not the behaviour: the domain here is DERIVED from the
+    example's shape rather than declared by a ``format:`` keyword, so it reports as
+    ``format-eq~derived``. This is the case that proves the surviving channel still
+    carries real value — it is the only committed fixture whose base58 domain comes from
+    an example rather than from prose.
+    """
     res = correlate_surfaces(_oracle(confirm=True), _mgr(confirm=True))
     link = _mutate_link(res)
     assert link is not None
-    assert "format-eq" in link.basis.signals, (
+    assert DERIVED_SIG_SIGNAL in link.basis.signals, (
         "the base58 example did not reach the signature — the examples-list channel is "
         "not wired into the value-domain corroborator"
     )

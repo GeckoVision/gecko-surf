@@ -60,12 +60,20 @@ _GENERIC_FRAC = 0.03
 # high-cardinality but it NAMES nothing (every API ships twenty of them), so equality of
 # format is the charter's "rarity is not distinctiveness" trap — it made every
 # ``detected_at`` corroborate every report date-range bound on the Pegana spec.
-# ``base58`` is a DERIVED domain (from an example shape / a "base58"/"mint address"
-# description hint) — a rare, high-entropy value domain that discriminates like a
-# declared pattern; folded into the format slot by ``_sig_of`` when no explicit format
-# is declared. It is a CORROBORATOR only — like every other signal here it never mints a
+# ``base58`` is here as a DECLARED format — a spec is free to write ``format: base58``
+# and that is EXTRACTED, a fact the surface states. ``base58~`` is its DERIVED twin: the
+# same value domain recovered by ``_domain_signal`` from an example's SHAPE when the spec
+# declared no format. The two are deliberately DIFFERENT tokens and therefore never
+# corroborate each other — a derived guess must not borrow a declaration's authority, and
+# nothing INFERRED may read as EXTRACTED. Both are CORROBORATORS only; neither mints a
 # standalone cross-API join (the §13.6 gate lives in ``correlate._score``, untouched).
-_DISCRIMINATING_FMT = frozenset({"uuid", "uri", "email", "ipv4", "currency", "base58"})
+_DISCRIMINATING_FMT = frozenset(
+    {"uuid", "uri", "email", "ipv4", "currency", "base58", "base58~"}
+)
+# Suffix marking a format-slot token as DERIVED rather than spec-declared. Everything
+# downstream that reports or ranks on the format slot MUST be able to tell them apart —
+# see ``is_derived_domain`` and ``correlate._sig_signal``.
+_DERIVED_FMT_SUFFIX = "~"
 # planning tiebreak rank: the §13.2 ladder, lower is preferred.
 _PROV_RANK = {"DECLARED": 0, "INFERRED": 1}
 
@@ -217,31 +225,56 @@ def _resource_noun(op: Operation) -> str | None:
 
 
 # base58 value-domain (§13.1 richer signature): a 32-44 char base58 string is the
-# Solana address/mint shape — a rare, high-entropy domain. Detected from an example's
-# SHAPE or a name/description hint, never from a response value. Bound the scanned text
-# so an untrusted, oversized description can't blow up the derivation.
+# Solana address/mint shape — a rare, high-entropy domain. Recovered ONLY from an
+# example's SHAPE, never from a response value (invariant #1) and — since R2 — never
+# from prose.
 _BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
-_BASE58_HINTS = ("base58", "mint address", "spl mint", "solana address", "pubkey")
-_DESC_SCAN_CAP = 400
 
 
 def _domain_signal(name: str, description: str, example: object) -> str:
     """A DERIVED discriminating value-domain token for a field/param, or "".
 
-    Reads only SURFACE metadata (the field name, its description, and a spec-authored
-    example's SHAPE) — never a response value (invariant #1). Today it recognizes the
-    ``base58`` Solana-address/mint domain, the join key Pegana/Birdeye/Jupiter share
+    Reads only a spec-authored example's SHAPE. Today it recognizes the ``base58``
+    Solana-address/mint domain, the join key Pegana/Birdeye/Jupiter share
     (``docs/specs/2026-07-28-pegana-correlation-surface.md``). This lets a field whose
     spec ships NO ``pattern``/``format`` still self-declare its value domain, so an
-    intra-API join corroborates where before it had nothing to match on — WITHOUT
-    loosening any cross-API gate (that stays DECLARED+CONFIRMED in ``correlate._score``).
+    intra-API join corroborates where before it had nothing to match on.
+
+    **``name`` and ``description`` are accepted and deliberately NOT read** (R2, and the
+    signature is kept so a future STRUCTURAL channel has its inputs). Until R2 this
+    scanned both for ``"base58"``/``"pubkey"``/``"solana address"`` hints. Two reasons it
+    had to go, and neither is "the regex was slightly wrong":
+
+    1. **It is the wrong class of evidence for this slot.** A curated keyword scan over
+       untrusted free text is exactly the BEST-EFFORT control ``gecko.sanitize`` refuses
+       to call a guarantee — paraphrase, homoglyphs, splitting across sibling fields and
+       encoding all evade it. Feeding a best-effort text signal into the FORMAT slot,
+       which downstream reads as a structural claim the spec made, is a category error:
+       it lets ingested prose mint something shaped like an EXTRACTED fact.
+    2. **It measurably misfired on real specs.** Every derived domain on every committed
+       fixture (23 of 23: privy, pegana, pegana_p0, txline) came from prose, and several
+       were plainly wrong — ``circulating_supply`` (a number) and ``pubkeys_b64`` (a
+       base64 blob) classified as Solana addresses, ``transaction_signature`` on
+       *Ethereum* endpoints, and ``transaction_hash`` landing in the same domain as
+       ``input_token``.
+
+    The returned token carries ``_DERIVED_FMT_SUFFIX`` so that no consumer can mistake it
+    for a spec-declared ``format:``. The example channel is itself attacker-controllable
+    (``sanitize`` does not address-scan hint channels, by design), which is why marking is
+    not the only defence: ``correlate._score`` additionally refuses to let a derived
+    domain raise a link's tier.
     """
     if isinstance(example, str) and _BASE58_RE.match(example):
-        return "base58"
-    hay = f"{name} {description}"[:_DESC_SCAN_CAP].lower()
-    if any(hint in hay for hint in _BASE58_HINTS):
-        return "base58"
+        return "base58" + _DERIVED_FMT_SUFFIX
     return ""
+
+
+def is_derived_domain(fmt: str) -> bool:
+    """True when a signature's FORMAT slot holds a domain Gecko DERIVED rather than one
+    the spec declared. The single predicate every consumer must use before treating the
+    format slot as something the surface asserted (§13.2: nothing INFERRED may become
+    indistinguishable from EXTRACTED)."""
+    return fmt.endswith(_DERIVED_FMT_SUFFIX)
 
 
 def _sig_of(
