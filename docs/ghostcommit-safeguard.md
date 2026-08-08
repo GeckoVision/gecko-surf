@@ -105,6 +105,31 @@ Nothing is silently sanitized and passed on.
   fallback or opt-in strictness for the pipeline that cares, not a quieter default.
 - **Detection is pattern-based**, so a novel phrasing can pass. Widening the patterns
   raises false positives, which is its own harm — a scanner people mute protects nobody.
+- **The pixel channel has different fidelity from the spec channel**, and a rule measured
+  on one does not automatically hold on the other. The renderer moves line breaks, and the
+  attacker picks the image width — so on this channel the attacker picks where the breaks
+  fall. Every rule scoped to a sentence stopped at one, which made a single break a
+  one-character bypass. OCR also shatters base58 literals into space-separated runs,
+  reproducing the "remove the spaces" evasion by accident on every image containing an
+  address. `gecko.ocrnorm` undoes both before the scan; it changes no rule. Measured over
+  the committed specs' prose wrapped at four widths (24,300 variants): zero new false
+  positives. Measured over the `fund_routing` attack set at the same widths: 37/68
+  attack-width pairs survived the renderer before, 68/68 after.
+- **Restoring fidelity is not a boundary against a knowing attacker.** It closes the
+  *accidental* gap — the one that fired on every image containing an address whether or
+  not anyone was aiming at it. Someone who has read `gecko.ocrnorm` can still re-open it:
+  end the line in a period or colon, leave a blank line, space the address fragments by
+  two spaces instead of one, or shatter it into one-character runs. Those are pinned as
+  executable cases, not prose. They stay open because each closure trades a false positive
+  in a channel that is already BEST-EFFORT.
+- **OCR misreads characters inside addresses** (`Q` read as `O`, which is outside the
+  base58 alphabet). Re-joining cannot help, and relaxing the address class to recover it
+  would match ordinary long identifiers and `$ref` paths — the exact false positive the
+  base58 guard exists to prevent. Refused.
+- **Column-split payloads are still open.** Row-major OCR interleaves columns, so a
+  directive flowing down one column is not contiguous. One committed fixture is now caught
+  there, but incidentally — by what the neighbouring column happens to contain, not by a
+  mechanism. Do not read it as coverage.
 - **No scheduled re-scan.** An image that changes after you cleared it is not re-checked.
 
 

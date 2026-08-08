@@ -74,7 +74,13 @@ Changing this file changes what the scanner can read, so treat it as a
 security-relevant change:
 
 1. Replace the blob and update the size + SHA-256 above.
-2. Re-run `uv run pytest tests/test_ocr_recall_corpus.py tests/test_ocr_engine.py`.
-3. The recall corpus must still measure 12/16 with the same four named residuals and
+2. Re-run `uv run pytest tests/test_ocr_recall_corpus.py tests/test_ocr_engine.py
+   tests/test_ocrnorm.py`.
+3. The recall corpus must still measure 13/18 with the same five named residuals and
    zero false positives. A change in those numbers is the finding — record it, do not
    adjust the expectations to match.
+4. That 13/18 is the engine **plus** `gecko.ocrnorm`, and the two must not be conflated
+   when judging an engine swap. Recall here is a product of what the engine reads AND of
+   undoing the renderer's line breaks and shattered base58 runs; a new engine that wraps
+   or spaces text differently moves the number without reading the pixels any better.
+   `tests/test_ocrnorm.py` isolates the normalisation half and needs no engine at all.

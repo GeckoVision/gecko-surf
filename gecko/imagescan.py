@@ -78,7 +78,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from gecko import encdetect, sanitize
+from gecko import encdetect, ocrnorm, sanitize
 
 # Verdict tiers. No canonical image-tier Literal exists elsewhere (risk.py's
 # ``Tier`` is governance-scoped), so this module is the single source of truth.
@@ -608,8 +608,15 @@ def _ocr_hits(text: str) -> list[str]:
     ``scan_text`` misses. NEVER ``looks_like_address_value`` (the base58 FP guard extends
     to OCR text). Capped at ``_MAX_SCAN_TEXT`` like every other channel — OCR of a large
     image can return a lot of text, and the fold-heavy scanner would OOM on it otherwise.
+
+    The recovery is normalised FIRST (:mod:`gecko.ocrnorm`). The sanitize rules are
+    calibrated on clean text, where a ``\\n`` is authored; here it is emitted by the
+    renderer at a width the ATTACKER chose, and every ``[^.\\n]``-scoped rule stops at
+    one. Undoing the renderer's line breaks and its shattered address runs is what makes
+    a rule measured on the spec channel actually hold on the pixel channel. It corrects
+    the CHANNEL only — no rule is relaxed, and ``ocrnorm`` names what it still misses.
     """
-    text = text[:_MAX_SCAN_TEXT]
+    text = ocrnorm.normalize_recovered_text(text[:_MAX_SCAN_TEXT])
     basis = [f"ocr → {rule}" for rule in sanitize.scan_convention_text(text)]
     if sanitize.looks_like_secret_value(text):
         basis.append("ocr → secret_value")
