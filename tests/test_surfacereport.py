@@ -151,3 +151,19 @@ def test_empty_graph_says_so_rather_than_rendering_a_confident_blank() -> None:
     assert counts(report)["spine"] == 0
     assert "no shared handle" in markdown
     assert "Every call" in markdown or "every call" in markdown
+
+
+def test_summary_reports_the_count_not_the_display_cap() -> None:
+    """REGRESSION. `summarize` reported len(chains), which is truncated to _TOP_N — so a
+    surface with 948 chainable hops printed "8 chainable hop(s)". The display cap read as
+    a measurement, and that number was quoted before anyone noticed.
+
+    A number that can be quoted must never be a truncation. `chains` is what is SHOWN;
+    `total_chains` is what was FOUND, and only the latter may appear in a summary.
+    """
+    report = _report()
+    assert report.total_chains >= len(report.chains)
+    assert f"{report.total_chains} chainable" in summarize(report)
+    if report.total_chains > len(report.chains):
+        markdown = render_markdown(report)
+        assert f"Showing {len(report.chains)} of {report.total_chains}" in markdown

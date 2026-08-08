@@ -80,7 +80,13 @@ class SurfaceReport:
     surface_id: str
     operations: int
     spine: tuple[SpineEntry, ...] = ()
+    #: The chains SHOWN — capped at _TOP_N for readability. Never a count.
     chains: tuple[ChainEntry, ...] = ()
+    #: Every chain FOUND. Separate from `chains` because the two were conflated
+    #: once already: `summarize` reported len(chains) and printed "8 chainable
+    #: hop(s)" for a surface with 948 of them — the display cap read as a
+    #: measurement. A number that can be quoted must never be a truncation.
+    total_chains: int = 0
     floor: tuple[FloorEntry, ...] = ()
     #: Names of operations that need nothing at all — the honest entry points. An agent
     #: with no context can call exactly these, and every other path starts at one.
@@ -175,6 +181,7 @@ def build_report(graph: SurfaceGraph, surface_id: str = "") -> SurfaceReport:
         operations=len(ops),
         spine=spine,
         chains=tuple(chains[:_TOP_N]),
+        total_chains=len(chains),
         floor=tuple(floor),
         entry_points=tuple(sorted(entry_points)),
     )
@@ -220,7 +227,12 @@ def render_markdown(report: SurfaceReport) -> str:
     if report.chains:
         out += [
             "A field one operation returns that another accepts — the hops an agent can "
-            "make without you drawing the arrow.",
+            "make without you drawing the arrow."
+            + (
+                f" Showing {len(report.chains)} of {report.total_chains}."
+                if report.total_chains > len(report.chains)
+                else ""
+            ),
             "",
             "| from | to | via | provenance |",
             "|---|---|---|---|",
@@ -275,7 +287,7 @@ def summarize(report: SurfaceReport) -> str:
         else f"{report.operations} operations, no shared handle"
     )
     return (
-        f"{spine} · {len(report.chains)} chainable hop(s) · "
+        f"{spine} · {report.total_chains} chainable hop(s) · "
         f"{len(report.floor)} operation(s) need a value this API never returns"
     )
 
