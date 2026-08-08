@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.3
+
+The release that makes `gecko prove` say something useful when it cannot reach an RPC.
+0.10.2 shipped before that fix merged, so the published binary still printed
+`no receipt — could not run (URLError)` — no cause, no next action, and no hint that a
+LOCAL fork is the default. Anyone we pointed at the CLI hit that first.
+
+Also in this release, all merged since 0.10.2:
+
+- a cyclic seed dependency is a gap, not a confident derivation order
+- untrusted spec prose can no longer mint a value domain that reads as declared
+- an unknown account no longer defaults to claiming the surface stated it
+- a scan that could not run no longer renders as a scan that passed
+- the bare-`id` REST chain now produces an edge
+- each PDA recipe carries its origin into the agent payload
+
 ## Unreleased
 
 ### Security
