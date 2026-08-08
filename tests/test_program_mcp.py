@@ -37,6 +37,22 @@ def test_get_program_graph_returns_structured_json() -> None:
     assert any(i["name"] == "open_round" for i in graph["instructions"])
 
 
+def test_the_origin_reaches_the_agent_through_the_mcp_tool() -> None:
+    """ "Wired" ≠ "reaches the agent": drive the actual tool an agent calls.
+
+    The IDL states `round`; `treasury` exists only in the ORE source (no IDL
+    instruction carries its pda block). Both land in the same payload, and the
+    payload says which is which — the CLI's stderr is no longer the only place
+    that fact exists.
+    """
+    pdas = _surface().call_tool("get_program_graph", {})["pdas"]
+    assert pdas["treasury"]["origin"] == "recovered"
+    assert pdas["round"]["origin"] == "extracted"
+    # and the tool def tells the agent what the values mean
+    tool = next(t for t in _surface().list_tools() if t["name"] == "get_program_graph")
+    assert "origin" in tool["description"]
+
+
 def test_derive_pda_returns_mainnet_address() -> None:
     """The actionable tool: an agent asks to derive 'config' and gets the real
     deployed address — no friction, no hand-derivation."""

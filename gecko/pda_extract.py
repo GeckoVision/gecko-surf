@@ -34,8 +34,15 @@ from .pda import (
     VariablePdaSeedNode,
     b58_encode,
 )
+from .provenance import ProgramProvenanceTier
 
-__all__ = ["extract_seed_consts", "from_source", "from_anchor_idl", "merge_pda_nodes"]
+__all__ = [
+    "extract_seed_consts",
+    "from_source",
+    "from_anchor_idl",
+    "merge_pda_nodes",
+    "merge_pda_nodes_with_origin",
+]
 
 # Rust integer type -> byte width, for `.to_le_bytes()` / `.to_be_bytes()` seeds.
 _INT_WIDTHS: dict[str, int] = {
@@ -428,10 +435,11 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     return nodes
 
 
-def merge_pda_nodes(
+def merge_pda_nodes_with_origin(
     idl_nodes: dict[str, PdaNode], source_nodes: dict[str, PdaNode]
-) -> dict[str, PdaNode]:
-    """Join IDL-recovered and source-recovered PDA graphs — "both, joined".
+) -> tuple[dict[str, PdaNode], dict[str, ProgramProvenanceTier]]:
+    """Join IDL-recovered and source-recovered PDA graphs — "both, joined" — and
+    say, per account, WHICH input won.
 
     IDL gives breadth (all instructions' accounts + arg-typed seeds); source fills
     the exact recipes the IDL dropped (#4057) and resolves opaque IDL seeds. Rule,
@@ -441,10 +449,28 @@ def merge_pda_nodes(
     - in source only -> use source (the IDL omitted the account's ``pda`` entirely);
     - in both -> keep IDL if it is :attr:`~gecko.pda.PdaNode.resolvable`; otherwise
       take the source node when *it* resolves the seeds the IDL left opaque.
+
+    Returns ``(merged, origin)`` where ``origin[name]`` is ``"extracted"`` (the
+    kept recipe is the IDL's) or ``"recovered"`` (source's won). This is the ONE
+    place that fact is decided, so it is the one place it is recorded — a consumer
+    that re-derives it from the merged nodes is duplicating an invariant that will
+    drift. ``"manual"`` (the third tier) never originates here: it is stamped by
+    whoever applies an explicit overlay on top of this join.
     """
     merged: dict[str, PdaNode] = dict(idl_nodes)
+    origin: dict[str, ProgramProvenanceTier] = dict.fromkeys(idl_nodes, "extracted")
     for name, snode in source_nodes.items():
         inode = merged.get(name)
         if inode is None or (not inode.resolvable and snode.resolvable):
             merged[name] = snode
-    return merged
+            origin[name] = "recovered"
+    return merged, origin
+
+
+def merge_pda_nodes(
+    idl_nodes: dict[str, PdaNode], source_nodes: dict[str, PdaNode]
+) -> dict[str, PdaNode]:
+    """The merged recipes alone. Prefer :func:`merge_pda_nodes_with_origin` — a
+    caller that only takes the nodes cannot tell an IDL-stated recipe from one
+    regex-recovered out of untrusted source text."""
+    return merge_pda_nodes_with_origin(idl_nodes, source_nodes)[0]
