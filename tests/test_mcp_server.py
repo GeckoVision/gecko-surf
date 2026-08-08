@@ -91,14 +91,24 @@ def test_no_question_says_what_it_needs_instead_of_dumping_the_surface() -> None
 
 
 def test_both_advertised_names_still_work() -> None:
-    """The fix must not undo the reason `required` was emptied in the first place."""
+    """The fix must not undo the reason `required` was emptied in the first place.
+
+    Asserts the ANSWER, not the container. This test originally read
+    `assert not isinstance(by_query, dict)` — true when written, and broken hours later
+    when scoped retrieval (#339) wrapped the result in a `{plan, tools}` envelope. The
+    invariant was never "returns a list"; it is "either name reaches the same real
+    answer, and neither is refused."
+    """
     surface = _surface()
 
     by_query = surface.call_tool("search_capabilities", {"query": "swap tokens"})
     by_intent = surface.call_tool("search_capabilities", {"intent": "swap tokens"})
 
     assert by_query == by_intent
-    assert not isinstance(by_query, dict)
+    assert "error" not in by_query
+    assert by_query["tools"], (
+        "a recognised question must return tools, not an empty scope"
+    )
 
 
 def test_query_docs_refuses_the_same_way() -> None:
