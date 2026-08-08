@@ -64,3 +64,46 @@ def test_an_empty_question_still_reads_as_absent() -> None:
 
     assert _question_of({"query": "   ", "intent": "real question"}) == "real question"
     assert _question_of({}) == ""
+
+
+# --- the entry tool must not fail open ---------------------------------------------
+
+
+def test_an_unknown_argument_name_is_named_not_ignored() -> None:
+    """Making `query` optional so `intent` would work had a consequence nobody intended:
+    EVERY name started "working". `search_capabilities(goal=...)` returned a successful,
+    unranked dump of the whole catalog — top hits `root`, `live`, `ready` — with nothing
+    telling the agent its argument had been ignored."""
+    result = _surface().call_tool("search_capabilities", {"goal": "swap tokens"})
+
+    assert isinstance(result, dict)
+    assert "goal" in result["error"]
+    assert "query" in result["error"]
+
+
+def test_no_question_says_what_it_needs_instead_of_dumping_the_surface() -> None:
+    """This is the ENTRY tool. An agent whose first call silently misfires has no reason
+    to make a second one — which is what 47 enumerations and 0 calls looks like."""
+    result = _surface().call_tool("search_capabilities", {})
+
+    assert isinstance(result, dict)
+    assert "query" in result["error"]
+
+
+def test_both_advertised_names_still_work() -> None:
+    """The fix must not undo the reason `required` was emptied in the first place."""
+    surface = _surface()
+
+    by_query = surface.call_tool("search_capabilities", {"query": "swap tokens"})
+    by_intent = surface.call_tool("search_capabilities", {"intent": "swap tokens"})
+
+    assert by_query == by_intent
+    assert not isinstance(by_query, dict)
+
+
+def test_query_docs_refuses_the_same_way() -> None:
+    """Same resolver, same trap — it took the same gate."""
+    result = _surface().call_tool("query_docs", {"topic": "swap"})
+
+    assert isinstance(result, dict)
+    assert "topic" in result["error"]

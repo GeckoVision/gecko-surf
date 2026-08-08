@@ -58,11 +58,50 @@ def _question_of(arguments: Mapping[str, Any]) -> str:
     published field (which breaks callers who got it right), both are accepted
     everywhere and neither is required, so whichever the agent reaches for works.
     """
-    for key in ("query", "intent"):
+    for key in _QUESTION_KEYS:
         value = arguments.get(key)
         if isinstance(value, str) and value.strip():
             return value
     return ""
+
+
+#: The names this surface accepts for "the caller's question". Both are advertised in
+#: every schema that takes one, so an agent that learns either keeps working.
+_QUESTION_KEYS = ("query", "intent")
+
+
+def question_error(arguments: Mapping[str, Any]) -> str | None:
+    """Why a question-taking call cannot proceed, or ``None`` if it can.
+
+    Making `query` optional (so `intent` would also work) had a consequence nobody
+    intended: EVERY name started "working". `search_capabilities(goal="...")` returned a
+    successful, unranked dump of the whole catalog — top hits `root`, `live`, `ready` —
+    with nothing telling the agent its argument had been ignored. A liveness probe
+    presented as the best answer to a real question.
+
+    That is the same shape as a check that could not run rendering as a check that
+    passed, and it is worse here because it is the ENTRY tool: an agent whose first call
+    silently misfires has no reason to make a second.
+
+    So the schema stays permissive (either name is accepted) and the HANDLER is strict:
+    an unrecognised argument name is named, not ignored, and an absent question says what
+    it needs instead of dumping the surface.
+    """
+    if any(
+        isinstance(arguments.get(key), str) and arguments[key].strip()
+        for key in _QUESTION_KEYS
+    ):
+        return None
+    supplied = sorted(k for k in arguments if k not in _QUESTION_KEYS)
+    if supplied:
+        return (
+            f"unknown argument {supplied[0]!r} — this tool takes your question as "
+            f"`query` (or `intent`). Nothing was searched."
+        )
+    return (
+        "needs your question as `query` (or `intent`), e.g. "
+        'query="is USDC pegged right now". Nothing was searched.'
+    )
 
 
 _SEARCH_TOOL = {
@@ -391,6 +430,11 @@ class McpSurface:
         correlation token — it joins connect->call for the retention funnel and is
         sanitized by ``emit_surf_event``; it never touches the upstream call."""
         if name == "search_capabilities":
+            problem = question_error(arguments)
+            if problem is not None:
+                # Refuse, loudly. A ranked-looking dump of the whole catalog is worse
+                # than an error: the agent cannot tell it asked the wrong thing.
+                return {"error": problem}
             query = _question_of(arguments)
             # Prefer the provenance-carrying substrate when the client offers it
             # (``AgentApiClient.search_ranked`` — a pure superset of ``search``): the top
@@ -457,6 +501,9 @@ class McpSurface:
         # failed and rewrite. Sibling of get_capability — dispatched by name, resolved
         # in the package (docsearch), never reaching an upstream call.
         if name == "query_docs":
+            problem = question_error(arguments)
+            if problem is not None:
+                return {"error": problem}
             return self.query_docs(_question_of(arguments))
 
         # The first-class "give me the graph" door: the deterministic call graph, SCOPED
