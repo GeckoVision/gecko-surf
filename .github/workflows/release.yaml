@@ -59,7 +59,7 @@ jobs:
       # certifi` floats to whatever is latest at build time, so two builds of the same
       # tag could bundle different CA snapshots; deriving the pin from the committed
       # lockfile makes the bundled trust store reproducible and lock-governed.
-      - name: Install gecko-surf[serve,solana] + pyinstaller + certifi (pinned to uv.lock)
+      - name: Install gecko-surf[serve,solana,ocr] + pyinstaller + certifi (pinned to uv.lock)
         shell: bash
         run: |
           python -m pip install --upgrade pip
@@ -67,7 +67,16 @@ jobs:
           echo "Pinning certifi==$CERTIFI_VER (from uv.lock)"
           # [solana] bundles solders so the frozen binary can derive PDAs
           # (`gecko orquestra --program …` / `npx @geckovision/gecko orquestra …`).
-          python -m pip install ".[serve,solana]" pyinstaller "certifi==$CERTIFI_VER"
+          #
+          # [ocr] bundles tesserocr, whose wheels carry libtesseract + leptonica, so the
+          # binary reads rendered pixels with no system tesseract. Without it every
+          # `gecko scan-image` on a binary install returns INCOMPLETE on the one channel
+          # a GhostCommit payload lives in — honest, and useless. A binary install is how
+          # a stranger first meets Skill Guard, so the capability has to be in the box.
+          # The matrix is Python 3.11 on linux-x86_64 / linux-arm64 / darwin-arm64, which
+          # is exactly the wheel coverage tesserocr has; the pytesseract fallback stays
+          # for anyone installing from PyPI on a platform without a wheel.
+          python -m pip install ".[serve,solana,ocr]" pyinstaller "certifi==$CERTIFI_VER"
 
       # Flags mirror the locally-proven build exactly. The serve path imports
       # mcp/uvicorn/starlette lazily, so they must be force-collected; pyyaml is a
@@ -82,6 +91,7 @@ jobs:
             --collect-all uvicorn \
             --collect-all starlette \
             --collect-all solders \
+            --collect-all tesserocr \
             --collect-submodules anyio \
             --collect-data certifi \
             --collect-data gecko \
@@ -110,6 +120,36 @@ jobs:
         run: |
           chmod +x "out/${{ matrix.asset }}"
           "out/${{ matrix.asset }}" --help
+
+      # PER-ARCH PIXEL-CHANNEL ASSERTION. Bundling [ocr] is only worth its 13 MB if the
+      # frozen binary can actually READ pixels — a bundled-but-unreachable tesserocr
+      # would ship a bigger binary that still says INCOMPLETE, and we would not know.
+      #
+      # Gate on POISON specifically, not on exit code alone: `scan-image` exits non-zero
+      # for BOTH "found a payload" (2) and "could not read the channel" (3), so an exit
+      # check would pass on precisely the failure this step exists to catch. The fixture
+      # is the flagship GhostCommit payload — rendered pixels only, no metadata, no
+      # trailing bytes — so nothing but a working OCR path can reach a verdict on it.
+      - name: Smoke test (the pixel channel is readable in the frozen binary)
+        shell: bash
+        run: |
+          rc=0
+          "out/${{ matrix.asset }}" scan-image \
+            tests/fixtures/imagescan/build_spec_payload.png > ocr_smoke.out 2>&1 || rc=$?
+          cat ocr_smoke.out
+          if grep -q "INCOMPLETE" ocr_smoke.out; then
+            echo "::error::frozen binary cannot read rendered pixels — [ocr] is installed but not reachable from the bundle (check --collect-all tesserocr and the vendored tessdata)"
+            exit 1
+          fi
+          if ! grep -q "POISON" ocr_smoke.out; then
+            echo "::error::expected POISON on the GhostCommit fixture, got neither POISON nor INCOMPLETE (exit $rc) — the scanner did not run"
+            exit 1
+          fi
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::POISON printed but exit was $rc, expected 2 — the exit-code contract broke"
+            exit 1
+          fi
+          echo "pixel channel OK: POISON reached on rendered pixels alone, exit 2"
 
       # TLS smoke: ONE real https GET through the binary's own code path (netguard's
       # pinned HTTPS connect — the exact line that failed on darwin-arm64 in the field
