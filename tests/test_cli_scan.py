@@ -139,8 +139,46 @@ def test_scan_image_allow_missing_channels_is_informed_consent_not_silence(
     assert "ocr" in out
 
 
-def test_scan_image_missing_file_errors_cleanly(capsys) -> None:
+def test_scan_image_missing_file_is_INCOMPLETE_not_POISON(capsys) -> None:
+    """An unreadable file exits ``_SCAN_INCOMPLETE_EXIT``, never the POISON code.
+
+    Both are non-zero, so `scan && deploy` blocks either way — this is about which
+    claim the exit code makes. Exit 2 says "I evaluated this artifact and it failed";
+    a file that could not be opened was never evaluated at all. That is exactly the
+    distinction exit 3 exists for, and mislabelling it would put a benign typo'd path
+    in the same bucket as a live GhostCommit payload.
+    """
     rc = cli.main(["scan-image", str(_FIX / "does_not_exist.png")])
     err = capsys.readouterr().err
-    assert rc == 2
+    assert rc == 3
     assert "does_not_exist" in err or "not" in err.lower()
+
+
+def test_scan_doc_missing_file_is_INCOMPLETE_not_POISON(capsys) -> None:
+    # Same rule on the doc path — one convention, both entrypoints.
+    rc = cli.main(["scan-doc", str(_FIX / "does_not_exist.md")])
+    err = capsys.readouterr().err
+    assert rc == 3
+    assert "does_not_exist" in err or "not" in err.lower()
+
+
+def test_scan_image_zero_channels_says_why_not_just_zero(capsys, monkeypatch) -> None:
+    """A text-free image passes, and the output says WHY the count is zero.
+
+    ``clean_arch.png`` is a synthetic PNG with no rendered text and no metadata, so
+    every channel was readable and none carried text. The verdict is a correct CLEAN
+    — but a bare "channels scanned: 0" under a pass reads as "looked at nothing,
+    declared it fine", which is the one sentence a reader will (reasonably) not
+    forgive. The count keeps its meaning; the line states what produced it.
+    """
+    monkeypatch.setattr(imagescan, "_read_rendered_text", lambda _d: "")
+    monkeypatch.setattr(imagescan, "_deep_metadata_available", lambda: True)
+    rc = cli.main(["scan-image", str(_FIX / "clean_arch.png")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "CLEAN" in out
+    assert "channels scanned: 0" in out
+    # the disambiguation: every channel WAS read, none carried text
+    assert "every channel was readable" in out
+    assert "none carried text" in out
+    assert "could not scan" not in out

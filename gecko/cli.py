@@ -707,7 +707,18 @@ def _print_scan_verdict(
     else:
         print(headers.get(tier, tier.upper()))
     if channels_scanned is not None:
-        print(f"  channels scanned: {channels_scanned}")
+        # A zero count under a pass is ambiguous to a reader in exactly the way this
+        # whole surface exists to avoid: "nothing was read" and "everything was read
+        # and carried no text" are different claims. When coverage is complete the
+        # count can only mean the second, so say so rather than leave the arithmetic
+        # to be read as a fail-open.
+        if channels_scanned == 0 and not channels_unavailable:
+            print(
+                "  channels scanned: 0 "
+                "(every channel was readable; none carried text to scan)"
+            )
+        else:
+            print(f"  channels scanned: {channels_scanned}")
     if basis:
         print("  basis:")
         for reason in basis:
@@ -757,8 +768,10 @@ def _cmd_scan_image(argv: list[str]) -> int:
     try:
         data = Path(args.path).read_bytes()
     except OSError as exc:
+        # NOT the POISON exit: a file we could not open was never evaluated, and exit 2
+        # would claim it was and failed. Still non-zero, so `scan && deploy` blocks.
         print(f"Could not read image: {exc}", file=sys.stderr)
-        return _SCAN_POISON_EXIT
+        return _SCAN_INCOMPLETE_EXIT
 
     verdict = imagescan.scan_image(data)
     print(f"Gecko scan-image — {args.path}\n" + "=" * 56)
@@ -803,8 +816,9 @@ def _cmd_scan_doc(argv: list[str]) -> int:
     try:
         text = Path(args.path).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
+        # Same rule as scan-image: unopened is "not evaluated" (3), not "failed" (2).
         print(f"Could not read doc: {exc}", file=sys.stderr)
-        return _SCAN_POISON_EXIT
+        return _SCAN_INCOMPLETE_EXIT
 
     verdict = scan_doc_page(text)
     tier = (
