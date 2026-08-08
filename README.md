@@ -223,6 +223,29 @@ never response payloads, user data, or secrets.
 | Verify docs claims against reality | `gecko verify-docs <spec>` |
 | Scan a skill image for hidden payloads | `gecko scan-image <path>` |
 
+## Skills
+
+The engine is the product; the skills are how an agent learns to drive it. Six of them
+ship as one plugin — markdown the agent reads, no executable logic of its own.
+
+```
+/plugin marketplace add GeckoVision/gecko-surf
+/plugin install gecko-surf@geckovision
+```
+
+| Skill | For | What it does |
+|---|---|---|
+| [`use-any-api`](skills/use-any-api/SKILL.md) | agent builder | Call an unfamiliar API first-call-correct — point Gecko at OpenAPI or docs, get intent-shaped MCP tools with auth hidden |
+| [`read-js-docs`](skills/read-js-docs/SKILL.md) | agent builder | Extract the API surface from JS-rendered docs, when `curl` returns an empty shell |
+| [`anti-poisoning`](skills/anti-poisoning/SKILL.md) | agent builder | Defend against a poisoned **spec** — one written to route your agent's arguments or exfiltrate your key |
+| [`skill-guard`](skills/skill-guard/SKILL.md) | agent builder | Defend against a poisoned **artifact** — an image or convention page carrying an instruction your agent will follow and your reviewer cannot see |
+| [`api-agent-ready`](skills/api-agent-ready/SKILL.md) | API provider | Make your own API's whole surface agent-usable, *alongside* whatever MCP you already ship |
+| [`x402-payai-setup`](skills/x402-payai-setup/SKILL.md) | API provider | Wire pay-per-call onto your API. You keep 100% — Gecko is not the rail and takes no cut |
+
+The two defense skills are one disease with two deliveries: a poisoned *spec* aims at
+what your agent **calls**, a poisoned *artifact* aims at what your agent **does**. Full
+map and status in [`skills/README.md`](skills/README.md).
+
 ## Modes
 
 - **Recorded** (default): $0, schema-synthesized responses, fully offline. Falsify
@@ -243,8 +266,9 @@ Gecko takes no cut, holds no funds, signs nothing.
 | Path | What |
 |---|---|
 | `gecko/` | the engine — ingest, catalog, tools, graphs, simulate, corpus |
-| `gecko/providers/` | program surfaces (Meteora, Pump.fun, ORE, MetaDAO) + configs |
+| `gecko/providers/` | program surfaces (Meteora, Pump.fun, Jupiter, ORE, MetaDAO) + configs |
 | `scripts/`, `gecko/cli.py` | thin transport — parse, call the package, format |
+| `skills/` | the agent-facing plugin — six skills, agents, commands |
 | `docs/` | architecture, receipt semantics, specs, benchmarks |
 | `examples/` | forkable starters |
 
