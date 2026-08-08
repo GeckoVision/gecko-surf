@@ -32,6 +32,23 @@
 > a **messy surface** (paywalled, drifting, undocumented, on-chain) or a **high-stakes
 > action** (your agent runs unattended with credentials or money).
 
+## What Gecko is
+
+Gecko is an **open-source knowledge graph built specifically for AI agents that call
+APIs**. Point it at an OpenAPI spec, a docs site, or a Solana program's IDL and source,
+and it reads that surface into a graph your agent traverses — every fact tagged with
+where it came from, and anything it cannot establish **flagged rather than guessed**.
+
+A specification tells your agent what a call *looks like*. It cannot tell it whether the
+call will *work*. That gap is in every spec, including a perfect one, and it is where
+agents fail expensively: not on the call that errors, but on the call that is accepted
+and wrong. Gecko closes it by handing back one specific call — and, for anything that
+spends, by simulating that call against real state first and returning a **receipt**.
+
+It is not the agent and not an orchestrator. It holds no key, signs nothing, broadcasts
+nothing, and stores no response payload — it stores surfaces and correctness metadata,
+never your data.
+
 ## Quick start
 
 No install:
