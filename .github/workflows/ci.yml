@@ -63,3 +63,60 @@ jobs:
 
       - name: pytest
         run: uv run pytest -q
+
+  # The BLINDING CANARY. Separate job because it needs the [ocr] extra, which the main
+  # gate deliberately does not install (the base install must stay green without it).
+  #
+  # Why this job exists at all: an OCR model is not human-reviewable. Someone who can
+  # alter the language data can blind the scanner without touching a line of Python —
+  # make the model return empty text and every rendered attack reads as CLEAN, with no
+  # exception, no error and no coverage gap, because the channel WAS read. Every other
+  # imagescan test injects a fake OCR seam, so they all keep passing against a blinded
+  # model. A red build here is the only signal we would ever get.
+  #
+  # GECKO_REQUIRE_OCR=1 makes a missing engine FAIL rather than skip — otherwise a
+  # broken install turns the canary into a no-op and the job goes green protecting
+  # nothing.
+  ocr-canary:
+    name: blinding canary (L3 OCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.11"
+      GECKO_REQUIRE_OCR: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv (+ cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # No apt-get install tesseract. That absence is the point: tesserocr's manylinux
+      # wheel carries libtesseract + leptonica and gecko/tessdata/ carries the language
+      # data, so this step also continuously proves the [ocr] extra is self-contained.
+      # If that ever stops being true, this job fails on the ocr_backend() assertion.
+      - name: Install (ocr extra, NO system tesseract)
+        run: uv sync --extra ocr
+
+      - name: Verify no system tesseract is present
+        run: |
+          if command -v tesseract >/dev/null 2>&1; then
+            echo "::error::A system tesseract is on PATH — this job must prove the"
+            echo "::error::[ocr] extra is self-contained, so the runner must not have one."
+            exit 1
+          fi
+          echo "confirmed: no tesseract binary on PATH"
+
+      - name: Blinding canary + vendored-data hash
+        run: uv run pytest tests/test_ocr_engine.py -q
+
+      # The recall corpus ships in its own PR. Guarded so this job is green on whichever
+      # of the two lands first; drop the guard once both are on main.
+      - name: OCR recall corpus
+        run: |
+          if [ -f tests/test_ocr_recall_corpus.py ]; then
+            uv run pytest tests/test_ocr_recall_corpus.py -q
+          else
+            echo "recall corpus not present on this ref (lands in the corpus PR)"
+          fi

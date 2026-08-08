@@ -667,7 +667,8 @@ _SCAN_INCOMPLETE_EXIT = 3
 _CHANNEL_REMEDIATION = {
     "ocr": (
         "rendered pixels (the channel an image-borne injection is rendered INTO) — "
-        "install the [ocr] extra and the tesseract binary"
+        "install the [ocr] extra (pip install 'gecko-surf[ocr]'; self-contained on "
+        "Linux/macOS, needs a system tesseract on Windows)"
     ),
     "deep-metadata": (
         "EXIF / XMP / IPTC / ICC — install the [imagescan] extra "
