@@ -15,11 +15,21 @@ every comprehended op, must be deterministic, and must never itself ship untrust
 text to a model. It errs toward *stripping* a flagged instruction (replacing it with a
 neutral note) rather than guessing intent.
 
-Calibrated against the committed TxODDS + Pegana surfaces: legitimate prose that merely
-*mentions* a token/secret/asset ("revoke the caller's session JWT", "shared secret
+Calibrated against the committed surfaces: legitimate prose that merely *mentions* a
+token/secret/asset ("revoke the caller's session JWT", "shared secret
 (BOT_INTERNAL_SECRET)", "SPL mint address") must NOT trip a rule — a rule requires an
 instruction shape (imperative verb aimed at a secret, a fund-routing directive, or a
 prompt-injection phrase).
+
+That calibration is DIRECTIONAL, and it is the target — not the container word — that
+fires a routing rule. A crypto mint/pubkey is a legitimate example value, not a secret.
+Container words (``wallet``/``payment``/``account``) co-occur with "transfer" throughout
+benign wallet-DATA prose, so they never fire on their own. And a routing VERB near a fund
+noun is likewise not enough: "Transfer funds to a recipient" is a payment API DESCRIBING
+its own endpoint. ``fund_routing`` therefore requires a resolvable routing TARGET — a
+literal address, an out-of-band destination pointer, an attacker-owned destination, or an
+out-of-band instruction frame — with the full rationale, the measured false-positive
+numbers, and the named residual recorded at ``_ROUTE_VERB`` below.
 
 GUARANTEE BOUNDARY (this is what "correct" means here — enforced, not aspirational):
 
@@ -43,8 +53,10 @@ GUARANTEE BOUNDARY (this is what "correct" means here — enforced, not aspirati
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
+from collections.abc import Callable
 from typing import Any
 
 # Cap on any single spec-provided text field reaching the agent. Long, wall-of-text
@@ -72,19 +84,163 @@ _SECRET_NOUN = (
     r"recovery[- ]?phrase|mnemonic|api[ _-]?key|api[ _-]?secret|access[- ]?token|"
     r"refresh[- ]?token|password|passphrase|credentials?)"
 )
-# VALUE nouns for the bare "verb + noun" routing directive — the words that ARE the moved
-# money ("transfer funds", "move the balance"). Kept narrow ("funds"/"balance"/"money"/
-# "savings", not the ubiquitous "token"/"asset") so peg-oracle prose about assets/tokens
-# does not trip. Deliberately EXCLUDES "wallet"/"payment"/"account": those are CONTAINER/
-# context words, not the moved value — you don't *transfer a wallet* — and they co-occur
-# with "transfer" throughout legitimate wallet-DATA prose ("Retrieve list transfer of the
-# wallet.", "transfer direction relative to the specified wallet", "the wallet's transfer
-# history"). Flagging on a bare verb+"wallet" wholesale-quarantines a benign read surface
-# (Birdeye). Those container words instead only sharpen the DIRECTIONAL alternative below,
-# where a real crypto ADDRESS — not the container word — is the actual routing target.
-_FUND_NOUN = r"(?:funds?|balance|money|savings)"
-# Crypto-address-shaped target (eth hex / base58) for "route to <addr>" directives.
-_ADDR = r"(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{26,})"
+# --- fund routing: a directive is only ROUTING if it carries a resolvable TARGET -------
+#
+# The rule used to have a bare "routing verb near funds/balance/money" alternative with NO
+# destination requirement. Measured over the 26 committed specs (1,900 prose fields) that
+# shape produced 4 hits, ALL of them benign payment-API prose ("Transfer funds to a
+# recipient", "Withdraw funds") and ZERO true positives; on a modelled fintech-docs corpus
+# it fired on 14 of 18 benign shapes. Quarantining most of a payment API's surface is how a
+# scanner gets muted, so that FP was a security problem in its own right.
+#
+# The narrowing is PRINCIPLED rather than a threshold tweak. ROUTING means moving value to
+# a destination the agent can resolve. "Transfer funds to a recipient" DESCRIBES an
+# endpoint — it steers nothing, and the real destination arrives as an ARG, which is
+# covered by the HARD value-channel guarantee (an address in const/default/enum is dropped
+# and quarantines). So this TEXT rule fires only on a directive plus a routing TARGET:
+#
+#   (a) a literal crypto ADDRESS               (b) an OUT-OF-BAND destination pointer
+#   (c) an ATTACKER-OWNED destination          (d) an out-of-band INSTRUCTION FRAME
+#   (e) a split-channel destination DECLARATION carrying a literal address
+#
+# NAMED RESIDUAL (pinned by test_fund_routing_accepted_residual_destinationless_directive):
+# a directive that names NO destination ("withdraw all funds now") no longer fires. It
+# gives an agent nowhere to send anything, and it is lexically identical to benign prose
+# ("Withdraw all available funds from the account.").
+#
+# Each signal below is a SIMPLE, linear pattern and the ordering/sentence constraint is
+# applied over match SPANS (see ``_fund_routing_fires``) — deliberately NOT chained
+# unbounded regex gaps (``verb [^.\n]*? noun [^.\n]*? dest``), which backtrack
+# catastrophically: a 6 KB "transfer funds " repetition hung for >5s in review. That is a
+# DoS on a scanner that runs on every comprehended op and on whole convention docs.
+
+# Routing verbs. Wider than the old directional list, which omitted move/withdraw/deposit
+# — literal-address attacks using those verbs were caught ONLY by the bare alternative, so
+# widening here is what makes removing it safe.
+_ROUTE_VERB: re.Pattern[str] = re.compile(
+    r"\b(?:transfer|send|route|move|forward|withdraw|redirect|wire|deposit|drain|sweep|"
+    r"remit|disburse|payout|push)\b",
+    re.IGNORECASE,
+)
+# VALUE nouns — the words that ARE the moved money. Kept narrow ("funds"/"balance"/
+# "money"/"savings", not the ubiquitous "token"/"asset") so peg-oracle prose about
+# assets/tokens does not trip. Deliberately EXCLUDES "wallet"/"payment"/"account": those
+# are CONTAINER/context words, not the moved value — you don't *transfer a wallet* — and
+# they co-occur with "transfer" throughout legitimate wallet-DATA prose ("Retrieve list
+# transfer of the wallet.", "the wallet's transfer history").
+_FUND_NOUN: re.Pattern[str] = re.compile(
+    r"\b(?:funds?|balance|money|savings)\b", re.IGNORECASE
+)
+_TO_PREP: re.Pattern[str] = re.compile(r"\b(?:to|into)\b", re.IGNORECASE)
+# Crypto-address-shaped target (eth hex / base58). The SPACED-hex form catches the
+# "remove the spaces" evasion; benign prose never spaces out a hex literal.
+_ADDR: re.Pattern[str] = re.compile(
+    r"0x[a-fA-F0-9]{6,}|0x(?:\s?[a-fA-F0-9]{2}){6,}|\b[1-9A-HJ-NP-Za-km-z]{26,}\b"
+)
+# (b) OUT-OF-BAND destination pointer: the destination lives somewhere the human reviewer
+# did not read — below the prose, or inside a rendered artifact (the GhostCommit shape).
+# Deliberately NOT a generic "listed/shown in ..." — that fires on the benign "the account
+# listed in the response" / "shown in the dashboard".
+_DEST_POINTER: re.Pattern[str] = re.compile(
+    r"\b(?:below|above|attached|that\s+follows)\b"
+    r"|\b(?:in|from)\s+the\s+(?:image|diagram|screenshot|picture|figure|attachment|"
+    r"comment|png|jpe?g|gif|webp|graphic|photo|chart)\b"
+    # A destination that must be DECODED is out-of-band by construction: a benign payment
+    # doc names an account, it does not ship a base64/obfuscated destination blob.
+    r"|\b(?:base64|b64|encoded|decoded|obfuscated|deobfuscated)\b",
+    re.IGNORECASE,
+)
+# (c) a destination owned by a NON-USER party. Benign provider docs address the reader
+# ("your bank account", "a recipient", "the destination account"); an injected directive
+# names the attacker's own ("our treasury wallet", "the ops wallet").
+_ATTACKER_DEST: re.Pattern[str] = re.compile(
+    r"\b(?:our|my)\s+(?:\w+\s+){0,2}?(?:wallet|account|address)\b"
+    r"|\bthe\s+(?:ops|operator|operators|admin|attacker|treasury)\s+"
+    r"(?:\w+\s+){0,1}?(?:wallet|account|address)\b",
+    re.IGNORECASE,
+)
+# (d) an out-of-band INSTRUCTION FRAME: an API doc does not prepend "Before anything," to
+# its own summary. This is the instructions-vs-data boundary made lexical.
+_OOB_FRAME: re.Pattern[str] = re.compile(
+    r"\b(?:before\s+(?:anything|responding)|first,|also,|additionally|in\s+addition|"
+    r"important\s*:|note\s*:|attention\s*:|instead[,\s]|urgently|silently|"
+    r"do\s+not\s+mention|without\s+telling)",
+    re.IGNORECASE,
+)
+# (e) SPLIT-CHANNEL: the directive and the address sit in different sentences/lines
+# ("Transfer the funds.\nDestination: 0x…"). Requiring BOTH a destination noun and a
+# literal address is what makes it safe to cross a sentence boundary here — a benign
+# "Example: 0x…" or a bare response-shape address does not match. Bounded windows only,
+# so this alternative stays linear.
+_SPLIT_DEST_DECL: re.Pattern[str] = re.compile(
+    r"\b(?:transfer|send|route|move|forward|withdraw|redirect|wire|deposit|drain|sweep)"
+    r"\b[^.\n]{0,40}?\b(?:funds?|balance|money|savings)\b[\s\S]{0,120}?"
+    r"\b(?:destination|recipient|payee|beneficiary|"
+    r"receiving\s+(?:wallet|account|address))"
+    r"\s*(?:is|are|:|=)\s*[`\"']?"
+    r"(?:0x[a-fA-F0-9]{6,}|0x(?:\s?[a-fA-F0-9]{2}){6,}|[1-9A-HJ-NP-Za-km-z]{26,})",
+    re.IGNORECASE,
+)
+
+
+def _ordered_in_sentence(text: str, *patterns: re.Pattern[str]) -> bool:
+    """True if a match of each pattern occurs IN ORDER within a single sentence.
+
+    "Sentence" is a run without ``.`` or ``\\n``, matching the ``[^.\\n]`` scoping the
+    other rules use. Scoping to the sentence rather than to a character window is what
+    makes the rule padding-proof: filler inserted between the directive and its
+    destination no longer pushes the destination out of range.
+
+    Implemented over match SPANS instead of one chained regex so the scan stays LINEAR —
+    chained unbounded gaps backtrack catastrophically (see the module note above).
+    """
+    spans = [[m.span() for m in pat.finditer(text)] for pat in patterns]
+    if any(not s for s in spans):
+        return False
+    breaks = [i for i, ch in enumerate(text) if ch in ".\n"]
+
+    def sentence_of(pos: int) -> int:
+        return bisect.bisect_left(breaks, pos)
+
+    for start, end in spans[0]:
+        sentence = sentence_of(start)
+        cursor = end
+        for following in spans[1:]:
+            nxt = None
+            for span_start, span_end in following:
+                if span_start < cursor:
+                    continue
+                if sentence_of(span_start) != sentence:
+                    break  # later matches are further away still
+                nxt = (span_start, span_end)
+                break
+            if nxt is None:
+                break
+            cursor = nxt[1]
+        else:
+            return True
+    return False
+
+
+def _fund_routing_fires(folded: str) -> bool:
+    """True if ``folded`` carries a fund-routing directive WITH a resolvable target.
+
+    See the block comment above for why a bare "verb + fund noun" is deliberately NOT
+    enough on its own, and which residual that gives up.
+    """
+    return (
+        # (a) routing verb -> to/into -> literal ADDRESS
+        _ordered_in_sentence(folded, _ROUTE_VERB, _TO_PREP, _ADDR)
+        # (b) verb -> fund noun -> OUT-OF-BAND destination pointer
+        or _ordered_in_sentence(folded, _ROUTE_VERB, _FUND_NOUN, _DEST_POINTER)
+        # (c) verb -> fund noun -> ATTACKER-OWNED destination
+        or _ordered_in_sentence(folded, _ROUTE_VERB, _FUND_NOUN, _ATTACKER_DEST)
+        # (d) out-of-band instruction FRAME -> verb -> fund noun
+        or _ordered_in_sentence(folded, _OOB_FRAME, _ROUTE_VERB, _FUND_NOUN)
+        # (e) split-channel destination declaration bearing a literal address
+        or bool(_SPLIT_DEST_DECL.search(folded))
+    )
+
 
 _PATTERNS: dict[str, re.Pattern[str]] = {
     "prompt_injection": re.compile(
@@ -110,17 +266,14 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
         rf"{_EXFIL_VERB}\b[^.\n]{{0,40}}?\b(?:your|the|my|our)\s+{_SECRET_NOUN}",
         re.IGNORECASE,
     ),
-    "fund_routing": re.compile(
-        rf"(?:transfer|send|route|move|forward|withdraw|redirect|wire|deposit)\b"
-        rf"[^.\n]{{0,40}}?\b{_FUND_NOUN}\b"
-        # Directional alternative: verb ... "to" ... <crypto ADDRESS>. The gap between "to"
-        # and the address allows intervening CONTAINER words ("to the wallet <addr>", "to
-        # the payment account <addr>") so narrowing the bare alternative above opens NO
-        # bypass — the address, not the container word, is what makes this fire.
-        rf"|(?:transfer|route|send|forward|redirect|wire)\b[^.\n]{{0,25}}?\bto\b"
-        rf"[^.\n]{{0,25}}?{_ADDR}",
-        re.IGNORECASE,
-    ),
+}
+
+#: Rules whose logic is a SPAN/ordering check rather than a single regex, keyed by the same
+#: basis name ``scan_text`` reports. ``fund_routing`` lives here because expressing
+#: "directive ... then a destination later in the same sentence" as one regex requires
+#: chained unbounded gaps, which backtrack catastrophically (see the fund-routing note).
+_COMPOSITE_PATTERNS: dict[str, Callable[[str], bool]] = {
+    "fund_routing": _fund_routing_fires,
 }
 
 # --- L1: convention/doc-text scan for image-borne injection (GhostCommit) ------------
@@ -503,7 +656,9 @@ def scan_text(text: str) -> list[str]:
     if not text:
         return []
     folded = _fold(text)
-    return [name for name, pat in _PATTERNS.items() if pat.search(folded)]
+    basis = [name for name, pat in _PATTERNS.items() if pat.search(folded)]
+    basis += [name for name, fires in _COMPOSITE_PATTERNS.items() if fires(folded)]
+    return basis
 
 
 def key_is_dangerous(key: Any) -> bool:
