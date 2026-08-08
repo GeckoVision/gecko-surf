@@ -430,6 +430,26 @@ def _cmd_report(argv: list[str]) -> int:
     # hit "wrote <name>.scorecard.html" with no hint of where the file landed.
     print(f"  → wrote {out.resolve()} ({len(html)} bytes)")
     print(f"  → wrote {sidecar.resolve()}")
+
+    # The graph report. The Scorecard GRADES the surface; this DESCRIBES it — the spine
+    # most operations hang off, the producer→consumer hops, and the inputs nothing here
+    # produces. Derived from the graph alone, so it costs nothing extra and cannot fail
+    # the grading run: a report we could not build is skipped with a reason, never
+    # rendered blank (a blank section reads as "no problems found").
+    try:
+        from . import surfacereport as graph_report_mod
+        from .surface import Surface
+
+        graph = Surface.of(AgentApiClient(spec, surface_id=name)).graph
+        graph_report = graph_report_mod.build_report(graph, name)
+        report_path = out.with_name(f"{out.stem}.graph-report.md")
+        report_path.write_text(
+            graph_report_mod.render_markdown(graph_report), encoding="utf-8"
+        )
+        print(f"  → wrote {report_path.resolve()}")
+        print(f"    {graph_report_mod.summarize(graph_report)}")
+    except Exception as exc:  # pragma: no cover - defensive, never fails the scorecard
+        print(f"  → graph report skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
     return 0
 
 
