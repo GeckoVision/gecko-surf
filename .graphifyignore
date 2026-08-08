@@ -1,0 +1,32 @@
+# Graphify scoping — belt-and-braces on top of .gitignore.
+#
+# Graphify honours .gitignore by default, and everything below is already ignored
+# there. It is repeated explicitly because the default can be turned off with a single
+# `--no-gitignore` flag, and the cost of that flag being typed once against this repo is
+# business strategy and secrets reaching a model. .graphifyignore is prioritised when
+# --no-gitignore is passed, so this list survives that mistake.
+#
+# Not paranoia about Graphify: it is on-device, its query log is opt-in-off, and we
+# scanned all 135 of its skill files with our own Skill Guard before installing (CLEAN).
+# This is the same rule we apply to every ingested surface — scope what a tool can read,
+# and do not rely on a default staying default.
+
+# Business strategy, pitch, numbers, partner analysis (CLAUDE.md: private/ only).
+private/
+
+# Operational state that names partners and open decisions.
+private/operating/
+
+# Secrets. Never on any machine's disk in a readable place, never in a graph.
+.env
+.env.*
+*.pem
+*.key
+
+# Local agent config + worktrees: not this project's architecture.
+.claude/
+.venv/
+graphify-out/
+
+# Vendored third-party data we did not author (and a 4 MB binary blob).
+gecko/tessdata/

@@ -49,3 +49,6 @@ docs/superpowers/
 
 # surfpool simnet logs from env-gated E2E runs (local artifacts, never committed)
 .surfpool/
+
+# Graphify's on-device code graph — regenerable, never committed.
+graphify-out/
