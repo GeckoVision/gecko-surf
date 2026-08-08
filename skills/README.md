@@ -4,9 +4,9 @@
 *whole* surface becomes agent-usable — first-call-correct, served over MCP,
 alongside whatever MCP the provider already ships.**
 
-Five skills — two for **API providers** who want agents to actually *use* their
-API, two for **agent builders** who need to call or safely consume APIs, and one
-for JS-rendered docs:
+Six skills — two for **API providers** who want agents to actually *use* their
+API, three for **agent builders** who need to call or safely consume APIs and the
+artifacts around them, and one for JS-rendered docs:
 
 | Skill | For | What it does | Status |
 |---|---|---|---|
@@ -15,6 +15,7 @@ for JS-rendered docs:
 | [`api-agent-ready`](api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |
 | [`x402-payai-setup`](x402-payai-setup/SKILL.md) | provider | Wire x402 micropayments onto the provider's API via **PayAI** — point the agent-facing tools at the provider's own x402 endpoint. **The provider keeps 100%.** | handshake/offline stub **Building (Pattern B)**; live settlement **Building / founder-gated** |
 | [`anti-poisoning`](anti-poisoning/SKILL.md) | agent builder | Protect your agent from a **poisoned API surface** — out-of-band trust anchor, spec-text/schema sanitizer, fail-closed auth-host firewall, quarantine. Treats every ingested spec as untrusted input. | **defenses Live** in the engine (free forever); hosted logs/analytics **Building (Cloud Pro)** |
+| [`skill-guard`](skill-guard/SKILL.md) | agent builder | Scan an untrusted **image or docs/convention page** before your agent reads it. The GhostCommit class hides the instruction in an image's **rendered pixels** — invisible to secret scanners and to code review. Three channels, one deterministic verdict, fail-closed quarantine. | **Live** (`gecko scan-image` / `scan-doc`); needs the `[ocr]` extra + the tesseract binary for the pixel channel |
 
 Built by **[GeckoVision](https://geckovision.tech)**, the API-comprehension
 company, on top of the open-source engine
