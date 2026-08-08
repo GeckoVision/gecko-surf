@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from gecko.program_graph import build_program_graph
+from gecko.program_graph import ProgramGraph, build_program_graph
 from tests.test_pda_extract import ORE_PROGRAM, ORE_SOURCE
 from tests.test_pda_idl import ANCHOR_IDL
 
@@ -182,6 +182,46 @@ def test_cycle_is_carried_into_the_json_payload() -> None:
     ix = payload["instructions"][0]
     assert ix["cycle"] == ["a", "b"]
     assert all(a["resolvable"] is False for a in ix["accounts"])
+
+
+def test_agent_payload_carries_each_recipe_s_origin() -> None:
+    """R7 — the origin must reach the AGENT, not only the CLI's stderr.
+
+    The IDL drops `config`'s pda block (#4057) and regex-parsed source rescues it;
+    the IDL states `round` itself. An agent reading `get_program_graph` has to be
+    able to tell those apart — an IDL-stated recipe and one recovered from
+    untrusted source text are not equally trustworthy.
+    """
+    idl_missing_config = {
+        **ANCHOR_IDL,
+        "instructions": [
+            ix
+            for ix in ANCHOR_IDL["instructions"]
+            # init_config is the instruction carrying config's pda block
+            if ix["name"] != "init_config"
+        ],
+    }
+    payload = json.loads(
+        json.dumps(
+            build_program_graph(idl=idl_missing_config, source=ORE_SOURCE).to_json()
+        )
+    )
+    assert payload["pdas"]["config"]["origin"] == "recovered"  # source rescued it
+    assert payload["pdas"]["round"]["origin"] == "extracted"  # the IDL stated it
+
+
+def test_origin_is_absent_only_as_an_explicit_unknown() -> None:
+    """A hand-built graph with no origin map emits ``origin: null`` rather than
+    omitting the key or defaulting to ``extracted`` — a missing key would let a
+    consumer read silence as 'this producer does not report origin', and a default
+    of ``extracted`` is exactly the false confidence R3 closed on find_start."""
+    graph = build_program_graph(idl=ANCHOR_IDL)
+    bare = ProgramGraph(
+        program_id=graph.program_id, pdas=graph.pdas, instructions=graph.instructions
+    )
+    payload = bare.to_json()
+    assert all("origin" in p for p in payload["pdas"].values())
+    assert all(p["origin"] is None for p in payload["pdas"].values())
 
 
 def test_to_json_is_serializable_and_complete() -> None:

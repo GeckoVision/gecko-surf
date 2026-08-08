@@ -38,7 +38,7 @@ from typing import Any, Mapping
 
 from .orquestra_client import ProjectSurface
 from .pda import PdaNode, ResolverPdaSeedNode
-from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes
+from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes_with_origin
 from .provenance import ProgramProvenanceTier
 from .provider_config import node_from_spec, node_to_spec
 
@@ -194,20 +194,14 @@ def comprehend_project(
 
     idl_nodes = _idl_nodes(surface)
     source_nodes = _source_nodes(surface, source)
-    merged = merge_pda_nodes(idl_nodes, source_nodes)
+    # the merge decides which input won, so the merge reports it — this module does
+    # NOT re-derive that fact from the merged nodes (a second copy of the rule drifts).
+    merged, origins = merge_pda_nodes_with_origin(idl_nodes, source_nodes)
 
-    provenance: dict[str, PdaProvenance] = {}
-    for name, node in merged.items():
-        # mirrors the merge rule: the source node was taken iff the IDL had no
-        # (equal) claim or its claim was opaque and source resolved it.
-        took_source = (
-            name in source_nodes
-            and merged[name] == source_nodes[name]
-            and (name not in idl_nodes or merged[name] != idl_nodes[name])
-        )
-        provenance[name] = _provenance_for(
-            name, node, "recovered" if took_source else "extracted"
-        )
+    provenance: dict[str, PdaProvenance] = {
+        name: _provenance_for(name, node, origins[name])
+        for name, node in merged.items()
+    }
 
     # manual overlay: explicit, hand-supplied knowledge — replaces or adds recipes.
     overlay_pdas = overlay.get("pdas") or {}

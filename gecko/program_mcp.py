@@ -34,7 +34,11 @@ _GET_GRAPH_TOOL = {
         "Return the full instruction↔PDA derivation graph for this Solana program: "
         "every instruction, which of its accounts are program-derived (PDAs), and how "
         "each PDA is derived (its seeds and what they come from). Structured JSON an "
-        "orchestrator can ingest — the join a raw IDL/llms.txt does not carry."
+        "orchestrator can ingest — the join a raw IDL/llms.txt does not carry. Each "
+        "PDA carries an 'origin': 'extracted' (the program's own IDL states this "
+        "recipe), 'recovered' (the IDL dropped it and it was reconstructed from "
+        "program source — correct in practice, but verify by simulating before "
+        "anything irreversible), or null (unknown)."
     ),
     "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
 }

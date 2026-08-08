@@ -20,7 +20,7 @@ step, via :func:`gecko.pda.derive_pda`).
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .pda import (
@@ -30,7 +30,8 @@ from .pda import (
     ResolverPdaSeedNode,
     VariablePdaSeedNode,
 )
-from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes
+from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes_with_origin
+from .provenance import ProgramProvenanceTier
 
 __all__ = [
     "SeedBinding",
@@ -104,25 +105,56 @@ class InstructionGraph:
 @dataclass(frozen=True)
 class ProgramGraph:
     """A program's full instruction↔PDA graph: the recovered PDA recipes plus every
-    instruction's join. ``to_json`` is the plug-and-play payload."""
+    instruction's join. ``to_json`` is the plug-and-play payload.
+
+    ``origins`` is metadata ABOUT this generation run — ``{account: tier}`` from
+    :func:`~gecko.pda_extract.merge_pda_nodes_with_origin`, saying which input the
+    kept recipe came from. It deliberately lives here and not on
+    :class:`~gecko.pda.PdaNode`: origin is not part of a recipe's identity, and
+    putting it there would change the frozen node's equality, which the merge rule
+    and the config round-trip both depend on.
+    """
 
     program_id: str | None
     pdas: dict[str, PdaNode]
     instructions: tuple[InstructionGraph, ...]
+    origins: dict[str, ProgramProvenanceTier] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "program_id": self.program_id,
-            "pdas": {name: _pda_to_json(node) for name, node in self.pdas.items()},
+            "pdas": {
+                name: _pda_to_json(node, self.origins.get(name))
+                for name, node in self.pdas.items()
+            },
             "instructions": [ix.to_json() for ix in self.instructions],
         }
 
 
-def _pda_to_json(node: PdaNode) -> dict[str, Any]:
+def _pda_to_json(node: PdaNode, origin: ProgramProvenanceTier | None) -> dict[str, Any]:
+    """One PDA recipe as the AGENT sees it.
+
+    ``origin`` is a load-bearing trust signal, not decoration — an agent may weigh
+    these differently, so the meanings are fixed here and are a one-way commitment:
+
+    - ``"extracted"`` — the program's own IDL states this recipe. Highest trust
+      available from a machine surface.
+    - ``"recovered"`` — the IDL dropped or left this recipe opaque (Anchor #4057)
+      and it was reconstructed by regex-parsing program SOURCE, which is untrusted
+      input. Correct in practice and better than the gap it fills, but it is a
+      reconstruction: an agent doing something irreversible should treat it as a
+      claim to verify (simulate), not as the program's own word.
+    - ``"manual"`` — hand-supplied through an explicit overlay; cannot reach this
+      emit site from :func:`build_program_graph`, which has no overlay step.
+    - ``null`` — this producer does not know. Emitted, never omitted and never
+      defaulted to ``"extracted"``: silence would read as "no origin reported",
+      and a default would manufacture confidence nobody claimed.
+    """
     return {
         "name": node.name,
         "program_id": node.program_id,
         "resolvable": node.resolvable,
+        "origin": origin,
         "seeds": [_seed_to_json(s) for s in node.seeds],
     }
 
@@ -344,7 +376,7 @@ def build_program_graph(
         or ((idl or {}).get("metadata") or {}).get("address")
     )
     source_nodes = from_source(source, program_id=prog) if source else {}
-    pdas = merge_pda_nodes(idl_nodes, source_nodes)
+    pdas, origins = merge_pda_nodes_with_origin(idl_nodes, source_nodes)
     # stamp the resolved program id onto every recipe
     pdas = {
         name: (node if node.program_id else PdaNode(node.name, node.seeds, prog))
@@ -408,7 +440,12 @@ def build_program_graph(
             )
         )
 
-    return ProgramGraph(program_id=prog, pdas=pdas, instructions=tuple(instructions))
+    return ProgramGraph(
+        program_id=prog,
+        pdas=pdas,
+        instructions=tuple(instructions),
+        origins=origins,
+    )
 
 
 def _type_str(ty: Any) -> str:
