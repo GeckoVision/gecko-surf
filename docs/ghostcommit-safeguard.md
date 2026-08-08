@@ -28,7 +28,7 @@ Read-only and local. Nothing is uploaded; the file is never modified.
 
 ## The three verdicts
 
-<!-- Verbatim output, captured 2026-08-07 against tests/fixtures/imagescan/. A PR that
+<!-- Verbatim output, captured 2026-08-08 against tests/fixtures/imagescan/. A PR that
      changes a verdict header, an exit code or the tier vocabulary is moving these
      claims — update them in the same PR. -->
 
@@ -57,10 +57,25 @@ INCOMPLETE — a channel this attack class uses could not be read
 **CLEAN** — every channel was read, nothing matched. Exit **0**. That header prints *only*
 when coverage is complete — enforced in the renderer, not left to a caveat someone skims.
 
+```
+CLEAN — no injection or exfil signal found
+  channels scanned: 0 (every channel was readable; none carried text to scan)
+  basis: (none)
+```
+
+A count of zero under a pass is the one line worth spelling out. It can mean two very
+different things — nothing was read, or everything was read and none of it carried text —
+and only the second is a pass. When coverage is complete the count can only mean the
+second, so the line says which rather than leaving a reader to infer it.
+
 > Exit **3** is deliberately distinct from **2**. "I could not evaluate this" and "I
 > evaluated it and it failed" need different responses, and `scan && deploy` must not pass
 > on something never checked. `--allow-missing-channels` buys back the zero exit and still
 > prints the gap: informed consent, not a mute.
+>
+> A file that cannot be opened at all takes exit **3** for the same reason — it was never
+> evaluated, so it is not a finding. Still non-zero: a typo'd path blocks the build rather
+> than passing it.
 
 
 ## The three layers
@@ -105,6 +120,12 @@ Nothing is silently sanitized and passed on.
   fallback or opt-in strictness for the pipeline that cares, not a quieter default.
 - **Detection is pattern-based**, so a novel phrasing can pass. Widening the patterns
   raises false positives, which is its own harm — a scanner people mute protects nobody.
+- **The attack numbers are measured on our own attack set**, which is also the set the
+  rules were written against. 68/68 says a specific regression is closed; it does not
+  estimate what fraction of attacks in the wild are caught, and no number here should be
+  read as recall. The false-positive number is the sounder half — 24,300 variants of
+  prose nobody wrote to be caught. A held-out corpus we did not author is the missing
+  measurement, and we know it.
 - **The pixel channel has different fidelity from the spec channel**, and a rule measured
   on one does not automatically hold on the other. The renderer moves line breaks, and the
   attacker picks the image width — so on this channel the attacker picks where the breaks
