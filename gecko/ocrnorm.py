@@ -115,6 +115,19 @@ _BASE58_RUN = re.compile(r"[1-9A-HJ-NP-Za-km-z]{2,}")
 #: verdict, so the fuse declines and the text is left byte-identical.
 _MIN_ADDRESS_LEN = 26
 
+#: Longest plausible SINGLE address (a base58 Solana pubkey is 32-44 characters; an EVM
+#: address is 42 with its ``0x``). The fuse exists to repair ONE address the renderer
+#: shattered, so a run longer than one address is not a repair — it is two values being
+#: welded together.
+#:
+#: Without this cap the fuse manufactured SECRETS out of benign prose. ``imagescan``
+#: also runs ``sanitize.looks_like_secret_value`` on this text, and that matches an
+#: 80-90 character base58 run (a Solana secret key). Two legitimate mints side by side —
+#: "The supported mints are So1111...112 J1toso...CPn today." — fused to 87 characters
+#: and quarantined an entirely benign Solana API surface. Pinned by
+#: ``test_fusion_never_welds_two_addresses_into_a_secret``.
+_MAX_ADDRESS_LEN = 44
+
 _TRIM = ".,;:!?()[]{}\"'`"
 
 
@@ -196,9 +209,14 @@ def fuse_address_runs(text: str) -> str:
     """Rejoin space-shattered address fragments into the single literal they encode.
 
     Acts only on a run of two or more single-space-separated, non-word-shaped base58
-    fragments that fuse to at least ``_MIN_ADDRESS_LEN`` characters — i.e. only where
-    the result could actually satisfy ``sanitize._ADDR``. Every other byte is preserved.
-    Linear: each token is visited once.
+    fragments fusing to between ``_MIN_ADDRESS_LEN`` and ``_MAX_ADDRESS_LEN`` characters
+    — i.e. only where the result could actually be ONE address. Every other byte is
+    preserved. Linear: each token is visited once.
+
+    The run stops growing at the cap rather than being abandoned when it exceeds it.
+    Abandoning would hand back a one-token evasion: append any short base58 word after
+    the address and the whole run overflows, so nothing fuses and the directive is
+    missed. Stopping at the cap recovers the address and leaves the trailing token alone.
     """
     parts = _TOKEN.findall(text)
     out: list[str] = []
@@ -211,6 +229,7 @@ def fuse_address_runs(text: str) -> str:
             index += 1
             continue
         run = [token]
+        length = len(token)
         last = index
         cursor = index + 1
         # Single space only: a wider gap is column alignment, not a split literal.
@@ -218,13 +237,14 @@ def fuse_address_runs(text: str) -> str:
             cursor + 1 < total
             and parts[cursor] == " "
             and _is_address_fragment(parts[cursor + 1])
+            and length + len(parts[cursor + 1]) <= _MAX_ADDRESS_LEN
         ):
             run.append(parts[cursor + 1])
+            length += len(parts[cursor + 1])
             last = cursor + 1
             cursor += 2
-        fused = "".join(run)
-        if len(run) >= 2 and len(fused) >= _MIN_ADDRESS_LEN:
-            out.append(fused)
+        if len(run) >= 2 and length >= _MIN_ADDRESS_LEN:
+            out.append("".join(run))
             index = last + 1
         else:
             out.append(token)
