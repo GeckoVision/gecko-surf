@@ -17,6 +17,20 @@ This lives in ONE module so the two hosts that serve Jito (``serve_mcp``,
 drift between hosts. The recorded/live split is realized via ``McpSurface.recorded_ops``
 (per-op override): the write ops stay recorded even though the surface mode is live, so
 their response is synthesized from the schema and never reaches the wire.
+
+TWO SURFACES, because Jito is two hosts. The Block Engine (the five JSON-RPC ops above)
+and the tip floor (``bundles.jito.wtf``, plain REST) are different services. A Gecko
+client pins exactly ONE base URL — that pin is the trust anchor the auth/exfil guard
+rests on — so a second host means a second surface, not a second base smuggled into the
+first. ``build_jito_tips_surface`` serves the tip floor at its own mount; both are built
+here so the hosts stay in step.
+
+WIRE ACCURACY (the 404 that lied): this surface must be built from the spec whose paths
+are Jito's REAL routes (``/api/v1/...``, with the JSON-RPC envelope in the body). The
+docs->draft on-ramp spec at ``examples/jito/spec/jito_blockengine_openapi.json`` models
+each JSON-RPC method as a VIRTUAL ``/{method}`` path — a comprehension artifact for the
+$0 recorded demo, never a wire contract. Mounting that one live sent
+``POST /getTipAccounts`` and 404'd every read. Do not point a LIVE surface at it.
 """
 
 from __future__ import annotations
@@ -32,13 +46,20 @@ from .tools import tool_name
 # In the image: /app/gecko/jito_surface.py -> parents[1] = /app (repo root); matches
 # serve_mcp/serve_providers so the shipped spec resolves identically on every host.
 _ROOT = Path(__file__).resolve().parents[1]
-JITO_SPEC_PATH = _ROOT / "examples" / "jito" / "spec" / "jito_blockengine_openapi.json"
+# The WIRE-ACCURATE Block Engine spec: real ``/api/v1/...`` routes, JSON-RPC envelope in
+# the body (method pinned per-op). See the module docstring for why the sibling
+# docs->draft spec (virtual /{method} paths) must never back a live surface.
+JITO_SPEC_PATH = _ROOT / "examples" / "jito_demo" / "spec" / "jito_openapi.json"
+JITO_TIPS_SPEC_PATH = _ROOT / "examples" / "jito" / "spec" / "jito_tips_openapi.json"
 
-# The jito spec declares TWO servers (mainnet first, testnet second); live mode fails
-# closed on an ambiguous multi-server spec (client.AmbiguousServerError) unless the target
-# is pinned. We pin mainnet — the host this surface has always de-facto served. Keyless
-# public JSON-RPC reads; ``public_session`` means no secret exists to inject toward the pin.
+# Pin mainnet explicitly rather than leaning on ``servers[0]``: the pin is also the trust
+# anchor (auth may only travel to a pinned host), and it keeps the surface correct if the
+# spec ever gains a testnet server. Keyless public JSON-RPC reads; ``public_session``
+# means no secret exists to inject toward the pin.
 JITO_MAINNET_BASE = "https://mainnet.block-engine.jito.wtf"
+
+# The tip floor's OWN host. Not a Block Engine host, not JSON-RPC — hence its own surface.
+JITO_TIPS_BASE = "https://bundles.jito.wtf"
 
 # The two money-moving WRITE ops, BY operationId (== the JSON-RPC method). Kept RECORDED
 # even on the live surface: catalog, never relay. Resolved to agent-facing tool names via
@@ -86,3 +107,17 @@ def build_jito_surface(enforce: EnforceMode | None) -> McpSurface:
         enforce=enforce,
         recorded_ops=resolve_write_tool_names(client),
     )
+
+
+def build_jito_tips_surface(enforce: EnforceMode | None) -> McpSurface:
+    """Build the Jito TIP-FLOOR surface — one keyless REST read, pinned to its own host.
+
+    Separate from ``build_jito_surface`` because it is a separate service on a separate
+    host, and a client pins one base URL. Nothing here moves money (a single GET), so
+    there is no ``recorded_ops`` carve-out; the hosted risk gate still applies."""
+    client = AgentApiClient(
+        str(JITO_TIPS_SPEC_PATH),
+        base_url=JITO_TIPS_BASE,
+        session=public_session(),
+    )
+    return McpSurface(client, mode="live", enforce=enforce)

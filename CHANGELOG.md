@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Fixed
+- **An upstream failure reached the agent as a success.** MCP's `isError` is the only
+  signal an agent has that a call did not work, and both transports returned plain
+  content — so a live `404` arrived as `isError: false` with an empty `data`, and an
+  agent read a dead endpoint as a successful call with no results. Measured on the hosted
+  `jito` surface: `getTipAccounts` returned
+  `{"status": 404, "data": ""}` **flagged as a success**.
+
+  The verdict now lives in one place (`gecko.toolerror.is_upstream_failure`) and both MCP
+  transports (Streamable HTTP + stdio) read it, so no surface can drift: an HTTP `>= 400`,
+  a program surface's structured `{"error": ...}` (`ore`'s `plan_instruction` showed the
+  identical symptom), and a gate/honeypot `{"blocked": true}` all travel as errors. The
+  body is still returned in full — flagged, never swallowed, because the body is what the
+  agent self-heals from. The live demo had the same disease and told the same lie
+  ("no fixtures in the feed" on an HTTP 401); it now says the call failed.
+
+- **The hosted Jito surface was built from a spec that never described the wire.**
+  `examples/jito/spec/jito_blockengine_openapi.json` models each JSON-RPC method as a
+  VIRTUAL `/{method}` path — an artifact of giving each method its own OpenAPI operation
+  for the $0 recorded demo. Mounted LIVE, those paths went out verbatim, so every read
+  `404`'d (`POST https://mainnet.block-engine.jito.wtf/getTipAccounts`). The surface is
+  now built from the wire-accurate spec (`/api/v1/...` routes, JSON-RPC envelope in the
+  body), verified against Jito's docs and against the live host.
+
+- **Jito's tip floor is a different host, so it is a different surface.** `getTipFloor`
+  lives on `bundles.jito.wtf` (plain REST), not the Block Engine. A Gecko client pins ONE
+  base URL — that pin is the trust anchor the auth/exfil guard rests on — so it is served
+  as its own `jito-tips` mount rather than a second base smuggled into the first.
+
+### Added
+- **Tool schemas stop asking the agent for values the spec already fixed.** A required
+  field with a `const` (or a `default`) has exactly one legal answer — a JSON-RPC
+  envelope's `jsonrpc: "2.0"` and its `method` are not decisions — and demanding it made
+  MCP's own input validation reject an otherwise correct call. Those fields are dropped
+  from `required` (kept in `properties`, so an agent may still override) and supplied by
+  the caller from `_invoke["spec_fixed"]`. Narrow by construction: REQUIRED fields only,
+  so no call that works today changes shape, and a spec that fixes nothing produces a
+  byte-identical tool def. `getTipAccounts` is now callable with no arguments at all.
+
 ### Security
 - **Untrusted spec prose could mint a value domain that read as a declared `format:`.**
   `graph._domain_signal` scanned a field's free-text `description` for

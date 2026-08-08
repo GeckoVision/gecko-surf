@@ -168,10 +168,9 @@ def test_single_server_spec_live_call_is_unchanged() -> None:
 
 
 def test_serve_providers_pins_jito_base_url_and_records_money_movers() -> None:
-    # Confirm (not assume) the hosted path: the jito block-engine spec declares
-    # mainnet+testnet, and the provider host serves its READS live — so its client must
-    # carry an explicit base_url or every hosted read would fail closed. The two
-    # money-moving writes stay RECORDED (catalog-only), never relayed.
+    # Confirm (not assume) the hosted path: the provider host serves jito's READS live, so
+    # its client must carry an EXPLICIT base_url — that pin is the trust anchor, not a
+    # servers[0] accident. The two money-moving writes stay RECORDED, never relayed.
     from gecko import serve_providers
     from gecko.jito_surface import JITO_MAINNET_BASE
     from gecko.mcp_server import McpSurface
@@ -181,7 +180,6 @@ def test_serve_providers_pins_jito_base_url_and_records_money_movers() -> None:
     assert isinstance(jito, McpSurface)
     assert jito.mode == "live"
     client = jito.client
-    assert len(client.servers) == 2
     assert client.base_url == JITO_MAINNET_BASE
     assert client._base_url_explicit is True
     # catalog, not relay: the money-movers are recorded even on the live surface.

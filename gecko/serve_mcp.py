@@ -49,7 +49,7 @@ from .http_server import (
     serve_multi_http,
 )
 from .examples.ore import build_ore_surface
-from .jito_surface import build_jito_surface
+from .jito_surface import build_jito_surface, build_jito_tips_surface
 from .mcp_server import McpSurface
 from .providers.catalog_surface import OrquestraCatalogSurface
 from .registry.api import registry_routes as _registry_routes
@@ -269,6 +269,10 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     # (catalog-only). Built via the shared boundary builder so serve_mcp and
     # serve_providers enforce the identical split; hosted enforce keeps the risk gate on.
     surfaces.append(("jito", build_jito_surface(hosted_enforce)))
+    # Jito's tip floor is a DIFFERENT host (bundles.jito.wtf) and plain REST, so it gets
+    # its own mount: one client pins one base URL (that pin is the trust anchor), and
+    # smuggling a second host into the block-engine surface is what 404'd it before.
+    surfaces.append(("jito-tips", build_jito_tips_surface(hosted_enforce)))
     # Jupiter Swap — served LIVE (keyless, public): a real external-call demo. base_url is
     # the free-tier host; public_session (no auth) means no secret can leak, and all four
     # ops are ungated so they're visible. The risk gate still runs.

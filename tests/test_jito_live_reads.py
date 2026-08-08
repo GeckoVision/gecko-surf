@@ -3,9 +3,11 @@
 The founder-confirmed boundary — *we are the catalog, not the relay*. Proven OFFLINE with
 an injected transport that RAISES if the wire is ever touched: a sendBundle / sendTransaction
 call must come back synthesized (recorded), never reaching the transport; a read must reach
-it, prepared against the pinned mainnet Block Engine. The jito spec declares TWO servers, so
-these also confirm the multi-server guard is satisfied by the explicit base_url pin (no
-``AmbiguousServerError``).
+it, prepared against the pinned mainnet Block Engine.
+
+Args here are the JSON-RPC shape Jito actually takes (positional ``params``); the envelope's
+fixed fields (``jsonrpc``/``id``/``method``) are supplied by the engine from the spec's own
+``const``/``default``, which is why a caller passes ``params`` alone.
 """
 
 from __future__ import annotations
@@ -64,7 +66,7 @@ def test_both_money_movers_resolve_to_tool_names() -> None:
 def test_sendBundle_stays_recorded_and_never_hits_the_wire() -> None:
     surface = _live_jito(_raise_on_wire)  # any wire touch explodes
 
-    out = surface.call_tool("sendBundle", {"body": {"transactions": ["deadbeef"]}})
+    out = surface.call_tool("sendBundle", {"body": {"params": [["deadbeef"]]}})
 
     assert out["mode"] == "recorded"  # synthesized, catalog-only
     assert "synthesized" in out["mode_note"].lower()  # the honest not-live note
@@ -74,7 +76,7 @@ def test_sendBundle_stays_recorded_and_never_hits_the_wire() -> None:
 def test_sendTransaction_stays_recorded_and_never_hits_the_wire() -> None:
     surface = _live_jito(_raise_on_wire)
 
-    out = surface.call_tool("sendTransaction", {"body": {"transaction": "deadbeef"}})
+    out = surface.call_tool("sendTransaction", {"body": {"params": ["deadbeef"]}})
 
     assert out["mode"] == "recorded"
 
@@ -97,8 +99,8 @@ def test_getTipAccounts_read_goes_live_to_mainnet() -> None:
 
 
 def test_live_read_does_not_raise_ambiguous_server_error() -> None:
-    # The spec declares mainnet + testnet; a live read would raise AmbiguousServerError if
-    # the surface hadn't pinned an explicit base_url. It must resolve to mainnet instead.
+    # The explicit mainnet pin (not servers[0] luck) is what a live read resolves to, and
+    # it is also the trust anchor — so this stays asserted even on a single-server spec.
     seen: list[str] = []
 
     def transport(req: PreparedRequest) -> tuple[int, Any]:
@@ -122,7 +124,8 @@ def test_build_jito_surface_is_live_with_recorded_writes_and_mainnet_pin() -> No
     assert surface.recorded_ops == WRITE_TOOL_NAMES
     assert surface.client.base_url == JITO_MAINNET_BASE
     assert surface.client._base_url_explicit is True
-    assert len(surface.client.servers) == 2  # multi-server spec, explicitly pinned
+    # Pinned by the builder, never inherited from servers[0] — the pin is the trust anchor.
+    assert surface.client.servers == [{"url": JITO_MAINNET_BASE}]
 
 
 # --- the hosted serve_mcp host wires the split correctly -------------------------------
