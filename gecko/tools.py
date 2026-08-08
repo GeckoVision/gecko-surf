@@ -210,8 +210,18 @@ def question_description(op: Operation) -> str:
     return " ".join(parts)
 
 
-def _safe_name(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]", "_", name)[:64]
+def safe_tool_name(operation_id: str) -> str:
+    """Sanitize a raw spec ``operationId`` into an agent-facing tool name.
+
+    Public because callers that hold an operationId but not the ``Operation`` — a plan
+    step names its op by id (``gecko.scope``) — must resolve it through the SAME rule, or
+    they silently miss the tool on any spec with odd operationIds.
+    """
+    return re.sub(r"[^A-Za-z0-9_-]", "_", operation_id)[:64]
+
+
+#: Back-compat alias for this module's internal callers.
+_safe_name = safe_tool_name
 
 
 def tool_name(op: Operation) -> str:
@@ -221,7 +231,7 @@ def tool_name(op: Operation) -> str:
     ``client.search`` — which filters hits against sanitized tool names — drops
     every result for specs whose operationId is synthesized/contains odd chars.
     """
-    return _safe_name(op.operation_id)
+    return safe_tool_name(op.operation_id)
 
 
 def _security_requires_auth(op: Operation) -> bool:

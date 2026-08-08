@@ -108,9 +108,10 @@ def test_recorded_call_is_first_call_correct():
 
 def test_search_capabilities_round_trips():
     raw = _call(_app(), "search_capabilities", {"query": "peg state for an asset"})
-    hits = json.loads(raw)
-    assert isinstance(hits, list) and hits
-    assert all("name" in h for h in hits)
+    # Retrieval returns a SCOPE envelope — {"plan": ..., "tools": [...]} — over the wire.
+    result = json.loads(raw)
+    assert isinstance(result, dict) and result["tools"]
+    assert all("name" in t for t in result["tools"])
 
 
 # --- control plane: payload returned, never persisted or logged ---

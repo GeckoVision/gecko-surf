@@ -294,8 +294,12 @@ def _skill_md(client: AgentApiClient, meta: dict[str, Any]) -> str:
         "",
         "## Call it right the first time",
         "",
-        '1. Intent → tool: `search_capabilities("<what you want to do>")`.',
-        '2. Full contract: `get_capability("<tool name>")` → its inputSchema.',
+        '1. Intent → scope: `search_capabilities("<what you want to do>")` → '
+        "`{plan, tools}`. `tools` are full schemas for just the ops that answer it; "
+        "`plan` (when present) is the order to call them in and the field that feeds "
+        "each next step.",
+        '2. Already know the name? `get_capability("<tool name>")` → its inputSchema '
+        "(one schema, no ranking — the cheap door).",
         "3. Call the tool by name with those inputs. Required params are marked `*` below.",
         "",
         "## Tools",

@@ -3,8 +3,8 @@
 Below scale, ``McpSurface.list_tools`` is BYTE-IDENTICAL to today (all current hosted
 surfaces are <50 ops, so they MUST be unaffected). Above scale it returns lightweight
 references (name + one-line summary + minimal valid ``inputSchema``) that tell the agent
-to fetch the full schema via ``search_capabilities`` — which stays a full callable tool
-and now returns full callable defs. The projection only hides schemas from the *list*; it
+to fetch the full schema via ``get_capability`` — the cheap door, now enumerated
+alongside ``search_capabilities``. The projection only hides schemas from the *list*; it
 must never make a real tool uncallable.
 """
 
@@ -18,7 +18,9 @@ import pytest
 
 from gecko.client import AgentApiClient
 from gecko.mcp_server import (
+    _GET_CAPABILITY_TOOL,
     _QUERY_DOCS_TOOL,
+    _REF_HINT,
     _SEARCH_TOOL,
     McpSurface,
     to_lightweight_ref,
@@ -88,7 +90,7 @@ def _tokens(enc: Any, defs: list[dict[str, Any]]) -> int:
 def _todays_full_list(client: AgentApiClient) -> list[dict[str, Any]]:
     """Reconstruct exactly what list_tools emitted before the projection existed:
     the synthetic tools followed by a full {name, description, inputSchema} per usable tool."""
-    tools = [_SEARCH_TOOL, _QUERY_DOCS_TOOL]
+    tools = [_SEARCH_TOOL, _GET_CAPABILITY_TOOL, _QUERY_DOCS_TOOL]
     for t in client.list_tools():
         tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
     return tools
@@ -108,10 +110,11 @@ def test_below_scale_first_tool_is_full_search_and_rest_are_full_defs():
     client = AgentApiClient(str(FIXTURE))
     tools = McpSurface(client).list_tools()
     assert tools[0] == _SEARCH_TOOL
-    assert tools[1] == _QUERY_DOCS_TOOL
-    assert len(tools) == 20  # 2 synthetic (search + query_docs) + 18 endpoints
+    assert tools[1] == _GET_CAPABILITY_TOOL
+    assert tools[2] == _QUERY_DOCS_TOOL
+    assert len(tools) == 21  # 3 synthetic + 18 endpoints
     # full defs carry the real parameter schema (properties), not a stub
-    non_search = [t for t in tools[2:]]
+    non_search = [t for t in tools[3:]]
     assert all("properties" in t["inputSchema"] for t in non_search)
 
 
@@ -124,14 +127,16 @@ def test_above_scale_returns_lightweight_refs_plus_full_search():
     tools = McpSurface(client).list_tools()
 
     assert tools[0] == _SEARCH_TOOL  # search stays a full callable tool
-    assert tools[1] == _QUERY_DOCS_TOOL  # query_docs stays a full callable tool
-    refs = tools[2:]
+    assert tools[1] == _GET_CAPABILITY_TOOL  # the cheap door, now enumerated
+    assert tools[2] == _QUERY_DOCS_TOOL  # query_docs stays a full callable tool
+    refs = tools[3:]
     assert len(refs) == 120
     for ref in refs:
         assert set(ref.keys()) == {"name", "description", "inputSchema"}
-        assert ref["description"].endswith(
-            "call search_capabilities for the full schema"
-        )
+        # The ref routes the agent to get_capability, NOT search_capabilities: it already
+        # knows the name it wants, so re-ranking an intent to recover one schema is the
+        # expensive door (measured 4.0x on the 159-op Privy surface).
+        assert ref["description"].endswith(_REF_HINT)
         # minimal valid MCP inputSchema — no parameter schema leaked into the list
         assert ref["inputSchema"] == {"type": "object"}
         assert "properties" not in ref["inputSchema"]
@@ -161,13 +166,16 @@ def test_above_scale_tool_stays_discoverable_and_callable():
     target = "getWidgetKind77"
     assert target in ref_names  # present in the list only as a lightweight ref
 
-    # search_capabilities returns the FULL callable def (with inputSchema) for the op
-    hits = surface.call_tool(
+    # search_capabilities scopes to the intent and returns FULL callable defs
+    scope = surface.call_tool(
         "search_capabilities", {"query": "widget metadata for kind 77"}
     )
-    match = next((h for h in hits if h["name"] == target), None)
+    match = next((t for t in scope["tools"] if t["name"] == target), None)
     assert match is not None
     assert "inputSchema" in match and match["inputSchema"].get("type") == "object"
+
+    # and the cheap door resolves the same schema from the name alone
+    assert surface.call_tool("get_capability", {"name": target})["name"] == target
 
     # and it is callable by name in recorded mode — the projection hid the schema
     # from the list, never made the tool uncallable
