@@ -39,6 +39,100 @@ Two reproductions, both on committed fixtures:
 
 ---
 
+## REVISED after four reviews — the original plan was wrong
+
+Four lanes reviewed this before code. Three of my claims did not survive, and the
+correction makes the work **smaller and ungated**. The original text is superseded from
+here down; what it got right was that the defect is real and that it starts at the graph.
+
+### What I had wrong
+
+1. **`_find_field` is not shared.** It is module-private with exactly **one** external
+   caller (`chain_eval.py:229`). I called it shared and used that to justify a breaking
+   change.
+2. **"Prefer refusal on a collection" would retract a published number.**
+   `getApiFixturesSnapshot` returns a top-level `type: array`
+   (`tests/fixtures/txline_openapi.yaml:254`), so the flagship TxLINE chain reaches its
+   join key *through* a list. Refusing there fails
+   `test_txline_chain1_fixtures_to_odds_is_first_plan_correct` and retracts row 1 of
+   `docs/benchmarks.md`. `chain_eval` is a **measurement harness, not a gate** — making a
+   measurement refuse destroys the measurement.
+3. **`ExplainEntry` is the wrong seam.** It is a per-plan projection with two
+   construction sites, and `compose.py:173` builds one from `(op, field_name)` with no
+   schema access — so every cross-surface entry would carry an empty pointer forever, and
+   "empty pointer ⇒ refuse" would silently kill every cross-API document. The precedent
+   already points the other way: `arazzo._locations(graphs)` reads a parameter's `in` off
+   the graph's nodes rather than off `ExplainEntry`.
+
+### The reframe that collapses the whole problem
+
+Arazzo 1.0 has no `for-each` and no "which one" expression. So for a join key inside a
+collection **there is no correct pointer to emit.** Emitting `/0/` does not fix the
+element-0 defect — it *promotes* it from the control plane, where it affects a score, into
+a published document a runtime will act on, stamped "verified resolvable".
+
+The honest emission for `arity == "many"` is a **refusal**, exactly like the existing
+`unresolved-parameter-location`.
+
+That has a consequence worth the whole review: **it removes the security gate.** Both
+Pegana `DELETE`/`PATCH` documents are element-0 bindings, so they stay refused on *arity*
+grounds without anyone ruling on non-idempotent verbs. Pegana's executable count goes
+2 → 0, which is the correct number and a better artifact than two documents that delete a
+webhook nobody named.
+
+### Revised, and this is the plan
+
+| | work | lane | gate |
+|---|---|---|---|
+| **R1** | `source_pointer` + `arity` on the **field `Node`** (schema-space: container path, no index). `Arity` declared in `graph.py` beside `NodeKind`/`EdgeKind` — **not** in `provenance.py`; it is structural, not a trust ladder, and needs no anti-poisoning review | `graph-engineer` | none |
+| **R2** | `chain_eval._find_field` **records the path it took** and returns arity. Nothing refuses. `ThreadOutcome` gains two fields. TxLINE stays green and now carries `arity="many"` as an honest annotation | `software-engineer` | none |
+| **R3** | `arazzo._pointers(graphs)` mirroring `_locations(graphs)`; new `RefusalKind` `unresolved-output-arity`. `arity == "many"` ⇒ refuse, never `/0/` | `graph-engineer` | none |
+| **R4** | `derive_candidates` reads `feeds_into(high_only=True)` — it currently ignores `edge.confidence` entirely, a live control bypass (34 of 36 Birdeye candidates rest on edges the planner quarantines) | `software-engineer` | **security-approved** |
+| **R5** | write targets excluded via `enforce.is_write_method`, structurally — not a score penalty, which is measurably re-rankable | `software-engineer` | **security-approved** |
+| **R6** | `key_is_dangerous` applied in `_response_leaves` as it already is in `_request_body_params` — provider-controlled response keys currently ride unguarded into emitted documents and the content hash | `defi-security-engineer` | is the gate |
+
+**Do not do:** the `ingest.py` edit (the container path is already available inside
+`_response_leaves`' own walk, merely discarded) · repurpose `Node.detail` (`correlate.py:422`
+reads it as the parent entity for the bare-`id` join rule) · a version bump for the hash
+change (`surface_rev` hashes the spec and is unaffected; `content_hash()` is referenced
+only in three tests).
+
+### Known traps, each already cost someone
+
+- **`_field_id` collides.** `parent = title or parent` is the container *label*, so
+  `/data/items/0/x` and `/meta/items/0/x` produce the same node id. Adding a pointer to a
+  colliding id makes it *stably* wrong, which is worse than unstably wrong.
+- **`unknown` degrades at the read boundary.** Every closed vocabulary here that held was
+  enforced at a write gate, not a type. Missing arity defaults to `unknown`, never `one`;
+  unrecognised raises; test the rehydrate, not just the build.
+- **Numeric segments prove data-plane origin.** A stored pointer must be index-free; the
+  serializer introduces position at render time or refuses.
+- **`Confidence` is already declared three times** with different members
+  (`graph.py:46`, `correlate.py:69`, `docs_reader/models.py:18`). Do not add a fourth type
+  beside it without noting that.
+
+### What this is NOT
+
+Not executability. **R1–R3 ship representation only** — the graph learns where a value
+lives and how many there are, and the serializer refuses what it cannot honestly express.
+No document becomes newly executable. That is deliberate: "documents a runtime can
+execute" walks toward orchestrator, and the measured value here is the refusal.
+
+Sequenced: R1 → R2 → R3 sequentially (overlapping files), R4/R5 after
+`feat/ranked-workflow-derivation` merges, R6 independently and first if anyone is free.
+
+### Still blocked on a person, not a lane
+
+**W5 — has any design partner been shown the output?** Zero evidence anyone wanted derived
+workflows. R1–R3 are worth doing regardless: arity-unrepresented is the **seventh**
+instance of this repo's named root cause — *the type has no representation for "not
+evaluated", so that case falls into the zero value* — and it sits under a published
+benchmark. But no further workflow engineering until a partner reacts.
+
+---
+
+## Original plan (superseded — kept for the reasoning, not the sequencing)
+
 ## Global constraints
 
 Every task inherits these.
