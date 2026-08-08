@@ -269,7 +269,11 @@ def test_surface_list_tools_is_search_plus_one_ref_per_provider() -> None:
     surface = CatalogMcpSurface(reg)
     tools = surface.list_tools()
     assert tools[0]["name"] == "search_capabilities"
-    assert len(tools) == len(reg.providers()) + 1
+    # get_capability is now ENUMERATED: every provider ref's hint points at it, and a
+    # hint that names an unlisted tool is a dead end for an agent that hasn't read our
+    # docs. Two synthetic tools + one ref per provider.
+    assert tools[1]["name"] == "get_capability"
+    assert len(tools) == len(reg.providers()) + 2
     names = {t["name"] for t in tools}
     assert {"paysponge-coingecko", "paysponge-perplexity"} <= names
 

@@ -1,8 +1,19 @@
 """MCP surface — what an agent actually installs.
 
 `McpSurface` is a framework-agnostic, fully testable view (list_tools / call_tool)
-over an AgentApiClient. It adds one synthetic tool — `search_capabilities` — so an
-agent can go from natural-language intent to the right endpoint, then call it.
+over an AgentApiClient. It adds synthetic navigation tools — `search_capabilities`
+(intent -> the right endpoint), `get_capability` (I know the name, give me its schema)
+and `query_docs` (why did my call fail) — so an agent can go from natural-language
+intent to a correct first call.
+
+The token split the two doors enforce (see `gecko.scope`):
+
+* **`list_tools` owns BREADTH** — every usable capability stays visible, full defs below
+  scale and lightweight refs above (`gecko.scale`). Recall lives here.
+* **`search_capabilities` owns DEPTH + ORDER** — one intent gets the ordered `plan` and
+  full schemas for exactly the ops that plan names, never the whole surface. It used to
+  re-emit the entire below-scale surface on every call (5.1x the connect cost on the
+  43-op Pegana P0 fixture, entirely duplicate).
 
 The optional `serve_stdio()` wraps it with the `mcp` SDK for a real server; it's
 import-guarded so the surface (and its tests) work without the SDK installed.
@@ -43,6 +54,7 @@ from .honeypot import (
 )
 from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
+from .scope import RETRIEVAL_MAX_TOOLS, build_scope
 from .search import project_hits
 from .toolerror import tool_result_payload
 
@@ -106,7 +118,12 @@ def question_error(arguments: Mapping[str, Any]) -> str | None:
 
 _SEARCH_TOOL = {
     "name": "search_capabilities",
-    "description": "Find which endpoint/tool fits a natural-language intent. Returns ranked tool names you can then call.",
+    "description": (
+        "Find which endpoint/tool fits a natural-language intent. Returns "
+        "{plan, tools}: `tools` = full schemas for just the ops that answer it; "
+        "`plan` (when present) = the order to call them in and the field feeding "
+        "each next step."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -155,10 +172,40 @@ _QUERY_DOCS_TOOL = {
 }
 
 
+_GET_CAPABILITY_TOOL = {
+    "name": "get_capability",
+    "description": (
+        "Fetch ONE tool's full callable schema by name. Use this whenever you already "
+        "know which tool you want (e.g. from a tools/list entry) — one schema, no "
+        "ranking. Cheaper than search_capabilities; that one is for finding a tool, "
+        "this one is for reading its contract."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "The exact tool name, as listed.",
+            },
+        },
+        "required": ["name"],
+    },
+}
+
+
 # The lightweight-ref hint: an above-scale list entry keeps only enough for the agent to
 # know the tool EXISTS and how to get its real schema. This exact suffix is asserted by the
 # projection tests — keep it stable.
-_REF_HINT = "call search_capabilities for the full schema"
+#
+# It points at ``get_capability``, not ``search_capabilities``: the agent reading a ref
+# ALREADY KNOWS the name it wants, so re-ranking an intent to recover one schema is the
+# expensive door (measured on the 159-op Privy surface: 9,086 B of get_capability calls vs
+# 36,070 B of searches for the same three known schemas — 4.0x).
+#
+# Deliberately SHORTER than the hint it replaces: it is repeated once per ref, so on a
+# 159-op surface every character is paid 159 times. The argument name is not spelled here
+# because ``get_capability`` is now enumerated with its own inputSchema.
+_REF_HINT = "call get_capability for the full schema"
 
 
 def to_lightweight_ref(tool: dict[str, Any]) -> dict[str, Any]:
@@ -249,9 +296,12 @@ class McpSurface:
         to a surface with no honeypot layer (at either scale)."""
         usable = self.client.list_tools()
         # The synthetic navigation tools lead every surface: search_capabilities (intent ->
-        # endpoint) and query_docs (self-heal: WHY a call failed + how to rewrite). Both are
-        # full callable defs at either scale — an agent can only self-heal a call it can SEE.
-        synthetic = [_SEARCH_TOOL, _QUERY_DOCS_TOOL]
+        # endpoint), get_capability (I already know the name, give me its schema) and
+        # query_docs (self-heal: WHY a call failed + how to rewrite). All three are full
+        # callable defs at either scale — an agent can only use a door it can SEE, and
+        # get_capability was callable-by-name but unlisted, so an agent that had not read
+        # our docs could not find the cheap door at all.
+        synthetic = [_SEARCH_TOOL, _GET_CAPABILITY_TOOL, _QUERY_DOCS_TOOL]
         if self.client.surface_all:
             tools = list(synthetic)
             for t in usable:
@@ -444,52 +494,53 @@ class McpSurface:
             # no planner either, so nothing changes).
             ranked_fn = getattr(self.client, "search_ranked", None)
             if callable(ranked_fn):
-                ranked = ranked_fn(query)
+                # ``search_ranked`` is kept as the ORDERING substrate (genuine lexical
+                # hits first, then the below-scale fallback appends) so ``is_fallback`` on
+                # the top hit — the genuine-hit gate below — is unchanged. What changes is
+                # that its surface-all breadth no longer reaches the agent: ``build_scope``
+                # truncates to ``RETRIEVAL_MAX_TOOLS``. surface_all is an ENUMERATION rule
+                # that had leaked into retrieval, so every search re-emitted the whole
+                # surface the agent already had from connect (measured on the 43-op Pegana
+                # P0 fixture: five searches 91,089 B against a 17,766 B connect — 5.1x the
+                # connect cost, entirely duplicate). Breadth stays where it belongs, in
+                # ``list_tools``, which below scale still shows every usable tool in full.
+                ranked = ranked_fn(query, RETRIEVAL_MAX_TOOLS)
                 hits = project_hits(ranked)
                 top_hit_genuine = bool(ranked) and not ranked[0].is_fallback
             else:
-                hits = self.client.search(query)
+                hits = self.client.search(query, RETRIEVAL_MAX_TOOLS)
                 top_hit_genuine = bool(hits)
-            # Return FULL callable defs: enrich each ranked hit with its real inputSchema so
-            # the agent can recover the schema the above-scale list_tools projection withheld
-            # and call the tool correctly first try. Below scale this is additive metadata on
-            # top of the frozen {name, summary, path, method} hit; the schema carries no auth
-            # (tool defs hide auth headers, invariant #4). Unknown names pass through as-is.
-            full = {t["name"]: t for t in self.client.list_tools()}
-            enriched: list[dict[str, Any]] = []
-            for hit in hits:
-                item = dict(hit)
-                tool = full.get(hit.get("name"))
-                if tool is not None:
-                    item["inputSchema"] = tool["inputSchema"]
-                enriched.append(item)
             # Chain enrichment (§5): when the TOP hit's required inputs are not
-            # satisfiable from the intent, attach the ordered supplier plan + its
-            # provenance-carrying explain so the agent can chain first-try instead of
+            # satisfiable from the intent, the ordered supplier plan + its
+            # provenance-carrying explain let the agent chain first-try instead of
             # discovering the sequence by trial and error. A thin projection — all the
             # logic (graph + satisfiability + suppression of trivial plans) lives in the
-            # package (client.plan_for). None when a chain isn't needed, so flat search is
-            # byte-identical there. getattr-guarded for duck-typed clients (catalog
+            # package (client.plan_for). getattr-guarded for duck-typed clients (catalog
             # aggregator, test fakes) that carry no planner.
             #
-            # Genuine-hit gate: below scale an out-of-scope query still returns EVERY
-            # usable tool as a score-0 fallback (the surface-all rule), so hits[0] is an
-            # ordering artifact (GET-first-then-path), not intent — attaching a supplier
-            # plan there would steer the agent into a chain nobody asked for. A plan rides
-            # the top hit ONLY when the lexical arm genuinely corroborated it.
+            # Genuine-hit gate: a fallback top hit is a query-independent ordering
+            # artifact (GET-first-then-path), not intent — scoping the answer to a
+            # supplier plan there would steer the agent into a chain nobody asked for. A
+            # plan rides the top hit ONLY when the lexical arm genuinely corroborated it.
+            plan: dict[str, Any] | None = None
             plan_for = getattr(self.client, "plan_for", None)
-            if enriched and top_hit_genuine and callable(plan_for):
-                plan = plan_for(query, enriched[0]["name"])
-                if plan is not None:
-                    enriched[0]["plan"] = plan
+            if hits and top_hit_genuine and callable(plan_for):
+                plan = plan_for(query, hits[0]["name"])
+            # Retrieval returns a SCOPE, not a surface: the ordered plan plus full callable
+            # schemas for exactly the ops that plan names (strictly smaller than the ranked
+            # list AND strictly more informative — it carries the ordering and the join a
+            # flat list cannot). With no plan it is the ranked hits, capped. Schemas carry
+            # no auth (tool defs hide auth headers, invariant #4) and no ``_invoke``.
+            full = {t["name"]: t for t in self.client.list_tools()}
+            scope = build_scope(hits, full, plan, limit=RETRIEVAL_MAX_TOOLS)
             # Observe, never mutate: usage metadata only (result breadth k), never the query.
             emit_surf_event(
                 "surf.search",
                 surface_id=self.client.surface_id,
-                k=len(hits),
+                k=len(scope["tools"]),
                 session_id=session_id,
             )
-            return enriched
+            return scope
 
         # Progressive-disclosure fetch-one: resolve a ref to its full callable def. Thin
         # dispatch to the package; not enumerated in list_tools (keeps that projection

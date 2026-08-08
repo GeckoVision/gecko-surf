@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from .caller import CallError
-from .mcp_server import _SEARCH_TOOL, to_lightweight_ref
+from .mcp_server import _GET_CAPABILITY_TOOL, _SEARCH_TOOL, to_lightweight_ref
 from .modes import CallMode
 from .paysh_catalog import CatalogRegistry, ProviderSurface
 from .surfaces import SurfaceError, safe_surface_id
@@ -57,8 +57,11 @@ class CatalogMcpSurface:
 
         At ~70 tools, dumping full defs would blow the context budget, so each provider is a
         ref (name + one-line summary + minimal schema); the agent resolves the full schema
-        via ``search_capabilities`` / ``get_capability`` before calling by name."""
-        tools = [_SEARCH_TOOL]
+        via ``search_capabilities`` / ``get_capability`` before calling by name.
+
+        ``get_capability`` is ENUMERATED because every ref's hint points at it — a hint
+        that names an unlisted tool is a dead end for an agent that hasn't read our docs."""
+        tools = [_SEARCH_TOOL, _GET_CAPABILITY_TOOL]
         for _ps, tool in self._provider_tools():
             tools.append(to_lightweight_ref(tool))
         return tools
@@ -208,7 +211,15 @@ class CatalogMcpSurface:
         state and never touches the upstream call with it."""
         args = arguments or {}
         if name == "search_capabilities":
-            return self.search_capabilities(str(args.get("query", "")))
+            # Same wire envelope as the single-surface ``McpSurface``: two surfaces
+            # publishing ONE tool name must not return two shapes, or an agent that
+            # learned the catalog surface mis-reads the API surface (the exact
+            # first-call failure ``_question_of`` exists to prevent). No cross-provider
+            # planner yet, so ``plan`` is always None here.
+            return {
+                "plan": None,
+                "tools": self.search_capabilities(str(args.get("query", ""))),
+            }
         if name == "get_capability":
             return self.get_capability(str(args.get("name", "")))
         # The cross-provider correlation doors (hidden: callable by name, NOT enumerated

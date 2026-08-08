@@ -105,27 +105,36 @@ def test_satisfiable_intent_yields_no_plan() -> None:
     assert plan_for_query(g, _op("getApiFixturesSnapshot"), "latest fixtures") is None
 
 
-# --- McpSurface projection: the plan rides the top search hit -------------------
-def test_search_capabilities_attaches_plan_to_top_hit() -> None:
+# --- McpSurface projection: the plan SCOPES the search ---------------------------
+#
+# Retrieval returns ``{"plan": ..., "tools": [...]}`` — the plan is the envelope, not a
+# field buried on hit 0, and ``tools`` is exactly the ops that plan names (see
+# gecko/scope.py). These assertions moved from ``hits[0]["plan"]`` to ``result["plan"]``
+# for that reason; the plan CONTENT they pin is byte-for-byte the same.
+def test_search_capabilities_scopes_the_answer_to_the_plan() -> None:
     surface = McpSurface(_client())
-    hits = surface.call_tool("search_capabilities", {"query": ODDS_INTENT})
-    assert hits and hits[0]["name"] == "getApiOddsUpdatesFixtureid"
-    plan = hits[0].get("plan")
+    result = surface.call_tool("search_capabilities", {"query": ODDS_INTENT})
+    plan = result["plan"]
     assert plan is not None
     assert [s["operation_id"] for s in plan["steps"]] == [
         "getApiFixturesSnapshot",
         "getApiOddsUpdatesFixtureid",
     ]
     assert plan["explain"][0]["basis"] == "entity:fixture"
-    # only the top hit carries a plan; the rest are plain flat-search hits.
-    assert all("plan" not in h for h in hits[1:])
+    # The scope IS the plan: the supplier and the goal, in derivation order, each with
+    # its full callable schema — the ordering a flat ranked list cannot carry.
+    assert [t["name"] for t in result["tools"]] == [
+        "getApiFixturesSnapshot",
+        "getApiOddsUpdatesFixtureid",
+    ]
+    assert all("inputSchema" in t for t in result["tools"])
 
 
 def test_search_capabilities_no_plan_on_satisfiable_intent() -> None:
     surface = McpSurface(_client())
-    hits = surface.call_tool("search_capabilities", {"query": ODDS_SATISFIABLE})
-    assert hits
-    assert all("plan" not in h for h in hits)  # flat search untouched
+    result = surface.call_tool("search_capabilities", {"query": ODDS_SATISFIABLE})
+    assert result["plan"] is None  # flat search untouched
+    assert result["tools"]
 
 
 # --- the genuine-hit gate: a fallback top hit must never grow a plan ------------
@@ -207,23 +216,25 @@ def test_search_ranked_carries_fallback_provenance() -> None:
 
 def test_no_plan_on_out_of_scope_fallback_top_hit() -> None:
     surface = McpSurface(AgentApiClient(_chainable_spec()))
-    hits = surface.call_tool("search_capabilities", {"query": OOS_QUERY})
-    # surface-all: everything stays visible (the below-scale promise)...
-    assert [h["name"] for h in hits] == ["getDetail", "listFixtures"]
-    # ...but the fallback top hit gets NO plan — it isn't what the agent asked for.
-    assert all("plan" not in h for h in hits)
+    result = surface.call_tool("search_capabilities", {"query": OOS_QUERY})
+    # Ranked order is unchanged (the 2-op surface is under the retrieval cap, so nothing
+    # is truncated here) ...
+    assert [t["name"] for t in result["tools"]] == ["getDetail", "listFixtures"]
+    # ... but the fallback top hit gets NO plan — it isn't what the agent asked for.
+    assert result["plan"] is None
 
 
 def test_genuine_chain_hit_still_gets_plan_on_same_surface() -> None:
     """Regression guard: the gate filters FALLBACK tops only — a genuine chain-shaped
     hit on the very same surface keeps its supplier plan (with provenance)."""
     surface = McpSurface(AgentApiClient(_chainable_spec()))
-    hits = surface.call_tool("search_capabilities", {"query": GENUINE_CHAIN_QUERY})
-    assert hits[0]["name"] == "getDetail"
-    plan = hits[0].get("plan")
+    result = surface.call_tool("search_capabilities", {"query": GENUINE_CHAIN_QUERY})
+    plan = result["plan"]
     assert plan is not None
     assert [s["operation_id"] for s in plan["steps"]] == ["listFixtures", "getDetail"]
     assert plan["explain"][0]["param"] == "fixtureId"
+    # the scope follows the plan's derivation order, goal last.
+    assert [t["name"] for t in result["tools"]] == ["listFixtures", "getDetail"]
 
 
 # --- the "reaches the agent" proof: real streamable-HTTP MCP transport ----------
@@ -263,12 +274,11 @@ def test_plan_reaches_agent_over_streamable_http_mcp() -> None:
                         return res.content[0].text  # type: ignore[union-attr]
 
     raw = anyio.run(_call, "search_capabilities", {"query": ODDS_INTENT})
-    hits = json.loads(raw)
-    assert isinstance(hits, list) and hits
-    top = hits[0]
-    assert top["name"] == "getApiOddsUpdatesFixtureid"
+    result = json.loads(raw)
+    assert isinstance(result, dict) and result["tools"]
+    assert result["tools"][-1]["name"] == "getApiOddsUpdatesFixtureid"  # goal last
     # THE PROOF: the plan block survived the wire, ordered + with provenance intact.
-    plan = top["plan"]
+    plan = result["plan"]
     assert [s["operation_id"] for s in plan["steps"]] == [
         "getApiFixturesSnapshot",
         "getApiOddsUpdatesFixtureid",
@@ -282,5 +292,5 @@ def test_plan_reaches_agent_over_streamable_http_mcp() -> None:
 
     # And the regression guard survives the wire too: a satisfiable intent stays flat.
     raw_flat = anyio.run(_call, "search_capabilities", {"query": ODDS_SATISFIABLE})
-    flat_hits = json.loads(raw_flat)
-    assert flat_hits and all("plan" not in h for h in flat_hits)
+    flat = json.loads(raw_flat)
+    assert flat["tools"] and flat["plan"] is None

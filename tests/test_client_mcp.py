@@ -47,14 +47,19 @@ def test_mcp_surface_lists_search_plus_endpoints():
     surface = McpSurface(_client())
     tools = surface.list_tools()
     assert tools[0]["name"] == "search_capabilities"
-    assert tools[1]["name"] == "query_docs"  # the self-heal tool must be discoverable
-    assert len(tools) == 20  # 2 synthetic tools (search + query_docs) + 18 endpoints
+    # get_capability is the CHEAP door (one named schema, no ranking) and must be
+    # discoverable — it was callable-by-name only, so an agent that had not read our
+    # docs could not find it. query_docs is the self-heal door.
+    assert tools[1]["name"] == "get_capability"
+    assert tools[2]["name"] == "query_docs"
+    assert len(tools) == 21  # 3 synthetic tools + 18 endpoints
 
 
 def test_mcp_surface_search_and_call():
     surface = McpSurface(_client())
+    # Retrieval returns a SCOPE — {"plan": ..., "tools": [...]} — not the whole surface.
     found = surface.call_tool("search_capabilities", {"query": "match score updates"})
-    assert any("scores" in f["path"] for f in found)
+    assert any("scores" in t["path"] for t in found["tools"])
 
 
 def test_recorded_call_is_synthetic_source_and_segregates_corpus(tmp_path):

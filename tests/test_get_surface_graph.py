@@ -61,8 +61,11 @@ def test_get_surface_graph_is_hidden_from_list_tools() -> None:
     assert "get_surface_graph" not in names  # callable by name, never enumerated
     # The projection is untouched: same shape the strict tests hard-code.
     assert listed[0]["name"] == "search_capabilities"
-    assert listed[1]["name"] == "query_docs"
-    assert len(listed) == 20
+    # get_capability is now ENUMERATED (the cheap door has to be findable); the graph
+    # door stays hidden, which is what this test guards.
+    assert listed[1]["name"] == "get_capability"
+    assert listed[2]["name"] == "query_docs"
+    assert len(listed) == 21
 
 
 def test_control_plane_clean_no_auth_or_payload() -> None:
