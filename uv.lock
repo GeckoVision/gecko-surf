@@ -303,7 +303,7 @@ wheels = [
 
 [[package]]
 name = "gecko-surf"
-version = "0.9.5"
+version = "0.10.2"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },
@@ -345,6 +345,7 @@ sosbot = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -376,6 +377,7 @@ provides-extras = ["serve", "credentials", "events", "sosbot", "dense", "fcc", "
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.20" },
     { name = "mypy", specifier = ">=2.1.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.15.20" },

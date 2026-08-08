@@ -319,6 +319,39 @@ class McpSurface:
                 result["plan"] = plan
         return result
 
+    def export_arazzo(
+        self, op: str, *, title: str = "Gecko derived plan"
+    ) -> dict[str, Any]:
+        """The derived plan for ``op`` as a portable Arazzo 1.0 document — the handoff
+        artifact an agent can hand to any runtime (arazzo-cli, a workflow UI) instead of
+        keeping the DAG locked inside this process.
+
+        Thin transport: build the plan with the shipped planner, serialize with the pure
+        ``gecko.arazzo.to_arazzo``. Control-plane clean — the document carries operation
+        ids, parameter NAMES, per-edge provenance and Arazzo runtime EXPRESSIONS, never a
+        value and never an auth header. An op with no confident plan (or a quarantined
+        hop) returns a NON-executable refusal document: ``workflows`` is empty, so no
+        runtime can execute what Gecko refused. Check ``x-gecko-executable``.
+
+        Getattr-guarded like ``surface_graph_data``: a duck-typed client with no graph
+        gets an honest refusal rather than a raise."""
+        from .arazzo import to_arazzo
+        from .graph import plan as intra_plan
+
+        graph = getattr(self.client, "surface_graph", None)
+        if graph is None:
+            return to_arazzo(
+                None, title=title, refusal_reason="this surface has no graph"
+            )
+        surface_id = graph.surface_id or "api"
+        plan = intra_plan(graph, op, frozenset())
+        return to_arazzo(
+            plan,
+            graphs=(graph,),
+            title=title,
+            refusal_reason=f"no confident plan for '{op}' on '{surface_id}'",
+        )
+
     def _assess(self, name: str, arguments: dict[str, Any]) -> RiskAssessment | None:
         """Score a call, FAILING OPEN on a scorer bug. Returns the assessment, or ``None``
         (→ treat as allow) if scoring itself raised — a scoring bug must never break the

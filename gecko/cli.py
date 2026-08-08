@@ -61,6 +61,7 @@ _SUBCOMMANDS = (
     "auth",
     "graph",
     "correlate",
+    "export-arazzo",
     "index",
     "metrics",
     "drift",
@@ -962,6 +963,99 @@ def _cmd_correlate(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_export_arazzo(argv: list[str]) -> int:
+    """`gecko export-arazzo <spec> [<spec> ...] --op <operationId>` — the derived plan
+    as a portable Arazzo 1.0 document.
+
+    Thin transport, like `gecko correlate`: build a Surface per spec, compose the
+    safety-gated chain with the shipped ``compose_safe_chain``, serialize with the pure
+    ``gecko.arazzo.to_arazzo``, print JSON. All logic lives in the package.
+
+    Exit 0 when the document is executable; **3 when it is a refusal** — a quarantined
+    hop, an unconfirmed cross-API join, or no confident plan. A refused document is still
+    printed (the refusal is the artifact), but it carries no workflow and deliberately
+    does not validate as Arazzo, so a runtime cannot execute what Gecko refused.
+    """
+    from .access import public_session
+    from .arazzo import is_executable, to_arazzo
+    from .hints import load_confirmed
+    from .safechain import compose_safe_chain
+    from .surface import Surface
+
+    p = argparse.ArgumentParser(
+        prog="gecko export-arazzo",
+        description="Export the derived plan as an Arazzo 1.0 document (no values).",
+    )
+    p.add_argument(
+        "specs", nargs="+", help="One or more OpenAPI URLs, paths, or docs URLs."
+    )
+    p.add_argument("--op", required=True, help="The target operationId to plan for.")
+    p.add_argument(
+        "--id",
+        action="append",
+        default=[],
+        help="Surface id per spec, in order (default: s0, s1, …).",
+    )
+    p.add_argument(
+        "--target",
+        default=None,
+        help="Surface id owning --op (default: the LAST spec's surface id).",
+    )
+    p.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        help="NAME=ENTITY customer confirmation, applied to every surface. Merged over "
+        "the persisted `gecko graph confirm` store.",
+    )
+    p.add_argument(
+        "--satisfied",
+        action="append",
+        default=[],
+        help="An input the caller already holds (repeatable).",
+    )
+    p.add_argument("--title", default="Gecko derived plan")
+    p.add_argument(
+        "-o", "--out", default=None, help="Write to a file (default: stdout)."
+    )
+    args = p.parse_args(argv)
+
+    extra = _parse_kv(args.confirm)
+    ids = [args.id[i] if i < len(args.id) else f"s{i}" for i in range(len(args.specs))]
+    surfaces = {
+        sid: Surface.from_spec(
+            spec,
+            session=public_session(),
+            surface_id=sid,
+            declared_hints={**load_confirmed(sid), **extra} or None,
+        )
+        for sid, spec in zip(ids, args.specs)
+    }
+    target = args.target or ids[-1]
+    if target not in surfaces:
+        print(f"export-arazzo: unknown target surface '{target}'.", file=sys.stderr)
+        return 2
+
+    chain = compose_safe_chain(surfaces, target, args.op, args.satisfied)
+    doc = to_arazzo(
+        chain,
+        graphs=tuple(s.graph for s in surfaces.values()),
+        sources=dict(zip(ids, args.specs)),
+        title=args.title,
+        refusal_reason=(
+            f"no confident plan for '{args.op}' on '{target}' — a cross-API join needs "
+            "both sides customer-confirmed (`gecko graph confirm`)"
+        ),
+    )
+    text = json.dumps(doc, indent=2)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"Wrote {args.out} ({len(text)} bytes).")
+    else:
+        print(text)
+    return 0 if is_executable(doc) else 3
+
+
 def _cmd_index(argv: list[str]) -> int:
     """`gecko index <specA> <specB> [...]` — the multi-provider value-domain index.
 
@@ -1704,6 +1798,10 @@ def _print_help() -> None:
     )
     print("  watch <plan>       re-simulate a watch plan on a schedule (CI)")
     print("  drift <path>       N-confirmed drift over a simulated.jsonl corpus")
+    print(
+        "  export-arazzo <spec>...  the derived plan as a portable Arazzo 1.0 doc "
+        "(names only, no values)"
+    )
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -2085,6 +2183,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_graph(rest)
     if cmd == "correlate":
         return _cmd_correlate(rest)
+    if cmd == "export-arazzo":
+        return _cmd_export_arazzo(rest)
     if cmd == "index":
         return _cmd_index(rest)
     if cmd == "metrics":
