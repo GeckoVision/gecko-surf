@@ -62,6 +62,7 @@ _SUBCOMMANDS = (
     "graph",
     "correlate",
     "export-arazzo",
+    "workflows",
     "index",
     "metrics",
     "drift",
@@ -1089,6 +1090,100 @@ def _cmd_export_arazzo(argv: list[str]) -> int:
     else:
         print(text)
     return 0 if is_executable(doc) else 3
+
+
+def _cmd_workflows(argv: list[str]) -> int:
+    """`gecko workflows <spec>` — the workflows an agent will want, derived and ranked.
+
+    `export-arazzo` takes `--op`, which means the provider must already know which
+    workflow they want. This removes that: derive the candidates from the graph, rank
+    them, and emit each as a validated Arazzo document plus a markdown index.
+
+    Thin transport — the ranking lives in :mod:`gecko.workflows`, the planning in
+    ``compose_safe_chain``, the serialization in ``to_arazzo``. Nothing new is invented
+    here; the only new idea is CHOOSING the targets.
+    """
+    from .access import public_session
+    from .arazzo import is_executable, to_arazzo
+    from .hints import load_confirmed
+    from .safechain import compose_safe_chain
+    from .surface import Surface
+    from .workflows import derive_candidates, describe, render_index
+
+    p = argparse.ArgumentParser(
+        prog="gecko workflows",
+        description="Derive and rank the agent workflows an API surface can offer, and "
+        "write each as an Arazzo 1.0 document. Offline, $0, no model call.",
+    )
+    p.add_argument("spec", help="An OpenAPI URL, path, or docs URL.")
+    p.add_argument(
+        "--id", default=None, help="Surface id (default: derived from spec)."
+    )
+    p.add_argument("--limit", type=int, default=7, help="How many to emit (default 7).")
+    p.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        help="NAME=ENTITY customer confirmation. Merged over the persisted store.",
+    )
+    p.add_argument(
+        "-o",
+        "--out",
+        default=".",
+        help="Directory for the emitted documents (default: the working directory).",
+    )
+    args = p.parse_args(argv)
+
+    sid = args.id or onboard.safe_name(args.spec)
+    surface = Surface.from_spec(
+        args.spec,
+        session=public_session(),
+        surface_id=sid,
+        declared_hints={**load_confirmed(sid), **_parse_kv(args.confirm)} or None,
+    )
+    candidates = derive_candidates(surface.graph, limit=args.limit)
+    if not candidates:
+        # A surface with no chainable hop is a real answer, not an error: every call
+        # stands alone and an agent needs no plan. Saying so beats writing zero files
+        # and letting the operator guess whether it ran.
+        print(
+            f"{sid}: no derivable workflow — no operation here produces a value another "
+            "one accepts, so every call stands alone.",
+        )
+        return 0
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+    refused = 0
+    for candidate in candidates:
+        chain = compose_safe_chain({sid: surface}, sid, candidate.target, [])
+        doc = to_arazzo(
+            chain,
+            graphs=(surface.graph,),
+            sources={sid: args.spec},
+            title=f"{sid}: {candidate.producer} -> {candidate.target}",
+            workflow_id=f"{candidate.producer}-to-{candidate.target}",
+            refusal_reason=(f"no confident plan for '{candidate.target}' on '{sid}'"),
+        )
+        name = f"{sid}.{candidate.target}.arazzo.json"
+        (out_dir / name).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        written.append(name)
+        if not is_executable(doc):
+            refused += 1
+        print(f"  {describe(candidate)}")
+
+    index = out_dir / f"{sid}.workflows.md"
+    index.write_text(render_index(sid, candidates, written), encoding="utf-8")
+    print(f"\n  → wrote {len(written)} Arazzo document(s) to {out_dir.resolve()}")
+    print(f"  → wrote {index.resolve()}")
+    if refused:
+        # Refusals are the interesting half. Never let them pass as a silent success.
+        print(
+            f"  {refused} of {len(written)} could not be derived confidently and carry "
+            "a refusal instead of a workflow (deliberately not Arazzo-valid).",
+        )
+    return 0
 
 
 def _cmd_index(argv: list[str]) -> int:
@@ -2220,6 +2315,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_correlate(rest)
     if cmd == "export-arazzo":
         return _cmd_export_arazzo(rest)
+    if cmd == "workflows":
+        return _cmd_workflows(rest)
     if cmd == "index":
         return _cmd_index(rest)
     if cmd == "metrics":
