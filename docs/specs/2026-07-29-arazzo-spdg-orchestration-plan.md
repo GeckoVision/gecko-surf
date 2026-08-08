@@ -1,6 +1,11 @@
 # Orchestration: Arazzo + SPDG — evaluation & phased plan
 
 **Status:** plan (2026-07-29), from a staff-engineer architecture eval grounded in the code.
+**Update 2026-08-07 — §1 EXPORT is SHIPPED** as `gecko/arazzo.py` (`to_arazzo`,
+`is_executable`) + `gecko export-arazzo` + `McpSurface.export_arazzo`. See
+[What shipping it settled](#what-shipping-it-settled-2026-08-07) at the foot of this
+doc. Everything else below is unchanged and still open.
+
 Answers: how does Gecko "close the e2e" on logic-between-APIs (Arazzo) and cross-API data
 mapping (SPDG) while staying control-plane? Pairs with `docs/trust-boundary.md`,
 `docs/specs/2026-07-19-surface-graph-correlations-design.md`.
@@ -100,3 +105,61 @@ thin CLI/MCP verb. `Correland`'s no-payload shape is the guardrail to preserve.
 **Open questions (founder):** (1) has any provider shipped a real Arazzo doc yet? If not, ingest
 stays deferred and export is the only near-term move. (2) Is API #2 concrete enough to drive the
 vocab enrichment, or defer that too?
+
+---
+
+## What shipping it settled (2026-08-07)
+
+Building §1 EXPORT resolved four things the plan left open or got slightly wrong. The
+plan's *decisions* all held; these are corrections of detail, recorded so the next reader
+does not re-derive them.
+
+**1. "A refusal marker" was underspecified — Arazzo has no such shape.** The plan said a
+quarantined hop "must emit as a refusal marker, NEVER a callable step" without saying what
+a marker *is*. Reading the normative schema settles it: Step Object is
+`required: [stepId]` **plus** `oneOf: [operationId | operationPath | workflowId]`. Every
+member of `steps[]` is by construction an invocation; there is no step that is not a call.
+So the marker cannot live inside `steps` at all. What shipped: a refused chain emits **no
+workflow** — the hops move to root `x-gecko-refusals` (+ `x-gecko-withheld`, which names
+the clean hops too) and `workflows` stays `[]`, deliberately failing the schema's
+`workflows: minItems 1`. An all-refused export is therefore **not a loadable Arazzo
+document**, which is the strongest available statement of "there is nothing to run here"
+and the only encoding a runtime cannot misread.
+
+**2. The plan's field mapping was one field optimistic.** It read `dependsOn` as the home
+of the join ("`dependsOn` from `supplies`+`source_surface`"). `dependsOn` is a
+**workflow**-level field listing prerequisite *workflowIds* — it cannot express a
+step→step data dependency. The real carrier is the pair
+(`step.outputs`, `parameter.value`) bound by the runtime expression
+`$steps.<stepId>.outputs.<field>`, which is also what keeps the export value-free.
+
+**3. `Parameter.value` is REQUIRED, and that is fine.** Arazzo requires a `value` on every
+parameter, which reads at first like a data-plane requirement. It is not: `value` accepts a
+**runtime expression**, so every leaf we emit is a name reference
+(`$inputs.…` / `$steps.…`). The "no values" line survives contact with the format intact.
+
+**4. `SafeChainResult` could not carry the export on its own.** A `ChainNode` is a *hop*
+(surface, op, tool, quarantine stance) — it has no `consumes`/`supplies` and no `explain`,
+so serializing one produces steps with no parameters and no provenance. `SafeChainResult`
+gained an additive `plan: Plan | None = None` (set by `compose_safe_chain`, control-plane
+only) so the safety verdict and the edges travel together.
+
+**Still open, unchanged:** Arazzo INGEST (§1, untrusted parser, deferred until a provider
+ships one in the wild); the SPDG vocabulary enrichment (§2, wants API #2); the OpenSPG
+engine (§3, still data-plane, still rejected).
+
+**Newly exposed by building it** — each is a real gap the export *makes visible* rather
+than one it creates:
+
+- `PlanStep.consumes` is required non-auth inputs only, so an exported step names no
+  optional parameter. Fine for the join; incomplete as a call template.
+- `PlanStep` carries no parameter *location*, so `to_arazzo` needs the `SurfaceGraph`s to
+  fill Arazzo's required `in`. Without them it refuses the workflow
+  (`unresolved-parameter-location`) rather than guessing `query`.
+- Step `outputs` point at `$response.body#/<field>`; ingest flattens nested response
+  properties, so a nested join key resolves to nothing and the step fails loudly at the
+  runtime. Recovering the real JSON pointer is the fix.
+- `successCriteria` is omitted on purpose. The plan's §(b) already flagged that it needs
+  canonical examples we do not have; inventing `$statusCode == 200` would be a guess.
+- `requestBody.contentType` is emitted as `application/json` because ingest prefers that
+  media type but does not record which one it actually took.

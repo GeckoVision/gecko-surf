@@ -187,6 +187,12 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15.20",
     "types-pyyaml>=6.0.12.20260518",
+    # TEST-ONLY. tests/test_arazzo.py validates the Arazzo export against the VENDORED
+    # official OAI schema (tests/fixtures/arazzo/), not against an assertion list we
+    # wrote — a serializer emitting JSON we invented would pass a hand-written check and
+    # fail a real runtime. `gecko-surf` itself gains NO dependency (gecko/arazzo.py is
+    # pure stdlib) and the test importorskips, so a bare env still runs.
+    "jsonschema>=4.20",
     # The [solana] extra, in dev so the PDA-derivation tests (tests/test_pda.py)
     # run in the default `uv run pytest` lane against real mainnet ground truth.
     "solders>=0.21",

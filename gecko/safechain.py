@@ -28,6 +28,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from .compose import Workspace, cross_plan
+from .graph import Plan
 from .surface import SafetyVerdict, Surface
 from .tools import tool_name
 
@@ -64,6 +65,12 @@ class SafeChainResult:
     complete: bool  # every hop resolved clean -> the chain answered
     refused: bool  # a hop was quarantined -> a clean, honest refusal
     summary: str  # grounded, provenance-tagged, human-readable
+    #: The composed plan this verdict gates — carried so a SERIALIZER (gecko.arazzo) can
+    #: emit the per-edge provenance the ``nodes`` list alone does not hold (a ChainNode is
+    #: a hop, not an edge: it has no consumes/supplies and no explain). Control-plane only
+    #: — a ``Plan`` is names + provenance, never a payload. Defaults to ``None`` so a
+    #: directly-constructed result (tests, policy fakes) is unaffected.
+    plan: Plan | None = None
 
     @property
     def quarantined_nodes(self) -> tuple[ChainNode, ...]:
@@ -146,6 +153,7 @@ def compose_safe_chain(
         complete=complete,
         refused=refused,
         summary=_summarize(target_surface, target_tool, nodes, join_basis, refused),
+        plan=plan,
     )
 
 

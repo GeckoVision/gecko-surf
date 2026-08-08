@@ -141,6 +141,42 @@ Also in this release, all merged since 0.10.2:
   Declaring them on a `StartSpec` would fabricate accounts at plan time, so `StartSpec`
   deliberately gained no `cross_surface` field.
 
+### Added
+- **`gecko/arazzo.py` — the derived plan as a portable handoff artifact.** `to_arazzo()`
+  is a **pure serializer** (no I/O, no network, no store, no execution) that turns a
+  `compose.Plan` or a safety-gated `safechain.SafeChainResult` into an Arazzo 1.0
+  document any runtime can execute. Approved 2026-07-29
+  (`docs/specs/2026-07-29-arazzo-spdg-orchestration-plan.md`): *export now, ingest later,
+  never the executor.* Until now the DAG we derive was a Python object only our own CLI
+  and MCP could read. Thin transport: `gecko export-arazzo` + `McpSurface.export_arazzo`.
+
+  Three properties make it ours rather than anyone's Arazzo:
+
+  1. **A refused hop is never a callable step.** Arazzo's Step Object schema requires
+     exactly one of `operationId`/`operationPath`/`workflowId` — every member of `steps[]`
+     is by construction a *call*, so the format has **no shape for "deliberately not
+     runnable"**. Rather than force one, a chain carrying a Skill-Guard-quarantined hop
+     emits **no workflow at all**: the hops move to the root `x-gecko-refusals` /
+     `x-gecko-withheld` extensions and `workflows` stays empty, deliberately violating the
+     spec's `minItems: 1`. A refused export therefore does not load in a conformant
+     runtime — fail-closed, and the *whole* chain is withheld, not just the poisoned hop,
+     so a surviving clean prefix can never read as a partial plan we endorsed.
+  2. **Per-edge provenance travels with the edge.** Class (DECLARED/INFERRED — never
+     EXTRACTED for a `feeds` edge), basis, confidence, supplier step/field, and — on a
+     cross-surface join — the `gate: customer-confirmed` that `compose.cross_plan`
+     enforced, carried as `x-gecko-provenance` on the Parameter Object (or on
+     `requestBody` for a body-carried join). `cross_plan`'s refusal of an unconfirmed
+     join survives too, as a non-executable document.
+  3. **No values, ever.** Every wire-bound leaf is an Arazzo *runtime expression*
+     (`$inputs.<name>`, `$steps.<id>.outputs.<field>`, `$response.body#/<field>`) — name
+     references the runtime resolves against data it holds. A literal would put Gecko on
+     the data plane and trade away unilateral ingest.
+
+  Conformance is checked against the **vendored official OAI schema**
+  (`tests/fixtures/arazzo/`), not an assertion list: a clean export validates, a refused
+  one is asserted *not* to. `gecko-surf` gains no dependency (the module is pure stdlib);
+  `jsonschema` is dev-group only and the test `importorskip`s it.
+
 ### Fixed
 - **A cyclic seed dependency was rendered as a confident derivation order.** When two
   PDAs of an instruction seed from each other — or a PDA seeds from itself — the graph
