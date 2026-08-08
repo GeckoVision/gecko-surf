@@ -1,0 +1,83 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Jito Tips",
+    "version": "1.0.0",
+    "description": "Jito's tip-floor service: recent landed-tip percentiles, so a searcher can price a bundle/transaction tip before submitting it.\n\nWHY THIS IS ITS OWN SPEC: this endpoint is NOT on the Block Engine. It is served from a DIFFERENT host (bundles.jito.wtf, not <region>.mainnet.block-engine.jito.wtf) and it is plain REST, not JSON-RPC. A Gecko surface pins exactly one host (one base URL per client, so a poisoned or drifting spec can never redirect a call), so the tip floor is comprehended as its own surface rather than smuggled into the Block Engine one — where it 404'd.\n\nSource: https://docs.jito.wtf/lowlatencytxnsend/tips/ (documented `curl https://bundles.jito.wtf/api/v1/bundles/tip_floor`), verified live. A WebSocket stream of the same data exists at wss://bundles.jito.wtf/api/v1/bundles/tip_stream and is deliberately NOT modeled here (Gecko comprehends HTTP surfaces).\n\nKeyless and read-only: no auth, no signing, no spend.",
+    "x-source": [
+      "https://docs.jito.wtf/lowlatencytxnsend/tips/"
+    ]
+  },
+  "servers": [
+    {
+      "url": "https://bundles.jito.wtf",
+      "description": "Jito bundles/tips service. NOT a Block Engine host."
+    }
+  ],
+  "paths": {
+    "/api/v1/bundles/tip_floor": {
+      "get": {
+        "operationId": "getTipFloor",
+        "summary": "Get the recent Jito tip floor (percentiles, in SOL) to size a competitive tip.",
+        "description": "Returns recent landed-tip statistics in SOL. Use a percentile at or above the 50th to price a bundle tip that is likely to win the auction; Jito enforces a 1000-lamport minimum, but during demand the floor is what actually matters. Plain REST GET, no parameters, no auth.",
+        "tags": [
+          "tips"
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent tip-floor statistics (one entry per recent interval).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TipFloor"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TipFloor": {
+        "type": "array",
+        "description": "Recent Jito tip statistics, in SOL.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "string",
+              "format": "date-time",
+              "example": "2024-09-01T12:58:00Z"
+            },
+            "landed_tips_25th_percentile": {
+              "type": "number",
+              "example": 6.001e-06
+            },
+            "landed_tips_50th_percentile": {
+              "type": "number",
+              "example": 1e-05
+            },
+            "landed_tips_75th_percentile": {
+              "type": "number",
+              "example": 3.6196e-05
+            },
+            "landed_tips_95th_percentile": {
+              "type": "number",
+              "example": 0.0014479
+            },
+            "landed_tips_99th_percentile": {
+              "type": "number",
+              "example": 0.010007999
+            },
+            "ema_landed_tips_50th_percentile": {
+              "type": "number",
+              "example": 9.836e-06
+            }
+          }
+        }
+      }
+    }
+  }
+}

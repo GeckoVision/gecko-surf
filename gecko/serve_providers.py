@@ -30,7 +30,7 @@ from typing import Any
 
 from .enforce import resolve_hosted_enforce
 from .http_server import serve_multi_http
-from .jito_surface import build_jito_surface
+from .jito_surface import build_jito_surface, build_jito_tips_surface
 
 # In the image: /app/gecko/serve_providers.py -> parents[1] = /app (repo root).
 _ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +58,9 @@ def _build_surfaces() -> list[tuple[str, Any]]:
     return [
         ("pegana", json.loads(_PEGANA_SPEC.read_text("utf-8"))),
         ("jito", build_jito_surface(hosted_enforce)),
+        # Jito's tip floor lives on a different host (bundles.jito.wtf) and is plain REST;
+        # a client pins ONE base URL, so it is a second surface, not a second base.
+        ("jito-tips", build_jito_tips_surface(hosted_enforce)),
     ]
 
 

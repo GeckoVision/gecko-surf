@@ -13,6 +13,7 @@ from typing import Any
 from .client import AgentApiClient
 from .modes import CallMode
 from .sample import example_from_schema
+from .toolerror import is_upstream_failure
 
 DEFAULT_SPEC = str(
     Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "txodds_docs.yaml"
@@ -96,6 +97,19 @@ def live_demo() -> None:
         )
 
     fixtures = client.call(tool_for("/api/fixtures/snapshot"), {}, mode="live")
+    # An upstream refusal is NOT "no results". Reading a 401 as an empty feed is the same
+    # silent wrong answer the MCP surfaces used to hand agents (see gecko.toolerror) — say
+    # the call failed and stop, rather than narrating an emptiness we never observed.
+    if is_upstream_failure(fixtures):
+        print("\nGOAL: what World Cup matches are coming up?")
+        print(
+            f"  CALLED: {fixtures['method']} {fixtures['request']}  (HTTP {fixtures['status']})"
+        )
+        print(
+            "  → the API refused this call, so we have NO fixture data. "
+            "(A stale session? re-run the login.) Not an empty feed — a failed call."
+        )
+        return
     all_rows = fixtures["data"] if isinstance(fixtures["data"], list) else []
     # The snapshot carries several competitions (Friendlies, World Cup, ...). Filter to the
     # World Cup — otherwise the first row can be a friendly (e.g. Vietnam v Myanmar) that we

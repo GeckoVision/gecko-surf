@@ -118,6 +118,86 @@ def _input_schema(
     return out
 
 
+def _fixed_value(prop: Any) -> tuple[bool, Any]:
+    """The one value the spec fixes for a field: ``const``, else ``default``.
+
+    ``(found, value)`` so a legitimate ``None``/``0``/``[]`` isn't read as "not declared".
+    """
+    if not isinstance(prop, dict):
+        return False, None
+    if "const" in prop:
+        return True, prop["const"]
+    if "default" in prop:
+        return True, prop["default"]
+    return False, None
+
+
+def strip_spec_fixed_required(
+    schema: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Stop asking the agent for required values the SPEC already fixed.
+
+    Returns ``(agent_schema, fixed)`` where ``fixed`` is ``{"args": {...}, "body": {...}}``
+    — the values the caller will supply — and ``agent_schema`` is the same schema with
+    those names dropped from ``required`` (they stay in ``properties``, so an agent that
+    wants to override still can).
+
+    This is the question-shaped rule taken literally: a field with a ``const`` (or a
+    ``default`` on a required field) has exactly ONE legal answer, so asking the agent for
+    it is asking it to restate boilerplate — the class of thing that turns into a guess.
+    JSON-RPC-over-HTTP APIs make this concrete: the envelope's ``jsonrpc: "2.0"`` and
+    ``method: "<the operation itself>"`` are not decisions.
+
+    Scope is deliberately narrow — only fields that are declared REQUIRED. An optional
+    field with a default is left alone, so no call that works today changes shape; the
+    only calls affected are ones that would have failed on a missing required field.
+    Reads the SANITIZED schema, so a poisoned default has already been scrubbed.
+    """
+    properties: dict[str, Any] = schema.get("properties", {}) or {}
+    required: list[str] = list(schema.get("required") or [])
+    fixed_args: dict[str, Any] = {}
+    for name in list(required):
+        found, value = _fixed_value(properties.get(name))
+        if found:
+            fixed_args[name] = value
+            required.remove(name)
+
+    fixed_body: dict[str, Any] = {}
+    body_schema = properties.get("body")
+    if isinstance(body_schema, dict):
+        body_props: dict[str, Any] = body_schema.get("properties", {}) or {}
+        body_required: list[str] = list(body_schema.get("required") or [])
+        for name in list(body_required):
+            found, value = _fixed_value(body_props.get(name))
+            if found:
+                fixed_body[name] = value
+                body_required.remove(name)
+        if fixed_body:
+            body_schema = dict(body_schema)
+            if body_required:
+                body_schema["required"] = body_required
+            else:
+                body_schema.pop("required", None)
+                # Nothing left for the agent to decide inside the body: don't demand one.
+                if "body" in required:
+                    required.remove("body")
+            properties = {**properties, "body": body_schema}
+
+    if not fixed_args and not fixed_body:
+        return schema, {}  # byte-identical for every spec that fixes nothing
+    out = {**schema, "properties": properties}
+    if required:
+        out["required"] = required
+    else:
+        out.pop("required", None)
+    fixed: dict[str, Any] = {}
+    if fixed_args:
+        fixed["args"] = fixed_args
+    if fixed_body:
+        fixed["body"] = fixed_body
+    return out, fixed
+
+
 def question_description(op: Operation) -> str:
     parts = [op.summary or op.operation_id]
     agent_params = _agent_params(op)
@@ -199,6 +279,10 @@ def to_tool(op: Operation, declared: Mapping[str, str] | None = None) -> dict[st
     input_schema, poisoned_schema = sanitize.sanitize_schema(
         _input_schema(op, declared)
     )
+    # Don't ask the agent for values the spec already fixed (JSON-RPC envelopes and the
+    # like) — the caller supplies them from ``_invoke["spec_fixed"]``. Absent when the spec
+    # fixes nothing, so every other tool def (and its tools_rev) is byte-identical.
+    input_schema, spec_fixed = strip_spec_fixed_required(input_schema)
     tool: dict[str, Any] = {
         "name": tool_name(op),
         "description": description,
@@ -218,6 +302,8 @@ def to_tool(op: Operation, declared: Mapping[str, str] | None = None) -> dict[st
             },
         },
     }
+    if spec_fixed:
+        tool["_invoke"]["spec_fixed"] = spec_fixed
     if poison_reasons or poisoned_schema:
         # A poisoned op quarantines its whole surface (client enforces recorded-only,
         # no auth). Kept as spec metadata (a bool), never the stripped instruction text.

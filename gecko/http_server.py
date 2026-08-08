@@ -42,6 +42,7 @@ from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
 from .mcp_server import McpSurface
 from .telemetry import TelemetryError
+from .toolerror import tool_result_payload
 from .uaclass import classify_client
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -764,7 +765,7 @@ def build_http_app(
         ]
 
     @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+    async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
         args = arguments or {}
         start = time.perf_counter()
         # Thread the MCP session id onto the usage event so the funnel can join
@@ -788,10 +789,15 @@ def build_http_app(
             _capture(
                 name, status, None, args, int((time.perf_counter() - start) * 1000)
             )
-        # Return as unstructured JSON text; never cache/persist the body.
-        return [
-            mcp_types.TextContent(type="text", text=json.dumps(result, default=str))
-        ]
+        # Return as unstructured JSON text; never cache/persist the body. An upstream
+        # failure (4xx/5xx, a program surface's structured error, a refusal) is flagged
+        # via isError so the agent cannot read it as a successful empty result — the
+        # decision lives in the package (gecko.toolerror), shared with the stdio wire.
+        text, is_error = tool_result_payload(result)
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=text)],
+            isError=is_error,
+        )
 
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,

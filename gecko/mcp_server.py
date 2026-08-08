@@ -10,7 +10,6 @@ import-guarded so the surface (and its tests) work without the SDK installed.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import asdict
 from collections.abc import Mapping
@@ -45,6 +44,7 @@ from .honeypot import (
 from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 from .search import project_hits
+from .toolerror import tool_result_payload
 
 logger = logging.getLogger("gecko.mcp_server")
 
@@ -647,12 +647,16 @@ def serve_stdio(
         ]
 
     @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+    async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
         result = surface.call_tool(name, arguments or {})
-        # Return unstructured JSON text; the body is never cached or persisted.
-        return [
-            mcp_types.TextContent(type="text", text=json.dumps(result, default=str))
-        ]
+        # Return unstructured JSON text; the body is never cached or persisted. An
+        # upstream failure is flagged via isError (gecko.toolerror — the SAME decision
+        # the HTTP wire uses) so stdio and HTTP can't diverge on what an error is.
+        text, is_error = tool_result_payload(result)
+        return mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text=text)],
+            isError=is_error,
+        )
 
     async def _run() -> None:
         async with stdio_server() as (read_stream, write_stream):

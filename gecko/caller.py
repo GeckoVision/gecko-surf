@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -63,6 +63,34 @@ def _missing_required(tool: dict[str, Any], args: dict[str, Any]) -> list[str]:
     return missing
 
 
+def apply_spec_fixed(invoke: Mapping[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Supply the values the SPEC fixed for this operation, under whatever the agent sent.
+
+    ``_invoke["spec_fixed"]`` is computed once at comprehension time (``tools.
+    strip_spec_fixed_required``): the required fields whose value the spec pinned with a
+    ``const``/``default``, which is why the agent-facing schema no longer asks for them.
+    A JSON-RPC envelope is the canonical case — ``jsonrpc: "2.0"`` and the operation's own
+    ``method`` are not decisions the agent gets to make, and making it restate them is
+    exactly the guessing this product exists to remove.
+
+    The agent always wins: an explicitly-passed value is never overwritten.
+    """
+    fixed = invoke.get("spec_fixed") or {}
+    if not fixed:
+        return args
+    filled = dict(args)
+    for name, value in (fixed.get("args") or {}).items():
+        filled.setdefault(name, value)
+    body_fixed = fixed.get("body") or {}
+    if body_fixed:
+        body = filled.get("body")
+        body = dict(body) if isinstance(body, dict) else {}
+        for name, value in body_fixed.items():
+            body.setdefault(name, value)
+        filled["body"] = body
+    return filled
+
+
 #: Self-identifying User-Agent — canonical value lives in netguard (single source of
 #: truth for every stdlib fetch path). A caller/session UA overrides it.
 #: Verified against Colosseum's Cloudflare WAF (403 with the default, 200 with this).
@@ -77,6 +105,10 @@ def build_request(
     allowed_auth_hosts: set[str] | None = None,
 ) -> PreparedRequest:
     invoke = tool["_invoke"]
+
+    # Supply the values the spec fixed for this op (a JSON-RPC envelope, typically) before
+    # validating — the agent-facing schema deliberately stopped asking for them.
+    args = apply_spec_fixed(invoke, args)
 
     # Validate declared-required fields BEFORE building anything — catch the malformed
     # call the agent can't see rather than firing it.
