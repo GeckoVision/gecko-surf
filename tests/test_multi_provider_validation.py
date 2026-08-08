@@ -48,7 +48,11 @@ EXPECTED_OPERATIONS: dict[str, int] = {
 #: pinned so a detection change (either way) trips the gate for a security review.
 EXPECTED_QUARANTINE: dict[str, tuple[str, ...]] = {
     "birdeye": (),
-    "payapi": ("createTransfer",),  # fund_routing FP on "Transfer funds to a recipient"
+    # payapi was the pinned fund_routing FP ("Transfer funds to a recipient"). Cleared by
+    # the routing-TARGET narrow: a directive with no resolvable destination is a
+    # DESCRIPTION of a transfer endpoint, not a steering instruction. See the block comment
+    # in gecko/sanitize.py and test_sanitizer.py::test_fund_routing_catches_every_attack_class.
+    "payapi": (),
     "jito": (),
     "jito_blockengine": (),
     "pegana_api2": (),
@@ -107,29 +111,37 @@ def test_skill_guard_quarantine_matches_expected_per_provider() -> None:
 
 def test_privy_wallet_address_false_positives_are_pinned() -> None:
     """Privy: after the EVM-address-is-not-a-secret narrow, 66 wallet ops that quarantined
-    only on a PUBLIC 40-hex ``0x…`` address in a response example are now clean. The 6 that
+    only on a PUBLIC 40-hex ``0x…`` address in a response example are now clean. The 5 that
     REMAIN are CORRECT-BY-DESIGN fail-closed, not the address FP — pinned so a detection
     change either way trips this gate:
 
       * ``getTransaction`` / ``getTransactionByReferenceId`` / ``signWithWallet`` — a
         64-hex ``0x…`` value (a 32-byte tx hash / signature) is byte-for-byte
         indistinguishable from an EVM private key at the text layer, so it fails closed.
-      * ``withdrawFunds`` — the description "Withdraw funds" is fund-routing VOCABULARY with
-        no address target; identical in shape to the red-team attack "withdraw all funds
-        now", so the rule cannot un-flag it without opening a no-address routing bypass.
       * ``createPolicy`` (request schema depth 16) / ``getKrakenUser`` (response depth 21) —
         nesting past the depth cap is UNSCANNABLE, so it fails closed (a separate control,
         not the address class).
 
-    The honest answer for all 6 is confirm-to-unquarantine by the provider, NOT loosening a
-    rule. ``transfer`` / ``createUser`` / ``getWallet`` dropped out (pure address FP, fixed).
+    ``withdrawFunds`` DROPPED OUT with the fund-routing routing-TARGET narrow. Its
+    description is the two-word "Withdraw funds": fund-routing VOCABULARY with no
+    destination of any kind. An earlier review kept it on the grounds that un-flagging it
+    would open a no-address routing bypass; the measured re-review disagreed and this is
+    the deliberate reversal. A directive that names no destination gives an agent nowhere
+    to send anything, and the shape cost 4 false positives across the 26 committed specs
+    (1,900 prose fields) with zero true positives. The destination channel that CAN carry a
+    real target — a value in ``const``/``default``/``enum`` — is still covered by the HARD
+    arg-routing guarantee. The given-up strings are pinned in
+    test_sanitizer.py::test_fund_routing_accepted_residual_destinationless_directive.
+
+    The honest answer for the remaining 5 is confirm-to-unquarantine by the provider, NOT
+    loosening a rule. ``transfer`` / ``createUser`` / ``getWallet`` dropped out earlier
+    (pure address FP, fixed).
     """
     privy = _by_name()["privy"]
     assert set(privy.quarantined) == {  # type: ignore[attr-defined]
         "getTransaction",
         "getTransactionByReferenceId",
         "signWithWallet",
-        "withdrawFunds",
         "createPolicy",
         "getKrakenUser",
     }
