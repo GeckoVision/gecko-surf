@@ -42,9 +42,14 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from PIL import Image, ImageDraw, ImageFont
+# NOTE: Pillow is imported INSIDE the render functions, never at module scope.
+# The corpus DEFINITION below is plain data and must stay importable with the stdlib
+# alone, because the test suite imports this module to enumerate fixtures — including
+# on the base CI install, which has no Pillow. A module-scope `from PIL import ...`
+# turns "Pillow is absent" into a COLLECTION ERROR that fails the whole run rather
+# than skipping the OCR tests. Only RENDERING needs Pillow; reading the manifest does not.
 
 # --- payload building blocks ----------------------------------------------------------
 # Seeded canaries only. No real secret, no real funded address, appears anywhere here.
@@ -366,9 +371,7 @@ EXPECTED_RESIDUALS: frozenset[str] = frozenset(
 # --- rendering -------------------------------------------------------------------------
 
 
-def _wrap(
-    draw: ImageDraw.ImageDraw, text: str, font: object, max_width: int
-) -> list[str]:
+def _wrap(draw: Any, text: str, font: Any, max_width: int) -> list[str]:
     """Greedy word wrap measured against the real font metrics (not a char count)."""
     lines: list[str] = []
     current = ""
@@ -385,7 +388,12 @@ def _wrap(
 
 
 def render(fixture: Fixture) -> bytes:
-    """Render one fixture to encoded image bytes. Pure function of the fixture."""
+    """Render one fixture to encoded image bytes. Pure function of the fixture.
+
+    Requires Pillow (imported here, not at module scope — see the note at the top).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
     font = ImageFont.load_default(size=fixture.font_size)
     line_height = int(fixture.font_size * 1.55)
     pad = 24
