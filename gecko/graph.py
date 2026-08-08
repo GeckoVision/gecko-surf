@@ -566,6 +566,30 @@ class SurfaceGraph:
     def content_hash(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
 
+    def feeds_edges(self, *, high_only: bool = True) -> list[Edge]:
+        """Every ``feeds`` edge, plannable-only by default — the collection-level twin of
+        :meth:`feeds_into`.
+
+        This exists because its absence cost us twice. ``feeds_into`` applies the
+        genericity demotion but answers for ONE destination, so anything wanting every
+        chainable hop iterated ``self.edges`` and re-implemented edge selection *without*
+        the trust dimension: ``workflows.derive_candidates`` surfaced 34 of 36 Birdeye
+        candidates that rest only on demoted edges, and the surface report published
+        "948 chainable hop(s)" where 34 are plannable.
+
+        The default is the SAFE one on purpose. ``Edge.confidence`` is a field a caller
+        may consult rather than a state that constrains what a caller can do, so the
+        not-plannable case has no representation of its own and falls into the type's
+        zero value — an ordinary edge in an ordinary list. When the unsafe answer is the
+        one you get for free, it is the one that ships. ``high_only=False`` is available
+        and must be asked for by name.
+        """
+        return [
+            e
+            for e in self.edges
+            if e.kind == "feeds" and (not high_only or e.confidence == "high")
+        ]
+
     def feeds_into(self, param_node_id: str, *, high_only: bool = True) -> list[Edge]:
         """The INFERRED ``feeds`` edges whose destination is this param node.
         ``high_only`` excludes genericity-demoted (low) edges from planning (§10)."""

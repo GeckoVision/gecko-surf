@@ -1092,6 +1092,21 @@ def _cmd_export_arazzo(argv: list[str]) -> int:
     return 0 if is_executable(doc) else 3
 
 
+def _print_withheld(withheld: list[Any]) -> None:
+    """Name the state-changing targets we refused to derive. Excluded is not hidden — a
+    provider should see which of their write operations sit one hop from a context-free
+    call, which is the interesting half, and why we will not choose one for them."""
+    if not withheld:
+        return
+    print(
+        f"\n  withheld {len(withheld)} state-changing target(s) — a derived workflow "
+        "must not choose a side effect on your behalf:"
+    )
+    for w in withheld:
+        print(f"    {w.method.upper():6} {w.target}  (reachable from {w.producer})")
+    print("    Name one explicitly with `gecko export-arazzo --op <id>` to accept it.")
+
+
 def _cmd_workflows(argv: list[str]) -> int:
     """`gecko workflows <spec>` — the workflows an agent will want, derived and ranked.
 
@@ -1108,7 +1123,12 @@ def _cmd_workflows(argv: list[str]) -> int:
     from .hints import load_confirmed
     from .safechain import compose_safe_chain
     from .surface import Surface
-    from .workflows import derive_candidates, describe, render_index
+    from .workflows import (
+        derive_candidates,
+        derive_write_targets,
+        describe,
+        render_index,
+    )
 
     p = argparse.ArgumentParser(
         prog="gecko workflows",
@@ -1142,14 +1162,16 @@ def _cmd_workflows(argv: list[str]) -> int:
         declared_hints={**load_confirmed(sid), **_parse_kv(args.confirm)} or None,
     )
     candidates = derive_candidates(surface.graph, limit=args.limit)
+    withheld = derive_write_targets(surface.graph)
     if not candidates:
         # A surface with no chainable hop is a real answer, not an error: every call
         # stands alone and an agent needs no plan. Saying so beats writing zero files
         # and letting the operator guess whether it ran.
         print(
             f"{sid}: no derivable workflow — no operation here produces a value another "
-            "one accepts, so every call stands alone.",
+            "one accepts that the planner will chain on.",
         )
+        _print_withheld(withheld)
         return 0
 
     out_dir = Path(args.out)
@@ -1173,6 +1195,7 @@ def _cmd_workflows(argv: list[str]) -> int:
             refused += 1
         print(f"  {describe(candidate)}")
 
+    _print_withheld(withheld)
     index = out_dir / f"{sid}.workflows.md"
     index.write_text(render_index(sid, candidates, written), encoding="utf-8")
     print(f"\n  → wrote {len(written)} Arazzo document(s) to {out_dir.resolve()}")

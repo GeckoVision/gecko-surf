@@ -34,6 +34,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from .enforce import is_write_method
 from .graph import SurfaceGraph
 from .surfacereport import _short
 
@@ -44,6 +45,36 @@ _HUB_BONUS = 2.0
 #: Subtracted when the target ALSO needs an input nothing here produces. Enough to rank
 #: a self-contained workflow first, never enough to hide one — the gap is the finding.
 _FLOOR_PENALTY = 3.0
+
+
+@dataclass(frozen=True)
+class WriteTarget:
+    """A state-changing target an agent could chain toward, withheld on purpose.
+
+    Reported, never ranked. A provider should see which of their write operations sit one
+    hop from a context-free call — that is the interesting half — alongside the reason we
+    will not derive one for them.
+    """
+
+    producer: str
+    target: str
+    method: str
+    join: str
+
+
+def method_of(graph: SurfaceGraph, operation_id: str) -> str:
+    """The HTTP verb for an operation, read off its node. ``""`` when unknown.
+
+    Unknown must NOT default to ``get``: an operation whose verb we cannot establish is
+    exactly the one not to assume is safe. Callers pass the result to
+    ``enforce.is_write_method``, which treats an empty string as non-write — so the
+    caller, not this function, owns that decision explicitly.
+    """
+    for node in graph.nodes:
+        if node.kind == "operation" and node.name == operation_id:
+            method, _, _ = node.detail.partition(" ")
+            return method
+    return ""
 
 
 @dataclass(frozen=True)
@@ -96,9 +127,11 @@ def derive_candidates(graph: SurfaceGraph, limit: int = 7) -> list[Candidate]:
     entries = {name for name, need in required.items() if not need}
 
     best: dict[str, Candidate] = {}
-    for edge in graph.edges:
-        if edge.kind != "feeds":
-            continue
+    writes: dict[str, WriteTarget] = {}
+    # feeds_edges() applies the genericity demotion. Iterating graph.edges surfaced
+    # 34 of 36 Birdeye candidates resting only on edges the planner refuses — the
+    # command marketed exactly the joins that cannot be planned.
+    for edge in graph.feeds_edges():
         producer, target = _short(edge.src), _short(edge.dst)
         if producer == target or producer not in entries or target in entries:
             continue
@@ -114,6 +147,17 @@ def derive_candidates(graph: SurfaceGraph, limit: int = 7) -> list[Candidate]:
             + (_HUB_BONUS if is_hub else 0.0)
             - (_FLOOR_PENALTY if missing else 0.0)
         )
+        method = method_of(graph, target)
+        if is_write_method(method) or not method:
+            # STRUCTURAL exclusion, not a penalty. A penalty is a scalar another term can
+            # outweigh — with the existing floor penalty, Pegana's two POSTs land tied
+            # for first with delete_webhook. And an UNKNOWN verb is excluded too: the op
+            # whose method we could not establish is precisely the one not to assume is
+            # safe. Recorded, so the provider sees what was withheld and why.
+            writes.setdefault(
+                target, WriteTarget(producer, target, method or "?", join)
+            )
+            continue
         candidate = Candidate(
             producer=producer,
             target=target,
@@ -134,7 +178,27 @@ def derive_candidates(graph: SurfaceGraph, limit: int = 7) -> list[Candidate]:
             best[target] = candidate
 
     ranked = sorted(best.values(), key=lambda c: (-c.score, c.target, c.producer))
+    _LAST_WRITES[id(graph)] = sorted(
+        writes.values(), key=lambda w: (w.target, w.producer)
+    )
     return ranked[:limit]
+
+
+#: Write targets found on the most recent derivation per graph. Kept beside the ranking
+#: rather than returned, so the SAFE set stays the plain return value and a caller cannot
+#: accidentally iterate both as one list.
+_LAST_WRITES: dict[int, list[WriteTarget]] = {}
+
+
+def derive_write_targets(graph: SurfaceGraph) -> list[WriteTarget]:
+    """State-changing targets one hop from a context-free call — reported, never ranked.
+
+    These become executable only through the human-named ``export-arazzo --op`` path,
+    where a person accepted the side effect. ``gecko workflows`` removes exactly that
+    step, which is why it must not choose one.
+    """
+    derive_candidates(graph, limit=10**9)
+    return list(_LAST_WRITES.get(id(graph), []))
 
 
 def describe(candidate: Candidate) -> str:

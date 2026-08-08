@@ -143,6 +143,9 @@ def test_empty_graph_says_so_rather_than_rendering_a_confident_blank() -> None:
         nodes: list = []
         edges: list = []
 
+        def feeds_edges(self, *, high_only: bool = True) -> list:
+            return []
+
         def required_inputs(self, _name: str) -> list:
             return []
 

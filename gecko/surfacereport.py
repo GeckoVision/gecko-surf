@@ -139,9 +139,10 @@ def build_report(graph: SurfaceGraph, surface_id: str = "") -> SurfaceReport:
 
     seen: set[tuple[str, str, str]] = set()
     chains: list[ChainEntry] = []
-    for edge in graph.edges:
-        if edge.kind != "feeds":
-            continue
+    # feeds_edges(), not graph.edges: the raw collection includes genericity-demoted
+    # edges the planner refuses. Counting those published "948 chainable hop(s)"
+    # for a surface with 34 plannable ones.
+    for edge in graph.feeds_edges():
         producer, consumer = _short(edge.src), _short(edge.dst)
         name = edge.dst.rsplit(":", 1)[-1]
         key = (producer, consumer, name)
