@@ -137,11 +137,26 @@ imagescan = [
     "Pillow>=10.0",
 ]
 # Skill Guard L3 OCR (gecko.imagescan.ocr_text): read a payload rendered as visible
-# PIXELS (the flagship GhostCommit attack) via pytesseract + the tesseract binary.
-# OPTIONAL and lazy-imported — absent => ocr_text returns "" and only L1/L2 run. The
-# tesseract SYSTEM binary is a separate install (apt/brew); the extra pulls only the
-# Python bindings. No new BASE dependency.
+# PIXELS (the flagship GhostCommit attack). OPTIONAL and lazy-imported — absent =>
+# ocr_text returns "" and only L1/L2 run. No new BASE dependency.
+#
+# tesserocr's manylinux/macOS wheels BUNDLE libtesseract + leptonica, and this package
+# vendors eng.traineddata (gecko/tessdata/, Apache-2.0, hash-pinned in PROVENANCE.md).
+# So on Linux/macOS `pip install 'gecko-surf[ocr]'` is a COMPLETE install: no apt-get,
+# no brew, no system binary. That matters because the previous pytesseract-only extra
+# installed cleanly and then read nothing until the operator separately installed
+# tesseract — an extra that looks present while the pixel channel stays unreadable.
+#
+# PLATFORM RESIDUALS, stated plainly rather than papered over:
+#   * Windows      — tesserocr publishes no PyPI wheel. Falls back to pytesseract +
+#                    a system tesseract, exactly as before. Unchanged, not fixed.
+#   * macOS 3.13   — no tesserocr wheel yet (macOS tops out at tesserocr 2.7.1);
+#                    resolves to the pytesseract fallback.
+#   * musl/Alpine, glibc < 2.27 — no manylinux wheel; falls back likewise.
+# pytesseract is therefore KEPT as the fallback backend, not replaced. Both backends
+# are proven to produce identical detection basis on every committed image fixture.
 ocr = [
+    "tesserocr>=2.6; sys_platform != 'win32'",
     "pytesseract>=0.3.10",
     "Pillow>=10.0",
 ]
@@ -160,6 +175,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["gecko"]
+# The vendored OCR language data is not a .py file, so it must be named explicitly or
+# the wheel ships a [ocr] extra that installs an engine with nothing to recognise with.
+# gecko/tessdata/PROVENANCE.md records its upstream, licence and SHA-256; the hash is
+# asserted by tests/test_ocr_engine.py on every run.
+artifacts = ["gecko/tessdata/*.traineddata"]
 
 [dependency-groups]
 dev = [
@@ -185,5 +205,5 @@ python_version = "3.11"
 # PIL/pytesseract are the OPTIONAL Skill Guard image extras ([imagescan] / [ocr]),
 # lazy-imported inside gecko.imagescan; keep mypy clean whether or not they resolve.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*", "solders", "solders.*"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*", "tesserocr", "tesserocr.*", "solders", "solders.*"]
 ignore_missing_imports = true

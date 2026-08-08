@@ -5,7 +5,11 @@ hides a coding-agent directive where a secret scanner won't look. **L2** extract
 the *text-carrying* channels of an image with **stdlib only** (PNG tEXt/iTXt/zTXt,
 JPEG COM/APPn, trailing bytes) — and, when the ``[imagescan]`` Pillow extra is
 present, the deep EXIF/XMP/IPTC/ICC metadata. **L3** OCRs the *rendered pixels*
-when the ``[ocr]`` extra (pytesseract + the tesseract binary) is present. Every
+when the ``[ocr]`` extra is present. On Linux/macOS that extra is SELF-CONTAINED:
+``tesserocr``'s wheels bundle libtesseract/leptonica and this package vendors
+``eng.traineddata`` (``tessdata/PROVENANCE.md``), so no system tesseract is
+required; a ``pytesseract`` + system-binary fallback covers Windows and the
+platforms without a wheel. Both backends produce identical detection basis. Every
 recovered channel runs through Gecko's EXISTING injection engine
 (``sanitize.scan_text`` / ``sanitize.scan_convention_text`` +
 ``sanitize.looks_like_secret_value``). Any hit quarantines through the same
@@ -71,6 +75,7 @@ import struct
 import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from gecko import encdetect, sanitize
@@ -330,25 +335,59 @@ def _fmt_size(n: int) -> str:
 # --- L3: OCR the rendered pixels (opt-in [ocr] extra) --------------------------------
 
 
-def _read_rendered_text(data: bytes) -> str | None:
-    """THE OCR CAPABILITY SEAM. ``str`` == the channel was read (possibly to no text);
-    ``None`` == the channel could NOT be read at all.
+def vendored_tessdata_dir() -> Path:
+    """Directory holding the vendored ``eng.traineddata`` (see ``tessdata/PROVENANCE.md``).
 
-    That distinction is the whole of R9. The old contract collapsed both onto ``""``, so
-    "I OCR'd the pixels and they were clean" and "I have no OCR installed, I never looked
-    at the pixels" produced an identical, and identically-rendered, ``clean`` verdict —
-    on the one channel the GhostCommit attack actually uses.
+    Vendored because the ``tesserocr`` wheels bundle ``libtesseract`` and ``leptonica``
+    but NO language data — so without this, ``pip install 'gecko-surf[ocr]'`` yields an
+    engine that loads and recognises nothing, and the pixel channel stays unreadable
+    while looking installed.
+    """
+    return Path(__file__).parent / "tessdata"
 
-    ``None`` covers three genuinely-unread cases, all fail-closed:
 
-    * ``pytesseract`` / ``PIL`` not installed (no ``[ocr]`` extra) — the base install;
-    * the tesseract SYSTEM binary absent (``TesseractNotFoundError``);
-    * the decoder REFUSING these particular bytes — a crafted image, a
-      ``DecompressionBombError``, a tesseract crash. Per-image failure is a coverage gap
-      too: a binary being installed is not proof this image's pixels were read. This
-      mirrors the ``_ANOMALY_SCAN_ERROR`` treatment on the Pillow path.
+def _read_via_tesserocr(data: bytes) -> str | None:
+    """Read rendered text with the SELF-CONTAINED backend: ``tesserocr`` + vendored data.
 
-    Never raises: an untrusted-input parser that crashes comprehension is not an option.
+    Preferred because it needs no system install at all — the wheel carries
+    ``libtesseract``/``leptonica``, and the language data ships in this package. That is
+    what makes ``pip install 'gecko-surf[ocr]'`` a complete install on Linux/macOS
+    rather than a Python binding pointing at a binary the operator was expected to
+    apt-get separately.
+
+    The tessdata path is passed EXPLICITLY and never inherited from the environment.
+    Measured: ``tesserocr`` with no ``TESSDATA_PREFIX`` set does not fail — it HANGS
+    (>10 min at 100% CPU). A security scan that hangs is a scan that gets removed from
+    CI, so the ambient-configuration path is never taken.
+    """
+    try:
+        import tesserocr
+        from PIL import Image
+    except ImportError:
+        return None
+
+    tessdata = vendored_tessdata_dir()
+    if not (tessdata / "eng.traineddata").is_file():
+        # Refuse rather than fall through to an ambient lookup that may hang.
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            with tesserocr.PyTessBaseAPI(path=str(tessdata), lang="eng") as api:
+                api.SetImage(img)
+                recovered = api.GetUTF8Text()
+    except Exception:
+        return None
+    return recovered or ""
+
+
+def _read_via_pytesseract(data: bytes) -> str | None:
+    """Fallback backend: ``pytesseract`` driving a tesseract binary on PATH.
+
+    Retained for the platforms the self-contained path does not reach — notably Windows,
+    where ``tesserocr`` publishes no PyPI wheel — and for operators who already run a
+    managed system tesseract. Proven basis-identical to the tesserocr path across all
+    committed image fixtures, so which backend served a read is a packaging detail, not
+    a security-relevant one.
     """
     try:
         import pytesseract
@@ -359,14 +398,61 @@ def _read_rendered_text(data: bytes) -> str | None:
         with Image.open(io.BytesIO(data)) as img:
             recovered = pytesseract.image_to_string(img)
     except Exception:
-        # Broad by contract. OSError covers TesseractNotFoundError and PIL's
-        # UnidentifiedImageError / truncated-image OSError, ValueError covers bad modes,
-        # TesseractError a runtime failure — but Pillow also raises DecompressionBombError
-        # (a bare Exception subclass) on a crafted huge-dimension image, and that MUST NOT
-        # crash comprehension. Degrade to "unread", never to a silent "read it, saw
-        # nothing".
         return None
     return recovered or ""
+
+
+def ocr_backend() -> str | None:
+    """Name of the backend that would serve a read now, or ``None`` if there is none.
+
+    Diagnostics only — it must never influence a verdict. Returns a NAME, never a path
+    or binary location (control plane: the verdict surface carries no filesystem
+    detail).
+    """
+    if _read_via_tesserocr(_BACKEND_PROBE_PNG) is not None:
+        return "tesserocr"
+    if _read_via_pytesseract(_BACKEND_PROBE_PNG) is not None:
+        return "pytesseract"
+    return None
+
+
+#: A 1x1 white PNG. Used only to ask "can this backend decode anything at all" without
+#: touching a fixture or an untrusted input.
+_BACKEND_PROBE_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
+    b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe"
+    b"\x02\xfe\xdc\xccY\xe7\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def _read_rendered_text(data: bytes) -> str | None:
+    """THE OCR CAPABILITY SEAM. ``str`` == the channel was read (possibly to no text);
+    ``None`` == the channel could NOT be read at all.
+
+    That distinction is the whole of R9. The old contract collapsed both onto ``""``, so
+    "I OCR'd the pixels and they were clean" and "I have no OCR installed, I never looked
+    at the pixels" produced an identical, and identically-rendered, ``clean`` verdict —
+    on the one channel the GhostCommit attack actually uses.
+
+    Tries the self-contained backend first, then the system-binary one. Order matters
+    only for packaging: the two are proven to produce IDENTICAL detection basis on every
+    committed fixture, so a fallback never silently changes what is detected.
+
+    ``None`` covers the genuinely-unread cases, all fail-closed:
+
+    * neither backend installed (no ``[ocr]`` extra) — the base install;
+    * ``tesserocr`` present but the vendored language data missing;
+    * the tesseract SYSTEM binary absent on the fallback path;
+    * the decoder REFUSING these particular bytes — a crafted image, a
+      ``DecompressionBombError``, a tesseract crash. Per-image failure is a coverage gap
+      too: a backend being installed is not proof this image's pixels were read.
+
+    Never raises: an untrusted-input parser that crashes comprehension is not an option.
+    """
+    recovered = _read_via_tesserocr(data)
+    if recovered is not None:
+        return recovered
+    return _read_via_pytesseract(data)
 
 
 def _deep_metadata_available() -> bool:
