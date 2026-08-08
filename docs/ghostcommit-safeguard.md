@@ -120,6 +120,12 @@ Nothing is silently sanitized and passed on.
   fallback or opt-in strictness for the pipeline that cares, not a quieter default.
 - **Detection is pattern-based**, so a novel phrasing can pass. Widening the patterns
   raises false positives, which is its own harm — a scanner people mute protects nobody.
+- **The attack numbers are measured on our own attack set**, which is also the set the
+  rules were written against. 68/68 says a specific regression is closed; it does not
+  estimate what fraction of attacks in the wild are caught, and no number here should be
+  read as recall. The false-positive number is the sounder half — 24,300 variants of
+  prose nobody wrote to be caught. A held-out corpus we did not author is the missing
+  measurement, and we know it.
 - **The pixel channel has different fidelity from the spec channel**, and a rule measured
   on one does not automatically hold on the other. The renderer moves line breaks, and the
   attacker picks the image width — so on this channel the attacker picks where the breaks
