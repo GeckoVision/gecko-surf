@@ -43,13 +43,43 @@ must actually satisfy step N+1's input. The chain-FCC harness
 (`gecko/chain_eval.py`) executes plans in recorded mode and scores every step
 well-formed **and** every threaded value type-correct.
 
-| Chain (TxLINE, real paywalled API) | Result | Measured |
-|---|---|---|
-| `fixtures/snapshot → odds/updates/{fixtureId}` via `FixtureId` | **first-plan-correct** | 2026-07-19 |
-| `scores → stat-validation` via `seq` | **first-plan-correct** | 2026-07-19 |
-| negative control: type-mismatched chain | **correctly fails** (string→integer id caught) | 2026-07-19 |
+**Read the join class before the result.** Not all chains are the same problem, and
+these rows are all the easiest one.
+
+| Chain | Join class | Result | Measured |
+|---|---|---|---|
+| TxLINE `fixtures/snapshot → odds/updates/{fixtureId}` via `FixtureId` | **intra-API, designed** | first-plan-correct | 2026-07-19 |
+| TxLINE `scores → stat-validation` via `seq` | **intra-API, designed** | first-plan-correct | 2026-07-19 |
+| negative control: type-mismatched chain | — | **correctly fails** (string→integer id caught) | 2026-07-19 |
+| *cross-API, semantic* | **not measured** | — | — |
 
 The negative control matters: a metric that can't fail isn't a metric.
+
+### What "intra-API, designed" means, and why it is the easy case
+
+Both positive rows join on an id **the same provider designed to be shared across their
+own endpoints**. TxLINE's architect already did the join; the graph reads it off. That is
+a real capability and these numbers are honest *for that class* — but it is not the case
+the multi-API thesis is about, and a reader could easily take the section header for a
+general claim. Three classes, three different problems:
+
+| class | what carries the join | measured? |
+|---|---|---|
+| **intra-API, designed** | the provider's own shared id — lexically obvious | yes, above |
+| **intra-API, colliding** | one name, several value domains (Birdeye: `address` names a token contract, a trader, a pair contract and an account) | precision only — 16 cross-domain joins found, **0 reach the plannable set** (`tests/test_joincheck.py`) |
+| **cross-API, semantic** | a **customer-confirmed** value domain; there is no shared designer, so no name to trust (§13.6) | **no chain-correctness number exists** |
+
+The gap in row three is deliberate to state rather than quietly leave. The engine already
+treats these differently — a cross-API join *requires* a human confirmation precisely
+because it is not lexically derivable — so measuring only the designed case measures where
+we are strongest.
+
+**Why the sequence has to be derived at all** (measured 2026-08-09, all four committed
+specs): provider descriptions almost never declare it. A regex for prerequisite language
+("obtained from", "call X first", "returned by the … endpoint") over every `description`
+and `summary` found **3 real hits in 1,335** — TxLINE 2 (one a false positive), Pegana 1,
+Birdeye 0 of 686, Petstore 0 of 14. If providers wrote the sequence down, Arazzo would be
+a formatting exercise. They do not.
 
 ```bash
 uv run pytest tests/test_chain_eval.py tests/test_planner_wiring.py -q

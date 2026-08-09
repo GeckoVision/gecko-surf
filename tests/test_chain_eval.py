@@ -136,3 +136,46 @@ def test_kind_matches_type_matrix() -> None:
     assert not kind_matches_type("bool", "integer")
     assert not kind_matches_type("int", "boolean")
     assert not kind_matches_type("int", None)  # unknown type -> cannot confirm correct
+
+
+# --- R2: the harness RECORDS the route it took; it never refuses -----------------
+
+
+def test_collection_route_is_recorded_not_refused() -> None:
+    """`getApiFixturesSnapshot` returns a top-level array, so the join key is reached
+    through a collection — element 0 of N, chosen by sort order.
+
+    Until now nothing said so, and a caller could not tell "the id" from "the id of
+    whichever fixture sorted first". That is the recurring root cause: the
+    not-evaluated case (WHICH one?) falling into the type's zero value (a bare value
+    that looks singular).
+
+    It must RECORD, not refuse. chain_eval is a measurement harness; list→detail is the
+    most common honest REST chain, and refusing here would fail this very test and
+    retract a published benchmark row. Making a measurement refuse destroys the
+    measurement — the refusal belongs one layer up, where an executable artifact is
+    emitted and a policy decision is appropriate.
+    """
+    g, client = _graph_and_client(TXLINE)
+    p = plan(g, "getApiOddsUpdatesFixtureid", set())
+    assert p is not None
+    result = evaluate_chain(client, p)
+
+    assert result.first_plan_correct, "the published chain must stay green"
+    thread = result.threads[0]
+    assert thread.arity == "many", "the array crossing must be recorded"
+    assert thread.kind_ok, "recording arity must not change the verdict"
+    assert thread.source_pointer, "the route must be reported"
+    assert not any(seg.isdigit() for seg in thread.source_pointer.split("/")), (
+        "the recorded pointer stays index-free — an index would be an observation, "
+        "not a fact about the surface"
+    )
+
+
+def test_arity_is_unknown_when_the_field_was_never_found() -> None:
+    """A miss reports `unknown`, never `one`. 'I did not find it' and 'I found exactly
+    one' are different answers and must not share a representation."""
+    from gecko.chain_eval import _find_field
+
+    found, value, pointer, arity = _find_field({"a": 1}, "nope")
+    assert (found, value, pointer, arity) == (False, None, "", "unknown")

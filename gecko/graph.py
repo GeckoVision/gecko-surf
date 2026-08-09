@@ -47,6 +47,18 @@ Confidence = Literal["high", "low"]
 NodeKind = Literal["operation", "param", "field", "resource"]
 EdgeKind = Literal["consumes", "produces", "on", "feeds"]
 
+#: How many of a response value exist where it lives. STRUCTURAL, not a trust tier — it
+#: is deterministic from the schema and adding a member needs no anti-poisoning review,
+#: which is exactly why it does NOT belong in ``gecko.provenance`` beside the ladders
+#: (same reasoning as ``arazzo.RefusalKind``).
+#:
+#: ``unknown`` is a real member and the default. A field whose container we could not
+#: establish is not a scalar — it is unestablished, and defaulting it to ``one`` would be
+#: this repo's recurring root cause once more: the not-evaluated case falling into the
+#: type's zero value. Anything emitting a runtime expression must refuse on ``unknown``
+#: rather than assume.
+Arity = Literal["one", "many", "unknown"]
+
 _MAX_LEAF_DEPTH = 6  # bound the response-schema walk (ingest already resolved $refs)
 _ID_TYPES = ("number", "string")  # a flow key must be id-shaped; drops bool/enum links
 # generic-demotion floor: a produced/consumed name in > this many ops is demoted.
@@ -107,6 +119,14 @@ class Node:
     owner: str = ""  # operation_id for param+field+operation nodes; "" for resource
     detail: str = ""  # param: "{location}|{req|opt}"; field: parent object; op: path
     sig: str = ""  # §13.1 value-domain signature (param/field): type|fmt|pat8|enum8
+    #: RFC 6901 pointer to where this field lives in the 200 response body, in SCHEMA
+    #: SPACE — the container path with NO index. A numeric segment would encode "the
+    #: third element", which schema space has no notion of, and would put a data-plane
+    #: observation into a content-addressed structure. Position is introduced at render
+    #: time by whatever emits an expression, or refused. Empty when unestablished.
+    source_pointer: str = ""
+    #: Whether the container path passes through a collection. See :data:`Arity`.
+    arity: Arity = "unknown"
     # VAS-1: the verified-against-reality verdict once a CLAIMED op is replayed. Default
     # None (unverified op == unchanged); excluded from serialize() on purpose — the
     # content hash addresses the derived SHAPE, not a drift-dependent replay result.
@@ -342,15 +362,22 @@ def _sig_corroborates(a: str, b: str) -> bool:
     return bool(fa) and fa == fb and fa in _DISCRIMINATING_FMT
 
 
-def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
-    """(field_name, parent_object_name, id-shape-type, sig) leaves of the 200 response.
+def _response_leaves(
+    op: Operation,
+) -> list[tuple[str, str | None, str, str, str, Arity]]:
+    """(field_name, parent, id-shape-type, sig, source_pointer, arity) of the 200 response.
+
+    The pointer is the CONTAINER PATH the walk already traverses and used to discard —
+    schema-space, no index. ``arity`` is ``many`` when that path crosses an ``items``
+    boundary. Both are what let a later step bind where a value actually lives instead of
+    guessing the body root.
 
     ``id`` and ``number`` collapse to ``number``; cycle- and depth-guarded (ingest
     already resolved $refs, but self-referential schemas can still recurse)."""
     resp = (op.responses or {}).get("200") or {}
     content = (resp.get("content") or {}).get("application/json") or {}
     schema = content.get("schema") or {}
-    out: list[tuple[str, str | None, str, str]] = []
+    out: list[tuple[str, str | None, str, str, str, Arity]] = []
     # slice 2 (§13.5): the canonical example ingest lifted per response field — including
     # the OpenAPI ``examples`` map/list channel that ``_sig_of``'s inline fallback misses.
     # Feeding it into the value-domain signature makes a producer field's discriminating
@@ -359,14 +386,30 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
     resp_ex = {f.name: f.example for f in op.response_fields if f.example is not None}
 
     def walk(
-        node: object, parent: str | None, depth: int, seen: frozenset[int]
+        node: object,
+        parent: str | None,
+        depth: int,
+        seen: frozenset[int],
+        path: str = "",
+        plural: bool = False,
     ) -> None:
         if depth > _MAX_LEAF_DEPTH or not isinstance(node, dict) or id(node) in seen:
             return
         seen = seen | {id(node)}
         title = node.get("title")
+        if key_is_dangerous(title):
+            title = None
         for name, sub in (node.get("properties") or {}).items():
             if not isinstance(sub, dict):
+                continue
+            # A response property NAME is attacker-controlled, exactly like a request-body
+            # key (see _request_body_params, which has guarded this since slice 2). The
+            # response side is now the MORE exposed of the two: this name becomes a graph
+            # node, rides into serialize() and therefore the content hash, appears in the
+            # surface report a provider pastes into a ticket, and is emitted into an
+            # Arazzo document as a runtime-expression key. Drop the hostile key only —
+            # one poisoned property must not cost a provider their whole response shape.
+            if key_is_dangerous(name):
                 continue
             t = sub.get("type") or ("object" if sub.get("properties") else "?")
             if t in ("integer", "number", "string", "boolean"):
@@ -381,13 +424,20 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
                             description=str(sub.get("description") or ""),
                             example=resp_ex.get(name),
                         ),
+                        f"{path}/{name}",
+                        "many" if plural else "one",
                     )
                 )
-            walk(sub, name, depth + 1, seen)
-        walk(node.get("items") or {}, title or parent, depth + 1, seen)
+            walk(sub, name, depth + 1, seen, f"{path}/{name}", plural)
+        # `title` becomes a parent label on every leaf below it, and correlate.py reads
+        # that label as the entity for the bare-`id` join rule — so a hostile title is a
+        # hostile entity name. Guarded here rather than at each use site.
+        # Crossing `items` means every leaf below is one of many. The pointer does NOT
+        # gain an index here — schema space has no third element.
+        walk(node.get("items") or {}, title or parent, depth + 1, seen, path, True)
         for k in ("oneOf", "anyOf", "allOf"):
             for sub in node.get(k, []) or []:
-                walk(sub, parent, depth + 1, seen)
+                walk(sub, parent, depth + 1, seen, path, plural)
 
     walk(schema, None, 0, frozenset())
     return out
@@ -565,6 +615,30 @@ class SurfaceGraph:
 
     def content_hash(self) -> str:
         return hashlib.sha256(self.serialize()).hexdigest()
+
+    def feeds_edges(self, *, high_only: bool = True) -> list[Edge]:
+        """Every ``feeds`` edge, plannable-only by default — the collection-level twin of
+        :meth:`feeds_into`.
+
+        This exists because its absence cost us twice. ``feeds_into`` applies the
+        genericity demotion but answers for ONE destination, so anything wanting every
+        chainable hop iterated ``self.edges`` and re-implemented edge selection *without*
+        the trust dimension: ``workflows.derive_candidates`` surfaced 34 of 36 Birdeye
+        candidates that rest only on demoted edges, and the surface report published
+        "948 chainable hop(s)" where 34 are plannable.
+
+        The default is the SAFE one on purpose. ``Edge.confidence`` is a field a caller
+        may consult rather than a state that constrains what a caller can do, so the
+        not-plannable case has no representation of its own and falls into the type's
+        zero value — an ordinary edge in an ordinary list. When the unsafe answer is the
+        one you get for free, it is the one that ships. ``high_only=False`` is available
+        and must be asked for by name.
+        """
+        return [
+            e
+            for e in self.edges
+            if e.kind == "feeds" and (not high_only or e.confidence == "high")
+        ]
 
     def feeds_into(self, param_node_id: str, *, high_only: bool = True) -> list[Edge]:
         """The INFERRED ``feeds`` edges whose destination is this param node.
@@ -811,9 +885,20 @@ def build_graph(
             consumed_by[_norm(p.name)].add(oid)
 
         seen_here: set[str] = set()
-        for fname, parent, ftype, fsig in _response_leaves(op):
+        for fname, parent, ftype, fsig, fptr, farity in _response_leaves(op):
             fid = f"{ns}{_field_id(_op_id(op), fname, parent)}"
-            add_node(Node("field", fid, fname, oid, parent or "", fsig))
+            add_node(
+                Node(
+                    "field",
+                    fid,
+                    fname,
+                    oid,
+                    parent or "",
+                    fsig,
+                    source_pointer=fptr,
+                    arity=farity,
+                )
+            )
             edges.append(Edge("produces", op_node_id, fid, "EXTRACTED"))
             n = _norm(fname)
             produced_by[n].add(oid)

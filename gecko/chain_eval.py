@@ -28,7 +28,7 @@ from typing import Any
 from .caller import CallError
 from .client import AgentApiClient
 from .fcc_eval import ValueKind, value_kind
-from .graph import Plan
+from .graph import Arity, Plan
 from .ingest import Operation
 from .tools import tool_name
 
@@ -65,6 +65,12 @@ class ThreadOutcome:
     value_kind: ValueKind  # kind of the threaded value ("none" when not found)
     param_type: str | None  # the consuming param's declared JSON-Schema type
     kind_ok: bool  # value_kind matches the consuming param type
+    #: Where the value was found in the producer's response, schema-space and index-free.
+    source_pointer: str = ""
+    #: Whether the route crossed a collection. ``many`` means "element 0 of N was taken
+    #: and nobody said which" — reported here so a caller can act on it, since this
+    #: harness deliberately does not.
+    arity: Arity = "unknown"
 
 
 @dataclass(frozen=True)
@@ -88,22 +94,44 @@ class ChainFccResult:
         return all(s.well_formed for s in self.steps)
 
 
-def _find_field(data: Any, name: str) -> tuple[bool, Any]:
-    """DFS the synthesized response for the first key == ``name``; deterministic
-    because ``example_from_schema`` is deterministic. Returns (found, value)."""
+def _find_field(
+    data: Any, name: str, _path: str = "", _plural: bool = False
+) -> tuple[bool, Any, str, Arity]:
+    """DFS the synthesized response for the first key == ``name``, RECORDING the route.
+
+    Returns ``(found, value, pointer, arity)``. Deterministic, because
+    ``example_from_schema`` is.
+
+    The route is the point. This function descends into lists and returns the first
+    match, which for a collection means element 0 — and until now it said nothing about
+    having done so, so a caller could not distinguish "the id" from "the id of whichever
+    element happened to sort first". That is this repo's recurring root cause: the
+    not-evaluated case (which one?) falling into the type's zero value (a bare value that
+    looks singular).
+
+    It does NOT refuse. ``chain_eval`` is a MEASUREMENT HARNESS, not a gate — list→detail
+    is the most common honest REST chain, and `getApiFixturesSnapshot` returns a
+    top-level array, so refusing here would fail the flagship TxLINE chain and retract a
+    published benchmark row. Making a measurement refuse destroys the measurement. The
+    refusal belongs one layer up, in whatever emits an executable artifact, where a
+    policy decision belongs.
+    """
     if isinstance(data, Mapping):
         if name in data:
-            return True, data[name]
-        for v in data.values():
-            found, val = _find_field(v, name)
+            return True, data[name], f"{_path}/{name}", "many" if _plural else "one"
+        for key, v in data.items():
+            found, val, ptr, ar = _find_field(v, name, f"{_path}/{key}", _plural)
             if found:
-                return found, val
+                return found, val, ptr, ar
     elif isinstance(data, (list, tuple)):
         for item in data:
-            found, val = _find_field(item, name)
+            # Crossing a collection: everything below is one of many. The pointer stays
+            # index-free — schema space has no third element, and an index here would be
+            # an observation rather than a fact about the surface.
+            found, val, ptr, ar = _find_field(item, name, _path, True)
             if found:
-                return found, val
-    return False, None
+                return found, val, ptr, ar
+    return False, None, "", "unknown"
 
 
 def _param_type(op: Operation, name: str) -> str | None:
@@ -226,7 +254,7 @@ def evaluate_cross_chain(
             th = threadings.get(supplied)
             if th is None or th.source_op != opid:
                 continue
-            found, value = _find_field(result.get("data"), th.source_field)
+            found, value, ptr, arity = _find_field(result.get("data"), th.source_field)
             context[supplied] = value
             vk = value_kind(value)
             thread_outcomes.append(
@@ -238,6 +266,8 @@ def evaluate_cross_chain(
                     value_kind=vk,
                     param_type=th.consumer_type,
                     kind_ok=found and kind_matches_type(vk, th.consumer_type),
+                    source_pointer=ptr,
+                    arity=arity,
                 )
             )
 
