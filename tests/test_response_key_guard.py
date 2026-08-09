@@ -65,7 +65,9 @@ def test_instruction_shaped_response_key_never_becomes_a_node() -> None:
     the request-body side already does — one hostile property must not cost a provider
     their entire response shape.
     """
-    names = _field_names(_spec({_POISON_KEY: {"type": "string"}, "id": {"type": "string"}}))
+    names = _field_names(
+        _spec({_POISON_KEY: {"type": "string"}, "id": {"type": "string"}})
+    )
     assert _POISON_KEY not in names
     assert "id" in names, "a clean sibling must survive the drop"
 
@@ -74,7 +76,9 @@ def test_absurdly_long_response_key_never_becomes_a_node() -> None:
     """The other half of `key_is_dangerous`: an over-long key is a denial-of-legibility
     payload in a report a human reads."""
     long_key = "a" * (MAX_KEY_LEN + 1)
-    names = _field_names(_spec({long_key: {"type": "string"}, "id": {"type": "string"}}))
+    names = _field_names(
+        _spec({long_key: {"type": "string"}, "id": {"type": "string"}})
+    )
     assert long_key not in names
     assert "id" in names
 

@@ -80,9 +80,7 @@ def test_nested_wrapper_survives_to_the_pointer() -> None:
     resolves to nothing."""
     graph = Surface.of(AgentApiClient(str(BIRDEYE), surface_id="birdeye")).graph
     nested = [
-        n
-        for n in graph.nodes
-        if n.kind == "field" and n.source_pointer.count("/") > 1
+        n for n in graph.nodes if n.kind == "field" and n.source_pointer.count("/") > 1
     ]
     assert nested, "birdeye has fields below the body root; the pointer must show it"
 
