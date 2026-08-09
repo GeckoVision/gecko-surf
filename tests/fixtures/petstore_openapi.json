@@ -1,154 +1,171 @@
 {
-  "openapi": "3.0.0",
-  "info": {
-    "title": "Swagger Petstore",
-    "version": "1.0.0",
-    "description": "The canonical OpenAPI example (learn.openapis.org/examples/v3.0/petstore-expanded), trimmed to the shapes this repo needs: a LIST endpoint returning an array and a DETAIL/CREATE endpoint returning a single object. Both arities in one small, universally-recognised surface."
-  },
-  "servers": [{ "url": "https://petstore.swagger.io/v2" }],
-  "paths": {
-    "/pets": {
-      "get": {
-        "operationId": "findPets",
-        "summary": "List pets, optionally filtered by species",
-        "parameters": [
-          {
-            "name": "species",
-            "in": "query",
-            "required": false,
-            "description": "Species of the pet, e.g. dog or cat.",
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": { "type": "integer", "format": "int32" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "pet response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": { "$ref": "#/components/schemas/Pet" }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "operationId": "addPet",
-        "summary": "Create a pet and return it",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/NewPet" }
-            }
-          }
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Swagger Petstore",
+        "version": "1.0.0",
+        "description": "The canonical OpenAPI example (learn.openapis.org/examples/v3.0/petstore-expanded), trimmed to the shapes this repo needs: a LIST endpoint returning an array and a DETAIL/CREATE endpoint returning a single object. Both arities in one small, universally-recognised surface.",
+    },
+    "servers": [{"url": "https://petstore.swagger.io/v2"}],
+    "paths": {
+        "/pets": {
+            "get": {
+                "operationId": "findPets",
+                "summary": "List pets, optionally filtered by species",
+                "parameters": [
+                    {
+                        "name": "species",
+                        "in": "query",
+                        "required": false,
+                        "description": "Species of the pet, e.g. dog or cat.",
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {"type": "integer", "format": "int32"},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "pet response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Pet"},
+                                }
+                            }
+                        },
+                    }
+                },
+            },
+            "post": {
+                "operationId": "addPet",
+                "summary": "Create a pet and return it",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/NewPet"}
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "the created pet",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Pet"}
+                            }
+                        },
+                    }
+                },
+            },
         },
-        "responses": {
-          "200": {
-            "description": "the created pet",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Pet" }
-              }
+        "/pets/{petId}": {
+            "get": {
+                "operationId": "findPetById",
+                "summary": "Get the details of a single pet by its id",
+                "parameters": [
+                    {
+                        "name": "petId",
+                        "in": "path",
+                        "required": true,
+                        "description": "The id of the pet to fetch.",
+                        "schema": {"type": "integer", "format": "int64"},
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "pet response",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Pet"}
+                            }
+                        },
+                    }
+                },
             }
-          }
-        }
-      }
+        },
+        "/adoptions": {
+            "get": {
+                "operationId": "listAdoptions",
+                "summary": "Current adoptions",
+                "responses": {
+                    "200": {
+                        "description": "adoptions",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {"$ref": "#/components/schemas/Adoption"},
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        },
+        "/pets/featured": {
+            "get": {
+                "operationId": "getFeaturedPet",
+                "summary": "The pet currently featured on the storefront",
+                "description": "Returns exactly one pet. Callable with no prior context, so it is an entry point AND a singular producer \u2014 the shape a chain needs when the join key must not be element 0 of a list.",
+                "responses": {
+                    "200": {
+                        "description": "the featured pet",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Pet"}
+                            }
+                        },
+                    }
+                },
+            }
+        },
     },
-    "/pets/{petId}": {
-      "get": {
-        "operationId": "findPetById",
-        "summary": "Get the details of a single pet by its id",
-        "parameters": [
-          {
-            "name": "petId",
-            "in": "path",
-            "required": true,
-            "description": "The id of the pet to fetch.",
-            "schema": { "type": "integer", "format": "int64" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "pet response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Pet" }
-              }
-            }
-          }
+    "components": {
+        "schemas": {
+            "Pet": {
+                "type": "object",
+                "required": ["petId", "name"],
+                "properties": {
+                    "petId": {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "The id of the pet.",
+                    },
+                    "name": {"type": "string"},
+                    "species": {
+                        "type": "string",
+                        "description": "Species of the pet, e.g. dog or cat.",
+                    },
+                    "tag": {"type": "string"},
+                },
+            },
+            "NewPet": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "species": {"type": "string"},
+                    "tag": {"type": "string"},
+                },
+            },
+            "Adoption": {
+                "type": "object",
+                "required": ["adoptionId", "petId"],
+                "properties": {
+                    "adoptionId": {"type": "integer", "format": "int64"},
+                    "petId": {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "The id of the pet being adopted.",
+                    },
+                    "status": {"type": "string"},
+                },
+            },
         }
-      }
     },
-    "/adoptions": {
-      "get": {
-        "operationId": "listAdoptions",
-        "summary": "Current adoptions",
-        "responses": {
-          "200": {
-            "description": "adoptions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": { "$ref": "#/components/schemas/Adoption" }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "Pet": {
-        "type": "object",
-        "required": ["petId", "name"],
-        "properties": {
-          "petId": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The id of the pet."
-          },
-          "name": { "type": "string" },
-          "species": {
-            "type": "string",
-            "description": "Species of the pet, e.g. dog or cat."
-          },
-          "tag": { "type": "string" }
-        }
-      },
-      "NewPet": {
-        "type": "object",
-        "required": ["name"],
-        "properties": {
-          "name": { "type": "string" },
-          "species": { "type": "string" },
-          "tag": { "type": "string" }
-        }
-      },
-      "Adoption": {
-        "type": "object",
-        "required": ["adoptionId", "petId"],
-        "properties": {
-          "adoptionId": { "type": "integer", "format": "int64" },
-          "petId": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The id of the pet being adopted."
-          },
-          "status": { "type": "string" }
-        }
-      }
-    }
-  }
 }

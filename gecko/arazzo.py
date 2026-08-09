@@ -60,6 +60,13 @@ RefusalKind = Literal[
     "no-confident-plan",  # the planner returned None (e.g. the cross-API gate refused)
     "quarantined-hop",  # Skill Guard quarantined a hop on the chain
     "unresolved-parameter-location",  # Arazzo needs `in`; we could not recover it
+    # The join key lives inside a collection. Arazzo 1.0 has no `for-each` and no
+    # "which one" expression, so there is NO correct pointer to emit — `/0/` would not
+    # fix the ambiguity, it would PROMOTE it from the control plane (where it moves a
+    # score) into a published document a runtime acts on. Refusing is the honest
+    # emission, and it is why the destructive-verb question never had to be answered:
+    # the element-0 bindings are refused on arity before anyone rules on the verb.
+    "unresolved-output-arity",
 ]
 
 _REFUSAL_NOTICE = (
@@ -111,15 +118,17 @@ def to_arazzo(
     step_index = _step_ids(plan or withheld)
     locations = _locations(graphs)
     sigs = _signatures(graphs)
+    pointers = _pointers(graphs)
     src_names = _source_names(plan or withheld)
 
     steps: list[dict[str, Any]] = []
     caller_inputs: dict[str, str] = {}
     if plan is not None:
         for pstep in plan.steps:
-            step, unresolved, needed = _step(
+            step, unresolved, needed, unresolved_outputs = _step(
                 pstep,
                 plan,
+                pointers,
                 step_index,
                 src_names,
                 locations,
@@ -138,6 +147,26 @@ def to_arazzo(
                             "Arazzo requires `in` on an operation-bound parameter and the "
                             "location was not recoverable from the supplied graphs or the "
                             "path template. Guessing would silently misplace the input."
+                        ),
+                    }
+                )
+            for field_name, why in unresolved_outputs:
+                refusals.append(
+                    {
+                        "kind": "unresolved-output-arity",
+                        "surfaceId": pstep.surface,
+                        "operationId": pstep.operation_id,
+                        "field": field_name,
+                        "emittedAsStep": False,
+                        "reason": (
+                            "the value lives inside a collection and Arazzo 1.0 has no "
+                            "`for-each` and no which-one expression, so no correct "
+                            "pointer exists; emitting `/0/` would bind whichever "
+                            "element sorted first and call it verified"
+                            if why == "many"
+                            else "the field's location in the response body was never "
+                            "established; the previous behaviour guessed the body root, "
+                            "which produced a plausible wrong pointer"
                         ),
                     }
                 )
@@ -302,6 +331,28 @@ def _ordered(values: Iterable[str]) -> list[str]:
 
 
 # --- graph lookups (the honest source of `in` and of input types) ------------------
+def _pointers(
+    graphs: Iterable[SurfaceGraph],
+) -> dict[tuple[str, str, str], tuple[str, str]]:
+    """(surface_id, operation_id, lowercased field name) -> (source_pointer, arity).
+
+    Read off the graph's FIELD nodes, mirroring :func:`_locations` for params. The
+    producer side is symmetric with the consumer side on purpose: neither fact belongs on
+    ``ExplainEntry``, which is a per-plan projection that one of its two construction
+    sites cannot compute.
+    """
+    out: dict[tuple[str, str, str], tuple[str, str]] = {}
+    for graph in graphs:
+        for node in graph.nodes:
+            if node.kind != "field":
+                continue
+            out.setdefault(
+                (graph.surface_id, node.owner, node.name.lower()),
+                (node.source_pointer, node.arity),
+            )
+    return out
+
+
 def _locations(graphs: Iterable[SurfaceGraph]) -> dict[tuple[str, str, str], str]:
     """(surface_id, operation_id, lowercased param name) -> location, read off the graph's
     param nodes (``detail`` is ``"{location}|{req|opt}"``). One name may exist in two
@@ -346,12 +397,13 @@ def _signatures(graphs: Iterable[SurfaceGraph]) -> dict[tuple[str, str, str], st
 def _step(
     pstep: PlanStep,
     plan: Plan,
+    pointers: dict[tuple[str, str, str], tuple[str, str]],
     step_index: Mapping[tuple[str, str], str],
     src_names: Mapping[str, str],
     locations: Mapping[tuple[str, str, str], str],
     *,
     qualify: bool,
-) -> tuple[dict[str, Any], list[str], dict[str, str]]:
+) -> tuple[dict[str, Any], list[str], dict[str, str], list[tuple[str, str]]]:
     """One PlanStep -> one Arazzo Step Object.
 
     Returns ``(step, unresolved_parameter_names, caller_supplied_inputs)``. Every consumed
@@ -412,10 +464,10 @@ def _step(
             request_body["x-gecko-provenance"] = body_prov
         step["requestBody"] = request_body
 
-    outputs = _outputs(plan, pstep)
+    outputs, unresolved_outputs = _outputs(plan, pstep, pointers)
     if outputs:
         step["outputs"] = outputs
-    return step, unresolved, caller_inputs
+    return step, unresolved, caller_inputs, unresolved_outputs
 
 
 def _location_of(
@@ -495,23 +547,45 @@ def _provenance(
     return record
 
 
-def _outputs(plan: Plan, pstep: PlanStep) -> dict[str, str]:
+def _outputs(
+    plan: Plan, pstep: PlanStep, pointers: dict[tuple[str, str, str], tuple[str, str]]
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """The response fields LATER steps consume, as runtime expressions. Only fields the
     plan actually joins on are named — this is not a response schema dump, and it carries
     no value.
 
-    The JSON pointer assumes the field sits at the body root; ingest flattens nested
-    response properties, so a nested join key resolves to nothing and the step fails
-    LOUDLY at the runtime rather than silently binding the wrong field.
+    The pointer comes from the graph's field node, not from a guess at the body root.
+    Returns ``(outputs, unresolved)`` — ``unresolved`` names fields whose location or
+    arity could not be honestly expressed, so the caller refuses instead of emitting.
+
+    Two refusal cases, both deliberate:
+
+    * **no pointer** — the field's location was never established. The previous code
+      emitted ``#/<name>`` regardless, which produced a plausible wrong pointer.
+    * **arity == "many"** — the value lives inside a collection, and Arazzo 1.0 has no
+      ``for-each`` and no "which one" expression. There is no correct pointer to emit.
+      Emitting ``/0/`` would move the element-0 ambiguity out of the control plane and
+      into a document a runtime acts on, stamped "verified resolvable".
     """
     out: dict[str, str] = {}
+    unresolved: list[tuple[str, str]] = []
     for entry in plan.explain:
         if entry.source_op != pstep.operation_id:
             continue
         if entry.source_surface and entry.source_surface != pstep.surface:
             continue
-        out[_expr_key(entry.source_field)] = f"$response.body#/{entry.source_field}"
-    return dict(sorted(out.items()))
+        pointer, arity = pointers.get(
+            (pstep.surface, pstep.operation_id, entry.source_field.lower()),
+            ("", "unknown"),
+        )
+        if arity == "many":
+            unresolved.append((entry.source_field, "many"))
+            continue
+        if not pointer:
+            unresolved.append((entry.source_field, "unestablished"))
+            continue
+        out[_expr_key(entry.source_field)] = f"$response.body#{pointer}"
+    return dict(sorted(out.items())), unresolved
 
 
 # --- document scaffolding ----------------------------------------------------------
