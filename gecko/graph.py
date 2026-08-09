@@ -365,8 +365,19 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
             return
         seen = seen | {id(node)}
         title = node.get("title")
+        if key_is_dangerous(title):
+            title = None
         for name, sub in (node.get("properties") or {}).items():
             if not isinstance(sub, dict):
+                continue
+            # A response property NAME is attacker-controlled, exactly like a request-body
+            # key (see _request_body_params, which has guarded this since slice 2). The
+            # response side is now the MORE exposed of the two: this name becomes a graph
+            # node, rides into serialize() and therefore the content hash, appears in the
+            # surface report a provider pastes into a ticket, and is emitted into an
+            # Arazzo document as a runtime-expression key. Drop the hostile key only —
+            # one poisoned property must not cost a provider their whole response shape.
+            if key_is_dangerous(name):
                 continue
             t = sub.get("type") or ("object" if sub.get("properties") else "?")
             if t in ("integer", "number", "string", "boolean"):
@@ -384,6 +395,9 @@ def _response_leaves(op: Operation) -> list[tuple[str, str | None, str, str]]:
                     )
                 )
             walk(sub, name, depth + 1, seen)
+        # `title` becomes a parent label on every leaf below it, and correlate.py reads
+        # that label as the entity for the bare-`id` join rule — so a hostile title is a
+        # hostile entity name. Guarded here rather than at each use site.
         walk(node.get("items") or {}, title or parent, depth + 1, seen)
         for k in ("oneOf", "anyOf", "allOf"):
             for sub in node.get(k, []) or []:
