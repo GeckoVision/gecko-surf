@@ -59,6 +59,7 @@ def live_probe(
     from .access import keychain_session
     from .client import AgentApiClient
     from .credentials import CredentialError
+    from .verify import selfcheck_corpus
 
     if base_url is None:
         servers = spec.get("servers") or [{}]
@@ -80,7 +81,14 @@ def live_probe(
                 "no auth-gated GET with zero required params to probe — "
                 "pass --op <operationId>.",
             )
-        result = client.call(probe, {}, mode="live")
+        # The probe is the OTHER Gecko-initiated live call (verify-docs is the first): we
+        # pick the op and pass ``{}`` ourselves, so its status is evidence about our
+        # credential, not about how well an agent calls this API. It writes nothing today
+        # (this client carries no ``corpus_path``), and the scope makes that a GUARANTEE
+        # rather than an accident of the current constructor — wiring capture in here later
+        # cannot reopen the denominator hole through a second door.
+        with selfcheck_corpus(client):
+            result = client.call(probe, {}, mode="live")
     except CredentialError as exc:
         return ProbeResult(False, None, op, f"credential missing — {exc}")
 

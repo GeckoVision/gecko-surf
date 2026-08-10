@@ -532,6 +532,49 @@ def synthetic_sibling(path: str | Path) -> Path:
     return Path(path).with_name("synthetic.jsonl")
 
 
+#: The segregated file name for Gecko's OWN self-check outcomes. A module constant (not a
+#: literal at the call site) so the one place that names the tier is the one place that can
+#: change it.
+SELFCHECK_FILENAME = "selfcheck.jsonl"
+
+
+def selfcheck_sibling(path: str | Path) -> Path:
+    """The segregated file for outcomes of calls GECKO made about itself, co-located with
+    the corpus (``<dir>/selfcheck.jsonl``).
+
+    The third segregation axis, and the one the ``source`` axis structurally cannot
+    express. ``source`` answers *did the status come off the wire?* — and for a
+    ``verify-docs --live`` probe the honest answer is YES, so the row is genuinely
+    ``observed``. The question this file answers is a different one: *who made the call?*
+    A self-check is Gecko walking every operation with arguments IT synthesized; where a
+    required path param had no spec example and no DECLARED value domain, the id was
+    INVENTED (see ``validator.synthesized_route_args``). The resulting 404 is evidence
+    about our placeholder, never about the endpoint — and no agent ever made that call, so
+    it must not sit in the denominator of a metric that claims agents call this API right
+    the first time.
+
+    Segregation is by PATH, not by an in-band tag or a relabelled ``source`` — the same
+    posture as ``synthetic_sibling`` and ``simulated_sibling``, for the same reason: a
+    reader of the main corpus that has never heard of the self-check tier then NEVER sees a
+    self-check row (it FAILS CLOSED). An "exclude self-checks at query time" tag would fail
+    OPEN — every current and future reader would have to remember the filter, and one that
+    forgets silently corrupts the published rate. Relabelling ``source`` would be worse
+    still: it would make a real wire observation lie about how it was obtained, and would
+    trip ``outcome_from_record``'s source-must-equal-``source_for_mode(mode)`` check on the
+    way back in.
+
+    IDEMPOTENT on purpose: re-deriving from an already-segregated path returns that path,
+    so a nested or repeated scope can never walk back to the main corpus.
+
+    The rows stay fully readable — ``verify.load_observed_corpus`` takes an explicit path,
+    so a later, unrelated run can point it here and replay real prior wire outcomes
+    offline (Pattern B). Nothing about this file is scoped to a run or session id."""
+    target = Path(path)
+    if target.name == SELFCHECK_FILENAME:
+        return target
+    return target.with_name(SELFCHECK_FILENAME)
+
+
 def record(outcome: CallOutcome, path: str | Path) -> None:
     """Append one allowlisted JSONL record. Best-effort: a corpus write must never
     break the agent's call, so failures are swallowed with a redacted note (the
