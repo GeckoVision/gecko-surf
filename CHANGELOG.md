@@ -19,6 +19,41 @@ Also in this release, all merged since 0.10.2:
 ## Unreleased
 
 ### Fixed
+- **The signing gate verified the bytes it had just built — a tautology.**
+  `prepare_handoff` built a transaction, simulated it, and then called
+  `evaluate_tx(built.tx, receipt)` on that same captured object. Both sides of the
+  comparison came from one variable, so the "this transaction is NOT the one the receipt
+  attests" branch was unreachable through that function, and the approval proved only
+  that a value equals itself. The happy-path test asserted exactly that and read as
+  coverage.
+
+  Split, rather than papered over with an optional subject argument (an optional
+  `subject_tx` defaulting to the captured bytes keeps the tautology on the default path
+  and stamps it "independently verified" — strictly worse than an honest label):
+
+  * `prepare_handoff(plan, ...) -> PreparedPlan` — build + simulate. Returns the bytes it
+    simulated plus the Receipt, makes **no verification claim**, and has no `approved`
+    field. Its `require` parameter is gone; nothing there is being checked.
+  * `verify_handoff(tx, receipt, *, require) -> SignerHandoff` — the subject bytes are a
+    required positional with no fallback, `require` is keyword-only with **no default**
+    (a default is a strength nobody chose), and the returned `transaction_base64` is the
+    SUBJECT re-encoded, never the simulated bytes — returning what we simulated after
+    checking something else re-opens the window from the other side.
+
+  **BREAKING** for any caller of `prepare_handoff`: the return type and field names
+  changed (`approved` → `simulation_passed`, `transaction_base64` →
+  `simulated_transaction_base64`), and approval now requires the second call. There were
+  no callers outside the tests in this repo. Do not "fix" this by restoring a `require`
+  default or a subject fallback.
+
+  **RESIDUAL, not closed here:** under the `structural` binding the blockhash is
+  normalised out, so a subject differing from the simulated transaction ONLY in its
+  blockhash matches, is approved, and is returned — bytes that were never simulated.
+  That is the honest ceiling of a `replaceRecentBlockhash:true` simulation; closing it is
+  D4's job (one simulation approving unbounded distinct transactions stays an open
+  finding). `tests/test_handoff.py::test_verify_returns_the_subject_bytes_never_the_simulated_ones`
+  pins the behaviour so the residual is visible rather than assumed away.
+
 - **An upstream failure reached the agent as a success.** MCP's `isError` is the only
   signal an agent has that a call did not work, and both transports returned plain
   content — so a live `404` arrived as `isError: false` with an empty `data`, and an
