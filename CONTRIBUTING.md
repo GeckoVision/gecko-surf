@@ -41,6 +41,17 @@ uv run python -m gecko.demo         # E2E: goal → discover → correct call �
 
 Python 3.11+, managed with `uv`. No key is needed for the suite or the demo.
 
+A bare `uv sync` — no extras — must give you a **mypy-clean tree**. If `uv run mypy gecko`
+reports `import-not-found` on a fresh checkout, that is a bug in our config, not something
+for you to work around: the optional-extra modules belong in the per-module
+`[[tool.mypy.overrides]]` block in `pyproject.toml`, listed by name so gecko's own code
+stays fully checked. Never add a blanket ignore, and never add a dependency just to quiet
+mypy.
+
+CI installs `uv sync --extra serve` (`.github/workflows/ci.yml`), which pulls the serve
+transport plus its transitive `anyio` and `pyjwt`. That means CI can be green while a bare
+checkout is red — so run the gate below against a **bare** sync before you open a PR.
+
 ## Before you open a PR (the mandatory gate)
 
 ```bash
