@@ -522,16 +522,26 @@ class AgentApiClient:
 
     def _call_live(
         self, tool_name: str, args: dict[str, Any], req: PreparedRequest
-    ) -> tuple[int, Any]:
+    ) -> tuple[int, Any, int]:
         """The live call with a bounded-once reactive self-heal. On 401/403 from a
         refreshable session: invalidate, re-resolve fresh headers (the proactive refresh
         fires inside ``auth_headers()``), retry the identical call ONCE. A second failure
         raises a redacted ``AuthError`` — never an unbounded re-auth loop. A plain
-        (non-refreshable) session skips the hook entirely (seam identity)."""
+        (non-refreshable) session skips the hook entirely (seam identity).
+
+        Returns ``(status, body, attempt)``. ``attempt`` is the ordinal of the request
+        the returned status came from — the ONLY caller-visible trace that the self-heal
+        engaged, and the reason it is returned rather than inferred: the capture boundary
+        computes ``first_call_correct = ok and attempt == 1``, so a self-healed 200 that
+        reported ``attempt=1`` would be persisted as first-call-correct and would inflate
+        the headline metric in the flattering direction. Retry POLICY is unchanged: still
+        bounded-once, still 401/403-only, still refreshable-sessions-only."""
+        attempt = 1
         status, body = self._run_live(req)
         if status in self._AUTH_FAIL_STATUSES and is_refreshable(self.session):
             self.session.invalidate()  # type: ignore[attr-defined]
             req = self.prepare(tool_name, args)
+            attempt = 2
             status, body = self._run_live(req)
             if status in self._AUTH_FAIL_STATUSES:
                 # redact-before-raise: only the host + status, never the token.
@@ -539,7 +549,7 @@ class AgentApiClient:
                 raise AuthError(
                     f"auth rejected after one re-auth (status {status}) for host {host}"
                 )
-        return status, body
+        return status, body, attempt
 
     def _call_probe(
         self,
@@ -618,7 +628,10 @@ class AgentApiClient:
             self._capture(tool_name, None, exc, args, None, effective)
             raise
         if effective == "live":
-            status, body = self._call_live(tool_name, args, req)
+            status, body, attempt = self._call_live(tool_name, args, req)
+            # ONE row per call, carrying the attempt the status came from — never a
+            # second row for the intermediate 401 (that would double-count the
+            # denominator and persist a failure the agent never saw).
             self._capture(
                 tool_name,
                 status,
@@ -626,6 +639,7 @@ class AgentApiClient:
                 args,
                 int((time.perf_counter() - start) * 1000),
                 effective,
+                attempt=attempt,
             )
             return {
                 "status": status,
@@ -666,11 +680,16 @@ class AgentApiClient:
         args: dict[str, Any],
         latency_ms: int | None,
         mode: str,
+        *,
+        attempt: int = 1,
     ) -> None:
         """One control-plane-safe outcome capture per call — metadata only, never the
         body or filled URL. Thin delegator into ``gecko.capture.capture_outcome`` (the
         telemetry + opt-in corpus edge); the client only resolves its own state (the
-        tool def, whether auth was injectable for this op)."""
+        tool def, whether auth was injectable for this op).
+
+        ``attempt`` defaults to 1: every path EXCEPT the live self-heal reaches the wire
+        (or doesn't) exactly once, so only ``_call_live`` ever passes 2."""
         op = self._op_by_name.get(tool_name)
         capture_outcome(
             tool_name=tool_name,
@@ -679,6 +698,7 @@ class AgentApiClient:
             args=args,
             latency_ms=latency_ms,
             mode=mode,
+            attempt=attempt,
             surface_id=self.surface_id,
             surface_rev=self.surface_rev,
             corpus_path=self._corpus_path,
