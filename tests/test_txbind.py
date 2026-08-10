@@ -44,6 +44,7 @@ def _memo(payload: bytes, payer: str = PAYER) -> str:
 #: and the byte at the blockhash offset are BOTH zero and zeroing either yields identical
 #: bytes — a digest comparison then cannot tell a right offset from a wrong one.
 REAL_BLOCKHASH = "So11111111111111111111111111111111111111112"
+TABLE = "GnMsEEyF6XKMajwtBsjxcBv8QoEM71QyUzz4Lf7vkeRu"
 
 
 def _memo_with(payload: bytes, *, blockhash: str, account: str = USDC) -> str:
@@ -528,3 +529,174 @@ def test_a_versioned_prefix_on_a_legacy_message_is_refused() -> None:
 
     with pytest.raises(TxDecodeError):
         blockhash_offset(b"\x80" + body[1:], "legacy")
+
+
+def _simulated(tx: str) -> Receipt:
+    """A passing Receipt produced by our own ``simulate`` over ``tx``."""
+    from gecko.simulate import BuiltTx, simulate
+
+    def fake_rpc(_url: str, _method: str, _params: list) -> dict:
+        return {"result": {"value": {"err": None, "unitsConsumed": 1, "logs": []}}}
+
+    return simulate(
+        {},
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=fake_rpc,
+        build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+    )
+
+
+def _v0_through_table(resolved: str, *, table: str = TABLE) -> str:
+    """A v0 transaction whose only non-static account is loaded FROM ``table``.
+
+    ``resolved`` is the address the table is holding at simulate time. Change it and
+    the transaction executes against a different account — with, as the tests below
+    prove, not one byte of difference on the wire.
+    """
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    target = Pubkey.from_string(resolved)
+    lookup = AddressLookupTableAccount(
+        key=Pubkey.from_string(table), addresses=[target]
+    )
+    meta = AccountMeta(pubkey=target, is_signer=False, is_writable=False)
+    return assemble_unsigned_tx(
+        [Instruction(program, b"route", [meta])], PAYER, lookup_tables=[lookup]
+    ).tx
+
+
+def test_a_message_that_loads_accounts_from_a_table_earns_no_binding() -> None:
+    from gecko.txbind import UnresolvedLookupError
+
+    with pytest.raises(UnresolvedLookupError) as caught:
+        message_binding(_v0_through_table(OTHER))
+
+    assert "lookup table" in str(caught.value)
+    # A subclass of TxDecodeError, so every existing catcher already fails closed.
+    assert isinstance(caught.value, TxDecodeError)
+
+
+def test_a_receipt_for_one_route_cannot_approve_another_with_the_same_bytes() -> None:
+    """THE fail-open this task exists to close, end to end.
+
+    The Receipt comes from our own ``simulate`` over route A. The subject is route B:
+    the same bytes, a different account. A digest over the message can never tell them
+    apart, so the only honest verdict is a refusal — for BOTH of them.
+    """
+    route_a = _v0_through_table(OTHER)
+    route_b = _v0_through_table(USDC)
+    assert base64.b64decode(route_a) == base64.b64decode(route_b)
+
+    receipt = _simulated(route_a)
+    verdict = evaluate_tx(route_b, receipt)
+
+    assert verdict.approved is False
+    assert "lookup table" in verdict.reason
+    # And not by luck: the receipt it was simulated against refuses too.
+    assert evaluate_tx(route_a, receipt).approved is False
+
+
+def test_a_receipt_over_static_accounts_records_that_it_resolved_none() -> None:
+    receipt = _simulated(_memo(b"water"))
+
+    assert receipt.lookup_resolution == "none"
+    assert receipt.message_binding is not None
+
+
+def test_an_undecodable_transaction_still_refuses_rather_than_raising() -> None:
+    """The lookup check runs inside the decode path; it must not turn the gate into
+    something that throws."""
+    receipt = _simulated(_memo(b"water"))
+
+    assert evaluate_tx("not-base64!!", receipt).approved is False
+
+
+def test_an_unresolved_receipt_refuses_even_a_matching_binding() -> None:
+    """Belt and braces, on the Receipt side. If a Receipt ever reaches the gate marked
+    unresolved, no digest agreement can rescue it — including one computed over a
+    perfectly ordinary legacy message."""
+    tx = _memo(b"water")
+    receipt = dataclasses.replace(
+        _receipt(message_binding(tx), "structural"), lookup_resolution="unresolved"
+    )
+
+    verdict = evaluate_tx(tx, receipt)
+
+    assert verdict.approved is False
+    assert "lookup table" in verdict.reason
+
+
+def test_simulate_records_the_unresolved_lookup_rather_than_a_binding() -> None:
+    """The Receipt says WHY it carries no binding. A Receipt that simply lacked one
+    would be indistinguishable from an undecodable build, and the two want different
+    fixes."""
+    receipt = _simulated(_v0_through_table(OTHER))
+
+    assert receipt.lookup_resolution == "unresolved"
+    assert receipt.message_binding is None
+    assert receipt.binding_strength is None
+
+
+def test_the_new_receipt_field_never_reaches_the_corpus() -> None:
+    """Invariant #1: the corpus is categorical control plane. ``lookup_resolution`` is
+    a gate input, not an outcome, and the projection must not have grown a field."""
+    from gecko.corpus import simulated_outcome_from
+
+    outcome = simulated_outcome_from(
+        _simulated(_memo(b"water")),
+        program_id="MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+        instruction="memo",
+        recipe_hash="0" * 64,
+        slot=None,
+        network="fork",
+        ts=0,
+        surface_id="test",
+    )
+
+    assert not hasattr(outcome, "lookup_resolution")
+    assert "lookup" not in repr(outcome)
+
+
+def test_the_refusal_keys_on_the_lookups_not_on_the_version() -> None:
+    """A v0 message with an EMPTY lookup section commits to every account it uses, so
+    it binds and approves. Refusing all of v0 would be a blunter rule that breaks a
+    legitimate transaction — and the pressure to relax a rule that over-refuses is how
+    gates get deleted."""
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.instruction import Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    table = AddressLookupTableAccount(
+        key=Pubkey.from_string(TABLE), addresses=[Pubkey.from_string(OTHER)]
+    )
+    # No account meta resolves through the table, so try_compile emits no lookup.
+    built = assemble_unsigned_tx(
+        [Instruction(program, b"x", [])], PAYER, lookup_tables=[table]
+    )
+
+    from gecko.txbind import _decode, _message_of
+
+    message, version = _message_of(_decode(built.tx, "base64"))
+    assert version == "v0"
+    assert len(message.address_table_lookups) == 0
+
+    receipt = _simulated(built.tx)
+    assert receipt.lookup_resolution == "none"
+    assert evaluate_tx(built.tx, receipt).approved is True
+
+
+def test_two_routes_over_one_table_are_byte_identical_and_are_not_the_same_call() -> (
+    None
+):
+    """The premise, pinned before anything is asserted about the gate. If this ever
+    stops holding, the refusal below is guarding a case that no longer exists — and a
+    reader deserves to see that in a test name rather than infer it."""
+    route_a = _v0_through_table(OTHER)
+    route_b = _v0_through_table(USDC)
+
+    assert base64.b64decode(route_a) == base64.b64decode(route_b)
+    assert OTHER != USDC
