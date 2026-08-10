@@ -27,8 +27,10 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import cast
 
 from ..corpus import (
+    NETWORKS,
     CorpusError,
     network_category,
     recipe_hash,
@@ -36,6 +38,7 @@ from ..corpus import (
     seed_recipes_of,
     simulated_outcome_from,
 )
+from ..networks import UNKNOWN_NETWORK, Network
 from ..pda import PdaNode
 from ..rpc import RpcCall, default_rpc_call
 from ..simulate import Receipt
@@ -55,6 +58,26 @@ def _best_effort_slot(rpc_url: str, rpc_call: RpcCall | None) -> int | None:
     except Exception:  # noqa: BLE001 — slot is an enrichment, never a gate
         return None
     return result if isinstance(result, int) else None
+
+
+def _network_of(receipt: Receipt, network_label: str | None) -> Network:
+    """The network to RECORD: the Receipt's asserted field, else the prose collapse.
+
+    Order matters and only in this direction. A Receipt that ASSERTED its network states
+    a fact; the label is one operator's sentence about it, and an operator who mislabels a
+    devnet run would otherwise poison the ledger with ``fork``. The prose fallback exists
+    for receipts that asserted nothing — older rows, third-party Receipt-shaped objects,
+    and every provider orchestrator, which is handed an injected RPC and told nothing
+    about it.
+
+    This is the CORPUS, so reading prose is allowed: a categorical row one bucket off is a
+    slightly-wrong observation. The signing gate does the opposite and reads the field
+    only — see :func:`gecko.txbind.evaluate_tx`, which never imports the collapse.
+    """
+    asserted = getattr(receipt, "network", None)
+    if isinstance(asserted, str) and asserted in NETWORKS and asserted != UNKNOWN_NETWORK:
+        return cast("Network", asserted)
+    return network_category(network_label)
 
 
 def record_landing_outcome(
@@ -96,7 +119,7 @@ def record_landing_outcome(
             instruction=instruction,
             recipe_hash=fingerprint,
             slot=slot,
-            network=network_category(network_label),
+            network=_network_of(receipt, network_label),
             ts=int(time.time() * 1000),
             surface_id=f"orquestra:{program_id}",
         )

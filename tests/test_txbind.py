@@ -700,3 +700,104 @@ def test_two_routes_over_one_table_are_byte_identical_and_are_not_the_same_call(
 
     assert base64.b64decode(route_a) == base64.b64decode(route_b)
     assert OTHER != USDC
+
+
+# --------------------------------------------------------------------------- #
+# D2 — the network. A binding proves WHICH MESSAGE; it proves nothing about WHERE
+# the simulation ran, and a fork snapshot is not the state a mainnet signature lands in.
+# --------------------------------------------------------------------------- #
+def _on(network: str, binding: str | None, strength: str | None = "structural"):
+    """A passing receipt that ASSERTS ``network`` — nothing else stands in the way."""
+    return dataclasses.replace(_receipt(binding, strength), network=network)
+
+
+def test_a_fork_receipt_cannot_clear_a_mainnet_signature() -> None:
+    """THE D2 BUG. The bytes match, the binding matches, the receipt passed — and the
+    state it was validated against is a snapshot nobody is committing into."""
+    tx = _memo(b"buy water")
+
+    verdict = evaluate_tx(
+        tx, _on("fork", message_binding(tx)), expected_network="mainnet"
+    )
+
+    assert verdict.approved is False
+    assert "fork" in verdict.reason and "mainnet" in verdict.reason
+
+
+def test_the_same_receipt_clears_the_network_it_actually_ran_on() -> None:
+    tx = _memo(b"buy water")
+
+    assert evaluate_tx(tx, _on("fork", message_binding(tx)), expected_network="fork").approved
+
+
+def test_a_receipt_with_no_network_attribute_at_all_is_refused() -> None:
+    """MISSING == UNKNOWN == REFUSE. ``evaluate_tx`` reads the receipt through
+    ``getattr`` on an ``Any``, so a Receipt-SHAPED object from older or third-party code
+    reaches the gate with no ``network`` at all. Skipping the check there would make the
+    gate strictest on the receipts it built itself and blind to every other one."""
+
+    class LooksLikeAReceipt:
+        status = "pass"
+        binding_strength = "structural"
+        lookup_resolution = "none"
+
+        def __init__(self, binding: str) -> None:
+            self.message_binding = binding
+
+    tx = _memo(b"buy water")
+    verdict = evaluate_tx(
+        tx, LooksLikeAReceipt(message_binding(tx)), expected_network="mainnet"
+    )
+
+    assert verdict.approved is False
+    assert "network" in verdict.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("receipt_network", "expected_network"),
+    [
+        ("unknown", "mainnet"),
+        ("mainnet", "unknown"),
+        ("unknown", "unknown"),
+        ("other", "other"),
+        ("solana-mainnet-beta", "solana-mainnet-beta"),
+    ],
+)
+def test_nothing_outside_the_approvable_set_is_ever_approved(
+    receipt_network: str, expected_network: str
+) -> None:
+    """Affirmative comparison only: BOTH sides must be a named, approvable member and
+    the same one. Never ``if expected and actual and expected != actual`` — that
+    approves whenever either side is empty, which is exactly when nothing is known.
+
+    The last pair is an off-vocabulary string on both sides: two receipts that both said
+    "solana-mainnet-beta" would otherwise compare equal and approve on a vocabulary
+    nothing validates."""
+    tx = _memo(b"buy water")
+
+    verdict = evaluate_tx(
+        tx, _on(receipt_network, message_binding(tx)), expected_network=expected_network
+    )
+
+    assert verdict.approved is False
+
+
+def test_the_network_parameter_has_no_default() -> None:
+    """mypy forces the decision at every call site; this asserts it at runtime so a
+    later 'convenience' default fails loudly rather than silently reopening D2."""
+    tx = _memo(b"buy water")
+
+    with pytest.raises(TypeError):
+        evaluate_tx(tx, _on("fork", message_binding(tx)))  # type: ignore[call-arg]
+
+
+def test_a_receipt_simulate_built_without_an_assertion_approves_nothing() -> None:
+    """``simulate``'s ``network`` default is the fail-closed member, not a permissive
+    one: a Receipt from a caller who asserted nothing refuses against EVERY expectation,
+    including ``unknown``. That is what makes a default admissible here at all."""
+    tx = _memo(b"water")
+    receipt = _simulated(tx, network="unknown")
+
+    assert receipt.network == "unknown"
+    for expected in ("mainnet", "devnet", "fork", "unknown"):
+        assert evaluate_tx(tx, receipt, expected_network=expected).approved is False

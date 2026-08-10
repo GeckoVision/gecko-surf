@@ -340,3 +340,74 @@ def test_verify_refuses_undecodable_subject_bytes_without_raising() -> None:
 
     assert verdict.approved is False
     assert verdict.transaction_base64 is None
+
+
+# ------------------------------------------------------------------- the network (D2)
+
+
+def test_prepare_records_the_network_the_simulation_actually_ran_against() -> None:
+    """``prepare_handoff`` and ``verify_handoff`` need DIFFERENT network facts and the
+    two must not be collapsed: this one records where the simulation ran, and it is the
+    only one this function can honestly know."""
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+
+    assert prepared.receipt.network == "fork"
+    assert prepared.network == "fork"
+
+
+def test_prepare_will_not_pick_a_network_for_the_caller() -> None:
+    """No permissive default: a run whose network nobody stated must not read as one
+    that was checked."""
+    with pytest.raises(TypeError):
+        prepare_handoff(
+            PLAN,
+            rpc_url="https://rpc.example.com",
+            build_call=_builder(_memo_tx(b"buy water")),
+            rpc_call=_rpc(),
+        )  # type: ignore[call-arg]
+
+
+def test_verify_refuses_a_fork_receipt_for_a_mainnet_signature() -> None:
+    """The D2 fail-open at the handoff seam: same bytes, same binding, and a snapshot of
+    a network nobody is committing into."""
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    verdict = verify_handoff(
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
+    )
+
+    assert verdict.approved is False
+    assert verdict.transaction_base64 is None
+
+
+def test_verify_approves_when_the_caller_expects_the_network_that_was_simulated() -> (
+    None
+):
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    verdict = verify_handoff(
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="fork",
+    )
+
+    assert verdict.approved is True
+    assert verdict.network == "fork"
+
+
+def test_verify_will_not_pick_a_network_for_the_caller() -> None:
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    with pytest.raises(TypeError):
+        verify_handoff(
+            prepared.simulated_transaction_base64,
+            prepared.receipt,
+            require="structural",
+        )  # type: ignore[call-arg]

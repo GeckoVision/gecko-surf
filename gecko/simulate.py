@@ -24,6 +24,7 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Sequence
 
+from .networks import UNKNOWN_NETWORK, Network
 from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
 from .txbind import LookupResolution
 
@@ -104,6 +105,20 @@ class Receipt:
     corpus vocabulary), never a fabricated number. ``sol_delta``/``tokens_received`` are
     best-effort and ``None`` unless the relevant account was tracked and decodable.
     ``network_label`` is the always-present honesty caveat (snapshot, not mainnet).
+
+    THE FIELD SET, STATED ONCE (several branches reshape this dataclass in parallel, and
+    two of them appending "at the end" is how a field gets dropped in a hand-resolved
+    merge — this is the canonical order):
+
+    1. ``status``, ``err``, ``revert_class``, ``units_consumed``, ``sol_delta``,
+       ``tokens_received``, ``logs_tail``, ``network_label`` — the original eight,
+       required, unchanged.
+    2. ``message_binding``, ``binding_strength`` — the signing binding.
+    3. ``lookup_resolution`` — whether the message loads accounts through an address
+       lookup table. A gate input, categorical, outside the corpus projection.
+    4. ``network`` — D2. Structured, closed vocabulary, the ONLY network input the gate
+       reads. Defaults to ``unknown``, which approves nothing.
+    5. ``observed_slot`` — D6. Recorded, never enforced.
     """
 
     status: Literal["pass", "fail", "unknown"]
@@ -133,6 +148,26 @@ class Receipt:
     #: enter the corpus projection (``corpus.simulated_outcome_from``), and no resolved
     #: ADDRESS is recorded here or anywhere else on the Receipt.
     lookup_resolution: LookupResolution | None = None
+    #: WHICH NETWORK this simulation ran against — structured, closed vocabulary, and the
+    #: ONLY network input the signing gate reads. ``network_label`` beside it is prose for
+    #: a human and is never compared: the default label is literally
+    #: "simulated (fork/RPC snapshot — not mainnet)", so a substring test for "mainnet"
+    #: matches a FORK receipt and inverts the gate into an approval.
+    #:
+    #: Defaults to ``unknown`` — the member that claims nothing — so a Receipt built by
+    #: older or third-party code can never silently assert a network it was never told.
+    #: ``simulate`` does not infer it from the RPC URL (a fork proxy answers at any
+    #: hostname) or from the label; a caller asserts it, or it stays unknown.
+    network: Network = UNKNOWN_NETWORK
+    #: The slot ``result.context.slot`` reported for the snapshot this ran against, or
+    #: ``None`` when the RPC sent nothing usable.
+    #:
+    #: RECORDED, NOT ENFORCED. Nothing reads this to decide anything — not the signing
+    #: gate, not the handoff. It exists so a receipt-age bound BECOMES EXPRESSIBLE
+    #: ("refuse a receipt more than N slots old"); that bound is NOT built, and a receipt
+    #: still does not expire. Named ``observed_slot`` rather than anything ending in
+    #: ``_at``/``_valid`` so it cannot be misread as a freshness guarantee.
+    observed_slot: int | None = None
 
 
 def _custom_code(err: Any) -> int | None:
@@ -237,6 +272,28 @@ def _default_build_call(plan: Mapping[str, Any]) -> BuiltTx:
     )
 
 
+def _context_slot(result: Any) -> int | None:
+    """The slot from a JSON-RPC ``result.context``, or ``None`` — never a coerced value.
+
+    This arrives over untrusted transport, so it is TYPE-CHECKED rather than trusted:
+    only a plain non-negative ``int`` is a slot. A numeric string is not coerced (that
+    would let ``"318492001"`` and ``318492001`` be the same receipt), a float is not
+    truncated, and ``bool`` is excluded explicitly — ``isinstance(True, int)`` is True in
+    Python, so a naive check admits ``True`` and records slot 1.
+
+    Absence is ``None``, never ``0``: zero is a CLAIM ("slot zero"), and a false one.
+    """
+    if not isinstance(result, Mapping):
+        return None
+    context = result.get("context")
+    if not isinstance(context, Mapping):
+        return None
+    slot = context.get("slot")
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot < 0:
+        return None
+    return slot
+
+
 def _tracked_lamports(value: Any) -> int | None:
     """Pull ``lamports`` out of a getAccountInfo/simulate account object, if present."""
     if isinstance(value, dict):
@@ -254,6 +311,7 @@ def simulate(
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
     network_label: str = _DEFAULT_NETWORK_LABEL,
+    network: Network = UNKNOWN_NETWORK,
     replace_blockhash: bool = True,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
@@ -262,6 +320,20 @@ def simulate(
     ``build_call`` are injectable so this is fully falsifiable offline. ``track`` is an
     ordered list of accounts to snapshot (``track[0]`` powers ``sol_delta``). The Receipt
     is returned, never stored.
+
+    ``network`` is ASSERTED by the caller and never derived here — not from ``rpc_url``
+    (a fork proxy answers at any hostname) and not from ``network_label`` (prose; the
+    default one names mainnet while meaning the opposite). The two travel side by side
+    WITHOUT a consistency check on purpose: a check that refused a "contradiction" would
+    make the prose load-bearing again, which is the D2 bug wearing a different hat. The
+    field is the fact; the label is a sentence about it.
+
+    The default is ``unknown``, the member that approves NOTHING at the signing gate — a
+    fail-closed default, not a permissive one. It is a default rather than a required
+    argument because most callers (every provider landing orchestrator) genuinely are not
+    told which network their injected RPC points at, and the only honest value they could
+    pass is this one. Asserting a network they cannot know would be the permissive
+    default in disguise.
     """
     validate_rpc_url(rpc_url)
     call = rpc_call or default_rpc_call
@@ -318,7 +390,12 @@ def simulate(
         strength = None
 
     sim = call(rpc_url, "simulateTransaction", [built.tx, sim_config])
-    value = (sim.get("result") or {}).get("value") or {}
+    result = sim.get("result") or {}
+    value = result.get("value") or {}
+    # ``result.context.slot`` used to be dropped on the floor here, which left nothing on
+    # the Receipt saying WHEN the snapshot was — an age bound was not merely unenforced,
+    # it was inexpressible.
+    observed_slot = _context_slot(result)
 
     err = value.get("err")
     logs = value.get("logs") or []
@@ -350,4 +427,6 @@ def simulate(
         message_binding=binding,
         binding_strength=strength,
         lookup_resolution=resolution,
+        network=network,
+        observed_slot=observed_slot,
     )

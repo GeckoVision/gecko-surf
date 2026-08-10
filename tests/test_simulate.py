@@ -260,3 +260,109 @@ def test_default_build_call_wraps_http_error_as_simulate_error(
     with pytest.raises(SimulateError) as exc:
         simulate(PLAN, rpc_url="http://127.0.0.1:8899", rpc_call=_sim_rpc(value))
     assert "403" in str(exc.value)
+
+
+# --- D6: the slot the snapshot was taken at (RECORDED, never enforced) --------
+
+
+def _slot_rpc(result: dict[str, Any]):
+    """A fake rpc_call that returns a whole ``result`` object — context included."""
+
+    def rpc(_url: str, method: str, _params: list[Any]) -> dict[str, Any]:
+        if method == "simulateTransaction":
+            return {"result": result}
+        return {"result": {"value": None}}
+
+    return rpc
+
+
+def _receipt_for(result: dict[str, Any]) -> Receipt:
+    return simulate(
+        PLAN,
+        rpc_url="https://api.example.com",
+        rpc_call=_slot_rpc(result),
+        build_call=_build_ok,
+    )
+
+
+def test_the_context_slot_is_carried_onto_the_receipt() -> None:
+    """``simulate`` read ``result.value`` and threw ``result.context`` away, so nothing
+    on a Receipt said WHEN the snapshot was — which made a receipt-age bound
+    inexpressible, not merely unenforced."""
+    receipt = _receipt_for(
+        {"context": {"slot": 318_492_001}, "value": {"err": None, "logs": []}}
+    )
+
+    assert receipt.observed_slot == 318_492_001
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        None,
+        {},
+        {"slot": "318492001"},  # a string is not coerced — two spellings, one receipt
+        {"slot": 318_492_001.0},  # a float is not truncated
+        {"slot": True},  # isinstance(True, int) is True in Python
+        {"slot": -1},
+        "not-a-mapping",
+    ],
+)
+def test_an_unusable_slot_is_absent_never_zero_and_never_coerced(context: Any) -> None:
+    """The slot arrives over untrusted transport, so it is TYPE-CHECKED rather than
+    trusted. Absence is ``None``: zero is a CLAIM ("slot zero"), and a false one."""
+    result: dict[str, Any] = {"value": {"err": None, "logs": []}}
+    if context is not None:
+        result["context"] = context
+
+    assert _receipt_for(result).observed_slot is None
+
+
+def test_the_slot_is_recorded_and_nothing_enforces_it() -> None:
+    """D6 DELIVERS NO FRESHNESS ENFORCEMENT — only the ability to EXPRESS an age bound.
+    Asserted structurally so nobody reads the field as a guarantee: neither the signing
+    gate nor the handoff mentions it, and a receipt still does not expire."""
+    from pathlib import Path
+
+    import gecko.txbind as txbind_module
+
+    gate = Path(txbind_module.__file__).with_name("txbind.py").read_text()
+    handoff = Path(txbind_module.__file__).with_name("handoff.py").read_text()
+
+    assert "observed_slot" not in gate
+    assert "observed_slot" not in handoff
+
+
+# --- D2: the network the snapshot was taken ON -------------------------------
+
+
+def test_the_network_defaults_to_the_member_that_claims_nothing() -> None:
+    receipt = _receipt_for({"value": {"err": None, "logs": []}})
+
+    assert receipt.network == "unknown"
+
+
+def test_an_asserted_network_rides_onto_the_receipt() -> None:
+    receipt = simulate(
+        PLAN,
+        rpc_url="https://api.example.com",
+        rpc_call=_slot_rpc({"value": {"err": None, "logs": []}}),
+        build_call=_build_ok,
+        network="devnet",
+    )
+
+    assert receipt.network == "devnet"
+
+
+def test_the_network_is_never_read_off_the_rpc_url() -> None:
+    """A fork proxy answers at any hostname, so the URL is attacker-influenceable and
+    is evidence of nothing. Pointing at the most mainnet-looking URL there is still
+    yields a receipt that asserts nothing."""
+    receipt = simulate(
+        PLAN,
+        rpc_url="https://api.mainnet-beta.solana.com",
+        rpc_call=_slot_rpc({"value": {"err": None, "logs": []}}),
+        build_call=_build_ok,
+    )
+
+    assert receipt.network == "unknown"

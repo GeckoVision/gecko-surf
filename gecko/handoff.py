@@ -54,6 +54,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from .networks import UNKNOWN_NETWORK, Network
 from .simulate import BuildCall, BuiltTx, Receipt, RpcCall, simulate
 from .txbind import BindingStrength, TxDecodeError, _decode, evaluate_tx
 
@@ -112,6 +113,17 @@ class PreparedPlan:
         return self.receipt.network_label
 
     @property
+    def network(self) -> str:
+        """The network the simulation ACTUALLY ran against — structured, not the prose.
+
+        A different fact from the one :func:`verify_handoff` needs (which network a
+        caller EXPECTS a signature to land on). Both are needed and they are deliberately
+        not collapsed: this one is an observation about a run that already happened, the
+        other is a claim about one that has not.
+        """
+        return self.receipt.network
+
+    @property
     def logs_tail(self) -> tuple[str, ...]:
         return self.receipt.logs_tail
 
@@ -148,6 +160,9 @@ class SignerHandoff:
     units_consumed: int | None
     network_label: str
     logs_tail: tuple[str, ...] = ()
+    #: The network the RECEIPT was taken on — carried beside the prose label so a caller
+    #: can show the compared fact, not the sentence about it.
+    network: str = UNKNOWN_NETWORK
 
     @property
     def receipt_line(self) -> str:
@@ -164,6 +179,7 @@ def prepare_handoff(
     rpc_call: RpcCall | None = None,
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
+    network: Network,
     replace_blockhash: bool = True,
 ) -> PreparedPlan:
     """Build ``plan``, simulate it, and return the bytes that were simulated.
@@ -171,6 +187,14 @@ def prepare_handoff(
     This function VERIFIES NOTHING — it has no independent input to verify against. It
     withholds the transaction when the simulation did not pass or when the Receipt binds
     nothing, because bytes nobody can later check do not belong in front of a signer.
+
+    ``network`` is the network THIS run is pointed at — keyword-only with no default, so
+    the decision is made at the call site rather than inherited from a permissive one. It
+    rides onto the Receipt as the network the simulation ACTUALLY ran against. That is a
+    DIFFERENT fact from the one :func:`verify_handoff` needs (the network a caller
+    EXPECTS a signature to land on), and the two are deliberately not collapsed into one
+    parameter: this function observes, that one demands. ``unknown`` is a legal value and
+    refuses everything downstream; it is not a way to opt out of the check.
 
     ``replace_blockhash=False`` against a fresh blockhash is what earns the Receipt an
     ``exact`` binding; the default ``True`` is the honest ceiling for a plan-shaped check
@@ -203,6 +227,7 @@ def prepare_handoff(
         rpc_call=rpc_call,
         build_call=capturing_build,
         track=track,
+        network=network,
         replace_blockhash=replace_blockhash,
     )
     if not captured:  # pragma: no cover - simulate always builds before it simulates
@@ -241,6 +266,7 @@ def verify_handoff(
     receipt: Receipt,
     *,
     require: BindingStrength,
+    expected_network: Network,
     encoding: str = "base64",
 ) -> SignerHandoff:
     """Is ``tx`` — supplied from outside — the transaction ``receipt`` attests?
@@ -256,6 +282,12 @@ def verify_handoff(
     one. ``structural`` does NOT cover the blockhash — see the residual in the module
     docstring.
 
+    ``expected_network`` is keyword-only with **no default** for the same reason: the
+    network a signature is HEADED FOR is the caller's fact, not this module's, and it is
+    not the same fact as the network the simulation ran on. A fork receipt matching the
+    bytes of a mainnet transaction is a refusal, because the state it was validated
+    against is a snapshot nobody is committing into.
+
     On approval ``transaction_base64`` is the SUBJECT re-encoded, never the simulated
     bytes: returning what we simulated after checking something else re-opens the window
     from the other side, with the caller signing bytes that were not the subject of the
@@ -263,7 +295,13 @@ def verify_handoff(
 
     Never raises: every failure path is ``approved=False`` with no payload.
     """
-    verdict = evaluate_tx(tx, receipt, encoding=encoding, require=require)
+    verdict = evaluate_tx(
+        tx,
+        receipt,
+        encoding=encoding,
+        require=require,
+        expected_network=expected_network,
+    )
 
     payload: str | None = None
     if verdict.approved:
@@ -288,6 +326,7 @@ def verify_handoff(
         units_consumed=receipt.units_consumed,
         network_label=receipt.network_label,
         logs_tail=receipt.logs_tail,
+        network=receipt.network,
     )
 
 
@@ -319,4 +358,5 @@ def _refused(receipt: Receipt, reason: str) -> SignerHandoff:
         units_consumed=receipt.units_consumed,
         network_label=receipt.network_label,
         logs_tail=receipt.logs_tail,
+        network=receipt.network,
     )

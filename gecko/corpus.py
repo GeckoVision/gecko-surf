@@ -39,6 +39,9 @@ from .pda import (
     SeedSource,
     VariablePdaSeedNode,
 )
+from .networks import LEGACY_NETWORK_ALIASES
+from .networks import NETWORKS as NETWORKS  # re-export: ONE declaration, in networks.py
+from .networks import Network, network_from_label
 from .sanitize import looks_like_secret_value
 from .simulate import REVERT_FAMILIES, Receipt, revert_family
 
@@ -853,8 +856,17 @@ SIM_STATUSES: frozenset[str] = frozenset({"pass", "fail", "unknown"})
 REVERT_CLASSES: frozenset[str] = REVERT_FAMILIES
 
 # The network the sim ran against — a categorical LABEL, never the RPC URL (a URL could
-# carry an API key). ``fork`` is a mainnet-backed snapshot; ``other`` is the fail-closed bucket.
-NETWORKS: frozenset[str] = frozenset({"fork", "mainnet", "devnet", "other"})
+# carry an API key). ``fork`` is a mainnet-backed snapshot; ``unknown`` is the fail-closed
+# bucket. DECLARED IN ``gecko/networks.py`` and imported above, never redeclared here: the
+# signing gate compares the same vocabulary off ``Receipt.network``, and two spellings of
+# one concept is how a row ends up categorised ``mainnet`` in one module and ``unknown``
+# in the other. ``other`` was this module's older name for the ``unknown`` bucket — same
+# bucket, one spelling now, and ``LEGACY_NETWORK_ALIASES`` reads back the rows already
+# written under the old one.
+#
+# SHARED MEMBERS, DIFFERENT PROVENANCE. A row's network may be DERIVED from prose
+# (``network_category`` below); a signing decision's may not. The vocabulary is one; what
+# is allowed to produce a value for each consumer is not.
 
 
 @dataclass(frozen=True)
@@ -1004,21 +1016,20 @@ def seed_recipes_of(pdas: Mapping[str, PdaNode]) -> dict[str, list[str]]:
     }
 
 
-def network_category(label: str | None) -> str:
+def network_category(label: str | None) -> Network:
     """Collapse a free-text ``network_label`` (the Receipt's honesty caveat) into the
     CLOSED ``NETWORKS`` category — never the label itself (free text could carry a URL).
 
-    Checked in specificity order: a fork label routinely mentions mainnet ("surfpool
-    fork (mainnet-backed — NOT mainnet)"), so ``fork`` wins before ``mainnet``. Fails
-    CLOSED to ``other`` for anything unrecognized (including ``None``)."""
-    text = (label or "").lower()
-    if "fork" in text:
-        return "fork"
-    if "devnet" in text:
-        return "devnet"
-    if "mainnet" in text:
-        return "mainnet"
-    return "other"
+    Delegates to :func:`gecko.networks.network_from_label`, which owns the collapse and
+    its specificity order (a fork label routinely mentions mainnet — "surfpool fork
+    (mainnet-backed — NOT mainnet)" — so ``fork`` is decided before ``mainnet``). Fails
+    CLOSED to ``unknown`` for anything unrecognized, including ``None``.
+
+    CORPUS/DISPLAY ONLY. This reads PROSE. A signing gate must never take a network from
+    it — a receipt's category being one bucket off is a slightly-wrong ledger row, while a
+    signature on the wrong network is unrecoverable. The gate compares the structured
+    ``Receipt.network`` instead, and ``gecko.txbind`` does not import this function."""
+    return network_from_label(label)
 
 
 def _guard_plan_name(entry: object, field: str) -> str:
@@ -1176,7 +1187,16 @@ def simulated_outcome_from_record(record: Mapping[str, Any]) -> SimulatedOutcome
             "simulated record tenancy is not a closed-set member, or is wider than "
             "this machine's derived consent — refused"
         )
-    outcome = SimulatedOutcome(**{key: record[key] for key in SIMULATED_ALLOWED_KEYS})
+    values = {key: record[key] for key in SIMULATED_ALLOWED_KEYS}
+    # A row written before the vocabulary was unified spells the fail-closed bucket
+    # ``other``; it means exactly what ``unknown`` means now. Translating it on READ keeps
+    # already-persisted history readable — a rename that orphans rows is a data loss, not
+    # a rename. Only the KNOWN legacy spellings translate: anything else (a hand-edited
+    # ``mars``) falls through to the closed-set gate below and still raises.
+    raw_network = values["network"]
+    if isinstance(raw_network, str) and raw_network in LEGACY_NETWORK_ALIASES:
+        values["network"] = LEGACY_NETWORK_ALIASES[raw_network]
+    outcome = SimulatedOutcome(**values)
     to_simulated_record(outcome)  # closed-set gate; raises CorpusError on bad axes
     return outcome
 
