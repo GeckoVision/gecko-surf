@@ -35,6 +35,7 @@ from . import corpus, keyauth
 from .access import public_session
 from .caller import CallError
 from .agentnative import build_artifacts
+from .capture import record_outcome
 from .client import AgentApiClient
 from .keyauth import KeyGate
 from .modes import CallMode
@@ -718,8 +719,12 @@ def build_http_app(
         invoke = invoke_by_name.get(name)
         if invoke is None:
             return
-        corpus.record(
-            corpus.outcome_from(
+        # Same fail-closed boundary the client uses: a control-plane violation must refuse
+        # the ROW, never raise into the served call (this runs after the upstream call has
+        # already happened, so a raise here would destroy a real result after the side
+        # effect). See ``capture.record_outcome``.
+        record_outcome(
+            lambda: corpus.outcome_from(
                 operation_id=name,
                 tool_invoke=invoke,
                 args=args,
@@ -732,7 +737,9 @@ def build_http_app(
                 surface_id=cid,
                 surface_rev=surface_rev,
             ),
-            corpus_path,  # type: ignore[arg-type]
+            corpus_path=corpus_path,  # type: ignore[arg-type]
+            surface_id=cid,
+            source=corpus.source_for_mode(mode),
         )
 
     server: Any = Server(server_name)

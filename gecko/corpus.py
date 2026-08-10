@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -81,11 +82,16 @@ OutcomeSource = Literal["observed", "reported", "synthetic", "simulated"]
 OUTCOME_SOURCES: frozenset[str] = frozenset(get_args(OutcomeSource))
 
 # ``tenancy`` answers "may this record LEAVE the machine into the cross-customer corpus?"
-# It is a one-way governance promise; the egress/consent layer is deliberately NOT built
-# here — only the field + a fail-closed ``local`` default, so the axis exists before any
-# record could ever egress (retrofitting it after the fact is the failure mode).
+# It is a one-way governance promise. Like ``source`` it is DERIVED at the boundary (see
+# ``consented_tenancy``) and is NOT a parameter — a caller cannot label its own rows
+# egress-eligible. No egress layer consumes ``contributed`` today; the axis exists so it
+# is never retrofitted onto rows written before it (that is the failure mode).
 Tenancy = Literal["local", "contributed"]
 TENANCIES: frozenset[str] = frozenset(get_args(Tenancy))
+
+# Widening order on the tenancy axis: ``local`` is the narrowest label. A reader admits a
+# row whose tenancy is no WIDER than the machine's own consent (see ``tenancy_admissible``).
+_TENANCY_WIDTH: dict[str, int] = {"local": 0, "contributed": 1}
 
 # JSON type names (never values) for arg_shape. bool is checked before int.
 _JSON_TYPES: list[tuple[type, str]] = [
@@ -100,6 +106,65 @@ _JSON_TYPES: list[tuple[type, str]] = [
 
 class CorpusError(Exception):
     """Raised when a record would violate the control-plane allowlist."""
+
+
+# --- the free-text channel guard — invariant #1 applied to our OWN store ---------------
+# ``error_class`` is a closed set, gated twice. The remaining free-text channels into a
+# persisted row were ungated, and they do NOT come from us:
+#
+#   * ``operation_id`` / ``path_template`` — UNTRUSTED-SPEC-derived. A poisoned spec picks
+#     the operationId and the path template, so it chooses what gets written into our
+#     store. That is a secret-exfiltration pipe pointed at ourselves.
+#   * ``arg_names`` (the single channel feeding BOTH ``params_present`` and the
+#     ``arg_shape`` KEYS) — AGENT-supplied at call time. A compromised agent, not only a
+#     poisoned spec, chooses those strings.
+#
+# The predicate is ``looks_like_secret_value`` ALONE — deliberately NOT the length cap and
+# base58 full-match ``_guard_plan_name`` applies to PDA/plan names. Calibrated against
+# every spec fixture in the repo (see ``tests/test_corpus_freetext_guard.py``): the secret
+# predicate has ZERO false positives across 366 operationIds / 335 paths / 143 param
+# names, while a 64-char cap rejects a real 81-char Pegana path and a base58 full-match
+# rejects the real operationId ``getApiFixturesUpdatesEpochdayHourofday``. A false
+# rejection here is not a harmless refusal — it silently removes a row from the metric
+# denominator, so over-strictness has its own correctness cost.
+#
+# It FAILS CLOSED by REFUSING the row, never by truncating: a truncated secret is still a
+# secret, and a truncated row silently enters the denominator.
+
+#: The closed set of field labels the free-text guard may name. ``arg_names`` is one
+#: channel because ``params_present`` and the ``arg_shape`` keys are the same strings from
+#: the same source — guarded once, derived twice.
+GUARDED_FREETEXT_FIELDS: frozenset[str] = frozenset(
+    {"operation_id", "path_template", "arg_names"}
+)
+
+
+class FreeTextGuardError(CorpusError):
+    """A free-text field carried a secret-shaped value and the row was refused.
+
+    Carries the CATEGORICAL ``field`` (a ``GUARDED_FREETEXT_FIELDS`` member) so the
+    capture boundary can count the drop without parsing a message — and never carries the
+    offending value: an exception message is a log line waiting to happen.
+    """
+
+    def __init__(self, field: str) -> None:
+        self.field = field
+        super().__init__(
+            f"{field}: value is secret-shaped — refusing to persist the row (redacted)"
+        )
+
+
+def guard_freetext(entry: object, field: str) -> str:
+    """Admit a spec/agent-derived free-text field only if it is not secret-shaped.
+
+    A gate, not a transformer: a clean value is returned byte-identical. Raises
+    ``FreeTextGuardError`` (a ``CorpusError``) otherwise — the caller must REFUSE the
+    row, never truncate it."""
+    if not isinstance(entry, str):
+        raise CorpusError(f"{field}: value must be a string (redacted)")
+    if looks_like_secret_value(entry):
+        raise FreeTextGuardError(field)
+    return entry
 
 
 @dataclass(frozen=True)
@@ -142,8 +207,16 @@ def _json_type(value: Any) -> str:
 
 
 def arg_shape_of(args: Mapping[str, Any]) -> dict[str, str]:
-    """Map each non-body arg NAME to its JSON type. Values never read."""
-    return {k: _json_type(v) for k, v in args.items() if k != "body"}
+    """Map each non-body arg NAME to its JSON type. Values never read.
+
+    The KEYS are agent-supplied free text, so they go through ``guard_freetext`` HERE too
+    — this helper is public, and a guard that only lived in ``outcome_from`` would leave a
+    bypass for any future caller."""
+    return {
+        guard_freetext(name, "arg_names"): _json_type(value)
+        for name, value in args.items()
+        if name != "body"
+    }
 
 
 def error_class_for(status: int | None, exc: BaseException | None) -> str:
@@ -203,6 +276,97 @@ def source_for_mode(mode: str) -> str:
     return _MODE_TO_SOURCE.get(mode, "synthetic")
 
 
+# --- tenancy is DERIVED from explicit local operator consent, never accepted -----------
+# Same doctrine as ``source``: a value a caller could hand us is a value a caller could
+# mislabel, so the boundary derives it. The predicate is DEFAULT-DENY and
+# TRUSTED-SOURCE-ONLY — it reads exactly two places, both explicit local operator state:
+#
+#   1. the ``GECKO_CORPUS_CONSENT`` env var, and
+#   2. a ``corpus-consent`` file in the operator's own gecko config home.
+#
+# It reads NOTHING else: not spec text, not a response, not an agent arg, not a
+# CWD-relative file (a ``GECKO_CONFIG_HOME`` override must be ABSOLUTE — a relative
+# override is CWD-relative state and is refused). Missing, unreadable, unparsable, or
+# unrecognized state yields ``local``. Nothing in the repo consumes ``contributed`` and
+# this adds no egress; deriving from ambient state is a widening, safe only while nothing
+# acts on the flag.
+_CONSENT_ENV = "GECKO_CORPUS_CONSENT"
+_CONSENT_HOME_ENV = "GECKO_CONFIG_HOME"
+_CONSENT_FILENAME = "corpus-consent"
+# The ONE accepted token — an exact match after strip/lower. "yes"/"true"/"1" are NOT
+# consent to publish; opting a machine into a cross-customer corpus must be unambiguous.
+_CONSENT_TOKEN = "contributed"
+# A consent marker is one short word. Cap the read so a huge/binary file is refused
+# rather than slurped (and so the token cannot hide at the end of a padded file).
+_MAX_CONSENT_BYTES = 64
+
+
+def _consent_home() -> Path:
+    """The operator's gecko config dir. ``GECKO_CONFIG_HOME`` overrides it ONLY when
+    absolute (a relative override would make consent CWD-relative — untrusted)."""
+    override = os.environ.get(_CONSENT_HOME_ENV)
+    if override:
+        candidate = Path(override)
+        if candidate.is_absolute():
+            return candidate
+    return Path.home() / ".gecko"
+
+
+def consent_path() -> Path:
+    """``<config home>/corpus-consent`` — the file form of the operator's opt-in."""
+    return _consent_home() / _CONSENT_FILENAME
+
+
+def _consent_marker() -> str | None:
+    """The raw consent marker from trusted local state, or ``None`` if unavailable.
+
+    Env var first (an operator setting it is explicit), then the config-home file. Any
+    read/decode failure is indistinguishable from absence — the caller fails closed."""
+    from_env = os.environ.get(_CONSENT_ENV)
+    if from_env is not None:
+        return from_env
+    try:
+        with consent_path().open("rb") as fh:
+            # Read one byte past the cap so an over-long file is detectable, not truncated
+            # into a false positive.
+            raw = fh.read(_MAX_CONSENT_BYTES + 1)
+    except OSError:
+        return None  # missing, a directory, unreadable — all fail closed
+    if len(raw) > _MAX_CONSENT_BYTES:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def consented_tenancy() -> str:
+    """Derive the ``tenancy`` label from local operator consent. Takes NO arguments —
+    structurally, agent args / spec text / a response cannot reach it.
+
+    Returns ``contributed`` only on an exact ``contributed`` marker in trusted local
+    state; every other case (absent, unreadable, unparsable, unrecognized) returns
+    ``local``. Re-checked against the closed ``TENANCIES`` set before returning, so a
+    future edit here cannot invent a third label."""
+    marker = _consent_marker()
+    tenancy = (
+        _CONSENT_TOKEN if (marker or "").strip().lower() == _CONSENT_TOKEN else "local"
+    )
+    return tenancy if tenancy in TENANCIES else "local"
+
+
+def tenancy_admissible(tenancy: object) -> bool:
+    """May a READER accept a row carrying this tenancy on THIS machine?
+
+    Fails closed twice: the label must be a closed-set member, and it must be no WIDER
+    than the machine's own derived consent. So a hand-written ``contributed`` row is
+    refused on a machine that never opted in (the read-path hole), while ``local`` — the
+    narrowest label — always reads, so opting in never orphans older rows."""
+    if not isinstance(tenancy, str) or tenancy not in TENANCIES:
+        return False
+    return _TENANCY_WIDTH[tenancy] <= _TENANCY_WIDTH[consented_tenancy()]
+
+
 def outcome_from(
     *,
     operation_id: str,
@@ -217,7 +381,6 @@ def outcome_from(
     surface_id: str,
     surface_rev: str,
     attempt: int = 1,
-    tenancy: str = "local",
 ) -> CallOutcome:
     """Build a control-plane-safe ``CallOutcome``.
 
@@ -226,13 +389,21 @@ def outcome_from(
     read for NAMES and TYPES only (``params_present`` / ``arg_shape``); values are
     never copied out.
 
-    ``source`` is NOT a parameter: it is DERIVED from ``mode`` (see ``source_for_mode``)
-    so a caller cannot mislabel a faked recorded ``200`` as ``observed``. ``tenancy``
-    defaults to ``local`` and is validated against the closed set (the egress layer is
-    not built here — only the guarded field).
+    Neither provenance axis is a parameter. ``source`` is DERIVED from ``mode`` (see
+    ``source_for_mode``) so a caller cannot mislabel a faked recorded ``200`` as
+    ``observed``; ``tenancy`` is DERIVED from local operator consent (see
+    ``consented_tenancy``) so a caller cannot label its own rows egress-eligible. Both
+    are re-checked against their closed sets before construction.
+
+    The three remaining FREE-TEXT channels are gated by ``guard_freetext``:
+    ``operation_id`` and ``path_template`` (untrusted-spec-derived) and the arg NAMES
+    (agent-supplied, feeding both ``params_present`` and the ``arg_shape`` keys). A
+    secret-shaped value REFUSES the whole row — see ``gecko.capture.record_outcome`` for
+    why that refusal must never propagate into the agent's call.
     """
     if error_class not in ERROR_CLASSES:
         raise CorpusError(f"error_class {error_class!r} not in the closed set")
+    tenancy = consented_tenancy()
     if tenancy not in TENANCIES:
         raise CorpusError(f"tenancy {tenancy!r} not in the closed set")
     source = source_for_mode(mode)
@@ -241,14 +412,19 @@ def outcome_from(
     if source not in OUTCOME_SOURCES:
         raise CorpusError(f"source {source!r} not in the closed set")
     ok = status is not None and 200 <= status < 400
+    # Guard the arg NAMES once; params_present and the arg_shape keys are the same
+    # strings from the same (agent-supplied) source, so both are derived from the guarded
+    # set — no second, forgettable gate.
+    arg_names = [guard_freetext(name, "arg_names") for name in args if name != "body"]
     return CallOutcome(
         ts=ts,
         surface_id=surface_id,
         surface_rev=surface_rev,
-        operation_id=operation_id,
+        operation_id=guard_freetext(operation_id, "operation_id"),
         method=str(tool_invoke["method"]),
-        path_template=str(tool_invoke["path"]),  # template from the tool def
-        params_present=[k for k in args if k != "body"],
+        # template from the tool def — spec-chosen, therefore untrusted
+        path_template=guard_freetext(str(tool_invoke["path"]), "path_template"),
+        params_present=arg_names,
         arg_shape=arg_shape_of(args),
         body_present="body" in args,
         status=status,
@@ -285,11 +461,62 @@ def outcome_from_record(record: Mapping[str, Any]) -> CallOutcome:
     Fails CLOSED the same way the writer does: any key not on the §1 allowlist (the shape a
     leaked body or filled URL would take) is rejected before construction, so a payload can
     never ride in through a fixture (invariant #1). Missing a required field is an equally
-    hard error — a truncated record is never silently defaulted."""
+    hard error — a truncated record is never silently defaulted.
+
+    It also RE-DERIVES what the writer derived, because membership alone still admits a
+    forged row (``source="observed"`` on a ``mode="recorded"`` row would smuggle a faked
+    ``200`` into the wire-only bucket):
+
+    * ``tenancy`` must be a closed-set member no wider than this machine's own consent
+      (``tenancy_admissible``) — a hand-written ``contributed`` row is refused;
+    * ``source`` must be the closed-set value ``source_for_mode(mode)`` derives;
+    * ``error_class`` must be a closed-set member;
+    * ``ok`` and ``first_call_correct`` must equal what ``outcome_from`` would compute
+      from ``status``/``attempt``.
+
+    Every row written through ``outcome_from`` satisfies all of these by construction, so
+    anything that trips here is a forged or hand-edited row. Full type-shape validation of
+    the remaining fields (e.g. ``latency_ms`` being an int) stays a known residual."""
     assert_allowlisted(record)
     missing = ALLOWED_KEYS - set(record)
     if missing:
         raise CorpusError(f"record missing required key(s): {sorted(missing)}")
+
+    tenancy = record["tenancy"]
+    if not tenancy_admissible(tenancy):
+        # Redacted: name the axis, never echo the row.
+        raise CorpusError(
+            "record tenancy is not a closed-set member, or is wider than this "
+            "machine's derived consent — refused"
+        )
+    source = record["source"]
+    if source not in OUTCOME_SOURCES:
+        raise CorpusError(f"record source {source!r} not in the closed set")
+    if source != source_for_mode(str(record["mode"])):
+        raise CorpusError(
+            "record source is not the value its mode derives — a forged provenance label"
+        )
+    if record["error_class"] not in ERROR_CLASSES:
+        raise CorpusError("record error_class not in the closed set")
+
+    status = record["status"]
+    if status is not None and (isinstance(status, bool) or not isinstance(status, int)):
+        raise CorpusError("record status must be an int or null")
+    expected_ok = status is not None and 200 <= status < 400
+    if record["ok"] is not expected_ok:
+        raise CorpusError("record ok is not derivable from its status")
+    if record["first_call_correct"] is not (expected_ok and record["attempt"] == 1):
+        raise CorpusError(
+            "record first_call_correct is not derivable from its status/attempt"
+        )
+    # Re-run the free-text guard on the READ side too — same both-boundaries doctrine as
+    # ``tenancy``. A row written before the guard existed (or a hand-supplied fixture) can
+    # still carry a secret-shaped name, and rehydrating it would re-admit the value into
+    # memory and into whatever the reader does next.
+    guard_freetext(record["operation_id"], "operation_id")
+    guard_freetext(record["path_template"], "path_template")
+    for name in list(record["params_present"]) + list(record["arg_shape"]):
+        guard_freetext(name, "arg_names")
     return CallOutcome(**{key: record[key] for key in ALLOWED_KEYS})
 
 
@@ -328,6 +555,98 @@ def record(outcome: CallOutcome, path: str | Path) -> None:
         import logging
 
         logging.getLogger("gecko.corpus").warning("corpus write failed (redacted)")
+
+
+# --- the dropped-row counter — a refused row must be COUNTABLE, not silent -------------
+# Refusing a row is the right failure mode, but a silent refusal is a hole in the metric
+# DENOMINATOR: the published first-call-correct rate would quietly stop seeing the surface
+# a poisoned spec attacked. So every refusal writes one categorical marker to a segregated
+# ``dropped.jsonl`` sibling — same discipline as every other tier here (closed sets, an
+# allowlist writer, append-only JSONL, segregation by PATH so a reader that doesn't know
+# about drops never mistakes one for an outcome).
+#
+# The drop record must not become the leak it exists to report: it carries the FIELD label
+# and the REASON, never the offending value, and its own ``surface_id`` runs through the
+# same secret predicate (falling back to a categorical ``"redacted"`` — refusing the DROP
+# record would restore the silent hole this exists to close).
+
+#: Why a row was refused. Closed, append-only — never free text.
+DROPPED_REASONS: frozenset[str] = frozenset(
+    {
+        "secret_shaped",  # a free-text field carried a secret-shaped value
+        "control_plane_violation",  # any other CorpusError at the write boundary
+    }
+)
+
+#: Which channel tripped. ``other`` is the fail-closed bucket for a non-guard violation.
+DROPPED_FIELDS: frozenset[str] = GUARDED_FREETEXT_FIELDS | {"other"}
+
+#: The categorical stand-in written when a drop record's own ``surface_id`` is unsafe.
+_REDACTED_SURFACE_ID = "redacted"
+
+
+@dataclass(frozen=True)
+class DroppedRow:
+    """One refused corpus row, as a countable categorical marker — never a value."""
+
+    ts: int
+    surface_id: str  # opaque surface label, redacted if itself secret-shaped
+    field: str  # DROPPED_FIELDS member
+    reason: str  # DROPPED_REASONS member
+    source: str  # OutcomeSource — WHICH bucket lost a row (observed/synthetic/...)
+
+
+DROPPED_ALLOWED_KEYS = frozenset(DroppedRow.__dataclass_fields__)
+
+
+def dropped_sibling(path: str | Path) -> Path:
+    """The segregated file for refused rows (``<dir>/dropped.jsonl``). Segregated by PATH
+    for the same reason as ``synthetic_sibling``: a reader of the main corpus can never
+    mistake a drop marker for an outcome."""
+    return Path(path).with_name("dropped.jsonl")
+
+
+def to_dropped_record(row: DroppedRow) -> dict[str, Any]:
+    """Serialize a ``DroppedRow``, enforcing the allowlist AND the closed-set axes.
+
+    ``surface_id`` is the one free-text field, and it is REDACTED rather than rejected —
+    a refused drop record would put the denominator hole back."""
+    record_dict = asdict(row)
+    extra = set(record_dict) - DROPPED_ALLOWED_KEYS
+    if extra:
+        raise CorpusError(
+            f"non-allowlisted dropped-row key(s) would be persisted: {sorted(extra)}"
+        )
+    if row.field not in DROPPED_FIELDS:
+        raise CorpusError(f"dropped field {row.field!r} not in the closed set")
+    if row.reason not in DROPPED_REASONS:
+        raise CorpusError(f"dropped reason {row.reason!r} not in the closed set")
+    if row.source not in OUTCOME_SOURCES:
+        raise CorpusError(f"dropped source {row.source!r} not in the closed set")
+    if not isinstance(row.surface_id, str) or looks_like_secret_value(row.surface_id):
+        record_dict["surface_id"] = _REDACTED_SURFACE_ID
+    return record_dict
+
+
+def record_dropped(row: DroppedRow, path: str | Path) -> None:
+    """Append one categorical drop marker to the segregated ``dropped.jsonl`` sibling.
+
+    Best-effort on I/O like ``record`` (a counter must never break the caller), but a
+    closed-set violation still raises — the drop vocabulary is as fail-closed as the
+    outcome vocabulary."""
+    try:
+        record_dict = to_dropped_record(row)
+    except CorpusError:
+        raise  # an off-vocabulary drop marker is a build break, not a silent write
+    try:
+        target = dropped_sibling(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record_dict) + "\n")
+    except Exception:  # noqa: BLE001 - best-effort; never break the caller
+        import logging
+
+        logging.getLogger("gecko.corpus").warning("dropped-row write failed (redacted)")
 
 
 # --- adversarial (red-team) telemetry — a control-plane-safe sibling of CallOutcome ---
@@ -761,7 +1080,6 @@ def simulated_outcome_from(
     network: str,
     ts: int,
     surface_id: str,
-    tenancy: str = "local",
 ) -> SimulatedOutcome:
     """Build a control-plane-safe ``SimulatedOutcome`` from a :class:`Receipt`'s
     CATEGORICAL fields plus the plan's values-free structural fingerprint.
@@ -772,7 +1090,9 @@ def simulated_outcome_from(
     NEVER reads ``sol_delta``/``tokens_received``/``logs_tail``/``err`` — those are per-user
     state / secret-shaped and are excluded from the corpus by construction (they are not
     parameters and are not touched here). ``source`` is fixed to ``"simulated"`` — a caller
-    cannot mislabel it. The closed-set gate runs at ``to_simulated_record``."""
+    cannot mislabel it — and ``tenancy`` is DERIVED from local operator consent
+    (``consented_tenancy``), never accepted, exactly like ``outcome_from``'s. The
+    closed-set gate runs at ``to_simulated_record``."""
     family, error_code = revert_family(receipt.revert_class)
     return SimulatedOutcome(
         ts=ts,
@@ -787,7 +1107,7 @@ def simulated_outcome_from(
         slot=slot,
         network=network,
         source="simulated",
-        tenancy=tenancy,
+        tenancy=consented_tenancy(),
     )
 
 
@@ -799,12 +1119,19 @@ def simulated_outcome_from_record(record: Mapping[str, Any]) -> SimulatedOutcome
     pubkey/log would take) is rejected before construction, and a truncated record is a
     hard error, never silently defaulted. The closed-set axes are re-validated via
     ``to_simulated_record`` so a hand-edited off-vocabulary row cannot enter a drift
-    series."""
+    series, and ``tenancy`` gets the same re-derivation ``outcome_from_record`` applies:
+    a label wider than this machine's own consent is refused, not accepted on the row's
+    say-so."""
     assert_simulated_allowlisted(record)
     missing = SIMULATED_ALLOWED_KEYS - set(record)
     if missing:
         raise CorpusError(
             f"simulated record missing required key(s): {sorted(missing)}"
+        )
+    if not tenancy_admissible(record["tenancy"]):
+        raise CorpusError(
+            "simulated record tenancy is not a closed-set member, or is wider than "
+            "this machine's derived consent — refused"
         )
     outcome = SimulatedOutcome(**{key: record[key] for key in SIMULATED_ALLOWED_KEYS})
     to_simulated_record(outcome)  # closed-set gate; raises CorpusError on bad axes
