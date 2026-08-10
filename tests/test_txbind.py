@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -36,6 +37,31 @@ def _memo(payload: bytes, payer: str = PAYER) -> str:
         pubkey=Pubkey.from_string(USDC), is_signer=False, is_writable=False
     )
     return assemble_unsigned_tx([Instruction(program, payload, [meta])], payer).tx
+
+
+#: A REAL, non-zero blockhash. Every D3 fixture below uses one on purpose: a landing
+#: bundle is built with ``Hash.default()`` (landing.py), so on it the byte at offset 68
+#: and the byte at the blockhash offset are BOTH zero and zeroing either yields identical
+#: bytes — a digest comparison then cannot tell a right offset from a wrong one.
+REAL_BLOCKHASH = "So11111111111111111111111111111111111111112"
+
+
+def _memo_with(payload: bytes, *, blockhash: str, account: str = USDC) -> str:
+    """The same one-memo transaction, with the blockhash and the touched account chosen.
+
+    ``account == blockhash`` is the attack fixture: a message whose recent_blockhash bytes
+    also appear as an account key.
+    """
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    meta = AccountMeta(
+        pubkey=Pubkey.from_string(account), is_signer=False, is_writable=False
+    )
+    return assemble_unsigned_tx(
+        [Instruction(program, payload, [meta])], PAYER, blockhash=blockhash
+    ).tx
 
 
 def _receipt(
@@ -320,3 +346,185 @@ def test_simulating_without_replacement_earns_an_exact_binding() -> None:
     assert seen["replaceRecentBlockhash"] is False
     assert receipt.binding_strength == "exact"
     assert evaluate_tx(tx, receipt, require="exact").approved
+
+
+# --------------------------------------------------------------------------- #
+# D3 — the blockhash offset is DERIVED from the layout, never searched for by value.
+#
+# The old normaliser did `serialized.find(blockhash)`. Any 32 bytes that happen to equal
+# the blockhash — an account key, a slice of instruction data — win the race, and the
+# normaliser then zeroes THAT and leaves the real blockhash inside the "blockhash-blind"
+# digest. The structural binding stops being structural exactly when an attacker gets to
+# choose the bytes.
+# --------------------------------------------------------------------------- #
+def _body(tx: str) -> tuple[Any, str, bytes]:
+    """The message object, its version, and the bytes the binding actually hashes."""
+    from gecko.txbind import _decode, _message_of
+
+    message, version = _message_of(_decode(tx, "base64"))
+    return message, version, bytes(message)
+
+
+def test_the_blockhash_offset_is_derived_not_searched_for() -> None:
+    """Pin the OFFSET, not a byte comparison. `serialized[offset:offset+32] == blockhash`
+    is satisfied at a wrong offset whenever those bytes are duplicated (see the attack
+    fixture below), so only the offset itself can distinguish a correct parse."""
+    from gecko.txbind import blockhash_offset
+
+    message, version, body = _body(_memo_with(b"x", blockhash=REAL_BLOCKHASH))
+
+    # legacy: 3 header bytes + 1 compact-u16 count byte + 3 account keys × 32.
+    assert len(message.account_keys) == 3
+    assert blockhash_offset(body, version) == 100
+    assert blockhash_offset(body, version) == 3 + 1 + 32 * len(message.account_keys)
+    assert body[100:132] == bytes(message.recent_blockhash)
+
+
+def test_a_versioned_message_offset_skips_no_section() -> None:
+    """v0 carries an address-table-lookup section AFTER the instructions; the blockhash
+    still sits right behind the static keys, and the parse must consume the tail."""
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    from gecko.txbind import blockhash_offset
+
+    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    table = AddressLookupTableAccount(
+        key=Pubkey.from_string(USDC), addresses=[Pubkey.from_string(OTHER)]
+    )
+    built = assemble_unsigned_tx(
+        [
+            Instruction(
+                program,
+                b"x",
+                [
+                    AccountMeta(
+                        pubkey=Pubkey.from_string(OTHER),
+                        is_signer=False,
+                        is_writable=True,
+                    )
+                ],
+            )
+        ],
+        PAYER,
+        blockhash=REAL_BLOCKHASH,
+        lookup_tables=[table],
+    )
+    message, version, body = _body(built.tx)
+
+    assert version == "v0"
+    assert len(message.account_keys) == 2  # the third address comes from the table
+    assert blockhash_offset(body, version) == 68
+    assert body[68:100] == bytes(message.recent_blockhash)
+
+
+def test_a_blockhash_that_equals_an_account_key_zeroes_the_blockhash_not_the_key() -> (
+    None
+):
+    """THE ATTACK FIXTURE. `recent_blockhash` is chosen to equal an account key already in
+    the message, so a value search lands on the key. Reproduced on pre-D3 code: `find`
+    returns 68 (the third account key) and the real blockhash stays in the digest."""
+    from gecko.txbind import _normalise_blockhash
+
+    message, _version, body = _body(_memo_with(b"x", blockhash=USDC, account=USDC))
+    blockhash = bytes(message.recent_blockhash)
+
+    assert bytes(message.account_keys[2]) == blockhash  # the collision, on purpose
+    assert body.find(blockhash) == 68  # the trap the old normaliser walked into
+
+    normalised = _normalise_blockhash(message, body)
+
+    assert normalised[68:100] == blockhash  # the ACCOUNT KEY survives …
+    assert normalised[100:132] == bytes(32)  # … and the BLOCKHASH is what got zeroed
+
+
+def test_the_attack_fixture_still_binds_blockhash_blind() -> None:
+    """Behaviour, not offsets: same plan, same touched account, different blockhash → the
+    SAME structural digest. Pre-D3 the collision fixture leaked its blockhash into the
+    digest, so these two differed."""
+    collided = _memo_with(b"x", blockhash=USDC, account=USDC)
+    ordinary = _memo_with(b"x", blockhash=REAL_BLOCKHASH, account=USDC)
+
+    assert message_binding(collided, strength="structural") == message_binding(
+        ordinary, strength="structural"
+    )
+
+
+def test_swapping_an_account_key_changes_the_structural_digest() -> None:
+    """The other half of the pair: the keys ARE covered. (True on pre-D3 code too — it is
+    the blockhash-blindness above that the old normaliser broke.)"""
+    touching_usdc = _memo_with(b"x", blockhash=REAL_BLOCKHASH, account=USDC)
+    touching_other = _memo_with(b"x", blockhash=REAL_BLOCKHASH, account=OTHER)
+
+    assert message_binding(touching_usdc, strength="structural") != message_binding(
+        touching_other, strength="structural"
+    )
+
+
+def test_a_parse_landing_on_the_wrong_bytes_is_refused() -> None:
+    """The self-verifying assertion: if the derived offset does not hold the message's own
+    blockhash, we refuse instead of zeroing bytes we do not understand."""
+    from gecko.txbind import _normalise_blockhash
+
+    message, _version, body = _body(_memo_with(b"x", blockhash=REAL_BLOCKHASH))
+    tampered = bytearray(body)
+    tampered[100] ^= 0xFF
+
+    with pytest.raises(TxDecodeError, match="blockhash"):
+        _normalise_blockhash(message, bytes(tampered))
+
+
+def test_an_unparseable_message_raises_rather_than_returning_a_sentinel() -> None:
+    """A sentinel offset (or a sentinel digest) would make two unparseable messages EQUAL
+    at the comparison in `evaluate_tx` and therefore APPROVE. The no-raise contract lives
+    in `evaluate_tx`, never here."""
+    from gecko.txbind import blockhash_offset
+
+    with pytest.raises(TxDecodeError):
+        blockhash_offset(b"\x01\x00\x01", "legacy")  # truncated: no key count
+
+
+def test_trailing_bytes_are_refused_rather_than_hashed() -> None:
+    from gecko.txbind import blockhash_offset
+
+    _message, version, body = _body(_memo_with(b"x", blockhash=REAL_BLOCKHASH))
+
+    with pytest.raises(TxDecodeError, match="trailing"):
+        blockhash_offset(body + b"\x00", version)
+
+
+def test_an_absurd_account_count_is_refused_without_reading_it() -> None:
+    """Bounded: a message claiming 65,535 account keys is refused on the count, not after
+    walking 2MB of a buffer that does not exist."""
+    from gecko.txbind import blockhash_offset
+
+    claimed_huge = b"\x01\x00\x01" + b"\xff\xff\x03"  # header + compact-u16(65535)
+
+    with pytest.raises(TxDecodeError, match="account keys"):
+        blockhash_offset(claimed_huge, "legacy")
+
+
+def test_a_multi_byte_length_prefix_is_walked_correctly() -> None:
+    """Instruction data over 127 bytes needs a two-byte compact-u16 length. A parser that
+    mis-steps there lands somewhere plausible and would still satisfy a byte comparison;
+    the offset and the end-of-buffer check are what catch it."""
+    from gecko.txbind import blockhash_offset
+
+    message, version, body = _body(_memo_with(b"z" * 300, blockhash=REAL_BLOCKHASH))
+
+    assert blockhash_offset(body, version) == 100
+    assert body[100:132] == bytes(message.recent_blockhash)
+    with pytest.raises(TxDecodeError, match="trailing"):
+        blockhash_offset(body + b"\x00", version)
+
+
+def test_a_versioned_prefix_on_a_legacy_message_is_refused() -> None:
+    """The high bit of the first byte marks a versioned message; on a legacy layout it is
+    the signature count and must be clear."""
+    from gecko.txbind import blockhash_offset
+
+    _message, _version, body = _body(_memo_with(b"x", blockhash=REAL_BLOCKHASH))
+
+    with pytest.raises(TxDecodeError):
+        blockhash_offset(b"\x80" + body[1:], "legacy")

@@ -22,7 +22,9 @@ ran against. A fork simulation therefore cannot honestly attest a blockhash:
 * ``structural`` — covers the header, the account keys, the instructions and their order,
   and the fee payer, with the blockhash normalised out. This is what a simulation with a
   replaced blockhash can truthfully claim, and it catches a swapped account, an added
-  instruction, or a reordered route.
+  instruction, or a reordered route. The blockhash's position is DERIVED from the message
+  layout (:func:`blockhash_offset`), never found by searching for its value — whoever
+  chooses the blockhash would otherwise choose which 32 bytes get normalised away.
 * ``exact`` — covers the whole message including the blockhash. Stronger, available only
   when the simulation ran against a real blockhash it did not replace, and it expires with
   that blockhash (~150 slots, roughly a minute).
@@ -46,8 +48,10 @@ from typing import Any, Literal
 
 __all__ = [
     "BindingStrength",
+    "MessageVersion",
     "SigningVerdict",
     "TxDecodeError",
+    "blockhash_offset",
     "evaluate_tx",
     "message_binding",
 ]
@@ -55,7 +59,22 @@ __all__ = [
 #: How much of the message the binding covers. Ordered weakest → strongest.
 BindingStrength = Literal["structural", "exact"]
 
+#: The two message wire formats we decode. Single source of truth for this module and its
+#: tests — never redeclare it.
+MessageVersion = Literal["legacy", "v0"]
+
 _ZERO_BLOCKHASH = bytes(32)
+
+# Bounds for the layout walk below. These are wire facts, not guesses: a transaction is
+# capped at 1232 bytes on the wire, and every account reference inside a message is a u8
+# index, so 256 static keys is the hard ceiling. The instruction and lookup caps are
+# generous relative to what fits in 1232 bytes; they exist so a corrupt length prefix
+# costs us a refusal rather than a walk through a buffer that was never there.
+_MAX_MESSAGE_BYTES = 1232
+_MAX_ACCOUNT_KEYS = 256
+_MAX_INSTRUCTIONS = 256
+_MAX_INDEX_LIST = 256
+_MAX_LOOKUPS = 64
 
 
 class TxDecodeError(Exception):
@@ -109,14 +128,19 @@ def _decode(tx: str | bytes, encoding: str) -> bytes:
         raise TxDecodeError(f"transaction is not valid {encoding}") from exc
 
 
-def _message_of(raw: bytes) -> tuple[Any, str]:
+def _version_of(message: Any) -> MessageVersion:
+    """Which wire layout this message object serializes to."""
+    return "v0" if type(message).__name__.endswith("V0") else "legacy"
+
+
+def _message_of(raw: bytes) -> tuple[Any, MessageVersion]:
     """The message and its version, for a legacy or a versioned transaction."""
     try:
         from solders.transaction import VersionedTransaction
 
         parsed = VersionedTransaction.from_bytes(raw)
         message = parsed.message
-        return message, "v0" if type(message).__name__.endswith("V0") else "legacy"
+        return message, _version_of(message)
     except Exception:
         pass
     try:
@@ -127,21 +151,158 @@ def _message_of(raw: bytes) -> tuple[Any, str]:
         raise TxDecodeError("transaction decodes as neither legacy nor v0") from exc
 
 
-def _normalise_blockhash(message: Any, serialized: bytes) -> bytes:
-    """Zero the message's blockhash without hand-parsing wire offsets.
+def _compact_u16(buf: bytes, pos: int) -> tuple[int, int]:
+    """Read Solana's ShortVec length prefix: up to three bytes, seven bits each.
 
-    Locating the blockhash by value keeps this correct across message layouts. If it
-    cannot be found we fail closed rather than hash bytes we do not understand.
+    Non-canonical encodings (a continuation byte contributing nothing, or a value past
+    65,535) are refused — a decoder that accepts two spellings of one length lets the same
+    bytes mean two different messages.
+    """
+    value = 0
+    for group in range(3):
+        if pos >= len(buf):
+            raise TxDecodeError("message ends inside a length prefix")
+        byte = buf[pos]
+        pos += 1
+        value |= (byte & 0x7F) << (group * 7)
+        if not byte & 0x80:
+            if group and not byte:
+                raise TxDecodeError("non-canonical length prefix")
+            if value > 0xFFFF:
+                raise TxDecodeError("length prefix out of range")
+            return value, pos
+    raise TxDecodeError("length prefix longer than three bytes")
+
+
+def _advance(buf: bytes, pos: int, count: int) -> int:
+    """Step over ``count`` declared bytes, refusing to step past the end."""
+    end = pos + count
+    if end > len(buf):
+        raise TxDecodeError("message ends inside a section it declared")
+    return end
+
+
+def blockhash_offset(serialized: bytes, version: MessageVersion) -> int:
+    """Byte offset of the 32-byte ``recent_blockhash`` inside a serialized message.
+
+    The offset is DERIVED by walking the layout — optional version prefix, three header
+    bytes, the compact-u16 account-key count, that many 32-byte keys — and the blockhash
+    is the next 32 bytes. The rest of the message (instructions, and for v0 the
+    address-table-lookup section) is walked too, not because the offset needs it but
+    because a parse that does not reach exactly the end of the buffer did not understand
+    the buffer, and this function must not return an offset it cannot stand behind.
+
+    The previous implementation searched for the blockhash BY VALUE. Any 32 bytes that
+    happened to equal it — an account key, a slice of instruction data — won that race,
+    and the "blockhash-blind" structural digest then covered a zeroed account key and the
+    real blockhash. Whoever picks the blockhash picks which bytes get normalised out, so
+    the search had to go.
+
+    Raises :class:`TxDecodeError` on anything it cannot fully account for. It never
+    returns a sentinel: two unparseable messages that both mapped to the same sentinel
+    would compare EQUAL in :func:`evaluate_tx` and approve. The no-raise contract of the
+    signing gate lives in ``evaluate_tx``, not here.
+    """
+    if not serialized:
+        raise TxDecodeError("empty message")
+    if len(serialized) > _MAX_MESSAGE_BYTES:
+        raise TxDecodeError("message is larger than a transaction may be on the wire")
+
+    pos = 0
+    # solders' ``bytes(MessageV0)`` omits the 0x80 version prefix that the same message
+    # carries inside a serialized transaction. Accept either spelling, refuse a versioned
+    # prefix on something decoded as legacy (there it is the signature count, and 128
+    # signatures do not fit in a packet).
+    if serialized[0] & 0x80:
+        if version != "v0":
+            raise TxDecodeError("versioned prefix on a message decoded as legacy")
+        if serialized[0] & 0x7F != 0:
+            raise TxDecodeError("unsupported message version")
+        pos = 1
+
+    if pos + 3 > len(serialized):
+        raise TxDecodeError("message ends inside its header")
+    signers = serialized[pos]
+    readonly_signed = serialized[pos + 1]
+    readonly_unsigned = serialized[pos + 2]
+    pos += 3
+
+    keys, pos = _compact_u16(serialized, pos)
+    if keys < 1 or keys > _MAX_ACCOUNT_KEYS:
+        raise TxDecodeError(
+            f"message declares {keys} account keys, outside 1..{_MAX_ACCOUNT_KEYS}"
+        )
+    if (
+        signers < 1
+        or signers > keys
+        or readonly_signed > signers
+        or signers + readonly_unsigned > keys
+    ):
+        raise TxDecodeError("message header disagrees with its account key list")
+
+    offset = _advance(serialized, pos, 32 * keys)
+    pos = _advance(serialized, offset, 32)
+
+    instructions, pos = _compact_u16(serialized, pos)
+    if instructions > _MAX_INSTRUCTIONS:
+        raise TxDecodeError(f"message declares {instructions} instructions")
+    for _ in range(instructions):
+        if pos >= len(serialized):
+            raise TxDecodeError("message ends inside an instruction")
+        program_index = serialized[pos]
+        pos += 1
+        if program_index >= keys:
+            raise TxDecodeError("instruction names a program outside the account list")
+        accounts, pos = _compact_u16(serialized, pos)
+        if accounts > _MAX_INDEX_LIST:
+            raise TxDecodeError("instruction declares too many accounts")
+        pos = _advance(serialized, pos, accounts)
+        data_len, pos = _compact_u16(serialized, pos)
+        pos = _advance(serialized, pos, data_len)
+
+    if version == "v0":
+        lookups, pos = _compact_u16(serialized, pos)
+        if lookups > _MAX_LOOKUPS:
+            raise TxDecodeError("message declares too many address table lookups")
+        for _ in range(lookups):
+            pos = _advance(serialized, pos, 32)
+            writable, pos = _compact_u16(serialized, pos)
+            if writable > _MAX_INDEX_LIST:
+                raise TxDecodeError("lookup declares too many writable indexes")
+            pos = _advance(serialized, pos, writable)
+            readonly, pos = _compact_u16(serialized, pos)
+            if readonly > _MAX_INDEX_LIST:
+                raise TxDecodeError("lookup declares too many readonly indexes")
+            pos = _advance(serialized, pos, readonly)
+
+    if pos != len(serialized):
+        raise TxDecodeError("message has trailing bytes after its final section")
+    return offset
+
+
+def _normalise_blockhash(message: Any, serialized: bytes) -> bytes:
+    """Zero the message's blockhash at its STRUCTURALLY derived offset.
+
+    Fails closed: if the derived offset does not hold the message's own blockhash we
+    refuse rather than zero bytes we do not understand.
+
+    NOTE for a later reader: that equality check is a guard against a mis-stepped parser,
+    NOT proof the offset is right. It passes at a wrong offset whenever those 32 bytes are
+    duplicated in the message — exactly the case where ``recent_blockhash`` equals an
+    account key, and trivially true for a landing bundle built with ``Hash.default()``,
+    where the blockhash and much else are both zeros. Correctness comes from the
+    derivation plus the pinned-offset tests in ``tests/test_txbind.py``; do not delete
+    those as redundant with this line.
     """
     try:
         blockhash = bytes(message.recent_blockhash)
     except Exception as exc:  # noqa: BLE001 - redact
         raise TxDecodeError("message exposes no recent_blockhash") from exc
 
-    index = serialized.find(blockhash)
-    if index < 0:
-        raise TxDecodeError("blockhash not found in the serialized message")
-    return serialized[:index] + _ZERO_BLOCKHASH + serialized[index + 32 :]
+    offset = blockhash_offset(serialized, _version_of(message))
+    if serialized[offset : offset + 32] != blockhash:
+        raise TxDecodeError("derived blockhash offset does not hold the blockhash")
+    return serialized[:offset] + _ZERO_BLOCKHASH + serialized[offset + 32 :]
 
 
 def message_binding(
