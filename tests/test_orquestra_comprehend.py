@@ -124,6 +124,17 @@ def test_manual_overlay_list_is_exactly_the_pinned_artifact(api_id: str) -> None
     assert result.manual == EXPECTED_MANUAL[api_id]
 
 
+@pytest.mark.parametrize("api_id", sorted(CASES))
+def test_config_carries_the_computed_pda_origins(api_id: str) -> None:
+    """R7: the tier is computed at the merge and EMITTED on the artifact
+    (``program.pda_origins``) — no longer computed-then-discarded, which forced
+    find_start to re-derive it from hand-maintained maps in a second place."""
+    result = _comprehend(api_id)
+    assert result.config["program"]["pda_origins"] == {
+        name: prov.tier for name, prov in result.provenance.items()
+    }
+
+
 def test_without_overlay_the_differential_fails_loudly_naming_the_gaps() -> None:
     """Run pump.fun with NO overlay: the diff must list exactly the hand-supplied
     knowledge — the hidden account, the ATA recipes, the curated intents/notes."""

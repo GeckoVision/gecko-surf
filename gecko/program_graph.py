@@ -112,7 +112,9 @@ class ProgramGraph:
     kept recipe came from. It deliberately lives here and not on
     :class:`~gecko.pda.PdaNode`: origin is not part of a recipe's identity, and
     putting it there would change the frozen node's equality, which the merge rule
-    and the config round-trip both depend on.
+    and the config round-trip both depend on. The packaged program config carries
+    the same fact the same way — a sibling ``program.pda_origins`` map (R7), never
+    a node field — so the artifact and this run metadata stay one shape.
     """
 
     program_id: str | None

@@ -64,6 +64,17 @@
           {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
         ]
       }
+    },
+    "pda_origins": {
+      "config": "extracted",
+      "board": "extracted",
+      "treasury": "extracted",
+      "automation": "manual",
+      "miner": "manual",
+      "round": "manual",
+      "stake": "manual",
+      "recipient": "manual",
+      "treasury_tokens": "manual"
     }
   }
 }
