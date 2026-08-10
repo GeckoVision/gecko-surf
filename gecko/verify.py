@@ -25,6 +25,13 @@ Two modes, one code path (invariant #3):
   degrades live→recorded (quarantine / no injectable auth), the actual mode is synthetic
   and the op stays UNVERIFIED (honest "no access").
 
+A verify run is a SELF-CHECK, not an agent call — Gecko walks every op with arguments it
+synthesized itself. Any corpus row it produces is therefore routed to the segregated
+``corpus.selfcheck_sibling`` file for the whole run (``selfcheck_corpus``), so a 404 on an
+id we invented can never enter the published first-call-correct denominator. The rows are
+still honest wire evidence and stay ``source == "observed"``; they just live in their own
+file and their own denominator.
+
 Control plane only (invariant #1): the returned report carries op ids + verdict STATUS +
 BASIS strings + a provenance category + counts. It never carries a response body, an arg
 value, a filled URL, or a secret — none of those ever enter this module (the verdict is
@@ -36,7 +43,8 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +59,12 @@ if TYPE_CHECKING:
 
 # op_provenance (the claimed-until-checked classifier) lives in graph.py — its home so the
 # provenance ladder has a single source of truth; re-exported here as the verify surface.
-__all__ = ["load_observed_corpus", "op_provenance", "verify_docs"]
+__all__ = [
+    "load_observed_corpus",
+    "op_provenance",
+    "selfcheck_corpus",
+    "verify_docs",
+]
 
 _STATUS_TO_SUMMARY: dict[VerifyStatus, str] = {
     "VERIFIED": "verified",
@@ -117,6 +130,34 @@ def _replay_outcome(
     )
 
 
+@contextmanager
+def selfcheck_corpus(client: AgentApiClient) -> Iterator[None]:
+    """Point the client's corpus capture at the segregated self-check file for the
+    duration of a verify run — so a probe Gecko initiated cannot enter the agent-call
+    denominator.
+
+    Structural by UNREACHABILITY, not by filtering. The client holds exactly one corpus
+    path, and the write boundary (``capture.capture_outcome`` → ``corpus.record``) writes
+    to whatever that path names. Inside this scope the client no longer holds the main
+    path at all, so there is no code path — present or future — by which a self-check row
+    reaches the main corpus writer. That is deliberately stronger than tagging the row and
+    filtering it downstream: a filter is a thing a reader can forget.
+
+    A no-op when corpus capture is off (the default): a self-check must never CREATE a
+    corpus a caller did not ask for. Restores on the way out, including on an exception,
+    so a verify run that raises cannot leave the client permanently redirected.
+    """
+    original = getattr(client, "_corpus_path", None)
+    if original is None:
+        yield
+        return
+    client._corpus_path = corpus.selfcheck_sibling(original)
+    try:
+        yield
+    finally:
+        client._corpus_path = original
+
+
 def load_observed_corpus(path: str | Path) -> dict[str, corpus.CallOutcome]:
     """Load a pre-captured observed-outcome corpus (JSONL) into an ``op_id -> CallOutcome``
     map — the offline replay seam for the verify demo (Pattern B).
@@ -168,6 +209,23 @@ def verify_docs(
     report: dict[str, dict[str, Any]] = {}
     summary = {"verified": 0, "refuted": 0, "unverified": 0}
 
+    with selfcheck_corpus(client):
+        _verify_ops(client, graph, mode, outcomes, report, summary)
+
+    return {"mode": mode, "report": report, "summary": summary}
+
+
+def _verify_ops(
+    client: AgentApiClient,
+    graph: Any,
+    mode: CallMode,
+    outcomes: Mapping[str, corpus.CallOutcome] | None,
+    report: dict[str, dict[str, Any]],
+    summary: dict[str, int],
+) -> None:
+    """The per-op replay + verdict loop. Split out so the ENTIRE body runs inside
+    ``selfcheck_corpus`` — a loop that reached the wire outside that scope would write an
+    agent-denominator row, so the scope wraps the call, not each iteration."""
     for tool in client.list_tools():
         op = client._op_by_name.get(tool["name"])
         if op is None:  # a synthetic tool with no backing operation — nothing to verify
@@ -200,5 +258,3 @@ def verify_docs(
             "provenance": op_provenance(client.spec, op_id),
         }
         summary[_STATUS_TO_SUMMARY[verdict.status]] += 1
-
-    return {"mode": mode, "report": report, "summary": summary}

@@ -528,6 +528,10 @@ def _cmd_verify_docs(argv: list[str]) -> int:
         surface_id=surface,
         declared_hints=declared or None,
     )
+    # No ``corpus_path`` here, so a verify run persists nothing today. If one is ever
+    # wired in, it stays safe: ``verify_docs`` redirects the client's capture to the
+    # segregated ``corpus.selfcheck_sibling`` for the whole run, because these calls use
+    # arguments Gecko invented and must never enter the observed agent denominator.
     report = verify_mod.verify_docs(client, mode=mode)
     print(json.dumps(report, indent=2))
     return 0
