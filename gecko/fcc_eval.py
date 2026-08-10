@@ -486,7 +486,11 @@ def run_variance(records: list[RunRecord], arm: str) -> tuple[float, float]:
 
 
 def lift(records: list[RunRecord]) -> float:
-    """The number that matters: Gecko positive-FCC − raw positive-FCC (comprehension lift)."""
+    """The number that matters: Gecko positive-FCC − raw positive-FCC (comprehension lift).
+
+    POOLED over every fixture in ``records``. When the set spans APIs of unlike difficulty
+    this averages them and then describes none of them: on the pinned run the pooled +0.30
+    is the mean of a +0.55 API and a +0.00 API. Publish ``per_api_lift`` instead."""
     return fcc_rate(records, "gecko") - fcc_rate(records, "raw")
 
 
@@ -497,3 +501,266 @@ def lift_corpus(records: list[RunRecord]) -> float:
     a call's failure teaches the next agent to call it right. Zero when no correction matched
     any surfaced tool (a real finding, not a bug)."""
     return fcc_rate(records, "gecko_corpus") - fcc_rate(records, "gecko")
+
+
+# --------------------------------------------------------------------------- #
+# per-API lift — the ONLY publishable before/after pair
+# --------------------------------------------------------------------------- #
+#: The provenance label every block below carries. ``benchmark`` = a controlled two-arm
+#: run over a committed golden set. It is NOT ``observed``: production data has ONE arm
+#: (every call was prepared by Gecko), so it can certify a single-arm rate and can never
+#: produce a before/after pair. Anything sourced from the corpus must use
+#: ``telemetry.per_surface_fcc`` and its ``observed-with-gecko`` arm label instead.
+BENCHMARK_PROVENANCE = "benchmark"
+
+#: Spelled out rather than ``__name__``: under ``python -m`` the module name is
+#: ``__main__``, and a block that mislabels its own producer is worse than an unlabeled one.
+_MODULE = "gecko.fcc_eval"
+
+#: The floor under EACH arm's denominator. A rate over ``d`` attempts has resolution
+#: ``1/d``; publishing a two-digit percentage claim therefore needs ``1/d <= 0.10``, i.e.
+#: ``d >= 10``. Below it a single flip moves the headline by ten points or more, so the
+#: function refuses rather than emitting a number that a rerun would not reproduce.
+MIN_ATTEMPTS_PER_ARM = 10
+
+#: Closed vocabulary — like ``corpus.ERROR_CLASSES``, a refusal must name itself from a
+#: fixed set so "we could not answer" cannot be silently re-styled into a finding.
+RefusalReason = Literal["arm_absent", "below_floor", "unpaired"]
+
+
+@dataclass(frozen=True)
+class ArmRate:
+    """One arm's positive-FCC rate on ONE api, carrying its own denominator."""
+
+    arm: str
+    attempts: int  # positive-task attempts = tasks x runs
+    first_call_correct: int
+    rate: float
+
+
+@dataclass(frozen=True)
+class ApiLift:
+    """The before/after pair for ONE api. Emitted only when both arms cleared the floor
+    on the SAME tasks — otherwise the api appears in ``PerApiLift.unscored`` instead."""
+
+    api: str
+    baseline: ArmRate
+    treatment: ArmRate
+    lift: float  # treatment.rate - baseline.rate, as a fraction
+    tasks: int  # distinct positive tasks each arm ran
+    runs: int
+    provenance: str
+    produced_by: str
+
+    def sentence(self) -> str:
+        """The publishable sentence, RENDERED FROM THESE FIELDS.
+
+        Standing FEEDBACK: three published numbers once measured something other than the
+        sentence printed around them. So the sentence is not written by hand next to the
+        number — it is generated from the same object a test asserts, and it names both
+        arms, both denominators, the provenance and the producing function."""
+        return (
+            f"{self.api}: {round(self.baseline.rate * 100)}% -> "
+            f"{round(self.treatment.rate * 100)}% first-call-correct "
+            f"({round(self.lift * 100):+d} pts), "
+            f"{self.baseline.arm} vs {self.treatment.arm}, "
+            f"{self.baseline.attempts} attempts per arm "
+            f"({self.tasks} golden tasks x {self.runs} runs) "
+            f"[{self.provenance}; {self.produced_by}]"
+        )
+
+
+@dataclass(frozen=True)
+class UnscoredApi:
+    """An api the function REFUSED to score, and why. Its existence is the point: the
+    alternative is emitting ``0.0``, which reads as "measured, and Gecko did not help"."""
+
+    api: str
+    reason: RefusalReason
+    baseline_attempts: int
+    treatment_attempts: int
+    minimum_attempts_per_arm: int
+    provenance: str
+    produced_by: str
+
+
+@dataclass(frozen=True)
+class PerApiLift:
+    """The per-api split of the comprehension lift over a benchmark run.
+
+    Reporting convention shared with ``telemetry.per_surface_fcc`` (same shape, same
+    words) so the two published surfaces cannot drift: every block names its provenance,
+    its denominator and the function that produced it; a thing that could not answer is
+    absent from ``entries`` rather than present with a zero. One deliberate divergence —
+    the telemetry block COUNTS suppressed surfaces without naming them, because a
+    consumer's surface ids name their vendors. Here the api ids are OUR OWN committed
+    fixtures, so refusals are named: nothing about them is a disclosure."""
+
+    entries: tuple[ApiLift, ...]  # scored apis, biggest denominator first
+    unscored: tuple[UnscoredApi, ...]  # refusals, by api id
+    baseline_arm: str
+    treatment_arm: str
+    attempts: int  # block denominator: both arms' attempts across scored entries
+    minimum_attempts_per_arm: int
+    provenance: str
+    produced_by: str
+
+    def get(self, api: str) -> ApiLift | None:
+        for entry in self.entries:
+            if entry.api == api:
+                return entry
+        return None
+
+    def lift_for(self, api: str) -> float | None:
+        """The lift, or ``None`` for COULD NOT ANSWER — deliberately distinct from ``0.0``.
+
+        ``0.0`` is a finding (both arms measured, the shaping bought nothing on this API —
+        which is the true, published result for a clean well-documented one). ``None`` is
+        silence (thin denominator, missing arm, unpaired arms, or an api not in the run).
+        Collapsing the two turns "we did not measure" into "we measured no benefit"."""
+        entry = self.get(api)
+        return None if entry is None else entry.lift
+
+    def refusal_for(self, api: str) -> RefusalReason | None:
+        """Why ``api`` was not scored, or ``None`` if it was scored OR never appeared."""
+        for row in self.unscored:
+            if row.api == api:
+                return row.reason
+        return None
+
+
+def _tasks(rows: list[RunRecord]) -> dict[tuple[str, str], int]:
+    """The multiset of positive tasks an arm actually ran: (archetype, goal) -> attempts."""
+    counts: dict[tuple[str, str], int] = {}
+    for r in rows:
+        key = (r.archetype, r.goal)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _arm_rate(arm: str, rows: list[RunRecord]) -> ArmRate:
+    correct = sum(1 for r in rows if r.fcc)
+    total = len(rows)
+    return ArmRate(
+        arm=arm,
+        attempts=total,
+        first_call_correct=correct,
+        rate=round(correct / total, 4) if total else 0.0,
+    )
+
+
+def per_api_lift(
+    records: list[RunRecord],
+    *,
+    baseline_arm: str = "raw",
+    treatment_arm: str = "gecko",
+) -> PerApiLift:
+    """Split the comprehension lift by api — the only honest before/after pair we publish.
+
+    **Why this function exists.** A "60 -> 93"-shaped claim needs two arms measured on the
+    same tasks. That exists at exactly one seam: this golden-set harness, where ``raw``
+    (the naive whole-spec dump) and ``gecko`` (search-surfaced, question-shaped,
+    auth-hidden) answer identical tasks. Production/corpus data has NO control arm — every
+    recorded call was prepared by Gecko — so it can certify a single-arm rate
+    (``telemetry.per_surface_fcc``) and must never be differenced into a lift. Hence the
+    fixed ``benchmark`` provenance on every block here.
+
+    **Why per-api and not pooled.** ``lift()`` pools every fixture, so it reports the mean
+    of unlike APIs and describes none of them; the difficulty of the API is the dominant
+    variable in this metric, not the shaping. Per-api is also the honest form of the claim
+    ("no lift on a clean API" is a result we publish, not one we hide in an average).
+
+    **Refuses to score** rather than emit a number, per api, when:
+      - ``arm_absent``  — an arm produced no positive rows for that api;
+      - ``below_floor`` — either arm's denominator is under ``MIN_ATTEMPTS_PER_ARM``;
+      - ``unpaired``    — the arms did not run the same tasks the same number of times,
+        so the difference is a difference of task mixes, not of arms.
+    A refused api is ABSENT from ``entries`` and present in ``unscored``; ``lift_for``
+    returns ``None``. ``None`` is could-not-answer, ``0.0`` is a measured zero.
+
+    **What this supersedes.** These per-API FCC figures are currently HAND-COPIED from a
+    pinned run write-up into decks/docs and are superseded by this function's return
+    value, which reproduces them exactly from the run's records:
+      - TxODDS ``RAW 0.10 -> GECKO 0.65`` (lift +0.55, 120 positive attempts per arm)
+      - Pegana ``RAW 1.00 -> GECKO 1.00`` (lift +0.00, 100 positive attempts per arm)
+      - the POOLED ``RAW 0.51 -> GECKO 0.81`` (+0.30) headline, which is retired for
+        publication: it is the average of the two rows above and equals neither.
+    Earlier unpinned variants of the same claim ("~6x", "8 -> 61%", "0.44") were already
+    superseded by that write-up and are superseded again here.
+
+    **What this does NOT supersede — do not re-attribute these to this function.** The
+    canonical RETRIEVAL figures are ``recall@1 0.74 | recall@3 0.89 | MRR 0.81`` over 27
+    wired-gold rows, produced by ``gecko.retrieval_eval.evaluate_golden()``. They measure
+    the router (did we surface the right operation), not whether an agent then called it
+    correctly, and they have no second arm. A ``0.78`` is circulating for that metric: it
+    is not this function's output, it is not any figure in the canonical set, and nothing
+    here certifies it.
+
+    Pure function of ``records``: no I/O, no network, no state. Reads booleans and names
+    only — control-plane clean, like every other aggregator in this module."""
+    produced_by = f"{_MODULE}.per_api_lift"
+    pos = positive(records)
+    by_api: dict[str, dict[str, list[RunRecord]]] = {}
+    for r in pos:
+        if r.arm in (baseline_arm, treatment_arm):
+            by_api.setdefault(r.fixture, {}).setdefault(r.arm, []).append(r)
+
+    entries: list[ApiLift] = []
+    unscored: list[UnscoredApi] = []
+    for api in sorted(by_api):
+        arms = by_api[api]
+        base_rows = arms.get(baseline_arm, [])
+        treat_rows = arms.get(treatment_arm, [])
+        base = _arm_rate(baseline_arm, base_rows)
+        treat = _arm_rate(treatment_arm, treat_rows)
+
+        reason: RefusalReason | None = None
+        if not base_rows or not treat_rows:
+            reason = "arm_absent"
+        elif min(base.attempts, treat.attempts) < MIN_ATTEMPTS_PER_ARM:
+            reason = "below_floor"
+        elif _tasks(base_rows) != _tasks(treat_rows):
+            # Same count, different tasks still fails: an arm that got an easier mix would
+            # otherwise read as an arm that comprehended better.
+            reason = "unpaired"
+        if reason is not None:
+            unscored.append(
+                UnscoredApi(
+                    api=api,
+                    reason=reason,
+                    baseline_attempts=base.attempts,
+                    treatment_attempts=treat.attempts,
+                    minimum_attempts_per_arm=MIN_ATTEMPTS_PER_ARM,
+                    provenance=BENCHMARK_PROVENANCE,
+                    produced_by=produced_by,
+                )
+            )
+            continue
+
+        tasks = _tasks(base_rows)
+        entries.append(
+            ApiLift(
+                api=api,
+                baseline=base,
+                treatment=treat,
+                lift=round(treat.rate - base.rate, 4),
+                tasks=len(tasks),
+                runs=len({r.run for r in base_rows}),
+                provenance=BENCHMARK_PROVENANCE,
+                produced_by=produced_by,
+            )
+        )
+
+    # Deterministic: biggest denominator first, ties by api id — the split leads with the
+    # api whose evidence is strongest, not the one whose number is largest.
+    entries.sort(key=lambda e: (-(e.baseline.attempts + e.treatment.attempts), e.api))
+    return PerApiLift(
+        entries=tuple(entries),
+        unscored=tuple(unscored),
+        baseline_arm=baseline_arm,
+        treatment_arm=treatment_arm,
+        attempts=sum(e.baseline.attempts + e.treatment.attempts for e in entries),
+        minimum_attempts_per_arm=MIN_ATTEMPTS_PER_ARM,
+        provenance=BENCHMARK_PROVENANCE,
+        produced_by=produced_by,
+    )
