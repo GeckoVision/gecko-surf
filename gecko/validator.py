@@ -17,6 +17,7 @@ from typing import Any
 
 from . import corpus
 from .caller import CallError, build_request
+from .capture import record_outcome
 from .client import AgentApiClient
 from .graph import VerifyVerdict
 from .sample import example_from_schema, example_is_grounded
@@ -169,8 +170,11 @@ def _capture(
     invoke = tool.get("_invoke")
     if not isinstance(invoke, dict):
         return
-    corpus.record(
-        corpus.outcome_from(
+    # Through the same fail-closed boundary the client/server use: a secret-shaped
+    # operation_id/path/arg name in a poisoned spec REFUSES that one row (counted in
+    # dropped.jsonl) instead of aborting the whole validation sweep.
+    record_outcome(
+        lambda: corpus.outcome_from(
             operation_id=tool["name"],
             tool_invoke=invoke,
             args=args,
@@ -183,7 +187,9 @@ def _capture(
             surface_id=client.surface_id,
             surface_rev=client.surface_rev,
         ),
-        corpus_path,
+        corpus_path=corpus_path,
+        surface_id=client.surface_id,
+        source=corpus.source_for_mode("recorded"),
     )
 
 

@@ -14,12 +14,65 @@ by contract).
 
 from __future__ import annotations
 
+import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from . import corpus
 from .events import emit_surf_event
+
+logger = logging.getLogger("gecko.capture")
+
+
+def record_outcome(
+    build: Callable[[], corpus.CallOutcome],
+    *,
+    corpus_path: str | Path,
+    surface_id: str,
+    source: str,
+) -> bool:
+    """Build + persist one corpus row, REFUSING the row rather than raising into the
+    agent's call path. Returns whether a row was written.
+
+    This is the fail-closed boundary. ``corpus.outcome_from`` now rejects a secret-shaped
+    ``operation_id`` / ``path_template`` / arg name (a poisoned spec or a compromised
+    agent choosing what lands in our store), and ``corpus.record`` re-raises on an
+    allowlist violation. Both are called AFTER the request has already been sent and the
+    response received — ``client._capture`` sits outside the ``try/except CallError`` — so
+    letting a ``CorpusError`` propagate would destroy the agent's result *after* the side
+    effect. Fail closed means "do not persist", not "break the call".
+
+    The refusal is never silent: it leaves a categorical marker in the segregated
+    ``dropped.jsonl`` sibling, so a refused row is a countable hole in the denominator
+    rather than an invisible one.
+
+    ``build`` is a thunk (not a prebuilt outcome) so the CONSTRUCTION — where the guard
+    fires — is inside the boundary."""
+    try:
+        corpus.record(build(), corpus_path)
+        return True
+    except corpus.CorpusError as exc:
+        guard_hit = isinstance(exc, corpus.FreeTextGuardError)
+        field = exc.field if isinstance(exc, corpus.FreeTextGuardError) else "other"
+        reason = "secret_shaped" if guard_hit else "control_plane_violation"
+        # Redacted by construction: the marker carries the field label + reason, and the
+        # log line carries no value either (the exception message never holds one).
+        logger.warning(
+            "corpus row refused (%s on %s) — not persisted, drop counted", reason, field
+        )
+        corpus.record_dropped(
+            corpus.DroppedRow(
+                ts=int(time.time() * 1000),
+                surface_id=surface_id,
+                field=field,
+                reason=reason,
+                source=source,
+            ),
+            corpus_path,
+        )
+        return False
 
 
 def capture_outcome(
@@ -68,8 +121,8 @@ def capture_outcome(
     invoke = tool.get("_invoke") if isinstance(tool, dict) else None
     if not isinstance(invoke, dict):
         return
-    corpus.record(
-        corpus.outcome_from(
+    record_outcome(
+        lambda: corpus.outcome_from(
             operation_id=tool_name,
             tool_invoke=invoke,
             args=args,
@@ -82,5 +135,7 @@ def capture_outcome(
             surface_id=surface_id,
             surface_rev=surface_rev,
         ),
-        corpus_path,
+        corpus_path=corpus_path,
+        surface_id=surface_id,
+        source=source,
     )
