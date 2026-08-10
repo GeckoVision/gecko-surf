@@ -210,6 +210,14 @@ python_version = "3.11"
 # whether or not they are present — the engine itself stays dep-light.
 # PIL/pytesseract are the OPTIONAL Skill Guard image extras ([imagescan] / [ocr]),
 # lazy-imported inside gecko.imagescan; keep mypy clean whether or not they resolve.
+# `anyio` (a transitive dep of `mcp`) and `jwt` (PyJWT, via `pyjwt[crypto]`) arrive ONLY
+# with the [serve] extra. Both are lazy — `anyio` is imported inside the serve/bridge
+# functions of gecko.mcp_server / gecko.http_server / gecko.connect, and gecko.privy_auth
+# (module-level `import jwt`) is itself only imported from inside a function. So a bare
+# `uv sync` imports every engine and serve module fine but resolves neither; without these
+# entries `uv run mypy gecko` failed on a fresh checkout with 4 import-not-found errors
+# while CI stayed green, because CI installs `--extra serve`. Listed per-module ON PURPOSE:
+# this silences the missing THIRD-PARTY stub only — gecko's own code stays fully checked.
 [[tool.mypy.overrides]]
-module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*", "tesserocr", "tesserocr.*", "solders", "solders.*"]
+module = ["mcp.*", "starlette.*", "uvicorn", "uvicorn.*", "anyio", "anyio.*", "jwt", "jwt.*", "anthropic.*", "telegram.*", "openai.*", "pymongo", "pymongo.*", "keyring", "keyring.*", "certifi", "certifi.*", "gecko.redteam.llm", "PIL", "PIL.*", "pytesseract", "pytesseract.*", "tesserocr", "tesserocr.*", "solders", "solders.*"]
 ignore_missing_imports = true
