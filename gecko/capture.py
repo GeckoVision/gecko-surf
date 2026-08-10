@@ -35,13 +35,21 @@ def capture_outcome(
     corpus_path: str | Path | None,
     tool: dict[str, Any] | None,
     auth_injected: bool,
+    attempt: int = 1,
 ) -> None:
     """Emit the usage event and (opt-in) append one control-plane-safe corpus record.
 
     Uses the SAME narrow ``corpus.outcome_from`` boundary the HTTP server uses (it
     structurally cannot receive a payload). Corpus capture is opt-in via
     ``corpus_path``; the usage event always fires (and is itself a no-op without a
-    telemetry sink)."""
+    telemetry sink).
+
+    ``attempt`` is the ordinal of the request ``status`` came from — 1 everywhere except
+    the client's bounded-once auth self-heal, which passes 2. It is deliberately the ONLY
+    thing the retry adds to this signature: not the auth header, not the retried
+    response, not the host, and never the intermediate 401's body. ``outcome_from``
+    turns it into ``first_call_correct``, which is why a wrong default here silently
+    inflates the published rate."""
     # Usage instrumentation (independent of opt-in corpus capture): one
     # control-plane-safe outcome event — the ok-bool + error CLASS, never a body.
     # ``source`` carries the SAME provenance the corpus record derives (recorded ->
@@ -81,6 +89,7 @@ def capture_outcome(
             ts=int(time.time() * 1000),
             surface_id=surface_id,
             surface_rev=surface_rev,
+            attempt=attempt,
         ),
         corpus_path,
     )
