@@ -8,7 +8,9 @@ corrupt the moat metric:
   DERIVED at the ``outcome_from`` boundary from the capture ``mode`` ("did status
   come from the wire?"), never free-set by a caller. Governs routing/metric.
 * ``tenancy`` (local | contributed) — may the record egress into the cross-customer
-  corpus? Default ``local``; the egress layer is NOT built here — only the field.
+  corpus? DERIVED at the boundary from local operator consent (never a parameter — see
+  ``tests/test_corpus_tenancy.py``); the egress layer is NOT built, and nothing consumes
+  ``contributed``.
 
 These tests are the same non-negotiable gate as ``test_corpus_controlplane``: a
 control-plane violation is a build break. They also cover the (future) REPORTED
@@ -159,16 +161,22 @@ def test_reported_stays_in_main_corpus(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# tenancy axis: reserved now, egress layer NOT built — field + default only
+# tenancy axis: DERIVED from consent (full coverage in test_corpus_tenancy.py),
+# egress layer NOT built — the field exists so it is never retrofitted.
 # --------------------------------------------------------------------------- #
-def test_tenancy_defaults_to_local():
+def test_tenancy_defaults_to_local(monkeypatch):
+    monkeypatch.delenv("GECKO_CORPUS_CONSENT", raising=False)
+    monkeypatch.setenv("GECKO_CONFIG_HOME", "/nonexistent-gecko-config-home")
     assert _outcome(mode="live").tenancy == "local"
 
 
-def test_tenancy_is_a_closed_set_validated_fail_closed():
+def test_tenancy_cannot_be_free_set_by_a_caller():
+    # Same doctrine as source: not a parameter, so a caller cannot label its own rows
+    # egress-eligible (nor hand in an off-set label at all).
     assert "local" in TENANCIES and "contributed" in TENANCIES
-    with pytest.raises(CorpusError):
-        _outcome(mode="live", tenancy="everyone")  # off-set egress label -> reject
+    assert "tenancy" not in set(inspect.signature(outcome_from).parameters)
+    with pytest.raises(TypeError):
+        _outcome(mode="live", tenancy="everyone")
 
 
 def test_source_and_tenancy_are_allowlisted_and_persisted(tmp_path):
