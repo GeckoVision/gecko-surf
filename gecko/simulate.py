@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
+from .txbind import LookupResolution
 
 __all__ = [
     "BuildCall",
@@ -120,6 +121,18 @@ class Receipt:
     #: How much of the message the binding covers. ``structural`` omits the blockhash,
     #: which is the honest ceiling while we simulate with ``replaceRecentBlockhash``.
     binding_strength: str | None = None
+    #: Whether the simulated message loaded any account from an address lookup table —
+    #: the one case where a binding over the bytes cannot see the accounts (a v0 message
+    #: carries the table address and u8 indexes, never the addresses). ``unresolved``
+    #: means no binding was computable and the signing gate refuses; ``none`` means every
+    #: account is in the message and the binding covers all of them. ``None`` is a build
+    #: we could not decode, or a Receipt older than this field — it claims nothing, and
+    #: the gate still refuses it for want of a binding.
+    #:
+    #: CATEGORICAL and control-plane: this is a gate input, never an outcome. It does not
+    #: enter the corpus projection (``corpus.simulated_outcome_from``), and no resolved
+    #: ADDRESS is recorded here or anywhere else on the Receipt.
+    lookup_resolution: LookupResolution | None = None
 
 
 def _custom_code(err: Any) -> int | None:
@@ -283,16 +296,23 @@ def simulate(
     # the transaction in front of it is this one. Best-effort: a builder we cannot decode
     # yields no binding, and `evaluate_tx` refuses on a missing binding rather than
     # assuming — never the reverse.
+    #
+    # A message that loads accounts from an address lookup table is the one case that is
+    # not "we could not compute it" but "no honest binding exists": the bytes commit to
+    # the table and the indexes, not to the addresses. `_bind` raises there, and the
+    # resolution recorded a line earlier survives to say so on the Receipt.
     binding: str | None = None
     strength: str | None = None
+    resolution: LookupResolution | None = None
     try:
         from .txbind import message_binding as _bind
 
-        from .txbind import BindingStrength
+        from .txbind import BindingStrength, lookup_resolution_of
 
+        resolution = lookup_resolution_of(built.tx, encoding=built.encoding)
         chosen: BindingStrength = "structural" if replace_blockhash else "exact"
-        strength = chosen
         binding = _bind(built.tx, encoding=built.encoding, strength=chosen)
+        strength = chosen
     except Exception:  # noqa: BLE001 - a binding we cannot compute is absent, not fatal
         binding = None
         strength = None
@@ -329,4 +349,5 @@ def simulate(
         network_label=network_label,
         message_binding=binding,
         binding_strength=strength,
+        lookup_resolution=resolution,
     )

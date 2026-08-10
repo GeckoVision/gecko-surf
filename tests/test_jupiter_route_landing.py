@@ -175,6 +175,119 @@ def test_non_base64_instruction_data_is_rejected_without_echoing_it() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# The lookup tables the route announces — and what a binding can say about them.
+#
+# `addressLookupTableAddresses` is not decoration: a 25-account route does not fit a
+# legacy message, so the moment this bundle compiles v0 through those tables, its
+# serialized bytes stop naming the leg accounts. They name the TABLE and a u8 index.
+# Swap a leg and the table entry that resolves it and the wire bytes do not move —
+# which is why the gate refuses the whole shape rather than hashing it.
+# --------------------------------------------------------------------------- #
+_LEG_A = "AQoKYV7tYpTrFZN6P5oUufbQKAUr9mNYGe1TTJC9wajM"
+_LEG_B = "BQoKYV7tYpTrFZN6P5oUufbQKAUr9mNYGe1TTJC9wajM"
+
+
+def _route_tx(leg: str, *, through_table: bool) -> str:
+    """The planned Jupiter route, with one leg forced to ``leg``.
+
+    ``through_table`` compiles it v0 against the table the quote announced, holding
+    exactly that leg — the shape a real route takes once it outgrows a legacy message.
+    """
+    from solders.address_lookup_table_account import AddressLookupTableAccount
+    from solders.pubkey import Pubkey
+
+    from gecko.landing import assemble_unsigned_tx
+
+    plan = plan_route(BINDINGS, http_get=_get, http_post=_post)
+    instruction = dict(plan["swap_instruction"])
+    accounts = [dict(a) for a in instruction["accounts"]]
+    accounts[-1] = {"pubkey": leg, "isSigner": False, "isWritable": False}
+    instruction["accounts"] = accounts
+
+    tables = (
+        [
+            AddressLookupTableAccount(
+                key=Pubkey.from_string(plan["lookup_tables"][0]),
+                addresses=[Pubkey.from_string(leg)],
+            )
+        ]
+        if through_table
+        else []
+    )
+    return assemble_unsigned_tx(
+        [jupiter_instruction_to_solders(instruction)], USER, lookup_tables=tables
+    ).tx
+
+
+def test_two_routes_with_different_legs_serialize_identically_through_a_table() -> None:
+    """The premise. A route leg swapped for another address, with the table swapped to
+    match, produces the same bytes — so no digest over those bytes can tell the two
+    calls apart."""
+    assert base64.b64decode(_route_tx(_LEG_A, through_table=True)) == base64.b64decode(
+        _route_tx(_LEG_B, through_table=True)
+    )
+    # Without the table the same swap is plainly visible on the wire.
+    assert base64.b64decode(_route_tx(_LEG_A, through_table=False)) != base64.b64decode(
+        _route_tx(_LEG_B, through_table=False)
+    )
+
+
+def test_a_route_that_resolves_legs_through_a_table_is_refused() -> None:
+    """A receipt simulated over route A must not approve route B. It cannot distinguish
+    them, so it approves neither — the refusal is the deliverable."""
+    from gecko.simulate import BuiltTx, simulate
+    from gecko.txbind import evaluate_tx
+
+    route_a = _route_tx(_LEG_A, through_table=True)
+    route_b = _route_tx(_LEG_B, through_table=True)
+
+    def fake_rpc(_url: str, _method: str, _params: list) -> dict:
+        return {"result": {"value": {"err": None, "unitsConsumed": 86_669, "logs": []}}}
+
+    receipt = simulate(
+        {},
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=fake_rpc,
+        build_call=lambda _plan: BuiltTx(tx=route_a, encoding="base64"),
+    )
+
+    assert receipt.status == "pass"  # the simulation is fine; the BINDING is not
+    assert receipt.lookup_resolution == "unresolved"
+    assert receipt.message_binding is None
+    assert evaluate_tx(route_b, receipt).approved is False
+    assert evaluate_tx(route_a, receipt).approved is False
+
+
+def test_the_route_bundle_we_ship_today_still_binds() -> None:
+    """Blast radius, pinned. Nothing on the shipped path passes lookup tables into the
+    builder, so this bundle compiles legacy, commits to all 25 accounts, and binds. A
+    refusal that also swallowed today's route would be a regression wearing a safety
+    label."""
+    from gecko.simulate import BuiltTx, simulate
+    from gecko.txbind import evaluate_tx
+
+    tx = _route_tx(_LEG_A, through_table=False)
+
+    def fake_rpc(_url: str, _method: str, _params: list) -> dict:
+        return {"result": {"value": {"err": None, "unitsConsumed": 86_669, "logs": []}}}
+
+    receipt = simulate(
+        {},
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=fake_rpc,
+        build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+    )
+
+    assert receipt.lookup_resolution == "none"
+    assert receipt.message_binding is not None
+    assert evaluate_tx(tx, receipt).approved is True
+    # And the swapped leg is still caught, which is the check we already had.
+    assert (
+        evaluate_tx(_route_tx(_LEG_B, through_table=False), receipt).approved is False
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Live fork check — the FINAL step, never the debugger.
 # --------------------------------------------------------------------------- #
 @pytest.mark.skipif(

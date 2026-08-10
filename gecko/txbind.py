@@ -36,6 +36,21 @@ the strength travels with the verdict and a caller can demand one.
 binding is ``approved=False``. "We could not check" must never render as "fine" — that is
 the failure a signing gate exists to prevent.
 
+**A v0 message does not commit to the accounts it loads from a lookup table.** This is the
+one place where "the bytes are identical" stops meaning "the transaction is identical". A
+versioned message serializes its STATIC account keys, then, per lookup, the table's own
+address and two lists of u8 INDEXES. The addresses those indexes resolve to live in the
+table account on chain. Point one table key at different contents and you get two
+transactions that are byte-for-byte equal, hash-for-hash equal, and execute against
+different accounts — the exact shape a Jupiter route takes.
+
+Resolving them would take an RPC read at verify time, which would make an RPC a trust root
+of the signing gate and this module something that can fail open when a node is unreachable
+or lying. So the rule here is the fail-closed one: a message with a NON-EMPTY lookup
+section earns no binding at all, and any receipt marked ``unresolved`` refuses. The key is
+the lookup section, never the version — a v0 message with no lookups commits to every
+account it uses and binds normally, and a gate that over-refuses is a gate someone deletes.
+
 This module reads and compares. It does not sign, does not send, and holds no key.
 """
 
@@ -48,11 +63,14 @@ from typing import Any, Literal
 
 __all__ = [
     "BindingStrength",
+    "LookupResolution",
     "MessageVersion",
     "SigningVerdict",
     "TxDecodeError",
+    "UnresolvedLookupError",
     "blockhash_offset",
     "evaluate_tx",
+    "lookup_resolution_of",
     "message_binding",
 ]
 
@@ -62,6 +80,20 @@ BindingStrength = Literal["structural", "exact"]
 #: The two message wire formats we decode. Single source of truth for this module and its
 #: tests — never redeclare it.
 MessageVersion = Literal["legacy", "v0"]
+
+#: Whether a message loads any account through an address lookup table. Single source of
+#: truth for this module, ``simulate.Receipt.lookup_resolution`` and their tests — never
+#: redeclare it.
+#:
+#: * ``none`` — every account the message uses is in the message. The binding covers all
+#:   of them, which is what makes it worth checking.
+#: * ``unresolved`` — the message loads accounts from a table whose contents the bytes do
+#:   not carry. No honest binding exists, so the gate refuses.
+#:
+#: There is deliberately no ``pinned`` member yet: it would mean the resolved address list
+#: was captured at simulate time and re-checked at verify time, and nothing in this repo
+#: can re-check it without an RPC. Add the member when the check exists, not before.
+LookupResolution = Literal["none", "unresolved"]
 
 _ZERO_BLOCKHASH = bytes(32)
 
@@ -79,6 +111,16 @@ _MAX_LOOKUPS = 64
 
 class TxDecodeError(Exception):
     """A transaction could not be decoded. Never carries the payload."""
+
+
+class UnresolvedLookupError(TxDecodeError):
+    """The message loads accounts through an address lookup table.
+
+    A subclass of :class:`TxDecodeError` on purpose: every existing caller already treats
+    that as "no binding / refuse", so this closes the hole in the callers we have and in
+    the ones nobody has written yet. It is a distinct type only so a caller that wants to
+    say WHY can, never so a caller can decide it does not matter.
+    """
 
 
 @dataclass(frozen=True)
@@ -149,6 +191,36 @@ def _message_of(raw: bytes) -> tuple[Any, MessageVersion]:
         return Transaction.from_bytes(raw).message, "legacy"
     except Exception as exc:  # noqa: BLE001 - redact
         raise TxDecodeError("transaction decodes as neither legacy nor v0") from exc
+
+
+def _lookup_count(message: Any) -> int:
+    """How many address-table lookups this message carries.
+
+    A legacy message has no lookup section at all, so it is ``0`` by construction and
+    every account it uses is in the message. An unreadable section is a decode failure,
+    never a ``0`` — "we could not tell" must not spell "there are none".
+    """
+    lookups = getattr(message, "address_table_lookups", None)
+    if lookups is None:
+        return 0
+    try:
+        return len(lookups)
+    except TypeError as exc:
+        raise TxDecodeError("message has an unreadable lookup section") from exc
+
+
+def lookup_resolution_of(
+    tx: str | bytes, *, encoding: str = "base64"
+) -> LookupResolution:
+    """Does ``tx`` load any account from an address lookup table?
+
+    Callers use this to record on a Receipt WHY it carries no binding. Raises
+    :class:`TxDecodeError` on a transaction it cannot decode: an undecodable build makes
+    no claim in either direction, and returning ``none`` there would be a lie shaped
+    exactly like the safe answer.
+    """
+    message, _version = _message_of(_decode(tx, encoding))
+    return "unresolved" if _lookup_count(message) else "none"
 
 
 def _compact_u16(buf: bytes, pos: int) -> tuple[int, int]:
@@ -320,9 +392,20 @@ def message_binding(
     The version and the strength are folded into the digest input, so a legacy and a v0
     message with identical contents can never collide into the same binding, and a
     structural digest can never be mistaken for an exact one.
+
+    Raises :class:`UnresolvedLookupError` for a message that loads accounts from an
+    address lookup table. Returning a digest there would be the worst outcome available:
+    a hash that looks like proof, matches, and says nothing about the accounts the
+    transaction actually touches. There is no ``resolved_accounts`` parameter yet — when
+    one is added, it belongs here, folded into the digest, not checked beside it.
     """
     raw = _decode(tx, encoding)
     message, version = _message_of(raw)
+    if _lookup_count(message):
+        raise UnresolvedLookupError(
+            "message loads accounts from an address lookup table — the bytes commit to "
+            "the table and the indexes, never to the addresses they resolve to"
+        )
     body = bytes(message)
     if strength == "structural":
         body = _normalise_blockhash(message, body)
@@ -350,10 +433,27 @@ def evaluate_tx(
     gate that accepts a weaker proof than it demanded is not a gate.
 
     Never raises for a malformed transaction: a signing gate that throws is a gate that
-    gets wrapped in a try/except and bypassed. Every failure path is ``approved=False``.
+    gets wrapped in a try/except and bypassed. Every failure path is ``approved=False``,
+    including the address-lookup-table refusal — which is checked on BOTH sides, the
+    receipt's recorded resolution and the subject's own bytes, because either one alone
+    would leave the other free to arrive from somewhere this module did not build.
     """
     attested = getattr(receipt, "message_binding", None)
     strength = getattr(receipt, "binding_strength", None)
+
+    # Before anything else: a receipt whose simulated message loaded accounts from a
+    # lookup table attests a set of accounts nobody wrote down. It is checked first so
+    # the refusal says WHY rather than falling through to the generic "no binding" —
+    # a reason that reads as a missing feature invites someone to go add it.
+    if getattr(receipt, "lookup_resolution", None) == "unresolved":
+        return SigningVerdict(
+            approved=False,
+            reason=(
+                "receipt simulated a message that loads accounts from an address lookup "
+                "table; the bytes do not commit to those accounts"
+            ),
+            strength=strength if strength in ("structural", "exact") else None,
+        )
 
     if not attested:
         return SigningVerdict(
