@@ -83,6 +83,19 @@
           {"kind": "constant", "value": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", "encoding": "pubkey"}
         ]
       }
+    },
+    "pda_origins": {
+      "global": "extracted",
+      "mint_authority": "extracted",
+      "event_authority": "extracted",
+      "global_volume_accumulator": "extracted",
+      "bonding_curve": "extracted",
+      "bonding_curve_v2": "manual",
+      "user_volume_accumulator": "extracted",
+      "creator_vault": "manual",
+      "associated_bonding_curve": "manual",
+      "associated_user": "manual",
+      "fee_config": "extracted"
     }
   }
 }

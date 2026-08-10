@@ -27,7 +27,7 @@ Design constraints (do not weaken):
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from importlib import resources
 from typing import Any, Callable, Literal, Mapping, Sequence
 
@@ -37,7 +37,7 @@ from .lexnorm import STOPWORDS, fold_tokens, normalize_query
 from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
 from .program_graph import derivation_order_with_cycle
-from .provenance import AccountProvenance
+from .provenance import AccountProvenance, ProgramProvenanceTier
 
 __all__ = [
     "GapSpec",
@@ -277,6 +277,11 @@ class _Card:
     # the program's wired plan-intent names (surface cards only — honesty: a
     # surface card must not claim "no intent wired" when start points exist)
     wired_intents: tuple[str, ...] = ()
+    # R7: the packaged config's ``program.pda_origins`` — the per-account tier
+    # comprehension computed, read back as a one-way DEMOTION cap on the mechanical
+    # tag (see :func:`_apply_origin_cap`). ``None`` = present-but-invalid entry,
+    # capped at ``flagged``. Empty = the config asserts nothing (today's behaviour).
+    origins: Mapping[str, ProgramProvenanceTier | None] = field(default_factory=dict)
 
 
 def _first_sentence(text: str) -> str:
@@ -374,6 +379,7 @@ def _wired_cards() -> list[_Card]:
                     tags=[api_id],
                 ),
                 wired_intents=tuple(program.intents),
+                origins=dict(program.pda_origins),
             )
         )
         # one card per wired plan intent
@@ -410,6 +416,7 @@ def _wired_cards() -> list[_Card]:
                         ),
                         tags=[api_id, intent.instruction],
                     ),
+                    origins=dict(program.pda_origins),
                 )
             )
     return cards
@@ -502,6 +509,68 @@ def _account_step(
     )
 
 
+# --- the R7 origin cap -------------------------------------------------------------
+
+# Claim strength of an account tag: how much it asserts about where the recipe came
+# from. The config-asserted origin is a one-way DEMOTION switch over this order —
+# final = min(mechanical, asserted) — so a poisoned or over-confident config can only
+# ever LOWER a claim, never mint one.
+_CLAIM_STRENGTH: dict[str, int] = {"extracted": 2, "recovered": 1, "flagged": 0}
+
+# The explicit, total, CLOSED tier→tag mapping. ``manual`` reads as ``recovered``:
+# hand-supplied through the reviewed overlay is the same trust class as
+# source-recovered — derived from caller-supplied input, not the program artifact's
+# own word. ``cross_surface`` and ``flagged`` are deliberately unmapped: cross_surface
+# is a request-time fact from ANOTHER surface (never assertable from a program
+# artifact — see gecko.provenance), and flagged is COMPUTED (an unresolved seed, a
+# cycle, an unknown name), never asserted; the loader refuses both into the invalid
+# (``None``) marker.
+_ORIGIN_TIER_TO_TAG: dict[ProgramProvenanceTier, AccountProvenance] = {
+    "extracted": "extracted",
+    "recovered": "recovered",
+    "manual": "recovered",
+}
+
+# HONESTY: ``recovered`` means derived from caller-supplied source at comprehension
+# time — NOT verified against chain. The only refutation of a wrong address remains
+# the simulate→Receipt.
+_RECOVERED_CAP_NOTE = (
+    "origin (packaged config): this recipe was derived from caller-supplied source "
+    "at comprehension time — it is not the program artifact's own word and not "
+    "verified against chain; the simulate→Receipt is the check"
+)
+_INVALID_ORIGIN_NOTE = (
+    "the packaged config asserts an origin outside the closed tier ladder for this "
+    "account — failing closed: reported as a gap, never coerced into a confident tag"
+)
+
+
+def _apply_origin_cap(
+    step: DeriveStep, origins: Mapping[str, ProgramProvenanceTier | None]
+) -> DeriveStep:
+    """Cap one mechanical step with the config-carried origin (R7).
+
+    :func:`_account_step` stays the sole computer of the mechanical tag — flagged
+    first: an unresolved seed or a seed cycle is flagged no matter what any config
+    says. This function applies ``program.pda_origins`` to that RESULT as
+    ``final = min(mechanical, asserted)`` over claim strength. Absent entry → the
+    step is returned untouched (exactly the pre-R7 behaviour; absence never defaults
+    to any tier). A present-but-invalid entry (``None`` from the loader) caps that
+    ONE account at ``flagged`` — contained, loud in the note, never coerced.
+    """
+    if step.account not in origins:
+        return step
+    tier = origins[step.account]
+    if tier is None:
+        if step.provenance == "flagged":
+            return step  # already the floor; keep the mechanical explanation
+        return replace(step, provenance="flagged", note=_INVALID_ORIGIN_NOTE)
+    asserted = _ORIGIN_TIER_TO_TAG[tier]
+    if _CLAIM_STRENGTH[asserted] >= _CLAIM_STRENGTH[step.provenance]:
+        return step  # the mechanical claim is already at or below the assertion
+    return replace(step, provenance=asserted, note=step.note or _RECOVERED_CAP_NOTE)
+
+
 def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
     overlay = _packaged_overlay(card.api_id)
     overlay_pdas = frozenset((overlay.get("pdas") or {}).keys())
@@ -511,14 +580,20 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
     surface_named = frozenset(card.spec.surface_named if card.spec else ())
     ordered, cyclic = derivation_order_with_cycle(card.pdas, card.accounts)
     steps = [
-        _account_step(
-            name,
-            card.pdas.get(name),
-            recovered=recovered,
-            overlay_pdas=overlay_pdas,
-            overlay_why=overlay_why,
-            cyclic=cyclic,
-            surface_named=surface_named,
+        # R7: the config-asserted origin caps the MECHANICAL result (min, demotion
+        # only) — never a branch inside _account_step, which stays the sole computer
+        # of the mechanical tag.
+        _apply_origin_cap(
+            _account_step(
+                name,
+                card.pdas.get(name),
+                recovered=recovered,
+                overlay_pdas=overlay_pdas,
+                overlay_why=overlay_why,
+                cyclic=cyclic,
+                surface_named=surface_named,
+            ),
+            card.origins,
         )
         for name in ordered
     ]

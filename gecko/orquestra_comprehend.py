@@ -18,6 +18,9 @@ Honesty rules (the differentiator — do not weaken):
 - Provenance is recorded per PDA: ``extracted`` (from the IDL), ``recovered``
   (from source), or ``manual`` (from the overlay), plus a ``flagged`` bit for
   any recipe that still carries an unresolved seed or an unknown program id.
+  The tier is EMITTED on the artifact (``program.pda_origins``, R7) so read-time
+  consumers report the measured fact instead of re-deriving it by hand; the
+  flagged bit stays computed, never emitted as an assertable field.
 - Knowledge that CANNOT be derived from surface+source (empirically-discovered
   offsets, hidden ``remaining_accounts``, curated intents) enters only through
   an explicit ``manual_overlay`` — config-as-data, visibly hand-supplied. The
@@ -84,9 +87,18 @@ class PdaProvenance:
 @dataclass(frozen=True)
 class ComprehendResult:
     """The generated api-config dict (packaged-config JSON schema) + per-PDA
-    provenance. ``config`` is what ``gecko.provider_config`` loads; provenance
-    rides alongside (the packaged schema has no provenance key on purpose —
-    generated output must be byte-comparable with hand-authored configs)."""
+    provenance. ``config`` is what ``gecko.provider_config`` loads.
+
+    Since R7 the config itself carries the per-PDA tier (``program.pda_origins``) —
+    it used to be computed here and then DISCARDED from the artifact, forcing
+    ``find_start`` to re-derive the tier from hand-maintained maps in a second
+    place, which drifted (a hand map cannot express what the merge measured). That
+    was a documented decision (byte-comparability with hand-authored configs) and
+    R7 consciously retires it: hand-authored configs now carry the map too, and the
+    differential proof compares both. ``provenance`` still rides alongside with the
+    richer per-run detail (the flagged bit + unresolved seed names) — that part
+    stays run metadata, not schema, because ``flagged`` is COMPUTED downstream and
+    must never be assertable from a data file."""
 
     config: dict[str, Any]
     provenance: dict[str, PdaProvenance]
@@ -227,6 +239,10 @@ def comprehend_project(
         "orquestra_project": surface.slug,
         "intents": list(overlay.get("intents") or ()),
         "pdas": {name: node_to_spec(merged[name]) for name in ordered},
+        # R7: the tier is decided at the merge (and stamped ``manual`` at the overlay
+        # site), so it is EMITTED on the artifact here — find_start reads it back as a
+        # one-way demotion cap instead of re-deriving it from hand-maintained maps.
+        "pda_origins": {name: provenance[name].tier for name in ordered},
     }
     notes = overlay.get("notes")
     if notes is not None:

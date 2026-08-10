@@ -44,6 +44,13 @@
           {"kind": "variable", "name": "mint", "source": "account", "encoding": "pubkey"}
         ]
       }
+    },
+    "pda_origins": {
+      "launch": "recovered",
+      "launch_signer": "recovered",
+      "funding_record": "recovered",
+      "event_authority": "manual",
+      "funder_quote_account": "manual"
     }
   }
 }

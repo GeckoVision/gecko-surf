@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from importlib import resources
+from typing import cast, get_args
 
 from .pda import (
     ConstantPdaSeedNode,
@@ -21,6 +22,11 @@ from .pda import (
     VariablePdaSeedNode,
     b58_encode,
 )
+from .provenance import ProgramProvenanceTier
+
+# The closed tier ladder's values, derived from the single source of truth
+# (gecko.provenance) — never redeclared here, so the two cannot drift.
+_PROGRAM_TIER_VALUES: frozenset[str] = frozenset(get_args(ProgramProvenanceTier))
 
 __all__ = [
     "ConfigError",
@@ -212,6 +218,14 @@ class ProgramSpec:
     # The config's curated prose (gotchas, cross-program warnings, hidden-account
     # facts) — surfaced by find_start's router; empty when the config carries none.
     notes: str = ""
+    # R7: the per-account ``ProgramProvenanceTier`` comprehension computed, carried on
+    # the artifact (the ``program.pda_origins`` sibling map) instead of re-derived by
+    # hand at read time. ``None`` marks an entry that was PRESENT but not a valid tier;
+    # find_start treats it as a fail-closed cap at ``flagged`` for that one account.
+    # Deliberately a SIBLING map, never a field on the frozen PdaNode: origin is not
+    # part of a recipe's identity, and putting it on the node would change equality —
+    # which the merge rule and the exact config round-trip both depend on.
+    pda_origins: dict[str, ProgramProvenanceTier | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -241,6 +255,40 @@ class ProviderConfig:
     apis: tuple[str, ...]
 
 
+def _pda_origins_from_dict(
+    data: dict, pdas: dict[str, PdaNode]
+) -> dict[str, ProgramProvenanceTier | None]:
+    """Load the R7 ``pda_origins`` sibling map, fail-closed (the defi-security gate):
+
+    - absent key → empty map — read time behaves exactly as before R7;
+    - an entry naming an account not in ``pdas`` → loud refusal (mirrors the overlay
+      ``include`` unknown-account check) — a typoed or poisoned assertion never loads;
+    - a value outside the CLOSED tier ladder (null, non-string, ``cross_surface``,
+      ``flagged``, anything else) → kept as ``None``, the per-account cap-at-flagged
+      marker: never coerced, never dropped, never defaulted to a confident tier. The
+      raw value is deliberately discarded — no text channel from an untrusted file
+      may ride into agent-facing output.
+    """
+    raw = data.get("pda_origins")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("program.pda_origins must be an object of {account: tier}")
+    unknown = sorted(set(raw) - set(pdas))
+    if unknown:
+        raise ConfigError(
+            f"program.pda_origins names unknown account(s) {unknown}; "
+            f"known: {sorted(pdas)}"
+        )
+    origins: dict[str, ProgramProvenanceTier | None] = {}
+    for name, value in raw.items():
+        if isinstance(value, str) and value in _PROGRAM_TIER_VALUES:
+            origins[name] = cast(ProgramProvenanceTier, value)
+        else:
+            origins[name] = None
+    return origins
+
+
 def _program_from_dict(data: dict) -> ProgramSpec:
     pdas = {name: node_from_spec(name, spec) for name, spec in data["pdas"].items()}
     return ProgramSpec(
@@ -249,6 +297,7 @@ def _program_from_dict(data: dict) -> ProgramSpec:
         pdas=pdas,
         intents=tuple(data.get("intents", ())),
         notes=str(data.get("notes", "")),
+        pda_origins=_pda_origins_from_dict(data, pdas),
     )
 
 

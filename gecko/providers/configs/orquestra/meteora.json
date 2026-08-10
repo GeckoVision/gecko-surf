@@ -60,6 +60,15 @@
         ]
       }
     },
+    "pda_origins": {
+      "lb_pair": "recovered",
+      "reserve": "recovered",
+      "oracle": "extracted",
+      "bin_array": "extracted",
+      "bin_array_bitmap_extension": "extracted",
+      "event_authority": "extracted",
+      "user_token": "manual"
+    },
     "notes": "Meteora DLMM. The swap's bin_array PDAs travel as remaining_accounts the IDL never names: seed ['bin_array', lb_pair, index(i64 LE)] (MeteoraAg/dlmm-sdk commons/src/pda.rs::derive_bin_array_pda + seeds.rs BIN_ARRAY), index = floor(bin_id / 70) (bin_array.rs::bin_id_to_bin_array_index, MAX_BIN_PER_ARRAY=70). Which indexes a swap needs comes from lb_pair.active_id + the pool's liquidity bitmap (quote.rs::get_bin_array_pubkeys_for_swap) — a LIVE STATE read, not geometry; plan_swap performs it. The index is SIGNED (negative below price 1.0). bin_array_bitmap_extension = ['bitmap', lb_pair] (optional swap account; holds liquidity flags beyond array index +/-512)."
   }
 }
