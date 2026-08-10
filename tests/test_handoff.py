@@ -58,7 +58,7 @@ def _builder(tx: str, encoding: str = "base64"):
     return build
 
 
-def _rpc(err: Any = None, units: int = 4_200):
+def _rpc(err: Any = None, units: int = 4_200, **_ignored: Any):
     def call(_url: str, method: str, _params: Any) -> dict[str, Any]:
         if method == "simulateTransaction":
             return {
@@ -75,12 +75,15 @@ def _rpc(err: Any = None, units: int = 4_200):
     return call
 
 
-def _prepared(tx: str, encoding: str = "base64", **kwargs: Any):
+def _prepared(
+    tx: str, encoding: str = "base64", *, network: str = "mainnet", **kwargs: Any
+):
     return prepare_handoff(
         PLAN,
         rpc_url="https://rpc.example.com",
         build_call=_builder(tx, encoding),
         rpc_call=_rpc(**kwargs),
+        network=network,  # type: ignore[arg-type]
     )
 
 
