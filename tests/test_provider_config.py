@@ -14,6 +14,7 @@ import pytest
 from gecko.pda import derive_pda
 from gecko.provider_config import (
     ConfigError,
+    ProgramSpec,
     api_config_from_dict,
     load_packaged_provider,
     node_from_spec,
@@ -315,10 +316,43 @@ def test_origin_is_not_a_node_field_and_node_equality_ignores_it() -> None:
     assert not hasattr(a.program.pdas["lb_pair"], "origin")
 
 
+# The ONE exemption from the origin-completeness invariant below, hand-authored and
+# asserted by == (not appended to): adding a second entry has to be a visible, failing
+# edit to test_the_origin_completeness_exemption_is_exactly_jupiter.
+# The residual it names is real, not cosmetic: gecko/providers/configs/orquestra/
+# jupiter.json carries pdas {"event_authority"} and NO pda_origins, so that account
+# rides the uncapped mechanical "extracted" branch at find_start.py:499-500 — nothing
+# asserted its tier, and nothing caps it.
+_ORIGIN_COMPLETENESS_EXEMPT = frozenset({"jupiter"})
+
+
+def _assert_every_pda_carries_a_valid_origin(api_id: str, program: ProgramSpec) -> None:
+    """The completeness invariant, in ONE place so the packaged sweep and the negative
+    case below run the SAME check: every account in ``pdas`` has a ``pda_origins``
+    entry, and every entry is a valid tier (the loader keeps an invalid one as ``None``,
+    which is a cap marker, not a computed tier).
+
+    This is a CI-time check over the PACKAGED configs only, never a runtime guarantee:
+    ``_pda_origins_from_dict`` returns ``{}`` for an absent key
+    (gecko/provider_config.py:272-274) and ``_apply_origin_cap`` no-ops on an absent
+    entry (gecko/find_start.py:562-563), so an unpackaged or hand-edited config with a
+    missing origin still loads and still rides the mechanical chain at read time.
+    """
+    missing = sorted(set(program.pdas) - set(program.pda_origins))
+    assert not missing, f"{api_id}: pdas with no pda_origins entry: {missing}"
+    invalid = sorted(
+        name
+        for name, tier in program.pda_origins.items()
+        if tier not in ("extracted", "recovered", "manual")
+    )
+    assert not invalid, f"{api_id}: pda_origins entries outside the ladder: {invalid}"
+
+
 def test_packaged_configs_carry_the_computed_origins() -> None:
-    """The four fixture-backed packaged configs were regenerated to carry the tiers
-    comprehension computed; jupiter (hand-authored, no fixture) asserts nothing and
-    stays on the mechanical chain."""
+    """Every packaged program config the provider ITSELF lists carries the tiers
+    comprehension computed — enumerated from ``load_packaged_provider``, so a config
+    added later is covered without editing this test. jupiter is the single explicit
+    exemption (see ``_ORIGIN_COMPLETENESS_EXEMPT``)."""
     _, apis = load_packaged_provider("orquestra")
     meteora = apis["meteora"].program
     assert meteora is not None
@@ -329,14 +363,38 @@ def test_packaged_configs_carry_the_computed_origins() -> None:
     jupiter = apis["jupiter"].program
     assert jupiter is not None
     assert jupiter.pda_origins == {}
-    for api_id in ("pumpfun", "ore", "metadao_ico"):
-        program = apis[api_id].program
-        assert program is not None
-        assert set(program.pda_origins) == set(program.pdas), api_id
-        assert all(
-            v in ("extracted", "recovered", "manual")
-            for v in program.pda_origins.values()
-        )
+    checked = []
+    for api_id, api in sorted(apis.items()):
+        program = api.program
+        if program is None or api_id in _ORIGIN_COMPLETENESS_EXEMPT:
+            continue
+        _assert_every_pda_carries_a_valid_origin(api_id, program)
+        checked.append(api_id)
+    # the sweep has to have actually run on something — an empty loop passes silently
+    assert checked == ["metadao_ico", "meteora", "ore", "pumpfun"]
+
+
+def test_the_origin_completeness_exemption_is_exactly_jupiter() -> None:
+    """``==``, not ``in``: a second exemption cannot be quietly appended — it has to
+    turn this test red first."""
+    assert _ORIGIN_COMPLETENESS_EXEMPT == frozenset({"jupiter"})
+
+
+def test_a_config_whose_pdas_lack_an_origin_entry_is_rejected() -> None:
+    """The widened sweep BITES: a config that declares an account in ``pdas`` and no
+    ``pda_origins`` entry for it is refused by the very same helper the packaged sweep
+    calls — not a parallel copy of the check. The loader itself accepts it (absence is
+    not an error, by design), which is exactly why this CI-time invariant exists."""
+    data = _api_with_origins({"lb_pair": "extracted"})
+    data["program"]["pdas"]["oracle"] = {
+        "program_id": METEORA,
+        "seeds": [{"kind": "constant", "value": "oracle", "encoding": "utf8"}],
+    }
+    cfg = api_config_from_dict(data)
+    assert cfg.program is not None
+    assert set(cfg.program.pda_origins) == {"lb_pair"}
+    with pytest.raises(AssertionError, match="oracle"):
+        _assert_every_pda_carries_a_valid_origin("x", cfg.program)
 
 
 def test_program_orquestra_project_is_optional() -> None:
