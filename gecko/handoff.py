@@ -39,6 +39,30 @@ that it must CHOOSE it, out loud, at the line where somebody knows whether these
 are about to be signed. What keeps that survivable: :func:`verify_handoff` returns the
 SUBJECT bytes, never the simulated ones, so a caller signs exactly what was checked.
 
+THE QUARANTINE GATE, and why it runs FIRST. Gecko already refuses a poisoned tool on the
+HTTP plane — auth injection is withheld, the mode is forced back to recorded, a chain
+refuses at a poisoned hop. On the TRANSACTION plane it refused nothing: a tool the
+sanitizer had already quarantined could be built, simulated, and handed to a signer with
+a passing Receipt. :func:`prepare_handoff` now takes a ``surface`` and a ``tool`` —
+keyword-only, no defaults — and consults
+:func:`~gecko.signing_gate.gate_surface_tool` as its first statement, before the builder
+and before any RPC.
+
+Before, not after, for two reasons. ``evaluate_tx`` asks whether these are the bytes a
+Receipt attests — a question about IDENTITY, which presumes the transaction was allowed
+to exist; whether we may act for this tool at all is the prior question, about AUTHORITY.
+And a gate placed after the simulation still MINTS a passing Receipt for a poisoned tool
+before withholding the bytes — and that Receipt is a portable artifact this module hands
+out on purpose, so it outlives the refusal.
+
+WHAT THIS DOES NOT MAKE TRUE. Required arguments close OMISSION: there is no
+``verdict=None`` that quietly means unchecked. They do not close FABRICATION — see the
+residual in :mod:`gecko.signing_gate`. And this wires a control into a lane nobody walks
+yet: :func:`prepare_handoff` has no production callers, so the real-money path
+(``scripts/prepare_purchase.py`` → ``scripts/sign_and_send.py``, which call
+:func:`~gecko.simulate.simulate` directly) still gets no quarantine check. Threading it
+there is an open item, not a completed one.
+
 Two conversions live here because both have bitten a live handoff:
 
 * **base58 → base64.** Orquestra's ``/build`` returns base58; ``@orquestradev/signer-mcp``
@@ -60,7 +84,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .networks import UNKNOWN_NETWORK, Network
+from .signing_gate import SigningRefused, gate_surface_tool
 from .simulate import BuildCall, BuiltTx, Receipt, RpcCall, simulate
+from .surface import Surface
 from .txbind import BindingStrength, TxDecodeError, _decode, evaluate_tx
 
 __all__ = ["PreparedPlan", "SignerHandoff", "prepare_handoff", "verify_handoff"]
@@ -181,6 +207,8 @@ def prepare_handoff(
     plan: Mapping[str, Any],
     *,
     rpc_url: str,
+    surface: Surface,
+    tool: str,
     rpc_call: RpcCall | None = None,
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
@@ -188,6 +216,14 @@ def prepare_handoff(
     replace_blockhash: bool = True,
 ) -> PreparedPlan:
     """Build ``plan``, simulate it, and return the bytes that were simulated.
+
+    ``surface`` and ``tool`` are keyword-only with NO default, and they are checked before
+    anything is built. ABSENCE OF A VERDICT IS A REFUSAL: there is no ``verdict=None``
+    meaning "unchecked", because this function has no production callers and therefore no
+    compatibility claim on a permissive default. A Surface is demanded rather than a bare
+    :class:`~gecko.surface.SafetyVerdict` so that ``known_tools`` is derived inside the
+    boundary — the old ``known_tools=None`` default silently skipped the unknown-tool
+    check, and a call site that can omit an argument can omit the control.
 
     This function VERIFIES NOTHING — it has no independent input to verify against. It
     withholds the transaction when the simulation did not pass or when the Receipt binds
@@ -208,7 +244,23 @@ def prepare_handoff(
 
     Never raises for a bad build or an undecodable transaction: a handoff that throws is
     one someone wraps in ``try/except`` and bypasses. Every failure path withholds bytes.
+    The ONE exception is :class:`~gecko.signing_gate.SigningRefused`, below, and it is an
+    exception for the opposite reason: it fires before a Receipt exists, so a returned
+    refusal would have to invent one.
     """
+    # THE QUARANTINE GATE — first statement in the body, before the builder, before the
+    # RPC, before any Receipt exists.
+    #
+    # Not after `simulate`, and the difference is not stylistic. `evaluate_tx` asks "are
+    # these the bytes the Receipt attests" — a question about IDENTITY, which already
+    # presumes this transaction was allowed to exist. Whether we may act for this tool at
+    # all is the prior question, about AUTHORITY. Gating after the simulation would also
+    # mint a passing Receipt for a poisoned tool and then withhold the bytes; that Receipt
+    # is handed out (see `PreparedPlan.receipt`) and outlives the refusal.
+    decision = gate_surface_tool(surface, tool)
+    if decision.denied:
+        raise SigningRefused(decision)
+
     # CAPTURE, never rebuild. `simulate` returns a Receipt, not the transaction, and the
     # obvious fix — call the builder again for the bytes — is wrong twice over: it is a
     # second POST to the builder, and `/build` embeds a fresh `recentBlockhash` each time,
