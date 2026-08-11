@@ -290,7 +290,7 @@ def _context_slot(result: Any) -> int | None:
     if not isinstance(context, Mapping):
         return None
     slot = context.get("slot")
-    if isinstance(slot, bool) or not isinstance(slot, int) or slot < 0:
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
         return None
     return slot
 

@@ -322,6 +322,7 @@ def test_the_context_slot_is_carried_onto_the_receipt() -> None:
         {"slot": 318_492_001.0},  # a float is not truncated
         {"slot": True},  # isinstance(True, int) is True in Python
         {"slot": -1},
+        {"slot": 0},  # the name of this test promised this case; it was never here
         "not-a-mapping",
     ],
 )
