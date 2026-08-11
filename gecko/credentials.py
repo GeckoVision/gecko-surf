@@ -530,6 +530,81 @@ def default_resolver() -> ChainResolver:
     return ChainResolver([keyring_backend, command_backend, env_backend])
 
 
+# --- Signing-key resolution: a HANDLE, never the material --------------------
+
+
+@dataclass(frozen=True)
+class KeyHandle:
+    """WHICH signing key answered, and from where — never the key.
+
+    Every field here is safe to log, safe to put in an exception, and safe to hand to a
+    caller. That is the whole point: a signing key that resolves to a ``str`` has already
+    crossed a ``gecko/`` return boundary, and possession is what makes a party a custody
+    provider. This type is what a ``gecko/`` function is allowed to know about a key.
+
+    It carries no path, no file name and no location, on purpose. Where the material
+    actually lives is the business of the process that holds it — the OS keychain, an
+    external secret manager, a TEE lease — and naming it here would be the first half of
+    reading it here.
+    """
+
+    ref: CredentialRef
+    #: The backend that answered — ``keyring`` | ``command`` | ``env``. A NAME.
+    backend: str
+
+
+def resolve_key_handle(
+    ref: CredentialRef,
+    *,
+    backend_name: str,
+    resolver: ChainResolver | None = None,
+) -> KeyHandle:
+    """Prove a signing key is reachable through ``backend_name``, and return a handle.
+
+    PINNED, NOT CHAINED — and that is the difference between this and
+    :meth:`ChainResolver.resolve`. The chain exists to fall through: keyring → command →
+    env, first hit wins, a locked keychain degrades to the next backend. That is right for
+    an API token, where the cost of a miss is a 401. It is wrong for a signing key, where
+    the cost is that a locked keychain silently promotes an environment variable to the
+    thing that signs — the leakiest link in the chain, reached by accident, at the one
+    moment nobody wanted a downgrade. So the caller names ONE backend, and a miss there is
+    a refusal rather than a fall-through.
+
+    THE VALUE IS PROBED AND DISCARDED. The backend contract is ``get -> str | None``, so
+    the only way to know a key is present is to fetch it. It is read into a local, tested
+    for presence, and dropped; it is never returned, never logged, never interpolated into
+    the error, and never stored on the handle. Nothing downstream can obtain the material
+    from what this hands back — asserted at runtime in
+    ``tests/test_signer.py::test_key_handle_is_opaque``, because a signature check cannot
+    see a value.
+
+    Raises :class:`CredentialError` naming only the ref slot and the backend.
+    """
+    chain = resolver if resolver is not None else default_resolver()
+    candidates = [b for b in chain.backends if b.name == backend_name]
+    if not candidates:
+        raise CredentialError(
+            f"no {backend_name!r} credential backend is configured for "
+            f"{ref.slot()!r}; a signing key is never resolved through a backend other "
+            f"than the one the profile names."
+        )
+    for backend in candidates:
+        if not backend.available():
+            continue
+        probe = backend.get(ref)
+        present = probe is not None
+        del probe  # the material does not outlive the presence test
+        if present:
+            return KeyHandle(ref=ref, backend=backend_name)
+    # NOTE: names the ref and the pinned backend only — never a value, and never the
+    # other backends, because listing them reads as an invitation to try one.
+    raise CredentialError(
+        f"no signing key for {ref.slot()!r} in the {backend_name!r} backend. "
+        f"A signing key is never taken from a weaker source than the one configured; "
+        f"store it there, or change the profile out of band."
+    )
+
+
 def env_var_name(ref: CredentialRef) -> str:
     """The canonical env var for a ref (``GECKO_CRED_<SLOT>``) — non-secret, for
     remediation hints and the degradation banner."""
