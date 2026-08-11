@@ -149,12 +149,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      # graphify is a PYTHON tool on PyPI as `graphifyy` (double y) — not an npm package.
+      # The first version of this job assumed node and failed with `graphify: command not
+      # found`, which is what guessing an ecosystem instead of checking one costs.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
-          node-version: '22'
+          enable-cache: true
 
       - name: Install graphify
-        run: npm install -g graphify-code || npm install -g graphify
+        run: |
+          uv tool install graphifyy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Fail loudly here rather than three steps later with a confusing error.
+      - name: Confirm graphify is on PATH
+        run: graphify --help > /dev/null
 
       # Re-extract from the code that is actually on this ref. Fails loudly if extraction
       # breaks; that failure is the signal worth having.
