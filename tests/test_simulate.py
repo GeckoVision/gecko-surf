@@ -418,3 +418,41 @@ def test_the_network_is_never_read_off_the_rpc_url() -> None:
     )
 
     assert receipt.network == UNKNOWN_NETWORK
+
+
+# --- G6: the token leg does not disturb the lamport leg --------------------------------
+
+
+def test_a_receipt_built_without_a_token_delta_defaults_to_not_tracked() -> None:
+    """Other modules construct Receipts positionally (``handoff``). The new field must
+    default to NOT TRACKED — never to a report claiming an observed zero."""
+    receipt = Receipt(
+        status="pass",
+        err=None,
+        revert_class=None,
+        units_consumed=1,
+        sol_delta=None,
+        tokens_received=None,
+        logs_tail=(),
+        network_label="simulated",
+    )
+
+    assert receipt.token_delta is None
+
+
+def test_a_sol_only_simulation_still_reports_no_token_delta() -> None:
+    """The lamport leg is unchanged, and a simulation carrying no token balances says
+    'not tracked' rather than 'no tokens moved'."""
+    value = {"err": None, "logs": [], "accounts": [{"lamports": 900}]}
+    receipt = simulate(
+        PLAN,
+        rpc_url="https://api.example.com",
+        rpc_call=_sim_rpc(value, pre_lamports=1000),
+        build_call=_build_ok,
+        track=[TRACKED],
+        network=UNKNOWN_NETWORK,
+    )
+
+    assert receipt.sol_delta == -100
+    assert receipt.token_delta is None
+    assert receipt.tokens_received is None
