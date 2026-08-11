@@ -121,7 +121,10 @@ def test_the_catch_all_approves_nothing_even_against_itself(catch_all: str) -> N
     approvable, a receipt whose network was never established would approve."""
     tx = _memo(b"buy water")
     verdict = evaluate_tx(
-        tx, _receipt(tx, network=catch_all), expected_network=catch_all
+        tx,
+        _receipt(tx, network=catch_all),
+        require="structural",
+        expected_network=catch_all,
     )
 
     assert verdict.approved is False
@@ -132,7 +135,9 @@ def test_a_named_network_matching_itself_approves() -> None:
     """The positive control for the two refusals above: the gate is refusing the
     CATCH-ALL, not everything."""
     tx = _memo(b"buy water")
-    verdict = evaluate_tx(tx, _receipt(tx, network="fork"), expected_network="fork")
+    verdict = evaluate_tx(
+        tx, _receipt(tx, network="fork"), require="structural", expected_network="fork"
+    )
 
     assert verdict.approved is True
 
@@ -166,8 +171,16 @@ def test_the_gate_reads_the_field_not_the_label() -> None:
     tx = _memo(b"buy water")
     receipt = _receipt(tx, network="fork", label="simulated against LIVE mainnet")
 
-    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved is False
-    assert evaluate_tx(tx, receipt, expected_network="fork").approved is True
+    assert (
+        evaluate_tx(
+            tx, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    )
+    assert (
+        evaluate_tx(tx, receipt, require="structural", expected_network="fork").approved
+        is True
+    )
 
 
 def test_the_prose_collapse_is_not_reachable_from_the_signing_module() -> None:
@@ -237,12 +250,17 @@ def test_a_corpus_row_and_a_signing_verdict_agree_in_one_run(tmp_path: Path) -> 
         record_to=tmp_path / "corpus.jsonl",
     )
     row = json.loads((tmp_path / "simulated.jsonl").read_text().strip())
-    verdict = evaluate_tx(tx, receipt, expected_network="fork")
+    verdict = evaluate_tx(tx, receipt, require="structural", expected_network="fork")
 
     assert row["network"] == "fork"
     assert row["network"] in NETWORKS
     assert verdict.approved is True
-    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved is False
+    assert (
+        evaluate_tx(
+            tx, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    )
     # the row is categorical: the prose label never enters it
     assert FORK_LABEL not in json.dumps(row)
 

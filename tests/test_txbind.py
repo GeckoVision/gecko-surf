@@ -7,8 +7,10 @@ every "we could not check" path must render as NO, never as silence.
 
 from __future__ import annotations
 
+import ast
 import base64
 import dataclasses
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -44,6 +46,9 @@ def _memo(payload: bytes, payer: str = PAYER) -> str:
 #: and the byte at the blockhash offset are BOTH zero and zeroing either yields identical
 #: bytes — a digest comparison then cannot tell a right offset from a wrong one.
 REAL_BLOCKHASH = "So11111111111111111111111111111111111111112"
+#: A SECOND real, non-zero blockhash — what the next slot hands you. The D4 tests below
+#: need two that differ in nothing but this field.
+REFRESHED_BLOCKHASH = "2b8kBmnjHwXTvHzX1Y3PrRTVFwRRQRzGgLBGrfHtmH5J"
 TABLE = "GnMsEEyF6XKMajwtBsjxcBv8QoEM71QyUzz4Lf7vkeRu"
 
 
@@ -146,7 +151,10 @@ def test_the_attested_transaction_is_approved() -> None:
     tx = _memo(b"water")
 
     verdict = evaluate_tx(
-        tx, _receipt(message_binding(tx), "structural"), expected_network="mainnet"
+        tx,
+        _receipt(message_binding(tx), "structural"),
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved
@@ -160,6 +168,7 @@ def test_a_different_transaction_is_refused() -> None:
     verdict = evaluate_tx(
         swapped,
         _receipt(message_binding(approved), "structural"),
+        require="structural",
         expected_network="mainnet",
     )
 
@@ -175,6 +184,7 @@ def test_a_failing_receipt_can_never_approve_anything() -> None:
     verdict = evaluate_tx(
         tx,
         _receipt(message_binding(tx), "structural", status="fail"),
+        require="structural",
         expected_network="mainnet",
     )
 
@@ -185,7 +195,10 @@ def test_a_failing_receipt_can_never_approve_anything() -> None:
 def test_a_receipt_with_no_binding_is_refused() -> None:
     """Older receipts predate the binding. Absent proof is not weak proof — it is none."""
     verdict = evaluate_tx(
-        _memo(b"water"), _receipt(None, None), expected_network="mainnet"
+        _memo(b"water"),
+        _receipt(None, None),
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert not verdict.approved
@@ -212,6 +225,7 @@ def test_a_malformed_transaction_returns_a_verdict_rather_than_raising() -> None
     verdict = evaluate_tx(
         "!!!not base64!!!",
         _receipt("deadbeef", "structural"),
+        require="structural",
         expected_network="mainnet",
     )
 
@@ -223,7 +237,10 @@ def test_an_unrecognised_strength_is_refused() -> None:
     tx = _memo(b"water")
 
     verdict = evaluate_tx(
-        tx, _receipt(message_binding(tx), "vibes"), expected_network="mainnet"
+        tx,
+        _receipt(message_binding(tx), "vibes"),
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert not verdict.approved
@@ -259,7 +276,9 @@ def test_simulate_binds_the_receipt_to_what_it_simulated() -> None:
 
     assert receipt.binding_strength == "structural"
     assert receipt.message_binding == message_binding(tx)
-    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved
+    assert evaluate_tx(
+        tx, receipt, require="structural", expected_network="mainnet"
+    ).approved
 
 
 def test_an_undecodable_build_leaves_the_receipt_unbound() -> None:
@@ -280,7 +299,9 @@ def test_an_undecodable_build_leaves_the_receipt_unbound() -> None:
     )
 
     assert receipt.message_binding is None
-    assert not evaluate_tx("anything", receipt, expected_network="mainnet").approved
+    assert not evaluate_tx(
+        "anything", receipt, require="structural", expected_network="mainnet"
+    ).approved
 
 
 def test_the_binding_survives_a_dataclass_replace() -> None:
@@ -289,7 +310,10 @@ def test_the_binding_survives_a_dataclass_replace() -> None:
     receipt = _receipt(message_binding(tx), "structural")
 
     assert evaluate_tx(
-        tx, dataclasses.replace(receipt, units_consumed=1), expected_network="mainnet"
+        tx,
+        dataclasses.replace(receipt, units_consumed=1),
+        require="structural",
+        expected_network="mainnet",
     ).approved
 
 
@@ -570,8 +594,17 @@ def test_a_versioned_prefix_on_a_legacy_message_is_refused() -> None:
         blockhash_offset(b"\x80" + body[1:], "legacy")
 
 
-def _simulated(tx: str, *, network: str = "mainnet") -> Receipt:
-    """A passing Receipt produced by our own ``simulate`` over ``tx``."""
+def _simulated(
+    tx: str, *, network: str = "mainnet", replace_blockhash: bool = True
+) -> Receipt:
+    """A passing Receipt produced by our own ``simulate`` over ``tx``.
+
+    ``replace_blockhash`` is threaded rather than hard-coded so the D4 tests below can
+    take a receipt of EACH strength from the same helper. It is not a knob for greening
+    anything: the default stays ``True`` (what a fork simulation honestly does), and the
+    tests that use ``False`` assert ``binding_strength == "exact"`` immediately, so a
+    flip in either direction breaks the test that depends on it.
+    """
     from gecko.simulate import BuiltTx, simulate
 
     def fake_rpc(_url: str, _method: str, _params: list) -> dict:
@@ -583,6 +616,7 @@ def _simulated(tx: str, *, network: str = "mainnet") -> Receipt:
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
         network=network,  # type: ignore[arg-type]
+        replace_blockhash=replace_blockhash,
     )
 
 
@@ -631,12 +665,19 @@ def test_a_receipt_for_one_route_cannot_approve_another_with_the_same_bytes() ->
     assert base64.b64decode(route_a) == base64.b64decode(route_b)
 
     receipt = _simulated(route_a)
-    verdict = evaluate_tx(route_b, receipt, expected_network="mainnet")
+    verdict = evaluate_tx(
+        route_b, receipt, require="structural", expected_network="mainnet"
+    )
 
     assert verdict.approved is False
     assert "lookup table" in verdict.reason
     # And not by luck: the receipt it was simulated against refuses too.
-    assert evaluate_tx(route_a, receipt, expected_network="mainnet").approved is False
+    assert (
+        evaluate_tx(
+            route_a, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    )
 
 
 def test_a_receipt_over_static_accounts_records_that_it_resolved_none() -> None:
@@ -652,7 +693,9 @@ def test_an_undecodable_transaction_still_refuses_rather_than_raising() -> None:
     receipt = _simulated(_memo(b"water"))
 
     assert (
-        evaluate_tx("not-base64!!", receipt, expected_network="mainnet").approved
+        evaluate_tx(
+            "not-base64!!", receipt, require="structural", expected_network="mainnet"
+        ).approved
         is False
     )
 
@@ -666,7 +709,7 @@ def test_an_unresolved_receipt_refuses_even_a_matching_binding() -> None:
         _receipt(message_binding(tx), "structural"), lookup_resolution="unresolved"
     )
 
-    verdict = evaluate_tx(tx, receipt, expected_network="mainnet")
+    verdict = evaluate_tx(tx, receipt, require="structural", expected_network="mainnet")
 
     assert verdict.approved is False
     assert "lookup table" in verdict.reason
@@ -729,7 +772,12 @@ def test_the_refusal_keys_on_the_lookups_not_on_the_version() -> None:
 
     receipt = _simulated(built.tx)
     assert receipt.lookup_resolution == "none"
-    assert evaluate_tx(built.tx, receipt, expected_network="mainnet").approved is True
+    assert (
+        evaluate_tx(
+            built.tx, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is True
+    )
 
 
 def test_two_routes_over_one_table_are_byte_identical_and_are_not_the_same_call() -> (
@@ -760,7 +808,10 @@ def test_a_fork_receipt_cannot_clear_a_mainnet_signature() -> None:
     tx = _memo(b"buy water")
 
     verdict = evaluate_tx(
-        tx, _on("fork", message_binding(tx)), expected_network="mainnet"
+        tx,
+        _on("fork", message_binding(tx)),
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is False
@@ -771,7 +822,10 @@ def test_the_same_receipt_clears_the_network_it_actually_ran_on() -> None:
     tx = _memo(b"buy water")
 
     assert evaluate_tx(
-        tx, _on("fork", message_binding(tx)), expected_network="fork"
+        tx,
+        _on("fork", message_binding(tx)),
+        require="structural",
+        expected_network="fork",
     ).approved
 
 
@@ -791,7 +845,10 @@ def test_a_receipt_with_no_network_attribute_at_all_is_refused() -> None:
 
     tx = _memo(b"buy water")
     verdict = evaluate_tx(
-        tx, LooksLikeAReceipt(message_binding(tx)), expected_network="mainnet"
+        tx,
+        LooksLikeAReceipt(message_binding(tx)),
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is False
@@ -821,7 +878,10 @@ def test_nothing_outside_the_approvable_set_is_ever_approved(
     tx = _memo(b"buy water")
 
     verdict = evaluate_tx(
-        tx, _on(receipt_network, message_binding(tx)), expected_network=expected_network
+        tx,
+        _on(receipt_network, message_binding(tx)),
+        require="structural",
+        expected_network=expected_network,
     )
 
     assert verdict.approved is False
@@ -836,13 +896,18 @@ def test_the_network_parameter_has_no_default_on_either_end_of_the_seam() -> Non
     Neither may guess. A default on the OBSERVATION end is the subtler of the two: even
     the fail-closed ``unknown`` would let a run that stated nothing travel to the gate
     looking like a run that was checked, so the decision is pushed to the call site
-    where somebody actually knows."""
+    where somebody actually knows.
+
+    ``require`` is supplied on the first call even though it too has no default (D4), so
+    the ``TypeError`` this test claims is the NETWORK's. A test that omits two required
+    keywords and asserts one exception proves neither, and would keep passing after a
+    network default came back."""
     from gecko.simulate import BuiltTx, simulate
 
     tx = _memo(b"buy water")
 
     with pytest.raises(TypeError):
-        evaluate_tx(tx, _on("fork", message_binding(tx)))  # type: ignore[call-arg]
+        evaluate_tx(tx, _on("fork", message_binding(tx)), require="structural")  # type: ignore[call-arg]
 
     with pytest.raises(TypeError):
         simulate(  # type: ignore[call-arg]
@@ -865,4 +930,203 @@ def test_a_receipt_that_asserted_the_catch_all_approves_nothing() -> None:
 
     assert receipt.network == "unknown"
     for expected in ("mainnet", "devnet", "fork", "unknown"):
-        assert evaluate_tx(tx, receipt, expected_network=expected).approved is False
+        assert (
+            evaluate_tx(
+                tx, receipt, require="structural", expected_network=expected
+            ).approved
+            is False
+        )
+
+
+# --------------------------------------------------------------------------- #
+# D4 — the strength demand has NO default.
+#
+# `require` shipped defaulting to `structural`, which is the weakest thing the gate can
+# say yes to AND the one a caller is most likely to get without asking. A structural
+# binding is blockhash-blind by construction (that is what makes it survive
+# `replaceRecentBlockhash: true`), so the default meant: present a transaction whose
+# blockhash nobody simulated, omit one keyword, and the gate approves.
+#
+# The fix is at the CALL SITE, never in the definition of `structural`. Redefining
+# structural to cover the blockhash would collapse the two strengths into one and make
+# every replaceRecentBlockhash simulation refuse — a gate that over-refuses is a gate
+# somebody deletes. So the demand travels with the caller: a path about to produce a
+# signature asks for `exact`, and every other caller says out loud which it accepted.
+#
+# THE COST, stated rather than discovered: `exact` expires with its blockhash (~150
+# slots). A refreshed transaction is a REFUSAL and the caller must re-simulate rather
+# than reuse. That is the intended price, and it is what the docs already teach — a
+# receipt is true for the state it was taken against; take it at the moment you sign,
+# not the day before.
+# --------------------------------------------------------------------------- #
+def test_the_gate_will_not_pick_a_binding_strength_for_the_caller() -> None:
+    """``require`` is keyword-only with no default, asserted on the signature itself.
+
+    mypy enforces this statically at every call site; this asserts it at runtime, so a
+    later 'convenience' default fails loudly here instead of quietly re-permitting every
+    caller that forgot to ask."""
+    import inspect
+
+    parameter = inspect.signature(evaluate_tx).parameters["require"]
+
+    assert parameter.default is inspect.Parameter.empty, (
+        "`require` carries a default again — the gate is choosing a strength nobody named"
+    )
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_a_structural_receipt_does_not_clear_a_rehashed_transaction_on_a_signing_path() -> (
+    None
+):
+    """THE D4 BUG. Same instructions, same accounts, a blockhash we never simulated —
+    and, with the demand left unstated, an approval.
+
+    Authored so it cannot be greened from either forbidden direction:
+
+    * REDEFINING ``structural`` to cover the blockhash breaks the second assertion,
+      which pins that the two digests still MATCH. Structural is blockhash-blind on
+      purpose; that is what survives ``replaceRecentBlockhash: true``.
+    * FLIPPING ``replace_blockhash`` to ``False`` breaks the first assertion, which pins
+      that this receipt is the structural one a fork simulation honestly earns.
+
+    What is left is the only honest fix: the signing call site states ``exact`` and is
+    refused, and a caller who genuinely accepts blockhash-blind still says so out loud.
+    """
+    simulated = _memo_with(b"buy water", blockhash=REAL_BLOCKHASH)
+    rehashed = _memo_with(b"buy water", blockhash=REFRESHED_BLOCKHASH)
+    assert rehashed != simulated, "fixture is broken — the two must differ on the wire"
+
+    receipt = _simulated(simulated)
+    assert receipt.binding_strength == "structural"
+    assert message_binding(rehashed, strength="structural") == receipt.message_binding
+
+    with pytest.raises(TypeError):
+        evaluate_tx(rehashed, receipt, expected_network="mainnet")  # type: ignore[call-arg]
+
+    refused = evaluate_tx(
+        rehashed, receipt, require="exact", expected_network="mainnet"
+    )
+    assert refused.approved is False
+    assert "exact" in refused.reason
+
+    accepted = evaluate_tx(
+        rehashed, receipt, require="structural", expected_network="mainnet"
+    )
+    assert accepted.approved is True, (
+        "structural stays blockhash-blind — the refusal above belongs to the call site"
+    )
+    assert "blockhash NOT covered" in accepted.reason
+
+
+def test_an_exact_receipt_refuses_a_blockhash_refreshed_transaction() -> None:
+    """The other strength, and the cost of demanding it.
+
+    An ``exact`` receipt binds the blockhash, so a refreshed transaction is NOT the one
+    it attests — by the binding, not by a caveat. The caller's floor never buys a weaker
+    comparison than the receipt earned: asking for ``structural`` against an exact
+    receipt still refuses, because the digest is computed at the RECEIPT's strength. A
+    'fix' that computed it at ``require``'s strength instead would approve exactly the
+    bytes this whole node exists to refuse.
+
+    The last assertion is the price, paid: re-simulate against the refreshed bytes and
+    the gate approves them. Re-simulating is free; reusing a stale receipt is not."""
+    simulated = _memo_with(b"buy water", blockhash=REAL_BLOCKHASH)
+    refreshed = _memo_with(b"buy water", blockhash=REFRESHED_BLOCKHASH)
+
+    receipt = _simulated(simulated, replace_blockhash=False)
+    assert receipt.binding_strength == "exact"
+
+    refused = evaluate_tx(
+        refreshed, receipt, require="exact", expected_network="mainnet"
+    )
+    assert refused.approved is False
+    assert "NOT the one the receipt attests" in refused.reason
+
+    assert (
+        evaluate_tx(
+            refreshed, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    ), "the receipt's strength governs the digest, never the caller's floor"
+
+    with pytest.raises(TypeError):
+        evaluate_tx(refreshed, receipt, expected_network="mainnet")  # type: ignore[call-arg]
+
+    retaken = _simulated(refreshed, replace_blockhash=False)
+    assert (
+        evaluate_tx(
+            refreshed, retaken, require="exact", expected_network="mainnet"
+        ).approved
+        is True
+    )
+
+
+def _gate_calls_in(path: Path) -> list[tuple[int, ast.Call]]:
+    """Every literal ``evaluate_tx(...)`` / ``verify_handoff(...)`` call in ``path``.
+
+    Parsed with ``ast`` rather than matched with a regex so a line break or a rename of
+    the local alias cannot hide a call. It is still a SOURCE check: a call made through
+    ``getattr(txbind, "evaluate_tx")`` or a kwargs splat is invisible to it. This is a
+    lint against the accidental reintroduction of a permissive call site — the guarantee
+    is the signature itself, asserted above and enforced by mypy at every call site."""
+    tree = ast.parse(path.read_text())
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name in ("evaluate_tx", "verify_handoff"):
+            found.append((node.lineno, node))
+    return found
+
+
+def test_no_call_site_inherits_a_binding_strength_it_did_not_name() -> None:
+    """Every production caller of the gate names its own floor, at its own call site.
+
+    The point of removing the default is not tidiness — it is that the caller who knows
+    whether these bytes are about to be signed is the only one who can answer, and a
+    default answers for all of them at once, quietly, in the weakest voice available."""
+    repo_root = Path(__file__).resolve().parents[1]
+    sources = sorted((repo_root / "gecko").rglob("*.py")) + sorted(
+        (repo_root / "scripts").rglob("*.py")
+    )
+
+    silent = [
+        f"{path.relative_to(repo_root)}:{line}"
+        for path in sources
+        for line, call in _gate_calls_in(path)
+        if not any(keyword.arg == "require" for keyword in call.keywords)
+    ]
+
+    assert not silent, (
+        "a call site takes whatever strength the gate hands it:\n" + "\n".join(silent)
+    )
+
+
+def test_every_signing_script_demands_an_exact_binding() -> None:
+    """The scripts are the ONLY paths in this repo whose next step is a real signature,
+    so their floor is not a preference: ``structural`` there would approve a blockhash
+    nobody simulated, one keyword away from a broadcast.
+
+    A source check for the same reason as above, and with the same limits — it is a
+    tripwire on the file a founder is about to run, not a proof about the process."""
+    repo_root = Path(__file__).resolve().parents[1]
+    signing_scripts = ("prepare_purchase.py", "sign_and_send.py", "compose_e2e.py")
+
+    for script in signing_scripts:
+        path = repo_root / "scripts" / script
+        assert path.exists(), f"{script} vanished — this test is now guarding nothing"
+        calls = _gate_calls_in(path)
+        assert calls, f"{script} no longer consults the gate at all"
+        for line, call in calls:
+            demanded = [
+                keyword.value
+                for keyword in call.keywords
+                if keyword.arg == "require"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value == "exact"
+            ]
+            assert demanded, (
+                f"scripts/{script}:{line} does not demand `require='exact'`"
+            )
