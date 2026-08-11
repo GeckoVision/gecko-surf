@@ -16,7 +16,17 @@ What it does, in order:
    replaced blockhash never needed and a real send cannot do without.
 4. Simulates against LIVE mainnet, read-only, with `replaceRecentBlockhash: false`, so the
    Receipt earns an **exact** binding rather than a structural one.
-5. Prints the receipt, the binding, the deadline, and the exact bytes to sign.
+5. Prints the receipt, the binding, the deadline, the exact bytes to sign, and the
+   ``sign_and_send.py`` command that carries this run's binding forward.
+
+WHAT THE PRE-FLIGHT HERE PROVES, and what it does not. The receipt passed, it covers the
+whole message including the blockhash (``exact``), it names the network YOU named, and
+the message loads no accounts from a lookup table — all real, all worth refusing on. What
+it does NOT prove is that these bytes are the bytes anyone else has: the transaction we
+simulated and the transaction we then check are one variable, so that half of the check
+compares a value with itself and cannot fail. The comparison that CAN fail happens in the
+next script, against the binding printed here — which is why that binding is part of the
+command this run prints rather than a decoration on the receipt.
 
 The blockhash expires in roughly 150 slots — about a minute. That is deliberate: an exact
 binding that outlived its blockhash would be attesting a message that can no longer land.
@@ -280,12 +290,26 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
     for line in receipt.logs_tail[-4:]:
         print(f"    {line[:96]}")
 
-    # The SAME flag on both sides, and correct rather than tautological: these bytes are
-    # going to be signed and submitted to THIS `--rpc-url`, so "where the simulation ran"
-    # and "where the signature is headed" are one fact, stated once, by the operator. It
-    # does not check that the operator was right — say `mainnet` while pointed at a fork
-    # and this script believes you. What it does refuse is a receipt from somewhere else,
-    # and one that named no network at all.
+    # A SELF-CHECK, and it is labelled as one because half of it cannot fail. `serialized`
+    # is what was simulated a few lines up AND what is passed here, so `presented` and
+    # `attested` are two hashes of one string: the identity comparison is a tautology and
+    # would approve an attacker's transaction just as readily, had one arrived. It is kept
+    # because the REST of this call is not a tautology — it refuses a receipt that did not
+    # pass, one carrying only a structural binding, one whose message loads accounts from
+    # a lookup table, and one from a network the operator did not name.
+    #
+    # The falsifiable comparison happens in the NEXT script: the binding printed below is
+    # recorded here, before these bytes travel, and `sign_and_send.py --expect-binding`
+    # checks it against a binding computed from whatever bytes actually arrive. That is
+    # the only place the two sides have different origins, and therefore the only place a
+    # swapped recipient can be refused.
+    #
+    # The SAME network flag on both sides, and correct rather than tautological: these
+    # bytes are going to be signed and submitted to THIS `--rpc-url`, so "where the
+    # simulation ran" and "where the signature is headed" are one fact, stated once, by
+    # the operator. It does not check that the operator was right — say `mainnet` while
+    # pointed at a fork and this script believes you. What it does refuse is a receipt
+    # from somewhere else, and one that named no network at all.
     verdict = evaluate_tx(
         serialized,
         receipt,
@@ -293,7 +317,14 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
         require="exact",
         expected_network=network,
     )
-    print(f"\n  evaluate_tx(require=exact) → {verdict.approved}: {verdict.reason}")
+    print(
+        f"\n  self-check (require=exact) → {verdict.approved}: {verdict.reason}"
+        "\n  Reads: this receipt passed, on the network you named, with an exact binding"
+        "\n  over a message that loads no lookup accounts. It does NOT read as 'these"
+        "\n  bytes were independently verified' — both sides of the digest comparison"
+        "\n  came from the same string. Carry the binding to the signing step for a"
+        "\n  comparison that can fail."
+    )
 
     if not verdict.approved:
         print("\nDO NOT SIGN. The pre-flight did not approve this transaction.")
@@ -307,6 +338,19 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
     )
     print(
         f"  serializedTransaction ({built.get('encoding', 'base58')}):\n\n{serialized}\n"
+    )
+    # The handoff. `--expect-binding` is what makes the signing step's check falsifiable,
+    # so it is printed as part of the command rather than left for someone to copy out of
+    # the receipt block. The RPC URL is deliberately NOT echoed: it frequently carries an
+    # API key, and this transcript ends up in terminals, logs and demo recordings.
+    print(
+        "  Next, in the terminal that holds your key:\n\n"
+        "    uv run python scripts/sign_and_send.py \\\n"
+        f"      --network {network} --rpc-url <the same --rpc-url you passed here> \\\n"
+        f"      --expect-binding {receipt.message_binding} \\\n"
+        "      --tx <the serializedTransaction above>\n\n"
+        "  That run re-simulates against the chain as it is THEN, and refuses unless the\n"
+        "  binding it computes from the bytes you hand it equals the one above.\n"
     )
     return 0
 
