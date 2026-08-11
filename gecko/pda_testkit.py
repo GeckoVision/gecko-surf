@@ -43,6 +43,8 @@ __all__ = [
     "DerivationCheck",
     "RpcCall",
     "LOCAL_RPC",
+    "SurfpoolStatus",
+    "surfpool_status",
     "verify_derivation",
     "SurfpoolFork",
     "SurfpoolError",
@@ -51,6 +53,52 @@ __all__ = [
 
 class SurfpoolError(Exception):
     """Raised when the surfpool fork can't be started or never becomes ready."""
+
+
+@dataclass(frozen=True)
+class SurfpoolStatus:
+    """Whether a fork leg CAN run, as a value a caller must render rather than ignore.
+
+    ``shutil.which`` already answers this in one line, so the point of a type is not the
+    lookup — it is that "the fork leg did not run" becomes a fact a demo prints and a test
+    names, instead of a branch that quietly does nothing. This project has already shipped
+    a release that passed only because surfpool happened to be running on the machine; the
+    inverse failure (a fork claim that silently degraded to no fork at all) is the same bug
+    read from the other end. Both are prevented by making absence LOUD rather than falsy.
+    """
+
+    available: bool
+    binary: str
+    #: The resolved executable path, or ``None`` when it is not on ``PATH``.
+    path: str | None
+    #: One line, written to be printed verbatim.
+    detail: str
+
+
+def surfpool_status(binary: str = "surfpool") -> SurfpoolStatus:
+    """Is ``binary`` on ``PATH``? Never raises, never starts anything, never touches a node.
+
+    Deliberately does NOT probe an already-running validator. A fork leg that would accept
+    "something is answering on 8899" inherits whatever that something is, which is exactly
+    how an ambient process ends up standing in for a controlled one.
+    """
+    found = shutil.which(binary)
+    if found is None:
+        return SurfpoolStatus(
+            available=False,
+            binary=binary,
+            path=None,
+            detail=(
+                f"{binary!r} is not on PATH — the fork leg was NOT run and NOTHING here "
+                f"was proved against a validator"
+            ),
+        )
+    return SurfpoolStatus(
+        available=True,
+        binary=binary,
+        path=found,
+        detail=f"{binary!r} found at {found} — the fork leg can run",
+    )
 
 
 @dataclass(frozen=True)

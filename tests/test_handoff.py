@@ -718,3 +718,122 @@ def test_the_refusal_carries_no_transaction_and_no_receipt() -> None:
     assert not hasattr(refusal, "receipt")
     assert not hasattr(refusal, "transaction_base64")
     assert not hasattr(refusal, "network")
+
+
+# ------------------------------------------------------- the build path (C8, §4 row 1)
+#
+# ``prepare_handoff``'s own docstring promised "Never raises for a bad build or an
+# undecodable transaction: a handoff that throws is one someone wraps in ``try/except``
+# and bypasses." The code did not implement it: ``simulate`` was called unwrapped and
+# ``simulate.py`` raises ``SimulateError`` on a builder that returns nothing, on a
+# response with no transaction field, and on a transport fault.
+#
+# That gap is not cosmetic, and it is not "just" a broken docstring. It is the ONE
+# pressure that makes an autonomous caller write ``except Exception`` around this
+# function — and that same ``except`` swallows ``SigningRefused``, the quarantine gate,
+# turning the poisoned-tool refusal into a caught exception and a retry. The bypass is
+# not written by an attacker; it is written by the caller, for a reason we handed them.
+
+
+def test_a_builder_that_raises_yields_a_withheld_plan_not_an_exception() -> None:
+    """The promise, now implemented. A build failure withholds bytes and says so."""
+    from gecko.simulate import SimulateError
+
+    def exploding_build(_plan: Any) -> BuiltTx:
+        raise SimulateError("builder returned no transaction")
+
+    prepared = prepare_handoff(
+        PLAN,
+        rpc_url="https://rpc.example.com",
+        surface=_gated_surface(),
+        tool="make_purchase",
+        build_call=exploding_build,
+        rpc_call=_rpc(),
+        network="mainnet",
+    )
+
+    assert prepared.simulation_passed is False
+    assert prepared.simulated_transaction_base64 is None
+    assert "build" in prepared.reason or "simulate" in prepared.reason
+
+
+def test_the_receipt_for_a_failed_build_claims_nothing_it_did_not_observe() -> None:
+    """The counter-argument to returning a plan here is that it FABRICATES a Receipt —
+    the exact objection ``signing_gate`` raises against a returned refusal at the gate.
+    The difference is that a run was ATTEMPTED here, so a Receipt saying ``unknown``
+    about it is a true sentence rather than an invented one. It is only true if every
+    field claims nothing: no status, no network, no binding, no slot, no units. Asserted
+    field by field, because a Receipt that quietly carried the caller's asserted network
+    would let a failed build travel to the gate looking like an observation."""
+    from gecko.simulate import SimulateError
+
+    def exploding_build(_plan: Any) -> BuiltTx:
+        raise SimulateError("builder returned no transaction")
+
+    receipt = prepare_handoff(
+        PLAN,
+        rpc_url="https://rpc.example.com",
+        surface=_gated_surface(),
+        tool="make_purchase",
+        build_call=exploding_build,
+        rpc_call=_rpc(),
+        network="mainnet",
+    ).receipt
+
+    assert receipt.status == "unknown"
+    assert receipt.network == "unknown", "a run that never happened asserts no network"
+    assert receipt.message_binding is None
+    assert receipt.binding_strength is None
+    assert receipt.observed_slot is None
+    assert receipt.units_consumed is None
+    assert receipt.sol_delta is None
+    assert "not mainnet" in receipt.network_label
+
+
+def test_an_rpc_fault_also_withholds_rather_than_raising() -> None:
+    """Same pressure, different fault. A node that is down, rate-limited or lying is the
+    common case an unattended loop meets, and it must not be the case that teaches the
+    caller to write ``except Exception``."""
+    from gecko.rpc import RpcError
+
+    def failing_rpc(_url: str, method: str, _params: Any) -> dict[str, Any]:
+        raise RpcError(f"JSON-RPC {method} failed: code=-32005")
+
+    prepared = prepare_handoff(
+        PLAN,
+        rpc_url="https://rpc.example.com",
+        surface=_gated_surface(),
+        tool="make_purchase",
+        build_call=_builder(_memo_tx(b"buy water")),
+        rpc_call=failing_rpc,
+        network="mainnet",
+    )
+
+    assert prepared.simulation_passed is False
+    assert prepared.simulated_transaction_base64 is None
+    assert prepared.receipt.status == "unknown"
+
+
+def test_the_quarantine_refusal_is_still_an_exception_and_still_precedes_the_build() -> (
+    None
+):
+    """The build path softening must not soften the gate. ``SigningRefused`` is the ONE
+    exception this function raises, it is raised before anything is built, and widening
+    the build path to a withheld plan would be worthless if the gate came back as one
+    too — a caller reading ``simulation_passed is False`` cannot tell "the node was down"
+    from "this tool is poisoned", and the second one must stop the loop."""
+    from gecko.simulate import SimulateError
+
+    def exploding_build(_plan: Any) -> BuiltTx:
+        raise SimulateError("builder returned no transaction")
+
+    with pytest.raises(SigningRefused):
+        prepare_handoff(
+            PLAN,
+            rpc_url="https://rpc.example.com",
+            surface=_gated_surface(),
+            tool="drain_wallet",
+            build_call=exploding_build,
+            rpc_call=_rpc(),
+            network="mainnet",
+        )

@@ -336,19 +336,48 @@ def test_an_unusable_slot_is_absent_never_zero_and_never_coerced(context: Any) -
     assert _receipt_for(result).observed_slot is None
 
 
-def test_the_slot_is_recorded_and_nothing_enforces_it() -> None:
-    """D6 DELIVERS NO FRESHNESS ENFORCEMENT — only the ability to EXPRESS an age bound.
-    Asserted structurally so nobody reads the field as a guarantee: neither the signing
-    gate nor the handoff mentions it, and a receipt still does not expire."""
+def test_the_slot_is_enforced_in_exactly_one_place_and_the_gate_is_not_it() -> None:
+    """REPLACES ``test_the_slot_is_recorded_and_nothing_enforces_it``, whose headline went
+    stale the day :mod:`gecko.signer` shipped an age bound.
+
+    D6 delivered the ability to EXPRESS a freshness bound and deliberately enforced
+    nothing. That is no longer the state of the world, and a test asserting "nothing
+    enforces it" would now be a claim about a control's ABSENCE while the control exists —
+    the same defect as claiming one that does not. So the assertion moves from "nobody
+    reads it" to "exactly one place reads it, and it is not the gate":
+
+    * ``txbind.py`` — the signing gate — still never mentions the slot. It answers a
+      question about IDENTITY (are these the bytes the receipt attests); age is a
+      different question, and folding one into the other would make a stale-but-matching
+      transaction indistinguishable from a fresh-but-substituted one.
+    * ``handoff.py`` mentions it only to WRITE ``None`` onto the receipt for a run that
+      never happened. It performs no read — asserted over the AST rather than the text, so
+      a future ``receipt.observed_slot`` comparison cannot slip in under this name.
+    * ``signer.py`` reads it, and is the only module that does: the age bound is the
+      SECOND of two independent freshness reasons, beside ``require="exact"``.
+    """
+    import ast
     from pathlib import Path
 
     import gecko.txbind as txbind_module
 
-    gate = Path(txbind_module.__file__).with_name("txbind.py").read_text()
-    handoff = Path(txbind_module.__file__).with_name("handoff.py").read_text()
+    package = Path(txbind_module.__file__).parent
 
-    assert "observed_slot" not in gate
-    assert "observed_slot" not in handoff
+    assert "observed_slot" not in (package / "txbind.py").read_text()
+
+    def reads_the_slot(module: str) -> bool:
+        tree = ast.parse((package / module).read_text())
+        return any(
+            isinstance(node, ast.Attribute) and node.attr == "observed_slot"
+            for node in ast.walk(tree)
+        )
+
+    assert not reads_the_slot("handoff.py"), (
+        "handoff.py must not READ the slot — it only writes None for an unobserved run"
+    )
+    assert reads_the_slot("signer.py"), (
+        "the age bound lost its only reader; a receipt would stop expiring again"
+    )
 
 
 # --- D2: the network the snapshot was taken ON -------------------------------
