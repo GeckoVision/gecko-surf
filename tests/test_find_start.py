@@ -251,7 +251,14 @@ def test_a_common_verb_start_loses_to_the_program_the_caller_named() -> None:
     assert demoted.kind == "guess"  # kept and labelled, never dropped
     assert demoted.why == ("buy",)  # the evidence it DID have is still reported
     assert "ore" in demoted.note  # honest about which program out-evidenced it
-    assert result.starts[0].program == "ore"
+    # ore's own card now outranks the card that matched only the verb…
+    ranks = {(p.program, p.instruction): i for i, p in enumerate(result.starts)}
+    assert ranks[("ore", None)] < ranks[("pumpfun", "buy")]
+    # …and whatever leads is a HEDGE, not a plan. (This assertion used to read
+    # `starts[0].program == "ore"`. It moved for a CORPUS reason, not a code one:
+    # `let_me_buy` is wired on this base and its surface card ties ore's at score 3,
+    # sorting first on program name. Both are `surface`; no runnable start was gained.)
+    assert result.starts[0].kind != "start"
 
 
 def test_the_verb_defect_is_not_specific_to_buy() -> None:
@@ -349,6 +356,73 @@ def test_the_distinguishing_ceiling_moves_with_the_card_count() -> None:
     # wire ONE more unrelated program: same 6 carriers, ceiling 6.0 → distinguishing
     twelve = eleven + [card(11, "unrelated prose")]
     assert "usdc" in _distinguishing_terms({"usdc"}, twelve)
+
+
+def test_the_originating_row_is_an_honest_no_start_on_the_composed_base() -> None:
+    """THE REAL ROW, not the surrogate. 'purchase some of that new memecoin before it
+    bonds' is golden line 3 (gold ``pumpfun/buy``). It could not be reproduced when
+    this fix was written — ``let_me_buy`` was not wired then, so the card that wins the
+    row could not be built and only the 'buy some ore' surrogate reached the defect.
+
+    On the COMPOSED base it is reachable, and it is the whole defect in one row: the
+    caller names pump.fun in all but the word ('memecoin', 'bonds'), and the router
+    served ``let_me_buy/make_purchase`` as a RUNNABLE plan at rank 1 on the verb
+    'purchase' alone — a wrong-but-plausible plan against a storefront program, tied at
+    score 2 by pumpfun, which matched the distinguishing term 'bond' it does not carry.
+
+    The honest answer is no_start: nothing here names a program well enough to run.
+    The candidates are kept, ranked and labelled GUESSES, and pumpfun's SURFACE card
+    (a hedge — 'start from this program', not a plan) leads.
+
+    Evidence that would refute this: wiring a pumpfun intent that matches 'purchase',
+    or a scorer change that breaks the score-2 tie between the two programs.
+    """
+    result = find_start("purchase some of that new memecoin before it bonds", limit=10)
+    assert result.no_start  # the honest gap, not a plausible guess
+    assert all(p.kind != "start" for p in result.starts)
+    assert result.starts[0].kind == "surface"  # the hedge is not demoted (C11)
+    assert result.starts[0].program == "pumpfun"
+    demoted = next(
+        p
+        for p in result.starts
+        if (p.program, p.instruction) == ("let_me_buy", "make_purchase")
+    )
+    assert demoted.kind == "guess"  # kept, ranked, labelled — never dropped
+    assert demoted.why == ("purchase",)
+    assert "pumpfun" in demoted.note  # names the program that out-evidenced it
+
+
+def test_the_floor_only_ever_removes_runnable_starts_never_adds_one() -> None:
+    """C3/C4 as a property, not an anecdote: the rule is a monotone TIGHTENING of
+    ``gated`` (it gains a disjunct), so for any intent the set of ``kind == "start"``
+    points can only SHRINK. Nothing was loosened anywhere to pay for a demotion.
+
+    Pinned against the pre-fix start sets, recorded from origin/main
+    ffc2907da0947946d259582ba1c4cf4830f9a8c5 by direct probe. A future change that
+    promotes any card into one of these sets — or promotes a card that was never in
+    one — fails here.
+    """
+    before: dict[str, set[tuple[str, str | None]]] = {
+        "buy some ore": {
+            ("pumpfun", "buy"),
+            ("let_me_buy", "add_product"),
+            ("let_me_buy", "initialize"),
+            ("let_me_buy", "make_purchase"),
+            ("ore", "claimOre"),
+            ("let_me_buy", "mark_as_delivered"),
+        },
+        "sell my ore": {("pumpfun", "sell"), ("ore", "claimOre")},
+        "purchase some of that new memecoin before it bonds": {
+            ("let_me_buy", "make_purchase")
+        },
+    }
+    for intent, pre in before.items():
+        post = {
+            (p.program, p.instruction)
+            for p in find_start(intent, limit=10).starts
+            if p.kind == "start"
+        }
+        assert post <= pre, f"{intent!r} gained a runnable start: {sorted(post - pre)}"
 
 
 def test_the_golden_set_admits_no_false_accept() -> None:
