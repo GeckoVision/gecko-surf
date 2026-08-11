@@ -1252,11 +1252,61 @@ def _identity_terms(card: "_Card") -> set[str]:
     return fold_tokens(_tokens(" ".join(parts)))
 
 
+def _split_evidence_rival(
+    api_id: str,
+    score: int,
+    matched: set[str],
+    rivals: Sequence[tuple[str, int, set[str]]],
+) -> str | None:
+    """The api_id of ANOTHER program, tied at exactly this score, that matched a
+    distinguishing term this card did not — or ``None``.
+
+    The gap this closes: :func:`_identity_terms` unions the api_id with the
+    instruction and intent names and treats all three as "the caller named this
+    program". Program ids are proper nouns and that reading holds; instruction names
+    are ordinary English verbs and it does not — matching 'buy' is evidence about the
+    VERB, not about pumpfun. Observed live: "buy some ore" was served pumpfun/buy as a
+    RUNNABLE plan on the single token 'buy', tied on score with ore's own card, which
+    matched the one term in the intent that actually named a program.
+
+    So when the evidence is SPLIT — this card holds terms the rival lacks, the rival
+    holds a distinguishing term this card lacks, and the scorer cannot separate them —
+    the honest answer is that we do not know which program was meant, and a card we do
+    not know was meant is not runnable. It is demoted to a guess: kept, ranked, and
+    labelled, never dropped.
+
+    ``rivals`` carries, per genuine candidate, ``(api_id, score, matched &
+    distinguishing)`` — the DISTINGUISHING half only, so an incidental noun both cards
+    share can never trigger a demotion.
+
+    Deliberately narrow, and each condition is independently refutable:
+
+    - **exact tie only.** An unequal score is the scorer's job, not this rule's.
+    - **different program only.** pumpfun/buy vs pumpfun/sell is a choice WITHIN a
+      program the caller did name; demoting there would erase a correct answer.
+    - **a term the top card lacks.** If the top card already matched everything the
+      rival distinguishes on, the evidence is not split.
+
+    Strictly a TIGHTENING: it can only turn a ``start`` into a ``guess``, never the
+    reverse, so no card that is below the floor today can be promoted by it.
+
+    Deterministic in the rival it names: ``rivals`` is the scorer's ranked order, and
+    the FIRST qualifying rival is returned so the reported reason cannot drift.
+    """
+    for rival_api_id, rival_score, rival_distinguishing in rivals:
+        if rival_api_id == api_id or rival_score != score:
+            continue
+        if rival_distinguishing - matched:
+            return rival_api_id
+    return None
+
+
 def _start_point(
     card: _Card,
     score: int,
     why: tuple[str, ...],
     kind: StartKind,
+    guess_note: str = "",
     *,
     cards: Sequence[_Card] = (),
     verdicts: Mapping[str, object] | None = None,
@@ -1271,7 +1321,11 @@ def _start_point(
             else {"builder": "orquestra", "url": card.execute_url}
         )
     if kind == "guess":
-        note = (
+        # ``guess_note`` states WHICH floor rule demoted this card. Without it every
+        # guess claimed "no lexical overlap cleared the floor", which is false for a
+        # split-evidence demotion (its overlap did clear — another program's just
+        # named the intent better) — a note asserting a reason the code did not use.
+        note = guess_note or (
             "GUESS — no lexical overlap with the intent cleared the floor; this is "
             "a closest candidate, not a start"
         )
@@ -1452,6 +1506,17 @@ def find_start(
         # to rest on at least one term that actually narrows the field; a card matched
         # only on terms everything shares is demoted to a guess, which is what it is.
         distinguishing = _distinguishing_terms(q_tokens, cards)
+        # One row per genuine candidate: (program, score, the DISTINGUISHING half of
+        # its match). Built before the loop so every card is judged against the same
+        # rival table, in the scorer's order — the split-evidence check below reads it.
+        rivals = tuple(
+            (
+                by_op[id(se.entry.operation)].api_id,
+                se.score,
+                q_tokens & _card_terms(by_op[id(se.entry.operation)]) & distinguishing,
+            )
+            for se in genuine
+        )
         points = []
         for se in genuine:
             card = by_op[id(se.entry.operation)]
@@ -1468,14 +1533,30 @@ def find_start(
             # this program's derive tools", which is a hedge, not a plan — demoting it
             # would erase the useful middle answer ("this program is plausibly relevant")
             # without preventing any harm.
-            gated = card.kind == "start" and not (named or corroborated)
+            # …and, even when it clears that bar, evidence the caller meant this
+            # program RATHER THAN another: an identity term can be an ordinary verb
+            # ('buy'), so a tied rival program holding a distinguishing term this card
+            # lacks means the intent split its evidence and neither side is runnable.
+            rival = _split_evidence_rival(card.api_id, se.score, matched, rivals)
+            gated = card.kind == "start" and (
+                rival is not None or not (named or corroborated)
+            )
             kind = "guess" if gated else card.kind
+            guess_note = ""
+            if gated and rival is not None:
+                guess_note = (
+                    f"GUESS — {rival!r} tied this score and matched a term this intent "
+                    "used to distinguish it that this card does not carry; the "
+                    "evidence is split between two programs, so this is a closest "
+                    "candidate, not a start"
+                )
             points.append(
                 _start_point(
                     card,
                     se.score,
                     why,
                     kind=kind,
+                    guess_note=guess_note,
                     cards=cards,
                     verdicts=chain_verdicts,
                 )
@@ -1489,9 +1570,10 @@ def find_start(
                 no_start=True,
                 note=(
                     "no start found — nothing matched a term naming a wired program "
-                    "or its instruction, and no candidate was corroborated by two "
-                    "distinguishing terms. The entries below are closest candidates "
-                    "(GUESSES), not starts."
+                    "or its instruction, no candidate was corroborated by two "
+                    "distinguishing terms, and any that cleared those was tied on "
+                    "score by a different program the intent distinguished better. "
+                    "The entries below are closest candidates (GUESSES), not starts."
                 ),
             )
         return FindStartResult(

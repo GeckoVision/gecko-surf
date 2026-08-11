@@ -227,6 +227,149 @@ def test_recovered_tags_are_program_level_truths() -> None:
     assert lb_pair.provenance == "recovered"
 
 
+# --- the floor: split evidence between two programs -----------------------------
+
+
+def test_a_common_verb_start_loses_to_the_program_the_caller_named() -> None:
+    """THE DEFECT. ``_identity_terms`` unions api_id + instruction + intent_name and
+    calls every one of them "direct evidence the caller meant this program". Program
+    ids are proper nouns; instruction names are ordinary English verbs. So "buy some
+    ore" NAMES pumpfun/buy through the verb 'buy' alone and it was served as a
+    RUNNABLE plan — while the caller had literally named a different program, whose
+    card matched the distinguishing term 'ore' that pumpfun/buy does not carry.
+
+    Evidence that would refute this edge: a rival that is not tied on score (score,
+    not this rule, decides then), or one from the SAME program, or one carrying no
+    distinguishing term the top card lacks.
+    """
+    result = find_start("buy some ore", limit=10)
+    runnable = {(p.program, p.instruction) for p in result.starts if p.kind == "start"}
+    assert ("pumpfun", "buy") not in runnable  # not a plan to run on this evidence
+    demoted = next(
+        p for p in result.starts if (p.program, p.instruction) == ("pumpfun", "buy")
+    )
+    assert demoted.kind == "guess"  # kept and labelled, never dropped
+    assert demoted.why == ("buy",)  # the evidence it DID have is still reported
+    assert "ore" in demoted.note  # honest about which program out-evidenced it
+    assert result.starts[0].program == "ore"
+
+
+def test_the_verb_defect_is_not_specific_to_buy() -> None:
+    """Same shape through a second verb — the defect is the unqualified union, not
+    one card. 'sell my ore' must not hand back a runnable pumpfun sell.
+
+    KNOWN, DELIBERATE LIMIT (do not "fix" by widening the rule): the check fires on an
+    exact score tie only. 'sell my ore holdings' scores pumpfun/sell one point clear of
+    ore's card, and it is still served as a start. Trading that away costs correct rows
+    elsewhere — measured, not assumed — so the asymmetry is recorded, not papered over.
+    """
+    result = find_start("sell my ore", limit=10)
+    runnable = {(p.program, p.instruction) for p in result.starts if p.kind == "start"}
+    assert ("pumpfun", "sell") not in runnable
+    assert result.starts[0].program == "ore"
+
+
+def test_split_evidence_needs_a_tie_a_rival_program_and_a_term_the_top_lacks() -> None:
+    """The rule in isolation: three conditions, each independently refutable."""
+    from gecko.find_start import _split_evidence_rival
+
+    matched = {"buy"}
+    # tied, different program, carries a distinguishing term the top card lacks —
+    # and the reason names the rival, so the demotion is auditable without the code
+    assert _split_evidence_rival("pumpfun", 3, matched, (("ore", 3, {"ore"}),)) == "ore"
+    # same program — a program cannot out-evidence itself
+    assert (
+        _split_evidence_rival("pumpfun", 3, matched, (("pumpfun", 3, {"curve"}),))
+        is None
+    )
+    # not tied — score, not this rule, settles an unequal match
+    assert _split_evidence_rival("pumpfun", 3, matched, (("ore", 2, {"ore"}),)) is None
+    assert _split_evidence_rival("pumpfun", 3, matched, (("ore", 4, {"ore"}),)) is None
+    # the rival brings no distinguishing term the top card lacks
+    assert (
+        _split_evidence_rival("pumpfun", 3, {"buy", "ore"}, (("ore", 3, {"ore"}),))
+        is None
+    )
+    # with two qualifying rivals the FIRST in the scorer's order is reported, so the
+    # reason attached to a demotion cannot drift with the iteration order
+    assert (
+        _split_evidence_rival(
+            "pumpfun", 3, matched, (("ore", 3, {"ore"}), ("meteora", 3, {"meteora"}))
+        )
+        == "ore"
+    )
+
+
+def test_a_single_shared_noun_never_serves_a_runnable_start() -> None:
+    """THE ORIGINATING INCIDENT, pinned at unit level (it had no unit test — only an
+    assertion in the eval and the golden metrics). "get me out of hyUSD into USDC"
+    matched metadao_ico/fund on the single shared noun 'usdc' and was served as a
+    plan to RUN. One shared noun names neither a program nor an action."""
+    result = find_start("get me out of hyUSD into USDC", limit=10)
+    assert result.no_start
+    assert all(p.kind != "start" for p in result.starts)  # nothing runnable served
+    fund = next(
+        p
+        for p in result.starts
+        if (p.program, p.instruction) == ("metadao_ico", "fund")
+    )
+    assert fund.kind == "guess"
+    assert fund.why == ("usdc",)
+
+
+def test_the_distinguishing_ceiling_moves_with_the_card_count() -> None:
+    """RESIDUAL, pinned at an explicit card count. ``_distinguishing_terms`` compares
+    document frequency against ``len(cards) / 2``, so wiring an unrelated program can
+    flip a term from incidental to distinguishing with no code change — which loosens
+    ``corroborated`` and tightens the split-evidence rule at the same time. The
+    threshold is a property of the corpus, and it weakens PER TERM as cards are added.
+    """
+    from gecko.find_start import _Card, _distinguishing_terms, _operation
+
+    def card(index: int, text: str) -> _Card:
+        return _Card(
+            kind="start",
+            api_id=f"p{index}",
+            program_id=f"id{index}",
+            instruction="do",
+            intent_name="plan_do",
+            inputs=(),
+            accounts=(),
+            pdas={},
+            spec=None,
+            notes="",
+            execute_url=None,
+            operation=_operation(f"op{index}", f"/p{index}", text, text, []),
+        )
+
+    carriers = [card(i, "usdc pool") for i in range(6)]
+    eleven = carriers + [card(i, "unrelated prose") for i in range(6, 11)]
+    # df('usdc') = 6 of 11 cards, ceiling 5.5 → incidental, cannot corroborate
+    assert "usdc" not in _distinguishing_terms({"usdc"}, eleven)
+    # wire ONE more unrelated program: same 6 carriers, ceiling 6.0 → distinguishing
+    twelve = eleven + [card(11, "unrelated prose")]
+    assert "usdc" in _distinguishing_terms({"usdc"}, twelve)
+
+
+def test_the_golden_set_admits_no_false_accept() -> None:
+    """The disqualifying metric, as an automated tripwire: no deliberately
+    out-of-scope intent may clear the floor. Nothing asserted this before — a
+    loosened floor could raise it to 1 with an otherwise green suite."""
+    from gecko.retrieval_eval import evaluate_golden
+
+    assert evaluate_golden().false_accepts == 0
+
+
+def test_the_floor_change_does_not_cost_recall_on_the_golden_set() -> None:
+    """A tightened floor that drops recall is not a fix. Bounds, not equalities, so
+    this survives rows and programs being added to the set."""
+    from gecko.retrieval_eval import evaluate_golden
+
+    report = evaluate_golden()
+    assert report.recall_at_1 >= 0.74
+    assert report.recall_at_3 >= 0.88
+
+
 # --- program hint ---------------------------------------------------------------
 
 
