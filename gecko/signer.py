@@ -73,12 +73,43 @@ consults our verdict**: :class:`SigningBackend` takes the whole transaction *and
 rather than being handed naked bytes. Nothing in this Protocol forecloses that, and nothing
 in it requires a key to exist in this process.
 
-WHAT THIS MODULE IS NOT RESPONSIBLE FOR, SO NOBODY READS IT AS COVERED.
+THE SPEND VERDICT IS A PRECONDITION, NOT A COURTESY — G7. Verification is not
+authorization: a perfectly simulated transfer of everything to an attacker's address
+passes every check above. Until this change, :class:`~gecko.spend_policy.SpendPolicyGate`
+expressed four caps and **had no caller** — the ordering lived in one demo's docstring
+("so this ordering is the caller's to keep") and in a test named after the mutation. That
+is a gate a caller MAY consult, and this repo has now produced the same no-caller shape
+three times (``txbind.evaluate_tx``, ``signing_gate.evaluate``, and this).
 
-* **The spend policy** — per-transaction cap, cumulative/velocity, program+instruction
-  allowlist, destination allowlist. Verification is not authorization: a perfectly
-  simulated transfer of everything to an attacker's address passes every check here. That
-  predicate lands separately and must ALSO pass; this seam is not a substitute for it.
+So the gate is HELD HERE and CALLED HERE, and three properties make it a precondition
+rather than a parameter:
+
+* **No verdict can arrive from outside.** :meth:`TransactionSigner.sign` has no
+  ``spend_verdict=``, no ``policy=`` and no ``force=``. A signer that accepts a verdict is
+  a signer whose caller mints one, which is the audited-input problem moved one hop.
+* **Absence is a refusal.** An unconfigured ``spend_gate`` is
+  ``spend-policy-not-configured``, exactly mirroring :meth:`_configuration`. There is no
+  construction of this class that signs without an authorization answer.
+* **It is asked over the RE-VERIFIED bytes** — ``verified.transaction_base64``, never
+  ``handoff.transaction_base64``. Authorising the caller's copy and signing the seam's
+  copy is the TOCTOU window this whole seam exists to close, and it would be invisible
+  today because the two are equal.
+
+It runs AFTER the receipt-age and fee-payer checks and IMMEDIATELY BEFORE the backend is
+asked, so a transaction refused by a cheap check spends no velocity budget.
+
+WHAT THIS MODULE IS STILL NOT RESPONSIBLE FOR, SO NOBODY READS IT AS COVERED.
+
+* **The retry double-reserves.** A backend fault (locked keychain, unreachable custody
+  API) is a refusal a caller may retry, and each attempt reserves velocity budget again
+  for the same transaction. It is not deduplicated, because the only key that identifies
+  "the same transaction" is the message binding and a binding may not enter the spend
+  ledger. The counter therefore over-counts on retries — toward refusing, which is the
+  right direction, and said out loud rather than described as exact.
+* **What the spend gate itself cannot see**, which is documented in its own module: an
+  RPC read may not decide a signature, so destinations are message account keys rather
+  than resolved token-account owners, and the velocity counter is ADVISORY because the
+  file it lives in is writable by the process it bounds.
 * **The build path.** ``handoff.py:246`` promises "never raises for a bad build" while
   ``handoff.py:281`` calls ``simulate`` unwrapped and ``simulate.py:258/262/270`` raise
   ``SimulateError`` — so a builder failure escapes as an exception rather than a withheld
@@ -102,6 +133,7 @@ from .credentials import KeyHandle
 from .handoff import SignerHandoff, verify_handoff
 from .networks import UNKNOWN_NETWORK, Network
 from .simulate import Receipt
+from .spend_policy import SpendPolicyGate
 from .txbind import (
     BindingStrength,
     TxDecodeError,
@@ -162,6 +194,10 @@ RefusalCode = Literal[
     "receipt-too-old",
     "undecodable-transaction",
     "fee-payer-not-controlled",
+    # AUTHORIZATION — the second predicate, held and called here. "Nobody authored a
+    # policy" and "the policy said no" are different answers and never share a code.
+    "spend-policy-not-configured",
+    "spend-not-authorized",
     "backend-unavailable",
     "backend-returned-nothing",
     "backend-changed-the-message",
@@ -277,6 +313,11 @@ class TransactionSigner:
     backend: SigningBackend | None = None
     profile: SignerProfile | None = None
     max_receipt_age_slots: int = MAX_RECEIPT_AGE_SLOTS
+    #: The AUTHORIZATION predicate, held by the signer so it cannot be skipped by a caller
+    #: that forgot it. ``None`` is a refusal, not an unmetered pass — see
+    #: :meth:`_spend_gate`. It is a field rather than a parameter of :meth:`sign` because
+    #: a per-call gate is a per-call decision, and the caller does not get that decision.
+    spend_gate: SpendPolicyGate | None = None
 
     def sign(
         self,
@@ -300,6 +341,11 @@ class TransactionSigner:
         network round trip inside a security decision turns that decision into a timeout,
         which is the classic fail-open, so this function is total and offline and the
         caller does the I/O.
+
+        THERE IS NO PARAMETER FOR THE SPEND VERDICT, and that is the point of G7. The
+        authorization answer is produced here, from the gate this signer holds, over the
+        re-verified bytes; a caller cannot supply one, cannot skip one, and cannot reach
+        the backend without one.
         """
         backend, profile = self._configuration()
 
@@ -374,6 +420,33 @@ class TransactionSigner:
             profile=profile.name,
         )
 
+        # AUTHORIZATION, last and immediately before the key holder is asked. Everything
+        # above is cheap and side-effect free; this call RESERVES velocity budget, so a
+        # transaction refused by an earlier check must never reach it.
+        #
+        # Written INLINE rather than behind a helper on purpose: the subject must be
+        # `verified.transaction_base64` — the bytes that came back out of the
+        # re-verification a few lines up — and `verified` only exists here. A helper taking
+        # a `str` would let a later edit pass `handoff.transaction_base64` instead, which
+        # is the TOCTOU window this seam exists to close and which no behavioural test can
+        # see while the two are equal. `agent_supplied_policy` is pinned to the literal
+        # None: that argument exists to be refused, and a signer that forwarded one it
+        # received would have re-opened the widening path the gate closes.
+        verdict = self._spend_gate().authorize(
+            verified.transaction_base64,
+            receipt,
+            agent_supplied_policy=None,
+        )
+        if not verdict.authorized:
+            # The gate's own code travels inside the reason: "the mint was never authored"
+            # and "past the hourly bound" are different answers, and flattening them here
+            # would make this seam's refusal less legible than the one it received.
+            raise SignerRefused(
+                f"the spend policy did not authorise these bytes [{verdict.code}]: "
+                f"{verdict.reason}",
+                code="spend-not-authorized",
+            )
+
         signed_raw = _ask_backend(backend, raw, attestation)
         _rebind(signed_raw, attested, strength)
 
@@ -400,6 +473,16 @@ class TransactionSigner:
                 code="not-authorized",
             )
         return self.backend, self.profile
+
+    def _spend_gate(self) -> SpendPolicyGate:
+        """The configured gate, or a refusal. Mirrors :meth:`_configuration` exactly."""
+        if self.spend_gate is None:
+            raise SignerRefused(
+                "no spend policy gate is configured; verification is not authorization, "
+                "and absence of an authorization answer is a refusal, not a permission",
+                code="spend-policy-not-configured",
+            )
+        return self.spend_gate
 
     def _check_receipt_age(self, receipt: Receipt, current_slot: int) -> None:
         """The second, independent freshness reason. A receipt does not expire on its own."""

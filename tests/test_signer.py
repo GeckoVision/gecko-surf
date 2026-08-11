@@ -36,12 +36,20 @@ from gecko.signer import (
     SignedTransaction,
     TransactionSigner,
 )
-from gecko.simulate import Receipt
+from gecko.simulate import Receipt, TokenDeltaReport
+from gecko.spend_policy import (
+    AllowedInstruction,
+    InMemorySpendLedger,
+    SpendPolicy,
+    SpendPolicyGate,
+    TokenCaps,
+)
 from gecko.txbind import message_binding
 
 PAYER = "DLkcqeNNX8nRQgD87DN7LjHkcLQd9K2wuqaCbhkERJxL"
 FOREIGN = "FFWtrEQ4B4PKQoVuHYzZq8FabGkVatYzDpEVHsK5rrhF"
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+MEMO_PROGRAM = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 REAL_BLOCKHASH = "So11111111111111111111111111111111111111112"
 SLOT = 300_000_000
 
@@ -51,7 +59,7 @@ def _tx(payer: str = PAYER, payload: bytes = b"gecko") -> str:
     from solders.instruction import AccountMeta, Instruction
     from solders.pubkey import Pubkey
 
-    program = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+    program = Pubkey.from_string(MEMO_PROGRAM)
     meta = AccountMeta(
         pubkey=Pubkey.from_string(USDC), is_signer=False, is_writable=False
     )
@@ -73,7 +81,12 @@ def _receipt(
         err=None,
         revert_class=None,
         units_consumed=5_000,
-        sol_delta=None,
+        # G7: the signer now asks the spend policy, which reads both AMOUNT fields. A
+        # receipt that resolves neither is refused as ``amount-unresolvable``, so these
+        # fixtures state the two facts every signable receipt has to carry: the lamports
+        # that left (here, the signature fee) and a token leg that was READ — an empty
+        # ``measured`` report is an OBSERVED zero, which is what a memo transaction moves.
+        sol_delta=-5_000,
         tokens_received=None,
         logs_tail=(),
         network_label="simulated (fork/RPC snapshot — not mainnet)",
@@ -84,6 +97,38 @@ def _receipt(
         lookup_resolution="none",
         network=network,  # type: ignore[arg-type]
         observed_slot=observed_slot,
+        token_delta=TokenDeltaReport(status="measured", movements=(), refusals=()),
+    )
+
+
+def _spend_gate() -> SpendPolicyGate:
+    """The AUTHORIZATION predicate every signer in this file is built with.
+
+    It is deliberately PERMISSIVE about this file's one transaction — a memo — because
+    the subject of these tests is the verification seam, not the caps. What it is not is
+    ABSENT: absence is its own refusal (``spend-policy-not-configured``), proved in
+    ``tests/test_signer_spend_precondition.py``, and building every signer here without a
+    gate would make every test below pass for that reason instead of its own.
+    """
+    return SpendPolicyGate(
+        policy=SpendPolicy(
+            authorized=True,
+            per_transaction_cap_lamports=10_000_000,
+            hourly_cap_lamports=100_000_000,
+            daily_cap_lamports=500_000_000,
+            max_transactions_per_day=100,
+            allowed_instructions=frozenset(
+                {AllowedInstruction(program_id=MEMO_PROGRAM, discriminator=b"gecko")}
+            ),
+            # An address this transaction never writes: the memo tx's only writable
+            # account is the fee payer, which cap 4 exempts because the signer checks it
+            # more strictly. The entry exists because an EMPTY allowlist is an unauthored
+            # one, and an unauthored policy refuses.
+            allowed_destinations=frozenset({USDC}),
+            # An authored "this agent moves no tokens" — a sentence, not a silence.
+            token_caps=TokenCaps.none(),
+        ),
+        ledger=InMemorySpendLedger(),
     )
 
 
@@ -145,6 +190,7 @@ def _signer(backend: _FakeBackend | None = None, **kw: Any) -> TransactionSigner
     return TransactionSigner(
         backend=backend if backend is not None else _FakeBackend(),
         profile=kw.pop("profile", _profile()),
+        spend_gate=kw.pop("spend_gate", _spend_gate()),
         **kw,
     )
 
@@ -397,7 +443,9 @@ def test_a_backend_that_raises_refuses_rather_than_escaping() -> None:
 
     tx = _tx()
     receipt = _receipt(tx)
-    signer = TransactionSigner(backend=_Locked(), profile=_profile())
+    signer = TransactionSigner(
+        backend=_Locked(), profile=_profile(), spend_gate=_spend_gate()
+    )
     with pytest.raises(SignerRefused) as excinfo:
         signer.sign(_handoff(tx, receipt), receipt=receipt, current_slot=SLOT)
     assert excinfo.value.code == "backend-unavailable"
@@ -471,9 +519,9 @@ def test_an_external_signer_satisfies_the_protocol() -> None:
     assert isinstance(_Custody(), SigningBackend)
     tx = _tx()
     receipt = _receipt(tx)
-    signed = TransactionSigner(backend=_Custody(), profile=_profile()).sign(
-        _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
-    )
+    signed = TransactionSigner(
+        backend=_Custody(), profile=_profile(), spend_gate=_spend_gate()
+    ).sign(_handoff(tx, receipt), receipt=receipt, current_slot=SLOT)
     assert signed.signer_pubkey == PAYER
 
 
