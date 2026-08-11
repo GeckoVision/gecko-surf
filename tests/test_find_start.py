@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 from gecko.providers.cli import PROGRAMS
+from gecko.provider_config import load_packaged_provider
 from gecko.find_start import (
     FindStartResult,
     MissRecord,
@@ -282,7 +283,18 @@ def test_miss_record_counts_are_sane() -> None:
     (record,) = records
     assert record.intent_term_count == 3  # 'the' is a stopword
     assert record.matched_score == 0
-    assert record.wired_program_count == len(PROGRAMS)
+    # The field counts the api_ids that produced CARDS — i.e. every packaged program
+    # config — not the intent registry. Those two were the same number until
+    # `let_me_buy` landed: it is comprehended for DERIVATION and wires no plan intent,
+    # so PROGRAMS is now a STRICT subset. Asserting against the card source is what the
+    # field actually means; the subset check keeps the old relationship visible.
+    packaged = {
+        api_id
+        for api_id, api in load_packaged_provider("orquestra")[1].items()
+        if api.program is not None
+    }
+    assert record.wired_program_count == len(packaged)
+    assert set(PROGRAMS) < packaged
     assert record.margin == 0  # all fallback guesses score 0
 
 

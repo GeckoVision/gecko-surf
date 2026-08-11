@@ -375,16 +375,43 @@ def _snapshot() -> dict[str, list[dict]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# Cards packaged AFTER the pre-R7 snapshot was captured. They have no historical plan,
+# and back-filling one into a "captured from the unmodified code before the change"
+# fixture would forge the baseline — the pin's whole value is that nothing since has
+# touched it. They are therefore skipped by the three snapshot comparisons and covered
+# instead by the snapshot-FREE formulation in
+# ``test_the_cap_never_reorders_or_drops_an_account``, which needs no baseline.
+# `==`, not `in`: a fourth entry has to turn ``test_the_post_snapshot_cards_are_exactly_
+# these`` red before it can be skipped.
+_POST_SNAPSHOT_CARDS = frozenset({"let_me_buy/SURFACE"})
+
+
+def test_the_post_snapshot_cards_are_exactly_these() -> None:
+    """The skip list is a claim about which cards the pre-R7 pin cannot cover — so it
+    is asserted, and every name in it must really be missing from the fixture."""
+    snapshot = _snapshot()
+    assert _POST_SNAPSHOT_CARDS == frozenset({"let_me_buy/SURFACE"})
+    assert _POST_SNAPSHOT_CARDS.isdisjoint(snapshot)
+    keys = {f"{c.api_id}/{c.intent_name or 'SURFACE'}" for c in _wired_cards()}
+    assert keys - set(snapshot) == _POST_SNAPSHOT_CARDS
+
+
 def test_with_origins_absent_every_plan_is_byte_identical_to_pre_r7() -> None:
     """Strip ``pda_origins`` from every wired card: the plans must equal the pinned
     pre-R7 snapshot exactly. Absent origin is not a new behaviour — it IS the old
     behaviour."""
     snapshot = _snapshot()
+    compared = []
     for card in _wired_cards():
         key = f"{card.api_id}/{card.intent_name or 'SURFACE'}"
+        if key in _POST_SNAPSHOT_CARDS:
+            continue
         assert _plan_json(replace(card, origins={})) == snapshot[key], (
             f"{key}: the no-origin path drifted from the pre-R7 plan"
         )
+        compared.append(key)
+    # the sweep must have actually run — a fully-skipped loop passes silently
+    assert sorted(compared) == sorted(snapshot)
 
 
 def test_origins_only_downgrade_and_exactly_the_known_accounts() -> None:
@@ -396,6 +423,8 @@ def test_origins_only_downgrade_and_exactly_the_known_accounts() -> None:
     deltas: list[tuple[str, str, str, str]] = []
     for card in _wired_cards():
         key = f"{card.api_id}/{card.intent_name or 'SURFACE'}"
+        if key in _POST_SNAPSHOT_CARDS:
+            continue
         for before, after in zip(snapshot[key], _plan_json(card), strict=True):
             assert before["account"] == after["account"]
             if before["provenance"] == after["provenance"]:
@@ -417,14 +446,23 @@ def test_origins_only_downgrade_and_exactly_the_known_accounts() -> None:
 
 # --- derivation order is untouched by the cap --------------------------------------
 def test_the_cap_never_reorders_or_drops_an_account() -> None:
-    """The cap changes tags, never membership or order: every plan's account sequence
-    equals the pre-R7 snapshot's."""
+    """The cap changes tags, never membership or order.
+
+    Two formulations, deliberately. Against the pre-R7 snapshot where one exists, and —
+    for EVERY card, including any packaged after the snapshot was taken — against the
+    same card with its origins stripped. The second needs no baseline, so a new config
+    is covered on the day it lands rather than the day someone remembers to pin it.
+    """
     snapshot = _snapshot()
     for card in _wired_cards():
         key = f"{card.api_id}/{card.intent_name or 'SURFACE'}"
-        assert [s.account for s in _derive_plan(card)] == [
-            s["account"] for s in snapshot[key]
-        ]
+        capped = [s.account for s in _derive_plan(card)]
+        assert capped == [s.account for s in _derive_plan(replace(card, origins={}))], (
+            f"{key}: applying the origin cap changed the account sequence"
+        )
+        if key in _POST_SNAPSHOT_CARDS:
+            continue
+        assert capped == [s["account"] for s in snapshot[key]]
 
 
 def test_cyclic_accounts_stay_flagged_with_origins_asserted_end_to_end() -> None:
