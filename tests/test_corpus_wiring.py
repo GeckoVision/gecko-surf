@@ -28,6 +28,7 @@ from gecko.corpus import (
     simulated_outcome_from_record,
     to_simulated_record,
 )
+from gecko.networks import UNKNOWN_NETWORK
 from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode
 from gecko.providers.landing_record import record_landing_outcome
 from gecko.providers.meteora import _load_meteora_pdas
@@ -92,13 +93,17 @@ def test_seed_kind_token_covers_every_node_shape() -> None:
 
 
 def test_network_category_collapses_to_closed_set() -> None:
-    # fork wins over the "NOT mainnet" caveat text; unknown/None fail closed to other
+    # fork wins over the "NOT mainnet" caveat text; anything unrecognised — including a
+    # URL and None — fails closed to the CATCH-ALL, now spelled `unknown`. It was `other`
+    # while the corpus owned this vocabulary alone; there is one declaration now
+    # (`gecko.networks`) and rows written under the old spelling still read back through
+    # LEGACY_NETWORK_ALIASES. Same bucket, one name.
     assert network_category("surfpool fork (mainnet-backed — NOT mainnet)") == "fork"
     assert network_category("simulated (fork/RPC snapshot — not mainnet)") == "fork"
     assert network_category("mainnet") == "mainnet"
     assert network_category("devnet snapshot") == "devnet"
-    assert network_category("http://evil.example/rpc") == "other"
-    assert network_category(None) == "other"
+    assert network_category("http://evil.example/rpc") == UNKNOWN_NETWORK
+    assert network_category(None) == UNKNOWN_NETWORK
 
 
 # --- record_landing_outcome: fail closed vs best-effort --------------------------------
@@ -190,7 +195,9 @@ def test_record_landing_outcome_slot_is_best_effort(tmp_path: Path) -> None:
     )
     row = json.loads((tmp_path / "simulated.jsonl").read_text().strip())
     assert row["slot"] is None
-    assert row["network"] == "other"  # None label fails closed
+    # None label fails closed to the catch-all (spelled `unknown` since the vocabulary
+    # was unified with the signing gate's).
+    assert row["network"] == UNKNOWN_NETWORK
 
 
 # --- the read side: fail-closed rehydration -------------------------------------------

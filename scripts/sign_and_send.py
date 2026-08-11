@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
 from gecko.simulate import BuiltTx, simulate  # noqa: E402
 from gecko.txbind import _b58decode, evaluate_tx  # noqa: E402
@@ -58,7 +59,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Actually broadcast. Without it this only verifies and shows what it would do.",
     )
+    parser.add_argument(
+        "--network",
+        required=True,
+        choices=sorted(NETWORKS),
+        help=(
+            "Which network --rpc-url points at. YOU say; nothing here guesses. A fork "
+            "proxy answers at any hostname, so the URL is evidence of nothing. There is "
+            "no default: 'unknown' is a legal answer and refuses at the gate."
+        ),
+    )
     args = parser.parse_args(argv)
+    # `choices` already closed the set; this narrows the type for the two call sites
+    # below without a cast, and stays fail-closed if the flag is ever widened.
+    network = coerce_network(args.network)
 
     from solders.keypair import Keypair
     from solders.transaction import Transaction
@@ -91,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         rpc_call=_rpc,
         build_call=lambda _plan: BuiltTx(tx=args.tx, encoding="base58"),
         replace_blockhash=False,
-        network_label="re-simulated at signing time (live mainnet, read-only)",
+        network_label=f"re-simulated at signing time ({network}, read-only)",
+        network=network,
         track=[signer],
     )
     print(f"\n  RECEIPT  {receipt.status.upper()}", end="")
@@ -99,7 +114,14 @@ def main(argv: list[str] | None = None) -> int:
     if receipt.revert_class:
         print(f"  class    {receipt.revert_class}")
 
-    verdict = evaluate_tx(args.tx, receipt, encoding="base58", require="exact")
+    # The SAME flag on both sides, and correct rather than tautological: this script
+    # broadcasts to THIS `--rpc-url`, so "where the simulation ran" and "where the
+    # signature is headed" are one fact, stated once, by the operator. It does not check
+    # that the operator was right — say `mainnet` while pointed at a fork and this script
+    # believes you. What it refuses is a receipt that named no network at all.
+    verdict = evaluate_tx(
+        args.tx, receipt, encoding="base58", require="exact", expected_network=network
+    )
     print(f"  binding  {verdict.approved}: {verdict.reason}")
     if not verdict.approved:
         print("\nDO NOT SIGN. The pre-flight did not approve these bytes.")

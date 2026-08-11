@@ -58,7 +58,7 @@ def _builder(tx: str, encoding: str = "base64"):
     return build
 
 
-def _rpc(err: Any = None, units: int = 4_200):
+def _rpc(err: Any = None, units: int = 4_200, **_ignored: Any):
     def call(_url: str, method: str, _params: Any) -> dict[str, Any]:
         if method == "simulateTransaction":
             return {
@@ -75,12 +75,21 @@ def _rpc(err: Any = None, units: int = 4_200):
     return call
 
 
-def _prepared(tx: str, encoding: str = "base64", **kwargs: Any):
+def _prepared(
+    tx: str,
+    encoding: str = "base64",
+    *,
+    network: str = "mainnet",
+    replace_blockhash: bool = True,
+    **kwargs: Any,
+):
     return prepare_handoff(
         PLAN,
         rpc_url="https://rpc.example.com",
         build_call=_builder(tx, encoding),
         rpc_call=_rpc(**kwargs),
+        network=network,  # type: ignore[arg-type]
+        replace_blockhash=replace_blockhash,
     )
 
 
@@ -145,6 +154,7 @@ def test_the_builder_is_called_exactly_once() -> None:
         rpc_url="https://rpc.example.com",
         build_call=counting_build,
         rpc_call=_rpc(),
+        network="mainnet",
     )
 
     assert prepared.simulation_passed is True
@@ -218,7 +228,9 @@ def test_verify_refuses_a_transaction_the_receipt_does_not_attest() -> None:
     prepared = _prepared(_memo_tx(b"buy water"))
     swapped = _memo_tx(b"drain wallet")
 
-    verdict = verify_handoff(swapped, prepared.receipt, require="structural")
+    verdict = verify_handoff(
+        swapped, prepared.receipt, require="structural", expected_network="mainnet"
+    )
 
     assert verdict.approved is False
     assert verdict.transaction_base64 is None
@@ -231,7 +243,10 @@ def test_verify_approves_the_transaction_the_receipt_attests() -> None:
     assert prepared.simulated_transaction_base64 is not None
 
     verdict = verify_handoff(
-        prepared.simulated_transaction_base64, prepared.receipt, require="structural"
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is True
@@ -255,7 +270,9 @@ def test_verify_returns_the_subject_bytes_never_the_simulated_ones() -> None:
     assert rehashed != simulated, "fixture is broken — the two must differ on the wire"
 
     prepared = _prepared(simulated)
-    verdict = verify_handoff(rehashed, prepared.receipt, require="structural")
+    verdict = verify_handoff(
+        rehashed, prepared.receipt, require="structural", expected_network="mainnet"
+    )
 
     assert verdict.approved is True, "structural binding is blockhash-blind by design"
     assert verdict.transaction_base64 == rehashed
@@ -279,7 +296,11 @@ def test_verify_takes_base58_subject_bytes_and_returns_base64() -> None:
 
     prepared = _prepared(simulated)
     verdict = verify_handoff(
-        b58, prepared.receipt, require="structural", encoding="base58"
+        b58,
+        prepared.receipt,
+        require="structural",
+        encoding="base58",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is True
@@ -306,7 +327,10 @@ def test_verify_requiring_exact_refuses_a_structural_receipt() -> None:
     assert prepared.simulated_transaction_base64 is not None
 
     verdict = verify_handoff(
-        prepared.simulated_transaction_base64, prepared.receipt, require="exact"
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="exact",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is False
@@ -321,7 +345,10 @@ def test_verify_refuses_a_receipt_that_did_not_pass() -> None:
         _memo_tx(b"revert"), err={"InstructionError": [0, {"Custom": 3012}]}
     )
     verdict = verify_handoff(
-        _memo_tx(b"revert"), prepared.receipt, require="structural"
+        _memo_tx(b"revert"),
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is False
@@ -335,8 +362,129 @@ def test_verify_refuses_undecodable_subject_bytes_without_raising() -> None:
     prepared = _prepared(_memo_tx(b"buy water"))
 
     verdict = verify_handoff(
-        "!!! not a transaction !!!", prepared.receipt, require="structural"
+        "!!! not a transaction !!!",
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
     )
 
     assert verdict.approved is False
     assert verdict.transaction_base64 is None
+
+
+# ------------------------------------------------------------------- the network (D2)
+
+
+def test_prepare_records_the_network_the_simulation_actually_ran_against() -> None:
+    """``prepare_handoff`` and ``verify_handoff`` need DIFFERENT network facts and the
+    two must not be collapsed: this one records where the simulation ran, and it is the
+    only one this function can honestly know."""
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+
+    assert prepared.receipt.network == "fork"
+    assert prepared.network == "fork"
+
+
+def test_prepare_will_not_pick_a_network_for_the_caller() -> None:
+    """No permissive default: a run whose network nobody stated must not read as one
+    that was checked."""
+    with pytest.raises(TypeError):
+        prepare_handoff(
+            PLAN,
+            rpc_url="https://rpc.example.com",
+            build_call=_builder(_memo_tx(b"buy water")),
+            rpc_call=_rpc(),
+        )  # type: ignore[call-arg]
+
+
+def test_verify_refuses_a_fork_receipt_for_a_mainnet_signature() -> None:
+    """The D2 fail-open at the handoff seam: same bytes, same binding, and a snapshot of
+    a network nobody is committing into."""
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    verdict = verify_handoff(
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
+    )
+
+    assert verdict.approved is False
+    assert verdict.transaction_base64 is None
+
+
+def test_verify_approves_when_the_caller_expects_the_network_that_was_simulated() -> (
+    None
+):
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    verdict = verify_handoff(
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="fork",
+    )
+
+    assert verdict.approved is True
+    assert verdict.network == "fork"
+
+
+def test_verify_will_not_pick_a_network_for_the_caller() -> None:
+    prepared = _prepared(_memo_tx(b"buy water"), network="fork")
+    assert prepared.simulated_transaction_base64 is not None
+
+    with pytest.raises(TypeError):
+        verify_handoff(
+            prepared.simulated_transaction_base64,
+            prepared.receipt,
+            require="structural",
+        )  # type: ignore[call-arg]
+
+
+# -------------------------------------------------------------- the blockhash residual
+
+
+def test_a_structural_binding_never_approves_a_rehashed_transaction_on_a_signing_path() -> (
+    None
+):
+    """The residual named above, closed WHERE IT CAN BE: at the call site, not in the
+    definition of ``structural``.
+
+    A structural binding is blockhash-blind — that is the honest ceiling of a
+    ``replaceRecentBlockhash: true`` simulation and
+    ``test_verify_returns_the_subject_bytes_never_the_simulated_ones`` pins it. So the
+    demand here is on the CALLER: a path that is about to produce a signature asks for
+    ``exact``, and therefore refuses.
+
+    Authored so it cannot be greened from either side, which is the whole point:
+
+    * REDEFINING ``structural`` to cover the blockhash does not green the first half —
+      a receipt whose strength is ``structural`` is refused by ``require="exact"``
+      regardless of what the digest covers — and it breaks the residual test above.
+    * FLIPPING ``replace_blockhash`` to ``False`` does not green the second half — an
+      exact receipt genuinely refuses the rehashed bytes, on the binding, by name.
+    """
+    simulated = _memo_tx(b"buy water")
+    rehashed = _memo_tx(b"buy water", blockhash=OTHER_BLOCKHASH)
+    assert rehashed != simulated, "fixture is broken — the two must differ on the wire"
+
+    structural = _prepared(simulated, network="mainnet")
+    downgrade = verify_handoff(
+        rehashed, structural.receipt, require="exact", expected_network="mainnet"
+    )
+
+    assert downgrade.approved is False
+    assert downgrade.transaction_base64 is None
+    assert "exact" in downgrade.reason
+
+    exact = _prepared(simulated, network="mainnet", replace_blockhash=False)
+    assert exact.receipt.binding_strength == "exact"
+    mismatch = verify_handoff(
+        rehashed, exact.receipt, require="exact", expected_network="mainnet"
+    )
+
+    assert mismatch.approved is False
+    assert mismatch.transaction_base64 is None
+    assert "NOT the one" in mismatch.reason

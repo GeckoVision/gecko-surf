@@ -32,6 +32,23 @@ ran against. A fork simulation therefore cannot honestly attest a blockhash:
 Calling a structural binding "exact" would be the lie that makes the feature worthless, so
 the strength travels with the verdict and a caller can demand one.
 
+**The network is compared, asserted on both sides, and never inferred.** A binding proves
+WHICH MESSAGE; it says nothing about WHERE the simulation ran. A fork receipt used to
+clear a mainnet signature — same bytes, same digest, and a snapshot of state nobody is
+committing into. The gate compares the receipt's structured, closed-vocabulary ``network``
+against one the caller must name. It never reads the Receipt's free-text honesty caveat
+and never reads an RPC URL (a fork proxy answers at any hostname). Approval is membership
+in an EXPLICIT approvable set on both sides plus equality — so the catch-all approves
+nothing, including against itself, because equality is not agreement when neither side was
+told anything.
+
+WHY THE PROSE IS NOT AN INPUT — the full reasoning, with the string that proves it, lives
+in :mod:`gecko.networks` and is deliberately not repeated here: this module must not so
+much as NAME the prose field, or the next reader will reach for it. Read that module
+docstring before touching anything below. ``tests/test_network_vocabulary.py`` greps this
+file for the field name to keep it that way; that grep is a lint against the accidental
+case, defeated by any string construction, and it is not a guarantee.
+
 **Fail closed.** An undecodable transaction, an unknown version, or a receipt with no
 binding is ``approved=False``. "We could not check" must never render as "fine" — that is
 the failure a signing gate exists to prevent.
@@ -60,6 +77,8 @@ import base64
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from .networks import APPROVABLE_NETWORKS, Network
 
 __all__ = [
     "BindingStrength",
@@ -425,12 +444,26 @@ def evaluate_tx(
     *,
     encoding: str = "base64",
     require: BindingStrength = "structural",
+    expected_network: Network,
 ) -> SigningVerdict:
-    """Is ``tx`` the transaction ``receipt`` attests?
+    """Is ``tx`` the transaction ``receipt`` attests, on the network the caller expects?
 
     ``require`` is the minimum strength the caller accepts. Asking for ``exact`` when the
     receipt carries only a structural binding is a REFUSAL, not a silent downgrade — a
     gate that accepts a weaker proof than it demanded is not a gate.
+
+    ``expected_network`` is the network the CALLER says this signature is headed for. It
+    is keyword-only with NO DEFAULT on purpose: a ``None``-means-skip default leaves every
+    call site holding the hole while the code reads as fixed, so mypy makes each caller
+    decide. It is compared against the receipt's structured ``network`` field and against
+    nothing else — never a free-text caveat, never a URL. See :mod:`gecko.networks` for
+    why, including the exact string that makes reading the prose invert this gate.
+
+    Approval needs BOTH sides in :data:`~gecko.networks.APPROVABLE_NETWORKS` AND equal.
+    A missing attribute, an off-vocabulary string, and the catch-all member all refuse —
+    including catch-all against catch-all, which is where the tempting
+    ``if expected and actual and expected != actual`` shape approves: it treats "nobody
+    said" as "no disagreement".
 
     Never raises for a malformed transaction: a signing gate that throws is a gate that
     gets wrapped in a try/except and bypassed. Every failure path is ``approved=False``,
@@ -470,6 +503,42 @@ def evaluate_tx(
             reason="caller requires an exact binding; the receipt is structural only",
             strength=strength,
         )
+    # The network, in refusal order. AFFIRMATIVE comparison only: each side must be a
+    # named, approvable member and the two must be the same one. Read through `getattr`
+    # because `receipt` is an `Any` — a Receipt-SHAPED object from older or third-party
+    # code arrives with no `network` at all, and a missing attribute is UNKNOWN, which
+    # refuses. Skipping the check there would make the gate strictest on the receipts it
+    # built itself and blind to every other one.
+    receipt_network = getattr(receipt, "network", None)
+    if receipt_network not in APPROVABLE_NETWORKS:
+        return SigningVerdict(
+            approved=False,
+            reason=(
+                "receipt does not say which network it simulated against — an "
+                "unestablished network approves nothing"
+            ),
+            strength=strength,
+        )
+    if expected_network not in APPROVABLE_NETWORKS:
+        return SigningVerdict(
+            approved=False,
+            reason=(
+                "caller named no network for this signature — 'unknown' approves "
+                "nothing, including against itself"
+            ),
+            strength=strength,
+        )
+    if receipt_network != expected_network:
+        return SigningVerdict(
+            approved=False,
+            reason=(
+                f"receipt simulated on {receipt_network}; this signature is for "
+                f"{expected_network} — a snapshot of one network says nothing "
+                "about the other"
+            ),
+            strength=strength,
+        )
+
     if getattr(receipt, "status", None) != "pass":
         return SigningVerdict(
             approved=False,

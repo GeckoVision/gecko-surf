@@ -27,6 +27,7 @@ import struct
 from typing import Any, Mapping, Sequence
 
 from .events import emit_surf_event
+from .networks import UNKNOWN_NETWORK, Network
 from .rpc import RpcCall, default_rpc_call
 from .simulate import BuiltTx, Receipt, simulate
 
@@ -426,6 +427,7 @@ def simulate_landing_bundle(
     unit_price_microlamports: int = 0,
     track: Sequence[str] = (),
     network_label: str | None = None,
+    network: Network = UNKNOWN_NETWORK,
     postlude_ixs: Sequence[Any] = (),
     program: str | None = None,
     instruction: str | None = None,
@@ -439,6 +441,14 @@ def simulate_landing_bundle(
     pass (or reports no units), it is returned as-is with the max limit — the honest
     verdict, no second guess. ``simulateTransaction`` only; the unsigned tx is never
     sent.
+
+    ``network`` is passed THROUGH to the Receipt and is never decided here. This function
+    is handed an ``rpc_url`` and an injected transport and is told nothing about either,
+    so the only value it could honestly invent is the fail-closed one — which is exactly
+    what it defaults to. A caller that WAS told (an operator flag) threads the real member
+    down; every other caller gets ``unknown``, which approves nothing at the signing gate.
+    Hardcoding an approvable member here would be a fabricated assertion, and
+    ``tests/test_network_vocabulary.py`` lints this file for precisely that.
     """
     # The Program Surface was previously invisible to usage telemetry: every event kind
     # we emitted came from the HTTP/MCP path, so "an agent planned a real Solana call"
@@ -458,7 +468,12 @@ def simulate_landing_bundle(
             plane="surface",
         )
 
-    kwargs: dict[str, Any] = {"rpc_url": rpc_url, "rpc_call": rpc_call, "track": track}
+    kwargs: dict[str, Any] = {
+        "rpc_url": rpc_url,
+        "rpc_call": rpc_call,
+        "track": track,
+        "network": network,
+    }
     if network_label is not None:
         kwargs["network_label"] = network_label
 

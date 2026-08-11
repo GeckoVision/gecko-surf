@@ -28,6 +28,8 @@ from gecko.corpus import (
     simulated_outcome_from,
     to_simulated_record,
 )
+from gecko.networks import LEGACY_NETWORK_ALIASES
+from gecko.networks import NETWORKS as NETWORKS_DECLARATION
 from gecko.simulate import REVERT_FAMILIES, Receipt, revert_family
 
 # Secret-shaped VALUES the Receipt carries for the human caller — none may reach the corpus.
@@ -147,7 +149,20 @@ def test_to_simulated_record_rejects_off_set_network() -> None:
         to_simulated_record(replace(_outcome(), network="mars"))
     # sanity: the closed sets are the source of truth
     assert SIM_STATUSES == {"pass", "fail", "unknown"}
-    assert NETWORKS == {"fork", "mainnet", "devnet", "other"}
+    # THE VOCABULARY MOVED, ON PURPOSE. The corpus used to own this set and spelled its
+    # catch-all ``other``; the signing gate then needed the same concept and two
+    # declarations of one concept is how a receipt ends up ``mainnet`` in one module and
+    # unknown in the other. There is now ONE declaration (``gecko.networks``), the corpus
+    # imports it, and the catch-all is spelled ``unknown``. ``testnet`` joined at the same
+    # time — a network we can honestly simulate against and could not previously name.
+    assert NETWORKS == {"mainnet", "devnet", "testnet", "fork", "unknown"}
+    assert NETWORKS is NETWORKS_DECLARATION
+    # Rows already on disk under the old spelling stay readable — a vocabulary change
+    # that orphans persisted history is a data loss, not a rename. The alias is a READ
+    # path only: the line above still refuses ``mars``, so this did not become a coercion
+    # of anything unrecognised into a member.
+    assert LEGACY_NETWORK_ALIASES["other"] == "unknown"
+    assert "other" not in NETWORKS
     assert REVERT_CLASSES is REVERT_FAMILIES
 
 

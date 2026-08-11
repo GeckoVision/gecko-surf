@@ -66,7 +66,10 @@ def _memo_with(payload: bytes, *, blockhash: str, account: str = USDC) -> str:
 
 
 def _receipt(
-    binding: str | None, strength: str | None, status: str = "pass"
+    binding: str | None,
+    strength: str | None,
+    status: str = "pass",
+    network: str = "mainnet",
 ) -> Receipt:
     return Receipt(
         status=status,  # type: ignore[arg-type]
@@ -77,6 +80,7 @@ def _receipt(
         tokens_received=None,
         logs_tail=(),
         network_label="simulated (fork/RPC snapshot — not mainnet)",
+        network=network,  # type: ignore[arg-type]
         message_binding=binding,
         binding_strength=strength,
     )
@@ -141,7 +145,9 @@ def test_base58_encoded_json_is_refused_not_hashed() -> None:
 def test_the_attested_transaction_is_approved() -> None:
     tx = _memo(b"water")
 
-    verdict = evaluate_tx(tx, _receipt(message_binding(tx), "structural"))
+    verdict = evaluate_tx(
+        tx, _receipt(message_binding(tx), "structural"), expected_network="mainnet"
+    )
 
     assert verdict.approved
     assert "blockhash NOT covered" in verdict.reason  # the caveat always travels
@@ -151,7 +157,11 @@ def test_a_different_transaction_is_refused() -> None:
     approved = _memo(b"water")
     swapped = _memo(b"whisky")
 
-    verdict = evaluate_tx(swapped, _receipt(message_binding(approved), "structural"))
+    verdict = evaluate_tx(
+        swapped,
+        _receipt(message_binding(approved), "structural"),
+        expected_network="mainnet",
+    )
 
     assert not verdict.approved
     assert "NOT the one the receipt attests" in verdict.reason
@@ -163,7 +173,9 @@ def test_a_failing_receipt_can_never_approve_anything() -> None:
     tx = _memo(b"water")
 
     verdict = evaluate_tx(
-        tx, _receipt(message_binding(tx), "structural", status="fail")
+        tx,
+        _receipt(message_binding(tx), "structural", status="fail"),
+        expected_network="mainnet",
     )
 
     assert not verdict.approved
@@ -172,7 +184,9 @@ def test_a_failing_receipt_can_never_approve_anything() -> None:
 
 def test_a_receipt_with_no_binding_is_refused() -> None:
     """Older receipts predate the binding. Absent proof is not weak proof — it is none."""
-    verdict = evaluate_tx(_memo(b"water"), _receipt(None, None))
+    verdict = evaluate_tx(
+        _memo(b"water"), _receipt(None, None), expected_network="mainnet"
+    )
 
     assert not verdict.approved
     assert "no binding" in verdict.reason
@@ -183,7 +197,10 @@ def test_requiring_exact_refuses_a_structural_receipt() -> None:
     tx = _memo(b"water")
 
     verdict = evaluate_tx(
-        tx, _receipt(message_binding(tx), "structural"), require="exact"
+        tx,
+        _receipt(message_binding(tx), "structural"),
+        require="exact",
+        expected_network="mainnet",
     )
 
     assert not verdict.approved
@@ -192,7 +209,11 @@ def test_requiring_exact_refuses_a_structural_receipt() -> None:
 
 def test_a_malformed_transaction_returns_a_verdict_rather_than_raising() -> None:
     """A signing gate that throws is a gate that gets wrapped in try/except and bypassed."""
-    verdict = evaluate_tx("!!!not base64!!!", _receipt("deadbeef", "structural"))
+    verdict = evaluate_tx(
+        "!!!not base64!!!",
+        _receipt("deadbeef", "structural"),
+        expected_network="mainnet",
+    )
 
     assert isinstance(verdict, SigningVerdict)
     assert not verdict.approved
@@ -201,7 +222,9 @@ def test_a_malformed_transaction_returns_a_verdict_rather_than_raising() -> None
 def test_an_unrecognised_strength_is_refused() -> None:
     tx = _memo(b"water")
 
-    verdict = evaluate_tx(tx, _receipt(message_binding(tx), "vibes"))
+    verdict = evaluate_tx(
+        tx, _receipt(message_binding(tx), "vibes"), expected_network="mainnet"
+    )
 
     assert not verdict.approved
     assert "strength" in verdict.reason
@@ -220,16 +243,23 @@ def test_simulate_binds_the_receipt_to_what_it_simulated() -> None:
         rpc_calls.append(method)
         return {"result": {"value": {"err": None, "unitsConsumed": 42, "logs": []}}}
 
+    # The network is ASSERTED here, at simulate time, because that is the only honest
+    # way this assertion can hold: `evaluate_tx` compares the receipt's structured
+    # network against the caller's, and a receipt that asserted nothing is `unknown`,
+    # which approves nothing — including a `mainnet` expectation. Skipping the network
+    # check for an unknown receipt, or defaulting `simulate`'s network to an approvable
+    # member, would green this line and reopen D2 in the same stroke.
     receipt = simulate(
         {},
         rpc_url="http://127.0.0.1:8899",
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        network="mainnet",
     )
 
     assert receipt.binding_strength == "structural"
     assert receipt.message_binding == message_binding(tx)
-    assert evaluate_tx(tx, receipt).approved
+    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved
 
 
 def test_an_undecodable_build_leaves_the_receipt_unbound() -> None:
@@ -246,10 +276,11 @@ def test_an_undecodable_build_leaves_the_receipt_unbound() -> None:
         build_call=lambda _plan: BuiltTx(
             tx=base64.b64encode(b"garbage").decode(), encoding="base64"
         ),
+        network="mainnet",
     )
 
     assert receipt.message_binding is None
-    assert not evaluate_tx("anything", receipt).approved
+    assert not evaluate_tx("anything", receipt, expected_network="mainnet").approved
 
 
 def test_the_binding_survives_a_dataclass_replace() -> None:
@@ -257,7 +288,9 @@ def test_the_binding_survives_a_dataclass_replace() -> None:
     tx = _memo(b"water")
     receipt = _receipt(message_binding(tx), "structural")
 
-    assert evaluate_tx(tx, dataclasses.replace(receipt, units_consumed=1)).approved
+    assert evaluate_tx(
+        tx, dataclasses.replace(receipt, units_consumed=1), expected_network="mainnet"
+    ).approved
 
 
 # --------------------------------------------------------------------------- #
@@ -342,11 +375,17 @@ def test_simulating_without_replacement_earns_an_exact_binding() -> None:
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
         replace_blockhash=False,
+        # Asserted, for the same reason as the structural case above: an `exact` binding
+        # over a receipt that named no network still approves nothing. The strength and
+        # the network are independent gates and both must be earned.
+        network="mainnet",
     )
 
     assert seen["replaceRecentBlockhash"] is False
     assert receipt.binding_strength == "exact"
-    assert evaluate_tx(tx, receipt, require="exact").approved
+    assert evaluate_tx(
+        tx, receipt, require="exact", expected_network="mainnet"
+    ).approved
 
 
 # --------------------------------------------------------------------------- #
@@ -531,7 +570,7 @@ def test_a_versioned_prefix_on_a_legacy_message_is_refused() -> None:
         blockhash_offset(b"\x80" + body[1:], "legacy")
 
 
-def _simulated(tx: str) -> Receipt:
+def _simulated(tx: str, *, network: str = "mainnet") -> Receipt:
     """A passing Receipt produced by our own ``simulate`` over ``tx``."""
     from gecko.simulate import BuiltTx, simulate
 
@@ -543,6 +582,7 @@ def _simulated(tx: str) -> Receipt:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        network=network,  # type: ignore[arg-type]
     )
 
 
@@ -591,12 +631,12 @@ def test_a_receipt_for_one_route_cannot_approve_another_with_the_same_bytes() ->
     assert base64.b64decode(route_a) == base64.b64decode(route_b)
 
     receipt = _simulated(route_a)
-    verdict = evaluate_tx(route_b, receipt)
+    verdict = evaluate_tx(route_b, receipt, expected_network="mainnet")
 
     assert verdict.approved is False
     assert "lookup table" in verdict.reason
     # And not by luck: the receipt it was simulated against refuses too.
-    assert evaluate_tx(route_a, receipt).approved is False
+    assert evaluate_tx(route_a, receipt, expected_network="mainnet").approved is False
 
 
 def test_a_receipt_over_static_accounts_records_that_it_resolved_none() -> None:
@@ -611,7 +651,10 @@ def test_an_undecodable_transaction_still_refuses_rather_than_raising() -> None:
     something that throws."""
     receipt = _simulated(_memo(b"water"))
 
-    assert evaluate_tx("not-base64!!", receipt).approved is False
+    assert (
+        evaluate_tx("not-base64!!", receipt, expected_network="mainnet").approved
+        is False
+    )
 
 
 def test_an_unresolved_receipt_refuses_even_a_matching_binding() -> None:
@@ -623,7 +666,7 @@ def test_an_unresolved_receipt_refuses_even_a_matching_binding() -> None:
         _receipt(message_binding(tx), "structural"), lookup_resolution="unresolved"
     )
 
-    verdict = evaluate_tx(tx, receipt)
+    verdict = evaluate_tx(tx, receipt, expected_network="mainnet")
 
     assert verdict.approved is False
     assert "lookup table" in verdict.reason
@@ -686,7 +729,7 @@ def test_the_refusal_keys_on_the_lookups_not_on_the_version() -> None:
 
     receipt = _simulated(built.tx)
     assert receipt.lookup_resolution == "none"
-    assert evaluate_tx(built.tx, receipt).approved is True
+    assert evaluate_tx(built.tx, receipt, expected_network="mainnet").approved is True
 
 
 def test_two_routes_over_one_table_are_byte_identical_and_are_not_the_same_call() -> (
@@ -700,3 +743,126 @@ def test_two_routes_over_one_table_are_byte_identical_and_are_not_the_same_call(
 
     assert base64.b64decode(route_a) == base64.b64decode(route_b)
     assert OTHER != USDC
+
+
+# --------------------------------------------------------------------------- #
+# D2 — the network. A binding proves WHICH MESSAGE; it proves nothing about WHERE
+# the simulation ran, and a fork snapshot is not the state a mainnet signature lands in.
+# --------------------------------------------------------------------------- #
+def _on(network: str, binding: str | None, strength: str | None = "structural"):
+    """A passing receipt that ASSERTS ``network`` — nothing else stands in the way."""
+    return dataclasses.replace(_receipt(binding, strength), network=network)
+
+
+def test_a_fork_receipt_cannot_clear_a_mainnet_signature() -> None:
+    """THE D2 BUG. The bytes match, the binding matches, the receipt passed — and the
+    state it was validated against is a snapshot nobody is committing into."""
+    tx = _memo(b"buy water")
+
+    verdict = evaluate_tx(
+        tx, _on("fork", message_binding(tx)), expected_network="mainnet"
+    )
+
+    assert verdict.approved is False
+    assert "fork" in verdict.reason and "mainnet" in verdict.reason
+
+
+def test_the_same_receipt_clears_the_network_it_actually_ran_on() -> None:
+    tx = _memo(b"buy water")
+
+    assert evaluate_tx(
+        tx, _on("fork", message_binding(tx)), expected_network="fork"
+    ).approved
+
+
+def test_a_receipt_with_no_network_attribute_at_all_is_refused() -> None:
+    """MISSING == UNKNOWN == REFUSE. ``evaluate_tx`` reads the receipt through
+    ``getattr`` on an ``Any``, so a Receipt-SHAPED object from older or third-party code
+    reaches the gate with no ``network`` at all. Skipping the check there would make the
+    gate strictest on the receipts it built itself and blind to every other one."""
+
+    class LooksLikeAReceipt:
+        status = "pass"
+        binding_strength = "structural"
+        lookup_resolution = "none"
+
+        def __init__(self, binding: str) -> None:
+            self.message_binding = binding
+
+    tx = _memo(b"buy water")
+    verdict = evaluate_tx(
+        tx, LooksLikeAReceipt(message_binding(tx)), expected_network="mainnet"
+    )
+
+    assert verdict.approved is False
+    assert "network" in verdict.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("receipt_network", "expected_network"),
+    [
+        ("unknown", "mainnet"),
+        ("mainnet", "unknown"),
+        ("unknown", "unknown"),
+        ("other", "other"),
+        ("solana-mainnet-beta", "solana-mainnet-beta"),
+    ],
+)
+def test_nothing_outside_the_approvable_set_is_ever_approved(
+    receipt_network: str, expected_network: str
+) -> None:
+    """Affirmative comparison only: BOTH sides must be a named, approvable member and
+    the same one. Never ``if expected and actual and expected != actual`` — that
+    approves whenever either side is empty, which is exactly when nothing is known.
+
+    The last pair is an off-vocabulary string on both sides: two receipts that both said
+    "solana-mainnet-beta" would otherwise compare equal and approve on a vocabulary
+    nothing validates."""
+    tx = _memo(b"buy water")
+
+    verdict = evaluate_tx(
+        tx, _on(receipt_network, message_binding(tx)), expected_network=expected_network
+    )
+
+    assert verdict.approved is False
+
+
+def test_the_network_parameter_has_no_default_on_either_end_of_the_seam() -> None:
+    """BOTH ends. mypy forces the decision at every call site; this asserts it at runtime
+    so a later 'convenience' default fails loudly rather than silently reopening D2.
+
+    ``evaluate_tx`` is the demand side — which network this signature is headed for —
+    and ``simulate`` is the observation side — which network the run was pointed at.
+    Neither may guess. A default on the OBSERVATION end is the subtler of the two: even
+    the fail-closed ``unknown`` would let a run that stated nothing travel to the gate
+    looking like a run that was checked, so the decision is pushed to the call site
+    where somebody actually knows."""
+    from gecko.simulate import BuiltTx, simulate
+
+    tx = _memo(b"buy water")
+
+    with pytest.raises(TypeError):
+        evaluate_tx(tx, _on("fork", message_binding(tx)))  # type: ignore[call-arg]
+
+    with pytest.raises(TypeError):
+        simulate(  # type: ignore[call-arg]
+            {},
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=lambda *_a: {
+                "result": {"value": {"err": None, "unitsConsumed": 1, "logs": []}}
+            },
+            build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        )
+
+
+def test_a_receipt_that_asserted_the_catch_all_approves_nothing() -> None:
+    """The fail-closed member is a legal thing to assert and an APPROVAL OF NOTHING: a
+    caller who honestly cannot name the network says so, and the receipt then refuses
+    against EVERY expectation, including ``unknown`` itself. That is what makes
+    ``unknown`` safe to keep in the vocabulary at all."""
+    tx = _memo(b"water")
+    receipt = _simulated(tx, network="unknown")
+
+    assert receipt.network == "unknown"
+    for expected in ("mainnet", "devnet", "fork", "unknown"):
+        assert evaluate_tx(tx, receipt, expected_network=expected).approved is False

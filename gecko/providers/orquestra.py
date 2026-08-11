@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
 
+from ..networks import UNKNOWN_NETWORK
 from ..pda import PdaDerivationError, PdaNode, derive_pda
 from ..rpc import RpcError
 
@@ -135,7 +136,14 @@ class OrquestraProgramSurface:
         track = list(args.get("track") or ())
 
         try:
-            receipt = simulate(merged_plan, rpc_url=rpc_url, track=track)
+            # UNKNOWN, explicitly. This tool is handed an `rpc_url` by an agent and is
+            # told nothing about where it points; a fork proxy answers at any hostname,
+            # so there is no honest member to assert. The receipt therefore approves
+            # nothing at the signing gate, which is the correct outcome for a network
+            # nobody established — not a gap to be filled in with the convenient literal.
+            receipt = simulate(
+                merged_plan, rpc_url=rpc_url, track=track, network=UNKNOWN_NETWORK
+            )
         except (SimulateError, RpcError) as exc:
             return {"error": str(exc)}
         result = {
