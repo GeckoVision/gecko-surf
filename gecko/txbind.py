@@ -85,13 +85,17 @@ from typing import Any, Literal
 from .networks import APPROVABLE_NETWORKS, Network
 
 __all__ = [
+    "DISCRIMINATOR_CEILING",
     "BindingStrength",
+    "DecodedInstruction",
+    "DecodedMessage",
     "LookupResolution",
     "MessageVersion",
     "SigningVerdict",
     "TxDecodeError",
     "UnresolvedLookupError",
     "blockhash_offset",
+    "decode_message",
     "evaluate_tx",
     "lookup_resolution_of",
     "message_binding",
@@ -244,6 +248,139 @@ def lookup_resolution_of(
     """
     message, _version = _message_of(_decode(tx, encoding))
     return "unresolved" if _lookup_count(message) else "none"
+
+
+#: How many leading instruction-data bytes are kept as the DISCRIMINATOR.
+#:
+#: Eight, because that is what Anchor dispatches on (``sha256("global:<name>")[:8]``).
+#: Programs with a shorter selector — SPL Token's single byte, System's u32 — are covered
+#: because an allowlist entry declares its own length and is matched as a PREFIX of these
+#: bytes, so the author picks the selector width their program actually uses. Nothing
+#: beyond eight bytes is kept: a discriminator is a routing decision, and the argument
+#: bytes after it are payload this control plane has no business holding.
+DISCRIMINATOR_CEILING = 8
+
+
+@dataclass(frozen=True)
+class DecodedInstruction:
+    """One instruction, reduced to the facts a policy may be evaluated over.
+
+    ``discriminator`` is the leading (at most :data:`DISCRIMINATOR_CEILING`) data bytes and
+    is ``b""`` when the instruction carries no data at all. Empty is NOT a member of the
+    vocabulary: an instruction that names no selector cannot be matched against an allowlist
+    entry, and a caller must treat it as unreadable rather than as "the default one".
+    """
+
+    program_id: str
+    discriminator: bytes
+    data_length: int
+    account_indexes: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class DecodedMessage:
+    """A message reduced to program ids, selectors, writable accounts and the fee payer.
+
+    This is the SUBJECT a spend policy is evaluated over. It is derived here, locally, from
+    the same bytes :func:`message_binding` hashes — never from an agent's description of
+    them and never from an RPC read. The lookup-table rule from the module docstring applies
+    unchanged: a message that loads accounts from a table raises
+    :class:`UnresolvedLookupError`, because the addresses those u8 indexes resolve to are
+    not in the bytes and fetching them would make a node a trust root of a signing decision.
+
+    ``writable_accounts`` is derived from the message header, which is where writability is
+    declared. It INCLUDES the fee payer (index 0, always writable); a caller that wants
+    "everything this transaction may write except the account paying for it" subtracts
+    ``fee_payer`` itself and says so.
+    """
+
+    version: MessageVersion
+    fee_payer: str
+    account_keys: tuple[str, ...]
+    writable_accounts: frozenset[str]
+    instructions: tuple[DecodedInstruction, ...]
+
+
+def decode_message(tx: str | bytes, *, encoding: str = "base64") -> DecodedMessage:
+    """Decode ``tx`` into the facts a policy may read. Raises rather than guessing.
+
+    Every failure is a :class:`TxDecodeError`: an unreadable header, a program index past
+    the account list, a message with no instructions. None of them returns a partially
+    populated :class:`DecodedMessage`, because a policy evaluated over half a message
+    approves the half it could not see.
+    """
+    raw = _decode(tx, encoding)
+    message, version = _message_of(raw)
+    if _lookup_count(message):
+        raise UnresolvedLookupError(
+            "message loads accounts from an address lookup table — the bytes commit to "
+            "the table and the indexes, never to the addresses they resolve to"
+        )
+
+    try:
+        keys = tuple(str(key) for key in message.account_keys)
+        header = message.header
+        signers = int(header.num_required_signatures)
+        readonly_signed = int(header.num_readonly_signed_accounts)
+        readonly_unsigned = int(header.num_readonly_unsigned_accounts)
+        compiled = list(message.instructions)
+    except Exception as exc:  # noqa: BLE001 - redact: never echo the transaction
+        raise TxDecodeError(
+            "message does not expose a header, an account list and instructions"
+        ) from exc
+
+    total = len(keys)
+    if total < 1:
+        raise TxDecodeError("message declares no account keys")
+    if (
+        signers < 1
+        or signers > total
+        or readonly_signed > signers
+        or signers + readonly_unsigned > total
+    ):
+        raise TxDecodeError("message header disagrees with its account key list")
+
+    # Solana's writability layout: writable signers first, then readonly signers, then
+    # writable non-signers, then readonly non-signers. Derived from the header rather than
+    # from any per-account flag, because the header is what the runtime reads.
+    writable = frozenset(
+        key
+        for index, key in enumerate(keys)
+        if index < signers - readonly_signed
+        or (signers <= index < total - readonly_unsigned)
+    )
+
+    instructions: list[DecodedInstruction] = []
+    for one in compiled:
+        try:
+            program_index = int(one.program_id_index)
+            account_indexes = tuple(bytes(one.accounts))
+            data = bytes(one.data)
+        except Exception as exc:  # noqa: BLE001 - redact
+            raise TxDecodeError(
+                "instruction does not expose a program, an account list and data"
+            ) from exc
+        if program_index >= total:
+            raise TxDecodeError("instruction names a program outside the account list")
+        instructions.append(
+            DecodedInstruction(
+                program_id=keys[program_index],
+                discriminator=data[:DISCRIMINATOR_CEILING],
+                data_length=len(data),
+                account_indexes=account_indexes,
+            )
+        )
+
+    if not instructions:
+        raise TxDecodeError("message carries no instructions")
+
+    return DecodedMessage(
+        version=version,
+        fee_payer=keys[0],
+        account_keys=keys,
+        writable_accounts=writable,
+        instructions=tuple(instructions),
+    )
 
 
 def _compact_u16(buf: bytes, pos: int) -> tuple[int, int]:
