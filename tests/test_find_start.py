@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 from gecko.providers.cli import PROGRAMS
+from gecko.provider_config import load_packaged_provider
 from gecko.find_start import (
     FindStartResult,
     MissRecord,
@@ -104,6 +105,57 @@ def test_pump_preludes_declare_ata_with_token_2022_note() -> None:
     assert "compute_budget" in kinds
     ata = next(p for p in preludes if p.kind == "create_idempotent_ata")
     assert "Token-2022" in ata.note
+
+
+# --- the lifecycle chain (the first multi-instruction start) ---------------------
+
+
+def test_a_bar_intent_routes_to_a_let_me_buy_instruction_not_a_memecoin_buy() -> None:
+    """Before this landed, "buy a beer" routed to pumpfun/buy — a runnable plan to buy
+    a memecoin off a bonding curve. The nearest ask an agent could act on was the wrong
+    program entirely, because no card in the corpus named a storefront."""
+    top = find_start("buy a beer").starts[0]
+    assert (top.program, top.instruction) == ("let_me_buy", "make_purchase")
+    assert top.kind == "start"
+    assert top.next_tool is None  # honest: no Gecko plan tool, the derive plan is it
+    assert "beer" in top.why
+
+
+def test_every_start_point_carries_a_chain_verdict_it_had_to_decide() -> None:
+    """``StartPoint.chain`` has no default. A start that is one call of a multi-call
+    lifecycle and does not say so is exactly what this field prevents, and a start with
+    no chain must say THAT rather than leave the field empty."""
+    for intent in (PUMP_INTENT, "buy a beer", "swap sol for usdc"):
+        for point in find_start(intent).starts:
+            assert point.chain.status in {"ordered", "unresolved", "not_evaluated"}
+            assert point.chain.note
+
+
+def test_a_chain_start_is_ordered_only_on_an_explicit_agreement() -> None:
+    unchecked = find_start("buy a beer").starts[0].chain
+    assert unchecked.status == "not_evaluated"  # fail closed: nothing supplied it
+    checked = (
+        find_start("buy a beer", chain_verdicts={"sell_and_deliver": "AGREE"})
+        .starts[0]
+        .chain
+    )
+    assert checked.status == "ordered"
+    assert [s.instruction for s in checked.steps] == [
+        "make_purchase",
+        "mark_as_delivered",
+    ]
+
+
+def test_the_surface_card_of_a_chain_program_points_at_its_steps() -> None:
+    """Honesty: let_me_buy's surface card must not claim 'no start is wired' now that
+    its chain steps are start points."""
+    surface = next(
+        p
+        for p in find_start("open a store and sell peanuts", limit=12).starts
+        if p.kind == "surface" and p.program == "let_me_buy"
+    )
+    assert "initialize" in surface.note
+    assert "no executable plan intent" not in surface.note
 
 
 # --- the other showcase intents -------------------------------------------------
@@ -282,7 +334,18 @@ def test_miss_record_counts_are_sane() -> None:
     (record,) = records
     assert record.intent_term_count == 3  # 'the' is a stopword
     assert record.matched_score == 0
-    assert record.wired_program_count == len(PROGRAMS)
+    # The field counts the api_ids that produced CARDS — i.e. every packaged program
+    # config — not the intent registry. Those two were the same number until
+    # `let_me_buy` landed: it is comprehended for DERIVATION and wires no plan intent,
+    # so PROGRAMS is now a STRICT subset. Asserting against the card source is what the
+    # field actually means; the subset check keeps the old relationship visible.
+    packaged = {
+        api_id
+        for api_id, api in load_packaged_provider("orquestra")[1].items()
+        if api.program is not None
+    }
+    assert record.wired_program_count == len(packaged)
+    assert set(PROGRAMS) < packaged
     assert record.margin == 0  # all fallback guesses score 0
 
 

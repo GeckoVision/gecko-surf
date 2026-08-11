@@ -36,13 +36,21 @@ from .ingest import Operation
 from .lexnorm import STOPWORDS, fold_tokens, normalize_query
 from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
-from .program_graph import derivation_order_with_cycle
-from .provenance import AccountProvenance, ProgramProvenanceTier
+from .program_graph import chain_order_with_cycle, derivation_order_with_cycle
+from .provenance import AccountProvenance, ChainStatus, ProgramProvenanceTier
 
 __all__ = [
     "GapSpec",
     "PreludeSpec",
     "StartSpec",
+    "ChainEdge",
+    "ChainEdgeKind",
+    "ChainSpec",
+    "ChainStepSpec",
+    "ChainLink",
+    "ChainPlan",
+    "ChainStep",
+    "CHAIN_VERDICTS",
     "DeriveStep",
     "StartPoint",
     "CatalogCandidate",
@@ -125,6 +133,72 @@ class StartSpec:
     surface_named: tuple[str, ...] = ()
 
 
+# --- declared lifecycle chains (the join an IDL/llms.txt loses) ------------------
+
+# The kind of dependency ONE chain edge carries. CLOSED, and deliberately narrow:
+#
+#   ``initializes`` — the consumer requires an account the producer CREATED. The
+#     dependency is the account's existence; nothing the producer wrote is read back.
+#   ``produces``    — a real DATA dependency: an argument of the consumer is a value
+#     the producer wrote into the shared account (let_me_buy's ``receipt_id``).
+#
+# The distinction is load-bearing for the agent: an ``initializes`` edge can be
+# satisfied by a store somebody else opened, while a ``produces`` edge cannot be
+# satisfied at all until the producing call has landed.
+ChainEdgeKind = Literal["initializes", "produces"]
+
+
+@dataclass(frozen=True)
+class ChainEdge:
+    """One DECLARED ordering edge between two instructions of the same program.
+
+    Every field exists so the edge can answer, without reading code, the four
+    questions an edge must answer: what it connects (``produces`` → ``consumes``),
+    over what (``account`` — the shared account carrying the dependency), on what
+    ``basis``, and what evidence would refute it (``refuted_by``). The provenance
+    class is not asserted here: it is COMPUTED per plan from the linking account's
+    own tag on both endpoints (see :class:`ChainLink`), so a declaration can never
+    mint a stronger claim than the accounts underneath it.
+    """
+
+    produces: str
+    consumes: str
+    account: str
+    kind: ChainEdgeKind
+    basis: str
+    refuted_by: str
+
+
+@dataclass(frozen=True)
+class ChainStepSpec:
+    """One instruction of a declared chain: what it is called, how it describes
+    itself to the router, what the agent supplies, and its account set."""
+
+    instruction: str
+    description: str
+    inputs: tuple[str, ...]
+    spec: StartSpec
+
+
+@dataclass(frozen=True)
+class ChainSpec:
+    """A DECLARED multi-instruction lifecycle of one program — authored data, in the
+    same trust class as :class:`StartSpec` (hand-authored from the program artifact,
+    reviewed, asserted in tests), never extracted from an untrusted document.
+
+    ``steps`` is the declared instruction set; ``edges`` are the dependencies. The
+    ORDER is not stored — it is derived from ``edges`` by
+    :func:`gecko.program_graph.chain_order_with_cycle`, the same rail the account
+    level uses, so an unorderable chain is reported rather than sequenced.
+    """
+
+    name: str
+    api_id: str
+    summary: str
+    steps: tuple[ChainStepSpec, ...]
+    edges: tuple[ChainEdge, ...]
+
+
 # --- results ---------------------------------------------------------------------
 
 
@@ -138,12 +212,82 @@ class DeriveStep:
     resolver: str | None = None  # the declared read recipe/reason, when present
 
 
+# The closed chain-AGREEMENT vocabulary this module ACCEPTS as evidence. It is not a
+# ladder of ours — it is a verdict computed elsewhere (against landed transactions) and
+# handed in, so it is validated on the way in and normalized into :data:`ChainStatus`,
+# which IS ours. Pinned with ``==`` in tests against the producer's own set, so the two
+# drifting apart is a visible, failing edit rather than a silent downgrade to
+# NOT_EVALUATED. Anything outside this set — absent, misspelled, a bool, an object — is
+# NOT_EVALUATED: untrusted input never argues its way into confidence.
+CHAIN_VERDICTS = frozenset({"AGREE", "DISAGREE", "NOT_EVALUATED"})
+
+
+@dataclass(frozen=True)
+class ChainStep:
+    """One placed step of a chain plan: the instruction, its position in the derived
+    order, and its FULL derive plan — flagged accounts included, never trimmed."""
+
+    instruction: str
+    position: int
+    inputs: tuple[str, ...]
+    derive_plan: tuple[DeriveStep, ...]
+    gaps: tuple[GapSpec, ...]
+
+
+@dataclass(frozen=True)
+class ChainLink:
+    """One realized edge: the shared account that actually links two placed steps.
+
+    ``provenance`` is the WEAKER of the linking account's tag on the two endpoints —
+    a link is only as strong as the weakest end of it, and a ``flagged`` end means the
+    dependency cannot be carried at all (the plan says so instead of ordering around
+    it). ``basis``/``refuted_by`` ride along from the declared edge."""
+
+    account: str
+    produces: str
+    consumes: str
+    kind: ChainEdgeKind
+    provenance: AccountProvenance
+    basis: str
+    refuted_by: str
+
+
+@dataclass(frozen=True)
+class ChainPlan:
+    """The multi-instruction verdict for a start point.
+
+    NOTHING here has a default — ``ChainPlan()`` raises ``TypeError`` on purpose.
+    ``status`` in particular must be an explicit decision: a chain status that could
+    fall into a zero value is the exact defect the codebase has paid for repeatedly
+    (a verdict type with no representation for "not evaluated" reads as approval).
+    Consumers must test ``status == "ordered"`` positively — never truthiness, never a
+    ``!=`` denylist; all three members are non-empty, truthy strings.
+
+    An UNRESOLVABLE chain still returns every step with its full derive plan and one
+    :class:`GapSpec` per offender in ``unresolved`` — never ``steps=()``, never
+    ``None``, never a raise. ``steps=()`` means one thing only: no chain is declared
+    for this start (``status == "not_evaluated"``, and the note says so).
+    """
+
+    name: str
+    status: ChainStatus
+    verdict: str  # normalized into CHAIN_VERDICTS; the axis ``status`` summarizes
+    steps: tuple[ChainStep, ...]
+    links: tuple[ChainLink, ...]
+    unresolved: tuple[GapSpec, ...]
+    note: str
+
+
 @dataclass(frozen=True)
 class StartPoint:
-    """One ranked starting point. ``kind`` is honest: ``start`` = an executable
-    plan intent; ``surface`` = a wired program without a plan intent for this ask
-    (start from its derive/graph tools); ``guess`` = below the retrieval floor —
-    a closest-candidate, NOT a start."""
+    """One ranked starting point. ``kind`` is honest: ``start`` = a runnable plan —
+    an executable plan intent, or a step of a DECLARED lifecycle chain with a full
+    derive plan and a builder URL; ``surface`` = a wired program without a start for
+    this ask (start from its derive/graph tools); ``guess`` = below the retrieval
+    floor — a closest-candidate, NOT a start.
+
+    ``chain`` is REQUIRED (no default): a start that is one call of a multi-call
+    lifecycle and does not say so is the failure this field exists to prevent."""
 
     kind: StartKind
     program: str
@@ -158,6 +302,7 @@ class StartPoint:
     gaps: tuple[GapSpec, ...]
     execute: dict[str, str] | None
     serve: str
+    chain: ChainPlan
     note: str = ""
 
 
@@ -255,6 +400,182 @@ class FindStartResult:
         return asdict(self)
 
 
+# --- the DECLARED chains (authored data) -----------------------------------------
+
+# let_me_buy (letmebuy.app) — a storefront program whose EIGHT instructions all take
+# the same `receipts` account, writable. That is what makes it a lifecycle rather than
+# eight unrelated calls, and it is precisely the join an IDL loses: the IDL states each
+# instruction's accounts and args, never that one call must follow another. Both flows
+# below are hand-authored from the packaged config's own account/arg lists (the same
+# trust class as StartSpec) and are asserted in tests/test_let_me_buy_chain.py.
+_RECEIPTS_BASIS = (
+    "the packaged program config states one PDA per store, receipts = "
+    "['receipts', store_name], and lists it as account 0 of BOTH instructions — the "
+    "same address for the same store name, so the two calls address one account"
+)
+
+_LET_ME_BUY_SURFACE_NAMED = (
+    "authority",
+    "signer",
+    "mint",
+    "token_program",
+    "system_program",
+    "associated_token_program",
+)
+
+_OPEN_A_STORE = ChainSpec(
+    name="open_a_store",
+    api_id="let_me_buy",
+    summary=(
+        "open a store, then list what it sells — initialize creates the one store "
+        "account every later call addresses; add_product writes a product into it"
+    ),
+    steps=(
+        ChainStepSpec(
+            instruction="initialize",
+            # Every word of a card description is retrieval surface, so incidental
+            # prose is a liability: the first draft of this card said "Open a NEW
+            # store … BEFORE any product is listed", and those two words — which name
+            # nothing — were enough to serve `initialize` as a RUNNABLE start for
+            # "purchase some of that new memecoin before it bonds" (two rare terms
+            # clear the corroboration floor: rarity is not distinctiveness). They are
+            # gone; the sentence says the same thing with terms that name something.
+            description=(
+                "Open a store on let_me_buy: create the storefront account a "
+                "merchant sells from, named by the store name buyers scan a QR code "
+                "to reach. Run this ONCE per store — every later call of the store's "
+                "lifecycle addresses this same account, derived from the store name, "
+                "and nothing can be listed or sold until it exists."
+            ),
+            inputs=("store_name", "authority"),
+            spec=StartSpec(
+                accounts=("receipts", "authority", "system_program"),
+                surface_named=_LET_ME_BUY_SURFACE_NAMED,
+            ),
+        ),
+        ChainStepSpec(
+            instruction="add_product",
+            description=(
+                "List a product in a let_me_buy store: its name, its price, and the "
+                "SPL token mint that price is denominated in. The store must already "
+                "be open, and the mint fixes the currency for every purchase of that "
+                "product."
+            ),
+            inputs=("store_name", "authority", "name", "price", "mint"),
+            spec=StartSpec(
+                accounts=("receipts", "authority", "mint", "system_program"),
+                surface_named=_LET_ME_BUY_SURFACE_NAMED,
+            ),
+        ),
+    ),
+    edges=(
+        ChainEdge(
+            produces="initialize",
+            consumes="add_product",
+            account="receipts",
+            kind="initializes",
+            basis=(
+                _RECEIPTS_BASIS
+                + "; initialize is the only instruction that creates it (the others "
+                "take it as an existing, writable account)"
+            ),
+            refuted_by=(
+                "an add_product that lands against a store name never initialized — "
+                "or an IDL/source revision in which add_product also creates the "
+                "account (init_if_needed), which would make this edge ordering "
+                "advice rather than a requirement"
+            ),
+        ),
+    ),
+)
+
+_SELL_AND_DELIVER = ChainSpec(
+    name="sell_and_deliver",
+    api_id="let_me_buy",
+    summary=(
+        "sell, then deliver — make_purchase writes a receipt into the store account "
+        "and mark_as_delivered settles it by the receipt_id that purchase created"
+    ),
+    steps=(
+        ChainStepSpec(
+            instruction="make_purchase",
+            description=(
+                "Buy one listed product from a let_me_buy store and pay the merchant "
+                "in their SPL token — a beer or a coffee at the bar counter, ordered "
+                "by scanning the store's QR code. Writes a receipt into the store "
+                "account, which the merchant later marks delivered."
+            ),
+            inputs=(
+                "store_name",
+                "product_name",
+                "table_number",
+                "signer",
+                "authority",
+                "mint",
+            ),
+            spec=StartSpec(
+                accounts=(
+                    "receipts",
+                    "signer",
+                    "authority",
+                    "mint",
+                    "sender_token_account",
+                    "recipient_token_account",
+                    "token_program",
+                    "system_program",
+                    "associated_token_program",
+                ),
+                surface_named=_LET_ME_BUY_SURFACE_NAMED,
+                gaps=(),
+            ),
+        ),
+        ChainStepSpec(
+            instruction="mark_as_delivered",
+            description=(
+                "Mark a purchase receipt as delivered: the merchant confirms the "
+                "order was handed to the buyer, addressed by the receipt id the "
+                "purchase wrote into the store account."
+            ),
+            inputs=("store_name", "receipt_id", "authority"),
+            spec=StartSpec(
+                accounts=("receipts", "authority"),
+                surface_named=_LET_ME_BUY_SURFACE_NAMED,
+            ),
+        ),
+    ),
+    edges=(
+        ChainEdge(
+            produces="make_purchase",
+            consumes="mark_as_delivered",
+            account="receipts",
+            kind="produces",
+            basis=(
+                _RECEIPTS_BASIS
+                + "; and mark_as_delivered's `receipt_id: u64` selects an entry of "
+                "the receipts vec that only a landed make_purchase writes — a DATA "
+                "dependency, not merely an ordering preference"
+            ),
+            refuted_by=(
+                "a mark_as_delivered that settles a receipt_id no make_purchase "
+                "wrote — or a source revision where receipt_id is caller-chosen "
+                "rather than assigned by the purchase"
+            ),
+        ),
+    ),
+)
+
+# api_id → the chains declared for that program. Keyed, not scanned, so an unwired
+# program can never pick up another program's chain.
+_DECLARED_CHAINS: dict[str, tuple[ChainSpec, ...]] = {
+    "let_me_buy": (_OPEN_A_STORE, _SELL_AND_DELIVER),
+}
+
+
+def declared_chains(api_id: str) -> tuple[ChainSpec, ...]:
+    """The DECLARED lifecycle chains of one program (empty when none)."""
+    return _DECLARED_CHAINS.get(api_id, ())
+
+
 # --- the wired-program index -----------------------------------------------------
 
 
@@ -282,6 +603,8 @@ class _Card:
     # tag (see :func:`_apply_origin_cap`). ``None`` = present-but-invalid entry,
     # capped at ``flagged``. Empty = the config asserts nothing (today's behaviour).
     origins: Mapping[str, ProgramProvenanceTier | None] = field(default_factory=dict)
+    # the DECLARED chain this card is a step of (``None`` = a standalone start).
+    chain: str | None = None
 
 
 def _first_sentence(text: str) -> str:
@@ -355,6 +678,15 @@ def _wired_cards() -> list[_Card]:
         program_recovered: dict[str, str] = {}
         for spec in specs.get(api_id, {}).values():
             program_recovered.update(spec.recovered)
+        chains = declared_chains(api_id)
+        for chain in chains:
+            for chain_step in chain.steps:
+                program_recovered.update(chain_step.spec.recovered)
+        # The surface card must not claim "no start is wired" when chain steps are
+        # start points; they are named here alongside any plan intents.
+        start_point_names = tuple(program.intents) + tuple(
+            step.instruction for chain in chains for step in chain.steps
+        )
         # the program-surface card: derive_pda/get_program_graph is always a start
         cards.append(
             _Card(
@@ -378,10 +710,45 @@ def _wired_cards() -> list[_Card]:
                     description=f"{notes} accounts: {' '.join(program.pdas)}",
                     tags=[api_id],
                 ),
-                wired_intents=tuple(program.intents),
+                wired_intents=start_point_names,
                 origins=dict(program.pda_origins),
             )
         )
+        # one card per DECLARED chain step (a runnable start with no plan callable:
+        # Gecko derives the accounts, Orquestra's /build assembles the instruction)
+        for chain in chains:
+            for chain_step in chain.steps:
+                cards.append(
+                    _Card(
+                        kind="start",
+                        api_id=api_id,
+                        program_id=program.program_id,
+                        instruction=chain_step.instruction,
+                        intent_name=None,
+                        inputs=chain_step.inputs,
+                        accounts=chain_step.spec.accounts,
+                        pdas=dict(program.pdas),
+                        spec=chain_step.spec,
+                        notes=notes,
+                        execute_url=(
+                            f"{project_base}/instructions/{chain_step.instruction}/build"
+                            if project_base
+                            else None
+                        ),
+                        operation=_operation(
+                            operation_id=chain_step.instruction,
+                            path=f"/{api_id}/{chain_step.instruction}",
+                            summary=_first_sentence(chain_step.description),
+                            description=(
+                                f"{chain_step.description} "
+                                f"inputs: {', '.join(chain_step.inputs)}"
+                            ),
+                            tags=[api_id, chain_step.instruction],
+                        ),
+                        origins=dict(program.pda_origins),
+                        chain=chain.name,
+                    )
+                )
         # one card per wired plan intent
         for name in program.intents:
             intent = intents.get(api_id, {}).get(name)
@@ -608,6 +975,205 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
     return tuple(steps)
 
 
+# --- the chain rail (the account-level rail, one level up) ------------------------
+
+_NO_CHAIN_NOTE = (
+    "no lifecycle chain is DECLARED for this program — this start is a single "
+    "instruction, so the chain axis was not evaluated (it is not a chain that passed)"
+)
+
+# Why an unsupplied verdict is not an oversight: the chain-agreement evidence (a derived
+# account set compared against landed transactions) deliberately does NOT live in the
+# packaged config — ProgramSpec has no field for it and the loader drops unknown keys, so
+# a config-level pin would be an unenforced claim. It is handed in by the caller instead,
+# and its ABSENCE is the honest default: not evaluated, therefore not confident.
+_NO_VERDICT_NOTE = (
+    "no chain-agreement verdict was supplied for this chain, so the account sets were "
+    "never checked against landed transactions — the plan is reported, never claimed "
+    "executable. Supply chain_verdicts={name: 'AGREE'} from evidence to lift it"
+)
+_DISAGREE_NOTE = (
+    "the chain-agreement verdict is DISAGREE: landed transactions contradict the "
+    "account set this plan derives — every step is still reported, and none of it may "
+    "be executed as given"
+)
+
+
+def _normalize_verdict(raw: object) -> str:
+    """Accept a chain-agreement verdict from an UNTRUSTED caller.
+
+    Anything outside :data:`CHAIN_VERDICTS` — absent, misspelled, a bool, an object —
+    normalizes to ``NOT_EVALUATED``. It never raises: a malformed verdict must degrade
+    to "we did not check", never to a refusal that never happened, and never to trust.
+    """
+    return raw if isinstance(raw, str) and raw in CHAIN_VERDICTS else "NOT_EVALUATED"
+
+
+def _link_of(
+    edge: ChainEdge, plans: Mapping[str, tuple[DeriveStep, ...]]
+) -> tuple[ChainLink | None, GapSpec | None]:
+    """Realize one declared edge against the two endpoints' derive plans.
+
+    Returns ``(link, gap)`` — exactly one of them. The edge is only a link if BOTH
+    endpoints actually carry the shared account; otherwise the declaration is wrong (or
+    the config moved under it) and that is a gap, never a silently dropped edge.
+    """
+    missing = [name for name in (edge.produces, edge.consumes) if name not in plans]
+    if missing:
+        return None, GapSpec(
+            edge.account,
+            f"declared {edge.kind} edge {edge.produces} → {edge.consumes} names "
+            f"instruction(s) {', '.join(missing)} that are not steps of this chain",
+        )
+    tags: list[AccountProvenance] = []
+    for instruction in (edge.produces, edge.consumes):
+        step = next(
+            (s for s in plans[instruction] if s.account == edge.account),
+            None,
+        )
+        if step is None:
+            return None, GapSpec(
+                edge.account,
+                f"declared {edge.kind} edge {edge.produces} → {edge.consumes} is "
+                f"carried by {edge.account}, which {instruction} does not list — the "
+                "chain declaration and the account sets disagree",
+            )
+        tags.append(step.provenance)
+    weakest = min(tags, key=lambda tag: _CLAIM_STRENGTH.get(tag, 0))
+    if weakest == "flagged":
+        return None, GapSpec(
+            edge.account,
+            f"the account linking {edge.produces} → {edge.consumes} is FLAGGED on at "
+            "least one endpoint, so the dependency cannot be carried — the steps are "
+            "reported, the link is not claimed",
+        )
+    return (
+        ChainLink(
+            account=edge.account,
+            produces=edge.produces,
+            consumes=edge.consumes,
+            kind=edge.kind,
+            provenance=weakest,
+            basis=edge.basis,
+            refuted_by=edge.refuted_by,
+        ),
+        None,
+    )
+
+
+def _chain_plan(
+    card: _Card, cards: Sequence[_Card], verdicts: Mapping[str, object] | None
+) -> ChainPlan:
+    """Plan the DECLARED chain this card is a step of — the account-level rail
+    EXTENDED, never bypassed.
+
+    Each step's accounts still go through :func:`_derive_plan` (and therefore through
+    ``derivation_order_with_cycle``, which flags an unorderable account rather than
+    dropping it); the instructions themselves go through
+    :func:`~gecko.program_graph.chain_order_with_cycle`, the same ``(order, cycle)``
+    contract one level up. ``ordered`` requires ALL of: every instruction placed, every
+    declared link carried by an unflagged shared account on both ends, and an explicit
+    ``AGREE`` on the chain-agreement axis. Anything else is reported — ``unresolved``
+    when something was checked and refused, ``not_evaluated`` when it was never checked.
+    """
+    spec = next((c for c in declared_chains(card.api_id) if c.name == card.chain), None)
+    if spec is None:
+        return ChainPlan(
+            name="",
+            status="not_evaluated",
+            verdict="NOT_EVALUATED",
+            steps=(),
+            links=(),
+            unresolved=(),
+            note=_NO_CHAIN_NOTE,
+        )
+
+    by_instruction = {
+        c.instruction: c
+        for c in cards
+        if c.api_id == card.api_id and c.chain == spec.name and c.instruction
+    }
+    order, cyclic = chain_order_with_cycle(
+        [s.instruction for s in spec.steps],
+        [(e.produces, e.consumes) for e in spec.edges],
+    )
+    plans: dict[str, tuple[DeriveStep, ...]] = {}
+    steps: list[ChainStep] = []
+    unresolved: list[GapSpec] = []
+    for position, instruction in enumerate(order, 1):
+        step_card = by_instruction.get(instruction)
+        step_spec = next(s for s in spec.steps if s.instruction == instruction)
+        if step_card is None:
+            # a declared step with no card cannot be derived — reported, never dropped
+            unresolved.append(
+                GapSpec(
+                    instruction,
+                    "declared as a step of this chain but no card was built for it — "
+                    "the chain is reported without its derive plan rather than "
+                    "silently shortened",
+                )
+            )
+            plan: tuple[DeriveStep, ...] = ()
+        else:
+            plan = _derive_plan(step_card)
+        plans[instruction] = plan
+        steps.append(
+            ChainStep(
+                instruction=instruction,
+                position=position,
+                inputs=step_spec.inputs,
+                derive_plan=plan,
+                gaps=_gaps_of(step_card, plan) if step_card else (),
+            )
+        )
+    for instruction in sorted(cyclic):
+        unresolved.append(
+            GapSpec(
+                instruction,
+                "unorderable: dependency cycle among "
+                f"{', '.join(sorted(cyclic))} — this instruction's position in the "
+                "chain is arbitrary, so the order above must not be executed",
+            )
+        )
+
+    links: list[ChainLink] = []
+    for edge in spec.edges:
+        link, gap = _link_of(edge, plans)
+        if link is not None:
+            links.append(link)
+        if gap is not None:
+            unresolved.append(gap)
+
+    verdict = _normalize_verdict((verdicts or {}).get(spec.name))
+    if unresolved:
+        status: ChainStatus = "unresolved"
+        note = (
+            f"{spec.summary}. UNRESOLVED: {len(unresolved)} unresolved item(s) below — "
+            "every step is still reported with its full derive plan"
+        )
+    elif verdict == "DISAGREE":
+        status, note = "unresolved", f"{spec.summary}. {_DISAGREE_NOTE}"
+    elif verdict != "AGREE":
+        status, note = "not_evaluated", f"{spec.summary}. {_NO_VERDICT_NOTE}"
+    else:
+        status = "ordered"
+        note = (
+            f"{spec.summary}. Every step is placed, every declared link is carried by "
+            "a shared account both steps hold, and the chain-agreement verdict is "
+            "AGREE (the derived account set matched landed transactions). ORDERED is "
+            "not authorization: nothing here signs or broadcasts"
+        )
+    return ChainPlan(
+        name=spec.name,
+        status=status,
+        verdict=verdict,
+        steps=tuple(steps),
+        links=tuple(links),
+        unresolved=tuple(unresolved),
+        note=note,
+    )
+
+
 def _gaps_of(card: _Card, plan: tuple[DeriveStep, ...]) -> tuple[GapSpec, ...]:
     declared = {g.name: g for g in (card.spec.gaps if card.spec else ())}
     out: list[GapSpec] = []
@@ -687,9 +1253,16 @@ def _identity_terms(card: "_Card") -> set[str]:
 
 
 def _start_point(
-    card: _Card, score: int, why: tuple[str, ...], kind: StartKind
+    card: _Card,
+    score: int,
+    why: tuple[str, ...],
+    kind: StartKind,
+    *,
+    cards: Sequence[_Card] = (),
+    verdicts: Mapping[str, object] | None = None,
 ) -> StartPoint:
     plan = _derive_plan(card)
+    chain = _chain_plan(card, cards, verdicts)
     execute: dict[str, str] | None = None
     if card.execute_url:
         execute = (
@@ -705,8 +1278,8 @@ def _start_point(
     elif card.kind == "surface":
         if card.wired_intents:
             note = (
-                f"this program's plan intents ({', '.join(card.wired_intents)}) are "
-                "separate start points; this entry is its raw surface "
+                f"this program's start points ({', '.join(card.wired_intents)}) are "
+                "separate entries; this entry is its raw surface "
                 "(get_program_graph / derive_pda). " + _first_sentence(card.notes)
             )
         else:
@@ -715,6 +1288,16 @@ def _start_point(
                 "from its surface tools (get_program_graph / derive_pda). "
                 + _first_sentence(card.notes)
             )
+    elif card.chain:
+        position = next(
+            (s.position for s in chain.steps if s.instruction == card.instruction), 0
+        )
+        note = (
+            f"step {position} of {len(chain.steps)} in the DECLARED "
+            f"'{chain.name}' chain — no Gecko plan tool is wired for this "
+            "instruction: the derive plan IS the plan, and Orquestra's /build "
+            "assembles it. " + _first_sentence(card.notes)
+        )
     else:
         note = _first_sentence(card.notes)
     return StartPoint(
@@ -731,6 +1314,7 @@ def _start_point(
         gaps=_gaps_of(card, plan),
         execute=execute,
         serve=f"gecko-orquestra --program {card.api_id} --stdio",
+        chain=chain,
         note=note,
     )
 
@@ -783,6 +1367,7 @@ def find_start(
     catalog_pages: Sequence[ProjectCatalogPage] = (),
     limit: int = 5,
     on_miss: MissLogger | None = None,
+    chain_verdicts: Mapping[str, object] | None = None,
 ) -> FindStartResult:
     """Route ``intent`` to ranked start points across the wired programs.
 
@@ -792,6 +1377,12 @@ def find_start(
     fetch policy; this function is pure and offline). ``on_miss`` is the opt-in
     instrumentation seam — called with a CATEGORICAL :class:`MissRecord` when
     nothing clears the floor. Off by default; never receives the intent text.
+
+    ``chain_verdicts`` maps a DECLARED chain's name to its chain-agreement verdict
+    (``AGREE`` / ``DISAGREE`` / ``NOT_EVALUATED``) — evidence computed elsewhere,
+    against landed transactions, and handed in here. Omitting it is safe by
+    construction: an unsupplied or unrecognised verdict is ``NOT_EVALUATED``, and a
+    chain plan is ``ordered`` only on an explicit ``AGREE``.
     """
     cards = _wired_cards()
     wired_programs = {c.api_id for c in cards}
@@ -879,7 +1470,16 @@ def find_start(
             # without preventing any harm.
             gated = card.kind == "start" and not (named or corroborated)
             kind = "guess" if gated else card.kind
-            points.append(_start_point(card, se.score, why, kind=kind))
+            points.append(
+                _start_point(
+                    card,
+                    se.score,
+                    why,
+                    kind=kind,
+                    cards=cards,
+                    verdicts=chain_verdicts,
+                )
+            )
         points.sort(key=lambda p: (-p.score, _KIND_RANK[p.kind], p.program))
         if not any(point.kind == "start" for point in points):
             _miss(max((p.score for p in points), default=0), tuple(points))
@@ -907,7 +1507,14 @@ def find_start(
 
     # below the floor: honest no-start; the fallback candidates are labeled GUESSES
     guesses = tuple(
-        _start_point(by_op[id(se.entry.operation)], 0, (), kind="guess")
+        _start_point(
+            by_op[id(se.entry.operation)],
+            0,
+            (),
+            kind="guess",
+            cards=cards,
+            verdicts=chain_verdicts,
+        )
         for se in scored
     )
     _miss(0, guesses)
@@ -952,6 +1559,38 @@ def _render_step(index: int, step: DeriveStep) -> list[str]:
     return lines
 
 
+# The rendered label of a chain status. A status no output surface prints is a gate
+# with no caller — the CLI shows this verbatim.
+_CHAIN_LABEL: dict[ChainStatus, str] = {
+    "ordered": "ORDERED",
+    "unresolved": "UNRESOLVED",
+    "not_evaluated": "NOT EVALUATED",
+}
+
+
+def _render_chain(chain: ChainPlan) -> list[str]:
+    if not chain.steps:
+        return []  # no chain declared — the single-instruction note already says so
+    lines = [
+        f"    lifecycle chain: {chain.name} "
+        f"[{_CHAIN_LABEL[chain.status]}] (agreement: {chain.verdict})",
+        f"        {chain.note}",
+    ]
+    for step in chain.steps:
+        accounts = ", ".join(s.account for s in step.derive_plan) or "(no derive plan)"
+        lines.append(f"      {step.position}. {step.instruction} — {accounts}")
+    for link in chain.links:
+        lines.append(
+            f"      link: {link.account} [{link.provenance}] "
+            f"{link.produces} --{link.kind}--> {link.consumes}"
+        )
+        lines.append(f"            basis:      {link.basis}")
+        lines.append(f"            refuted by: {link.refuted_by}")
+    for gap in chain.unresolved:
+        lines.append(f"      ! unresolved {gap.name}: {gap.note}")
+    return lines
+
+
 def format_result(result: FindStartResult) -> str:
     lines: list[str] = []
     if result.no_start:
@@ -979,6 +1618,7 @@ def format_result(result: FindStartResult) -> str:
             lines.append("    derive plan (dependency-ordered):")
             for index, step in enumerate(point.derive_plan, 1):
                 lines.extend(_render_step(index, step))
+        lines.extend(_render_chain(point.chain))
         if point.preludes:
             lines.append("    preludes (DECLARED):")
             for prelude in point.preludes:

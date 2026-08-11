@@ -12,6 +12,7 @@ from typing import Any
 
 from gecko.find_start import (
     CatalogCandidate,
+    ChainPlan,
     DeriveStep,
     FindStartResult,
     GapSpec,
@@ -39,6 +40,18 @@ def _start(kind: str = "start", **over: Any) -> StartPoint:
         "gaps": (),
         "execute": None,
         "serve": "gecko-orquestra --program pumpfun",
+        # StartPoint.chain is REQUIRED and has no default — a start that belongs to a
+        # multi-call lifecycle and does not say so is what the field prevents, so even a
+        # fixture has to state which case it is. pumpfun/buy declares no chain.
+        "chain": ChainPlan(
+            name="",
+            status="not_evaluated",
+            verdict="NOT_EVALUATED",
+            steps=(),
+            links=(),
+            unresolved=(),
+            note="no lifecycle chain is DECLARED for this program",
+        ),
     }
     base.update(over)
     return StartPoint(**base)
