@@ -35,6 +35,7 @@ __all__ = [
     "seed_to_spec",
     "node_to_spec",
     "SpecSource",
+    "ArgConstraint",
     "ProgramSpec",
     "ApiConfig",
     "ProviderConfig",
@@ -204,6 +205,34 @@ class SpecSource:
 
 
 @dataclass(frozen=True)
+class ArgConstraint:
+    """What is known about the VALUES one instruction argument accepts.
+
+    An Anchor IDL types an argument (``string``, ``u64``) and stops there — it has no
+    vocabulary for "and it may not contain an underscore". So a constraint here is either
+    read out of the program's source (``established_from_source`` true, origin
+    ``extracted``/``recovered``) or it is an OBSERVATION: values seen accepted and values
+    seen rejected, at the ``manual`` tier, with the rule explicitly not claimed.
+
+    The distinction is the whole point. ``observed_rejected`` is a fact; the rule behind
+    it is an inference, and two data points is not enough to make one. ``note`` is
+    agent-facing text, so it may contain only what one of the two lists can support.
+    """
+
+    arg: str
+    #: The program-surface tier this claim is carried at. ``None`` marks an entry that was
+    #: PRESENT but not a valid member of the closed ladder — never coerced to a confident
+    #: tier, and read downstream as "do not rely on this".
+    origin: ProgramProvenanceTier | None
+    #: True only when the RULE itself was read out of the program's source or artifact.
+    #: False means the lists below are all that is known. Fail-closed: a non-bool is False.
+    established_from_source: bool
+    observed_rejected: tuple[str, ...] = ()
+    observed_accepted: tuple[str, ...] = ()
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class ProgramSpec:
     """A Solana program's on-chain identity + its recovered PDA recipes (already
     deserialized to :class:`~gecko.pda.PdaNode`) + the intents it exposes.
@@ -226,6 +255,10 @@ class ProgramSpec:
     # part of a recipe's identity, and putting it on the node would change equality —
     # which the merge rule and the exact config round-trip both depend on.
     pda_origins: dict[str, ProgramProvenanceTier | None] = field(default_factory=dict)
+    #: What is known about instruction ARGUMENT values, keyed by argument name. Empty
+    #: when the config states nothing — which is the honest default: an argument with no
+    #: entry is one nobody has established anything about, not one with no constraint.
+    arg_constraints: dict[str, ArgConstraint] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -289,6 +322,70 @@ def _pda_origins_from_dict(
     return origins
 
 
+def _string_tuple(raw: object) -> tuple[str, ...]:
+    """Only a list of strings survives. Anything else contributes NOTHING — an
+    observation list is evidence, and a malformed one must shrink the claim, never
+    widen it with coerced junk."""
+    if not isinstance(raw, list):
+        return ()
+    return tuple(item for item in raw if isinstance(item, str))
+
+
+def _arg_constraints_from_dict(data: dict) -> dict[str, ArgConstraint]:
+    """Load ``program.arg_constraints``, fail-closed:
+
+    - absent key → empty map (an argument nobody has studied claims nothing);
+    - not an object, or an entry that is not an object → loud ``ConfigError``;
+    - a tier outside the CLOSED ladder → kept as ``None``, never coerced to a confident
+      tier (same rule as ``pda_origins``);
+    - ``established_from_source`` that is not a bool → ``False``;
+    - the CONTRADICTION — ``established_from_source`` true at the ``manual`` tier, or an
+      observation-only entry claiming ``extracted``/``recovered`` — is a loud refusal.
+      "Two values were tried on chain" and "the program's source says so" are different
+      claims, and the config may not let the weaker one wear the stronger one's label.
+    """
+    raw = data.get("arg_constraints")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "program.arg_constraints must be an object of {arg: constraint}"
+        )
+    constraints: dict[str, ArgConstraint] = {}
+    for arg, spec in raw.items():
+        if not isinstance(spec, dict):
+            raise ConfigError(f"program.arg_constraints[{arg!r}] must be an object")
+        tier_raw = spec.get("origin")
+        origin = (
+            cast(ProgramProvenanceTier, tier_raw)
+            if isinstance(tier_raw, str) and tier_raw in _PROGRAM_TIER_VALUES
+            else None
+        )
+        established = spec.get("established_from_source")
+        established = established if isinstance(established, bool) else False
+        if established and origin not in ("extracted", "recovered"):
+            raise ConfigError(
+                f"program.arg_constraints[{arg!r}] claims established_from_source with "
+                f"origin {tier_raw!r}: only `extracted`/`recovered` may claim the rule "
+                "was read from the program's own artifact or source"
+            )
+        if not established and origin in ("extracted", "recovered"):
+            raise ConfigError(
+                f"program.arg_constraints[{arg!r}] carries origin {tier_raw!r} but does "
+                "not claim established_from_source: an observation may not wear a tier "
+                "that implies source derivation (use `manual`)"
+            )
+        constraints[arg] = ArgConstraint(
+            arg=str(arg),
+            origin=origin,
+            established_from_source=established,
+            observed_rejected=_string_tuple(spec.get("observed_rejected")),
+            observed_accepted=_string_tuple(spec.get("observed_accepted")),
+            note=str(spec.get("note", "")),
+        )
+    return constraints
+
+
 def _program_from_dict(data: dict) -> ProgramSpec:
     pdas = {name: node_from_spec(name, spec) for name, spec in data["pdas"].items()}
     return ProgramSpec(
@@ -298,6 +395,7 @@ def _program_from_dict(data: dict) -> ProgramSpec:
         intents=tuple(data.get("intents", ())),
         notes=str(data.get("notes", "")),
         pda_origins=_pda_origins_from_dict(data, pdas),
+        arg_constraints=_arg_constraints_from_dict(data),
     )
 
 

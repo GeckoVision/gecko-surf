@@ -52,6 +52,7 @@ from gecko.find_start import (
     format_result,
 )
 from gecko.pda import PdaNode, VariablePdaSeedNode, derive_pda
+from gecko.plan_refusals import DISTINCT_ACCOUNT_RULES
 from gecko.program_graph import chain_order_with_cycle, derivation_order_with_cycle
 from gecko.provenance import ChainStatus
 
@@ -369,6 +370,26 @@ def test_the_make_purchase_step_derives_the_landed_account_order() -> None:
     assert [s.account for s in plan.steps[0].derive_plan] == list(
         MAKE_PURCHASE_ACCOUNT_ORDER
     )
+
+
+def test_the_same_token_account_rule_sits_on_the_step_that_carries_both_accounts() -> (
+    None
+):
+    """The plan-time refusal and the chain must agree about WHERE the trap can happen.
+
+    The distinctness rule is keyed on (let_me_buy, make_purchase). If that step's derive
+    plan ever stopped carrying both token accounts — renamed, split, dropped — the rule
+    would still exist and still read as a control while never being reachable. This ties
+    the two together so divergence is a failing test, not a silent no-op.
+    """
+    rule = DISTINCT_ACCOUNT_RULES[("let_me_buy", "make_purchase")]
+    plan = _plan_for("make_purchase", {CHAIN: _landed_verdict()})
+    derived = {s.account for s in plan.steps[0].derive_plan}
+    assert set(rule.accounts) <= derived
+    # ...and the settling step carries neither, which is why the rule is keyed on the
+    # instruction and not on the api_id alone.
+    settle = {s.account for s in plan.steps[1].derive_plan}
+    assert not set(rule.accounts) & settle
 
 
 def test_bar_shaped_intents_route_to_let_me_buy_instructions() -> None:
