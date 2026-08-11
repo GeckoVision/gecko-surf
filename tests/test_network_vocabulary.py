@@ -20,6 +20,7 @@ Offline (Pattern B): every transaction is assembled locally, every RPC is inject
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -330,3 +331,210 @@ def test_an_off_vocabulary_row_still_fails_closed() -> None:
     coercing anything unrecognised into a member. A hand-edited row still raises."""
     with pytest.raises(CorpusError):
         simulated_outcome_from_record(_legacy_row("mars"))
+
+
+# --------------------------------------------------------------------------- #
+# NO FABRICATED NETWORK ASSERTION.
+#
+# The vocabulary above is only worth what the CALL SITES do with it. A gate that
+# compares two closed-set members faithfully is still a fail-open if some module
+# upstream invents one. So: a call site may assert a network only if it was TOLD one —
+# an explicit operator flag, or an argument from its own caller. Everything else passes
+# ``unknown``, which approves nothing.
+#
+# These two are SOURCE GREPS. A grep is defeated by any string construction
+# (``"main" + "net"``, a lookup in a dict, an f-string), so it is a LINT against
+# accidental reintroduction and NOT a guarantee. It is here because the thing it
+# catches — someone typing the convenient literal while wiring a new provider — is
+# exactly how this class of bug arrives, and a cheap tripwire on the common case beats
+# no tripwire at all.
+# --------------------------------------------------------------------------- #
+_REPO_ROOT = Path(networks_module.__file__).resolve().parents[1]
+
+#: Every script that reaches the simulate → gate seam and therefore needs an operator to
+#: name the network. Named explicitly rather than globbed: a new script must be added
+#: here deliberately, and a renamed one must fail this test rather than silently drop out.
+_NETWORK_ASSERTING_SCRIPTS = (
+    "prepare_purchase.py",
+    "sign_and_send.py",
+    "compose_e2e.py",
+)
+
+
+def _network_call_sites() -> list[Path]:
+    """The modules that hand a network to ``simulate``/``evaluate_tx`` without being an
+    operator themselves — the orchestrators — plus the scripts that ARE the operator."""
+    sites = [_REPO_ROOT / "gecko" / "landing.py"]
+    sites += sorted((_REPO_ROOT / "gecko" / "providers").glob("*.py"))
+    sites += [_REPO_ROOT / "scripts" / name for name in _NETWORK_ASSERTING_SCRIPTS]
+    return sites
+
+
+def test_no_call_site_asserts_a_network_it_was_not_told() -> None:
+    """An approvable literal bound to a ``network``-shaped keyword is a FABRICATED
+    assertion: the module states as fact something nobody told it.
+
+    The pattern deliberately does not match ``network_label="live mainnet..."`` — prose
+    naming a network is fine and is exactly what the whole D2 split exists to tolerate.
+    What is forbidden is the structured field, the gate's only input, being filled in
+    from a literal that no operator supplied."""
+    fabricated = re.compile(r"\bnetwork\s*=\s*[\"'](mainnet|devnet|testnet|fork)[\"']")
+
+    offenders = [
+        f"{path.relative_to(_REPO_ROOT)}:{number}: {line.strip()}"
+        for path in _network_call_sites()
+        if path.exists()
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if fabricated.search(line)
+    ]
+
+    assert not offenders, (
+        "a call site asserts a network it was not told:\n" + "\n".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("script", _NETWORK_ASSERTING_SCRIPTS)
+def test_every_signing_script_makes_the_operator_name_the_network(script: str) -> None:
+    """``--network`` is REQUIRED with NO default on every script that reaches the gate.
+
+    A default here is the whole D2 fail-open wearing a CLI flag: the permissive one
+    approves a network nobody chose, and even the fail-closed one lets a run that stated
+    nothing look like a run that was checked. The operator says, or the script does not
+    start."""
+    source = (_REPO_ROOT / "scripts" / script).read_text()
+
+    declaration = re.search(
+        r"add_argument\(\s*[\"']--network[\"'](.*?)\n\s*\)", source, re.S
+    )
+    assert declaration, f"{script} does not declare a --network flag"
+    body = declaration.group(1)
+    assert "required=True" in body, f"{script}'s --network is not required"
+    assert "default=" not in body, f"{script}'s --network carries a default"
+
+
+# --------------------------------------------------------------------------- #
+# The script path, exercised. ``mypy gecko`` does not reach ``scripts/``, so nothing
+# else in this repo would notice that a required keyword arrived at ``simulate`` and
+# ``compose_e2e`` still called it the old way — it would TypeError on the live path,
+# in front of a founder, holding a real RPC URL.
+# --------------------------------------------------------------------------- #
+def _b58(raw: bytes) -> str:
+    from gecko.txbind import _B58
+
+    number = int.from_bytes(raw, "big")
+    digits = ""
+    while number:
+        number, rem = divmod(number, 58)
+        digits = _B58[rem] + digits
+    return "1" * (len(raw) - len(raw.lstrip(b"\x00"))) + digits
+
+
+def _compose(monkeypatch: pytest.MonkeyPatch, *, tx_b64: str) -> dict[str, Any]:
+    """Wire ``scripts/compose_e2e`` to injected fakes and report what it did.
+
+    Every seam is replaced by module attribute, which the script resolves at call time:
+    the builder, the blockhash read, the RPC transport, and ``simulate`` itself (wrapped,
+    not replaced, so the REAL engine runs and the recorded ``network`` is the one the
+    script actually asserted)."""
+    import scripts.compose_e2e as compose
+
+    seen: dict[str, Any] = {}
+    real_simulate = compose.simulate
+
+    def recording_simulate(plan: Any, **kwargs: Any) -> Receipt:
+        seen["network_arg"] = kwargs.get("network")
+        receipt = real_simulate(plan, **kwargs)
+        seen["receipt"] = receipt
+        return receipt
+
+    monkeypatch.setattr(
+        compose,
+        "build_instruction",
+        lambda *_a, **_k: {
+            "serializedTransaction": _b58(__import__("base64").b64decode(tx_b64)),
+            "encoding": "base58",
+            "simulationError": None,
+        },
+    )
+    monkeypatch.setattr(
+        compose, "latest_blockhash", lambda *_a, **_k: ("So11111111111111", 1_000)
+    )
+    monkeypatch.setattr(compose, "_rpc", _sim_rpc())
+    monkeypatch.setattr(compose, "simulate", recording_simulate)
+    return seen
+
+
+def test_the_script_records_the_network_it_was_told_never_the_one_the_url_claims(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A mainnet-SHAPED URL in front of a fork transport. The operator said ``fork``, so
+    the receipt says ``fork`` — the hostname is evidence of nothing, and a fork proxy
+    answers at any of them.
+
+    The refusal on the last line is the point: these exact bytes, this exact binding, a
+    passing simulation — and no approval for a mainnet signature."""
+    import scripts.compose_e2e as compose
+
+    tx = _memo(b"buy water")
+    seen = _compose(monkeypatch, tx_b64=tx)
+
+    code = compose.main(
+        [
+            "--signer",
+            PAYER,
+            "--rpc-url",
+            "https://api.mainnet-beta.solana.com",
+            "--network",
+            "fork",
+        ]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    assert seen["network_arg"] == "fork"
+    receipt = seen["receipt"]
+    assert receipt.network == "fork"
+    assert evaluate_tx(tx, receipt, require="exact", expected_network="fork").approved
+    assert (
+        evaluate_tx(tx, receipt, require="exact", expected_network="mainnet").approved
+        is False
+    )
+
+
+def test_the_script_refuses_when_the_operator_could_not_name_a_network(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``unknown`` is a legal answer and a REFUSAL, not an opt-out. An operator who
+    cannot say which network the RPC is must not get bytes to sign."""
+    import scripts.compose_e2e as compose
+
+    _compose(monkeypatch, tx_b64=_memo(b"buy water"))
+
+    code = compose.main(
+        [
+            "--signer",
+            PAYER,
+            "--rpc-url",
+            "https://rpc.example.com",
+            "--network",
+            UNKNOWN_NETWORK,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert code == 1
+    assert "DO NOT SIGN" in output
+
+
+def test_the_script_will_not_start_without_a_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No flag, no run — argparse refuses before a single RPC is touched."""
+    import scripts.compose_e2e as compose
+
+    _compose(monkeypatch, tx_b64=_memo(b"buy water"))
+
+    with pytest.raises(SystemExit) as caught:
+        compose.main(["--signer", PAYER, "--rpc-url", "https://rpc.example.com"])
+
+    assert caught.value.code == 2

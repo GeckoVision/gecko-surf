@@ -36,6 +36,7 @@ from gecko.landing import (  # noqa: E402
     latest_blockhash,
     priority_fee_microlamports,
 )
+from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.simulate import simulate  # noqa: E402
 from gecko.txbind import evaluate_tx  # noqa: E402
@@ -148,6 +149,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--price-usdc", type=float, default=0.1)
+    parser.add_argument(
+        "--network",
+        required=True,
+        choices=sorted(NETWORKS),
+        help=(
+            "Which network --rpc-url points at. YOU say; nothing here guesses. A fork "
+            "proxy answers at any hostname, so the URL is evidence of nothing. There is "
+            "no default: 'unknown' is a legal answer and refuses at the gate."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.count < 1:
@@ -215,6 +226,9 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
     approved the exact bytes printed, non-zero otherwise — and a non-zero return stops
     the whole run rather than moving on to the next round.
     """
+    # `choices` already closed the set on the parser; this narrows the type for the two
+    # call sites below without a cast, and stays fail-closed if the flag is ever widened.
+    network = coerce_network(args.network)
     built = build_instruction(args.signer, ata, args.product, args.table)
     serialized = built.get("serializedTransaction")
     if not serialized:
@@ -245,7 +259,8 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
             tx=serialized, encoding=built.get("encoding", "base58")
         ),
         replace_blockhash=False,
-        network_label="simulated against LIVE mainnet (read-only, unsigned)",
+        network_label=f"simulated against {network} (read-only, unsigned)",
+        network=network,
         track=[args.signer],
     )
 
@@ -258,14 +273,25 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
     if receipt.revert_class:
         print(f"  class     {receipt.revert_class}")
     print(f"  binding   {receipt.message_binding} [{receipt.binding_strength}]")
-    print(f"  network   {receipt.network_label}")
+    print(f"  network   {receipt.network}   (as you stated it, never inferred)")
+    print(f"  caveat    {receipt.network_label}")
     print("=" * 62)
 
     for line in receipt.logs_tail[-4:]:
         print(f"    {line[:96]}")
 
+    # The SAME flag on both sides, and correct rather than tautological: these bytes are
+    # going to be signed and submitted to THIS `--rpc-url`, so "where the simulation ran"
+    # and "where the signature is headed" are one fact, stated once, by the operator. It
+    # does not check that the operator was right — say `mainnet` while pointed at a fork
+    # and this script believes you. What it does refuse is a receipt from somewhere else,
+    # and one that named no network at all.
     verdict = evaluate_tx(
-        serialized, receipt, encoding=built.get("encoding", "base58"), require="exact"
+        serialized,
+        receipt,
+        encoding=built.get("encoding", "base58"),
+        require="exact",
+        expected_network=network,
     )
     print(f"\n  evaluate_tx(require=exact) → {verdict.approved}: {verdict.reason}")
 

@@ -249,13 +249,17 @@ def test_a_route_that_resolves_legs_through_a_table_is_refused() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=route_a, encoding="base64"),
+        # Asserted so the refusals below are about the LOOKUP TABLE and nothing else: a
+        # receipt that named no network refuses for that reason first, which would make
+        # this test pass while proving something else entirely.
+        network="mainnet",
     )
 
     assert receipt.status == "pass"  # the simulation is fine; the BINDING is not
     assert receipt.lookup_resolution == "unresolved"
     assert receipt.message_binding is None
-    assert evaluate_tx(route_b, receipt).approved is False
-    assert evaluate_tx(route_a, receipt).approved is False
+    assert evaluate_tx(route_b, receipt, expected_network="mainnet").approved is False
+    assert evaluate_tx(route_a, receipt, expected_network="mainnet").approved is False
 
 
 def test_the_route_bundle_we_ship_today_still_binds() -> None:
@@ -276,14 +280,18 @@ def test_the_route_bundle_we_ship_today_still_binds() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        network="mainnet",
     )
 
     assert receipt.lookup_resolution == "none"
     assert receipt.message_binding is not None
-    assert evaluate_tx(tx, receipt).approved is True
+    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved is True
     # And the swapped leg is still caught, which is the check we already had.
     assert (
-        evaluate_tx(_route_tx(_LEG_B, through_table=False), receipt).approved is False
+        evaluate_tx(
+            _route_tx(_LEG_B, through_table=False), receipt, expected_network="mainnet"
+        ).approved
+        is False
     )
 
 

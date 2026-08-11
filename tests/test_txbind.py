@@ -243,11 +243,18 @@ def test_simulate_binds_the_receipt_to_what_it_simulated() -> None:
         rpc_calls.append(method)
         return {"result": {"value": {"err": None, "unitsConsumed": 42, "logs": []}}}
 
+    # The network is ASSERTED here, at simulate time, because that is the only honest
+    # way this assertion can hold: `evaluate_tx` compares the receipt's structured
+    # network against the caller's, and a receipt that asserted nothing is `unknown`,
+    # which approves nothing — including a `mainnet` expectation. Skipping the network
+    # check for an unknown receipt, or defaulting `simulate`'s network to an approvable
+    # member, would green this line and reopen D2 in the same stroke.
     receipt = simulate(
         {},
         rpc_url="http://127.0.0.1:8899",
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        network="mainnet",
     )
 
     assert receipt.binding_strength == "structural"
@@ -269,6 +276,7 @@ def test_an_undecodable_build_leaves_the_receipt_unbound() -> None:
         build_call=lambda _plan: BuiltTx(
             tx=base64.b64encode(b"garbage").decode(), encoding="base64"
         ),
+        network="mainnet",
     )
 
     assert receipt.message_binding is None
@@ -367,6 +375,10 @@ def test_simulating_without_replacement_earns_an_exact_binding() -> None:
         rpc_call=fake_rpc,
         build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
         replace_blockhash=False,
+        # Asserted, for the same reason as the structural case above: an `exact` binding
+        # over a receipt that named no network still approves nothing. The strength and
+        # the network are independent gates and both must be earned.
+        network="mainnet",
     )
 
     assert seen["replaceRecentBlockhash"] is False
@@ -815,19 +827,39 @@ def test_nothing_outside_the_approvable_set_is_ever_approved(
     assert verdict.approved is False
 
 
-def test_the_network_parameter_has_no_default() -> None:
-    """mypy forces the decision at every call site; this asserts it at runtime so a
-    later 'convenience' default fails loudly rather than silently reopening D2."""
+def test_the_network_parameter_has_no_default_on_either_end_of_the_seam() -> None:
+    """BOTH ends. mypy forces the decision at every call site; this asserts it at runtime
+    so a later 'convenience' default fails loudly rather than silently reopening D2.
+
+    ``evaluate_tx`` is the demand side — which network this signature is headed for —
+    and ``simulate`` is the observation side — which network the run was pointed at.
+    Neither may guess. A default on the OBSERVATION end is the subtler of the two: even
+    the fail-closed ``unknown`` would let a run that stated nothing travel to the gate
+    looking like a run that was checked, so the decision is pushed to the call site
+    where somebody actually knows."""
+    from gecko.simulate import BuiltTx, simulate
+
     tx = _memo(b"buy water")
 
     with pytest.raises(TypeError):
-        evaluate_tx(tx, _on("fork", message_binding(tx)), expected_network="mainnet")  # type: ignore[call-arg]
+        evaluate_tx(tx, _on("fork", message_binding(tx)))  # type: ignore[call-arg]
+
+    with pytest.raises(TypeError):
+        simulate(  # type: ignore[call-arg]
+            {},
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=lambda *_a: {
+                "result": {"value": {"err": None, "unitsConsumed": 1, "logs": []}}
+            },
+            build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        )
 
 
-def test_a_receipt_simulate_built_without_an_assertion_approves_nothing() -> None:
-    """``simulate``'s ``network`` default is the fail-closed member, not a permissive
-    one: a Receipt from a caller who asserted nothing refuses against EVERY expectation,
-    including ``unknown``. That is what makes a default admissible here at all."""
+def test_a_receipt_that_asserted_the_catch_all_approves_nothing() -> None:
+    """The fail-closed member is a legal thing to assert and an APPROVAL OF NOTHING: a
+    caller who honestly cannot name the network says so, and the receipt then refuses
+    against EVERY expectation, including ``unknown`` itself. That is what makes
+    ``unknown`` safe to keep in the vocabulary at all."""
     tx = _memo(b"water")
     receipt = _simulated(tx, network="unknown")
 

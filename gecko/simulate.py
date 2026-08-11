@@ -154,10 +154,11 @@ class Receipt:
     #: "simulated (fork/RPC snapshot — not mainnet)", so a substring test for "mainnet"
     #: matches a FORK receipt and inverts the gate into an approval.
     #:
-    #: Defaults to ``unknown`` — the member that claims nothing — so a Receipt built by
-    #: older or third-party code can never silently assert a network it was never told.
-    #: ``simulate`` does not infer it from the RPC URL (a fork proxy answers at any
-    #: hostname) or from the label; a caller asserts it, or it stays unknown.
+    #: The DATACLASS default is ``unknown`` — the member that claims nothing — so a
+    #: Receipt built by older or third-party code can never silently assert a network it
+    #: was never told. ``simulate`` itself has no default for it: this field is the one a
+    #: gate reads, so the run that produces it must be asked. Nothing infers it from the
+    #: RPC URL (a fork proxy answers at any hostname) or from the label.
     network: Network = UNKNOWN_NETWORK
     #: The slot ``result.context.slot`` reported for the snapshot this ran against, or
     #: ``None`` when the RPC sent nothing usable.
@@ -311,7 +312,7 @@ def simulate(
     build_call: BuildCall | None = None,
     track: Sequence[str] = (),
     network_label: str = _DEFAULT_NETWORK_LABEL,
-    network: Network = UNKNOWN_NETWORK,
+    network: Network,
     replace_blockhash: bool = True,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
@@ -328,12 +329,14 @@ def simulate(
     make the prose load-bearing again, which is the D2 bug wearing a different hat. The
     field is the fact; the label is a sentence about it.
 
-    The default is ``unknown``, the member that approves NOTHING at the signing gate — a
-    fail-closed default, not a permissive one. It is a default rather than a required
-    argument because most callers (every provider landing orchestrator) genuinely are not
-    told which network their injected RPC points at, and the only honest value they could
-    pass is this one. Asserting a network they cannot know would be the permissive
-    default in disguise.
+    It is keyword-only with **NO DEFAULT**, and that is a deliberate reversal. The earlier
+    draft defaulted it to :data:`~gecko.networks.UNKNOWN_NETWORK` and argued the default
+    was safe because unknown approves nothing. It is safe and it is still wrong: a default
+    lets a run that stated nothing travel to the signing gate looking exactly like a run
+    somebody thought about, and the caller who DID know — the operator with the flag in
+    their hand — never gets asked. So mypy asks instead, at every call site. A caller that
+    genuinely cannot know passes ``UNKNOWN_NETWORK`` explicitly; that is a sentence, not
+    a silence, and it still approves nothing.
     """
     validate_rpc_url(rpc_url)
     call = rpc_call or default_rpc_call

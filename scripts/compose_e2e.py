@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gecko.landing import latest_blockhash  # noqa: E402
+from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
 from gecko.simulate import BuiltTx, simulate  # noqa: E402
 from gecko.txbind import _b58decode, evaluate_tx  # noqa: E402
@@ -49,7 +50,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rpc-url", required=True)
     parser.add_argument("--product", default="Water")
     parser.add_argument("--table", type=int, default=11)
+    parser.add_argument(
+        "--network",
+        required=True,
+        choices=sorted(NETWORKS),
+        help=(
+            "Which network --rpc-url points at. YOU say; nothing here guesses. A fork "
+            "proxy answers at any hostname, so the URL is evidence of nothing. There is "
+            "no default: 'unknown' is a legal answer and refuses at the gate."
+        ),
+    )
     args = parser.parse_args(argv)
+    # `choices` already closed the set; this narrows the type for the two call sites
+    # below without a cast, and stays fail-closed if the flag is ever widened.
+    network = coerce_network(args.network)
 
     print("1. GECKO — derive the accounts this call needs")
     ata = derive_ata(args.signer, USDC)
@@ -68,22 +82,33 @@ def main(argv: list[str] | None = None) -> int:
     blockhash, valid_until = latest_blockhash(args.rpc_url, _rpc)
     print(f"   blockhash    {blockhash}  (valid to height {valid_until})")
 
-    print("\n3. GECKO — simulate against LIVE mainnet, read-only")
+    print(f"\n3. GECKO — simulate against {network}, read-only")
     receipt = simulate(
         {},
         rpc_url=args.rpc_url,
         rpc_call=_rpc,
         build_call=lambda _plan: BuiltTx(tx=b58, encoding="base58"),
         replace_blockhash=False,
-        network_label="live mainnet, read-only, unsigned",
+        network_label=f"{network} snapshot, read-only, unsigned (operator-asserted)",
+        network=network,
         track=[args.signer],
     )
     units = f"{receipt.units_consumed:,} CU" if receipt.units_consumed else "—"
     print(f"   RECEIPT      {receipt.status.upper()}   {units}")
+    print(f"   network      {receipt.network}   (as you stated it, never inferred)")
     if receipt.revert_class:
         print(f"   class        {receipt.revert_class}")
 
-    verdict = evaluate_tx(b58, receipt, encoding="base58", require="exact")
+    # The SAME flag on both sides, and that is correct rather than tautological here:
+    # these bytes are going to be signed and submitted to THIS `--rpc-url`, so "where the
+    # simulation ran" and "where the signature is headed" are one fact, stated once, by
+    # the operator. What it is NOT is a check that the operator was right — say `mainnet`
+    # while pointed at a fork and this script believes you. The refusal it does buy is
+    # the one that matters at the seam: a receipt taken elsewhere, or one that named no
+    # network at all, cannot clear this signature.
+    verdict = evaluate_tx(
+        b58, receipt, encoding="base58", require="exact", expected_network=network
+    )
     print(f"   binding      {verdict.approved}: {verdict.reason}")
     if not verdict.approved:
         print("\n   DO NOT SIGN — the pre-flight did not approve these bytes.")

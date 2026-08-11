@@ -36,12 +36,18 @@ the strength travels with the verdict and a caller can demand one.
 WHICH MESSAGE; it says nothing about WHERE the simulation ran. A fork receipt used to
 clear a mainnet signature — same bytes, same digest, and a snapshot of state nobody is
 committing into. The gate compares the receipt's structured, closed-vocabulary ``network``
-against one the caller must name. It never reads a prose label (the default one is
-literally "simulated (fork/RPC snapshot — not mainnet)", so any substring test for
-"mainnet" matches a FORK receipt and inverts the gate into an approval) and never reads an
-RPC URL (a fork proxy answers at any hostname). Approval is membership in an EXPLICIT
-approvable set on both sides plus equality — so the catch-all approves nothing, including
-against itself, because equality is not agreement when neither side was told anything.
+against one the caller must name. It never reads the Receipt's free-text honesty caveat
+and never reads an RPC URL (a fork proxy answers at any hostname). Approval is membership
+in an EXPLICIT approvable set on both sides plus equality — so the catch-all approves
+nothing, including against itself, because equality is not agreement when neither side was
+told anything.
+
+WHY THE PROSE IS NOT AN INPUT — the full reasoning, with the string that proves it, lives
+in :mod:`gecko.networks` and is deliberately not repeated here: this module must not so
+much as NAME the prose field, or the next reader will reach for it. Read that module
+docstring before touching anything below. ``tests/test_network_vocabulary.py`` greps this
+file for the field name to keep it that way; that grep is a lint against the accidental
+case, defeated by any string construction, and it is not a guarantee.
 
 **Fail closed.** An undecodable transaction, an unknown version, or a receipt with no
 binding is ``approved=False``. "We could not check" must never render as "fine" — that is
@@ -449,9 +455,9 @@ def evaluate_tx(
     ``expected_network`` is the network the CALLER says this signature is headed for. It
     is keyword-only with NO DEFAULT on purpose: a ``None``-means-skip default leaves every
     call site holding the hole while the code reads as fixed, so mypy makes each caller
-    decide. It is compared against the receipt's structured ``network`` field and NEVER
-    against ``network_label`` — that is prose, and the default one names mainnet while
-    meaning the opposite.
+    decide. It is compared against the receipt's structured ``network`` field and against
+    nothing else — never a free-text caveat, never a URL. See :mod:`gecko.networks` for
+    why, including the exact string that makes reading the prose invert this gate.
 
     Approval needs BOTH sides in :data:`~gecko.networks.APPROVABLE_NETWORKS` AND equal.
     A missing attribute, an off-vocabulary string, and the catch-all member all refuse —

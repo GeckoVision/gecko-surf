@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from gecko.networks import UNKNOWN_NETWORK, Network
 from gecko.simulate import (
     BuiltTx,
     Receipt,
@@ -119,6 +120,7 @@ def test_simulate_pass_reports_units_and_sol_delta() -> None:
         rpc_call=_sim_rpc(value, pre_lamports=1000),
         build_call=_build_ok,
         track=[TRACKED],
+        network=UNKNOWN_NETWORK,
     )
     assert isinstance(receipt, Receipt)
     assert receipt.status == "pass"
@@ -141,6 +143,7 @@ def test_simulate_fail_slippage() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=_sim_rpc(value),
         build_call=_build_ok,
+        network=UNKNOWN_NETWORK,
     )
     assert receipt.status == "fail"
     assert receipt.revert_class == "slippage"
@@ -156,6 +159,7 @@ def test_simulate_fail_custom() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=_sim_rpc(value),
         build_call=_build_ok,
+        network=UNKNOWN_NETWORK,
     )
     assert receipt.status == "fail"
     assert receipt.revert_class == "custom_program_error:6002"
@@ -171,6 +175,7 @@ def test_simulate_fail_account_error() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=_sim_rpc(value),
         build_call=_build_ok,
+        network=UNKNOWN_NETWORK,
     )
     assert receipt.status == "fail"
     assert receipt.revert_class == "account_error"
@@ -184,6 +189,7 @@ def test_network_label_propagates() -> None:
         rpc_call=_sim_rpc(value),
         build_call=_build_ok,
         network_label="surfpool fork (mainnet-backed — NOT mainnet)",
+        network=UNKNOWN_NETWORK,
     )
     assert receipt.network_label == "surfpool fork (mainnet-backed — NOT mainnet)"
 
@@ -198,6 +204,7 @@ def test_simulate_passes_the_built_tx_encoding_through() -> None:
         rpc_url="http://127.0.0.1:8899",
         rpc_call=_sim_rpc(value, capture=captured),
         build_call=lambda _p: BuiltTx(tx="3base58tx", encoding="base58"),
+        network=UNKNOWN_NETWORK,
     )
     assert captured["tx"] == "3base58tx"
     assert captured["config"]["encoding"] == "base58"
@@ -223,6 +230,7 @@ def test_default_build_call_prefers_serialized_and_carries_encoding(
         PLAN,
         rpc_url="http://127.0.0.1:8899",
         rpc_call=_sim_rpc(value, capture=captured),
+        network=UNKNOWN_NETWORK,
         # no build_call → exercises _default_build_call
     )
     assert captured["tx"] == "3realsignabletx"
@@ -243,6 +251,7 @@ def test_default_build_call_raises_when_no_tx_field(
             PLAN,
             rpc_url="http://127.0.0.1:8899",
             rpc_call=_sim_rpc(value),
+            network=UNKNOWN_NETWORK,
             # no build_call → uses the default which POSTs build_url
         )
 
@@ -258,7 +267,12 @@ def test_default_build_call_wraps_http_error_as_simulate_error(
     monkeypatch.setattr("gecko.simulate._http_post_json", fake_post)
     value = {"err": None, "unitsConsumed": 1, "logs": []}
     with pytest.raises(SimulateError) as exc:
-        simulate(PLAN, rpc_url="http://127.0.0.1:8899", rpc_call=_sim_rpc(value))
+        simulate(
+            PLAN,
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=_sim_rpc(value),
+            network=UNKNOWN_NETWORK,
+        )
     assert "403" in str(exc.value)
 
 
@@ -276,12 +290,15 @@ def _slot_rpc(result: dict[str, Any]):
     return rpc
 
 
-def _receipt_for(result: dict[str, Any]) -> Receipt:
+def _receipt_for(
+    result: dict[str, Any], *, network: Network = UNKNOWN_NETWORK
+) -> Receipt:
     return simulate(
         PLAN,
         rpc_url="https://api.example.com",
         rpc_call=_slot_rpc(result),
         build_call=_build_ok,
+        network=network,
     )
 
 
@@ -336,10 +353,14 @@ def test_the_slot_is_recorded_and_nothing_enforces_it() -> None:
 # --- D2: the network the snapshot was taken ON -------------------------------
 
 
-def test_the_network_defaults_to_the_member_that_claims_nothing() -> None:
+def test_the_catch_all_is_a_thing_a_caller_may_say_and_it_claims_nothing() -> None:
+    """``simulate`` has NO default for ``network`` — a caller who cannot honestly name
+    one says ``unknown`` out loud, and that assertion rides onto the Receipt unchanged.
+    A silence and a stated 'I do not know' look identical on the Receipt on purpose;
+    what differs is that one of them was a decision somebody made."""
     receipt = _receipt_for({"value": {"err": None, "logs": []}})
 
-    assert receipt.network == "unknown"
+    assert receipt.network == UNKNOWN_NETWORK
 
 
 def test_an_asserted_network_rides_onto_the_receipt() -> None:
@@ -363,6 +384,7 @@ def test_the_network_is_never_read_off_the_rpc_url() -> None:
         rpc_url="https://api.mainnet-beta.solana.com",
         rpc_call=_slot_rpc({"value": {"err": None, "logs": []}}),
         build_call=_build_ok,
+        network=UNKNOWN_NETWORK,
     )
 
-    assert receipt.network == "unknown"
+    assert receipt.network == UNKNOWN_NETWORK

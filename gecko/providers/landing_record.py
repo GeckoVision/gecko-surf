@@ -75,7 +75,11 @@ def _network_of(receipt: Receipt, network_label: str | None) -> Network:
     only — see :func:`gecko.txbind.evaluate_tx`, which never imports the collapse.
     """
     asserted = getattr(receipt, "network", None)
-    if isinstance(asserted, str) and asserted in NETWORKS and asserted != UNKNOWN_NETWORK:
+    if (
+        isinstance(asserted, str)
+        and asserted in NETWORKS
+        and asserted != UNKNOWN_NETWORK
+    ):
         return cast("Network", asserted)
     return network_category(network_label)
 
