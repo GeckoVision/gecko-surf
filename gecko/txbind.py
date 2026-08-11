@@ -30,7 +30,11 @@ ran against. A fork simulation therefore cannot honestly attest a blockhash:
   that blockhash (~150 slots, roughly a minute).
 
 Calling a structural binding "exact" would be the lie that makes the feature worthless, so
-the strength travels with the verdict and a caller can demand one.
+the strength travels with the verdict and every caller DEMANDS one: ``evaluate_tx``'s
+``require`` has no default, because the weak value fails open (it approves a blockhash
+nobody simulated) and the strong one refuses every fork simulation. A path about to
+produce a signature demands ``exact`` and accepts that the receipt expires with its
+blockhash.
 
 **The network is compared, asserted on both sides, and never inferred.** A binding proves
 WHICH MESSAGE; it says nothing about WHERE the simulation ran. A fork receipt used to
@@ -443,7 +447,7 @@ def evaluate_tx(
     receipt: Any,
     *,
     encoding: str = "base64",
-    require: BindingStrength = "structural",
+    require: BindingStrength,
     expected_network: Network,
 ) -> SigningVerdict:
     """Is ``tx`` the transaction ``receipt`` attests, on the network the caller expects?
@@ -451,6 +455,23 @@ def evaluate_tx(
     ``require`` is the minimum strength the caller accepts. Asking for ``exact`` when the
     receipt carries only a structural binding is a REFUSAL, not a silent downgrade — a
     gate that accepts a weaker proof than it demanded is not a gate.
+
+    It is keyword-only with NO DEFAULT, for the reason the default was wrong rather than
+    merely untidy. ``structural`` is blockhash-blind by construction, so the old default
+    approved a transaction carrying a blockhash NOBODY SIMULATED whenever a caller left
+    the keyword off — the fail-open shaped exactly like the safe answer, one omission
+    away from a signature. The safe-by-omission value is no better a default: ``exact``
+    refuses every ``replaceRecentBlockhash: true`` simulation, which is most of them, and
+    a gate that over-refuses is a gate someone deletes. There is no strength that is
+    right for all callers, so the caller states one.
+
+    A SIGNING SITE DEMANDS ``exact``. That is a demand on the call site, never a
+    redefinition of ``structural`` — collapsing the blockhash into the structural digest
+    would erase the one strength a fork simulation can honestly earn. The cost is real
+    and intended: an exact binding dies with its blockhash (~150 slots), so a refreshed
+    transaction REFUSES and the caller must re-simulate rather than reuse. A receipt is
+    true for the state it was taken against; take it at the moment you sign, not the day
+    before. Re-simulating is free.
 
     ``expected_network`` is the network the CALLER says this signature is headed for. It
     is keyword-only with NO DEFAULT on purpose: a ``None``-means-skip default leaves every

@@ -26,13 +26,18 @@ because they answer different questions and only one of them is a claim about sa
   drifts into a strength nobody chose. There is no path to ``approved=True`` over bytes
   this module produced itself.
 
-RESIDUAL, stated rather than buried. Under the ``structural`` default the blockhash is
-normalised out of the binding, so a subject that differs from the simulated transaction
-ONLY in its blockhash matches, is approved, and is returned — bytes that were never
-simulated. That is the honest ceiling of a ``replaceRecentBlockhash:true`` simulation,
-not a bug in this module, and closing it is D4's job. What keeps it survivable meanwhile:
-:func:`verify_handoff` returns the SUBJECT bytes, never the simulated ones, so a caller
-signs exactly what was checked.
+THE BLOCKHASH, and where it is closed. A ``structural`` binding normalises the blockhash
+out, so a subject differing from the simulated transaction ONLY in its blockhash matches
+and is approved — bytes that were never simulated. That is the honest ceiling of a
+``replaceRecentBlockhash:true`` simulation, not a bug in the digest, so it is closed at
+the CALL SITE and nowhere else: ``require`` has no default here or in
+:func:`~gecko.txbind.evaluate_tx`, and a path whose next step is a signature passes
+``exact`` and is therefore refused. Redefining ``structural`` to cover the blockhash
+would collapse the two strengths and make every fork simulation refuse; that is not the
+fix. The residual that survives: a caller may still choose ``structural`` — the point is
+that it must CHOOSE it, out loud, at the line where somebody knows whether these bytes
+are about to be signed. What keeps that survivable: :func:`verify_handoff` returns the
+SUBJECT bytes, never the simulated ones, so a caller signs exactly what was checked.
 
 Two conversions live here because both have bitten a live handoff:
 

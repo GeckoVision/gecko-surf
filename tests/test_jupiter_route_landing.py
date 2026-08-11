@@ -258,8 +258,18 @@ def test_a_route_that_resolves_legs_through_a_table_is_refused() -> None:
     assert receipt.status == "pass"  # the simulation is fine; the BINDING is not
     assert receipt.lookup_resolution == "unresolved"
     assert receipt.message_binding is None
-    assert evaluate_tx(route_b, receipt, expected_network="mainnet").approved is False
-    assert evaluate_tx(route_a, receipt, expected_network="mainnet").approved is False
+    assert (
+        evaluate_tx(
+            route_b, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    )
+    assert (
+        evaluate_tx(
+            route_a, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is False
+    )
 
 
 def test_the_route_bundle_we_ship_today_still_binds() -> None:
@@ -285,11 +295,19 @@ def test_the_route_bundle_we_ship_today_still_binds() -> None:
 
     assert receipt.lookup_resolution == "none"
     assert receipt.message_binding is not None
-    assert evaluate_tx(tx, receipt, expected_network="mainnet").approved is True
+    assert (
+        evaluate_tx(
+            tx, receipt, require="structural", expected_network="mainnet"
+        ).approved
+        is True
+    )
     # And the swapped leg is still caught, which is the check we already had.
     assert (
         evaluate_tx(
-            _route_tx(_LEG_B, through_table=False), receipt, expected_network="mainnet"
+            _route_tx(_LEG_B, through_table=False),
+            receipt,
+            require="structural",
+            expected_network="mainnet",
         ).approved
         is False
     )
