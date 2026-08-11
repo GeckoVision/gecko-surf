@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from .pda import (
     ConstantPdaSeedNode,
@@ -39,8 +39,10 @@ __all__ = [
     "InstructionGraph",
     "ProgramGraph",
     "build_program_graph",
+    "chain_order_with_cycle",
     "derivation_order_for",
     "derivation_order_with_cycle",
+    "topological_order",
 ]
 
 
@@ -269,6 +271,44 @@ def _bind_seeds(
     return tuple(bindings)
 
 
+def topological_order(
+    names: Sequence[str], deps: Mapping[str, set[str]]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The ONE ordering engine of this module: Kahn over ``names``, dependencies
+    first, returning ``(order, cycle)``.
+
+    Extracted so the account level (:func:`_derivation_order`, seeds) and the
+    instruction level (:func:`chain_order_with_cycle`, lifecycle chains) share a
+    single implementation of the contract that matters: **nothing is ever dropped**.
+    When the walk stalls, the residual (the cycle plus everything downstream of it)
+    is appended in declaration order AND returned as ``cycle``, so the caller reports
+    a gap instead of deriving in an order that is merely plausible. A second copy of
+    this loop would be a second place for that contract to rot.
+
+    ``deps`` may name entries outside ``names``; those references are ignored here —
+    the caller decides whether a dangling reference is a gap (the account level scopes
+    seeds to the listed accounts; the chain level reports an unknown step itself).
+    """
+    known = set(names)
+    order: list[str] = []
+    resolved: set[str] = set()
+    # stable: iterate declaration order, emit any whose deps are all resolved
+    while len(order) < len(names):
+        progressed = False
+        for n in names:
+            if n in resolved:
+                continue
+            if (deps.get(n, set()) & known) <= resolved:
+                order.append(n)
+                resolved.add(n)
+                progressed = True
+        if not progressed:
+            blocked = [n for n in names if n not in resolved]
+            order.extend(blocked)
+            return tuple(order), tuple(blocked)
+    return tuple(order), ()
+
+
 def _derivation_order(
     pda_accounts: dict[str, AccountRef],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -291,24 +331,29 @@ def _derivation_order(
         for b in acct.derive_from:
             if b.kind == "account" and b.bound_to in pda_accounts:
                 deps[name].add(b.bound_to)
+    return topological_order(names, deps)
 
-    order: list[str] = []
-    resolved: set[str] = set()
-    # stable: iterate declaration order, emit any whose deps are all resolved
-    while len(order) < len(names):
-        progressed = False
-        for n in names:
-            if n in resolved:
-                continue
-            if deps[n] <= resolved:
-                order.append(n)
-                resolved.add(n)
-                progressed = True
-        if not progressed:
-            blocked = [n for n in names if n not in resolved]
-            order.extend(blocked)
-            return tuple(order), tuple(blocked)
-    return tuple(order), ()
+
+def chain_order_with_cycle(
+    instructions: Sequence[str], edges: Sequence[tuple[str, str]]
+) -> tuple[tuple[str, ...], frozenset[str]]:
+    """Order the INSTRUCTIONS of a lifecycle chain, with the honest gap on the order.
+
+    The account-level rail one level up: ``edges`` are ``(produces, consumes)`` pairs —
+    the consumer runs after the producer — and the return is the same
+    ``(order, cycle)`` contract :func:`derivation_order_with_cycle` gives for seeds.
+    An instruction inside (or behind) a cycle stays in ``order`` and is named in
+    ``cycle``; a caller must report those as gaps rather than execute them in the
+    order given. An edge naming an instruction outside ``instructions`` orders nothing
+    here — the caller reports the dangling endpoint, because silently ignoring it
+    would turn a broken chain declaration into a confident sequence.
+    """
+    deps: dict[str, set[str]] = {name: set() for name in instructions}
+    for produces, consumes in edges:
+        if consumes in deps:
+            deps[consumes].add(produces)
+    order, cycle = topological_order(list(instructions), deps)
+    return order, frozenset(cycle)
 
 
 def derivation_order_with_cycle(

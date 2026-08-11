@@ -30,3 +30,9 @@
 {"intent": "what is the weather in lisbon", "gold_program": null, "gold_instruction": null, "note": "off-domain — the floor must reject it"}
 {"intent": "send ten usdc to my friend's wallet", "gold_program": null, "gold_instruction": null, "note": "plausible on-chain ask no wired program serves"}
 {"intent": "stake sol with a validator", "gold_program": null, "gold_instruction": null, "note": "native staking; 'stake' collides with ore token staking"}
+{"intent": "buy a beer", "gold_program": "let_me_buy", "gold_instruction": "make_purchase", "note": "the bar-shaped showcase ask — three words, one of which ('buy') also names pumpfun's instruction"}
+{"intent": "open a store and sell peanuts", "gold_program": "let_me_buy", "gold_instruction": "initialize", "note": "two lifecycle steps in one sentence; gold is the FIRST (initialize) and the chain carries add_product as step 2. 'peanuts' names nothing in any card"}
+{"intent": "pay the bar for my drinks with usdc", "gold_program": "let_me_buy", "gold_instruction": "make_purchase", "note": "paraphrase — 'pay'/'drinks'; 'usdc' collides with the meteora/metadao vocabulary"}
+{"intent": "list a new product in my shop", "gold_program": "let_me_buy", "gold_instruction": "add_product", "note": "'shop' names nothing in any card — the card says store"}
+{"intent": "mark the order as delivered to the customer", "gold_program": "let_me_buy", "gold_instruction": "mark_as_delivered", "note": "the second step of the purchase chain; 'order'/'customer' are not card terms"}
+{"intent": "set up a storefront so people can pay me by qr code", "gold_program": "let_me_buy", "gold_instruction": "initialize", "note": "true paraphrase of initialize — 'set up'/'storefront'/'qr'"}
