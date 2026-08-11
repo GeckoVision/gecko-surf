@@ -27,8 +27,25 @@ redesign):
   rescued what the IDL drops or hides, or a declared read recipe resolves it) /
   ``flagged`` (an honest gap — never dropped, never fabricated).
 
+**Chain/plan status** (:mod:`gecko.find_start`):
+
+- ``ChainStatus`` — the verdict on a MULTI-INSTRUCTION plan, one level above the
+  per-account ladder: ``ordered`` (every step placed, every link carried, and the
+  chain-agreement axis explicitly AGREE) / ``unresolved`` (evaluated and refused —
+  a seed-dependency cycle, a link that does not hold on both endpoints, or a chain
+  the landed transactions contradict) / ``not_evaluated`` (the axis was never
+  checked: no evidence supplied, or evidence that could not be parsed). It is a
+  verdict rather than an origin ladder, which is why it sits beside
+  :data:`VerifyStatus` rather than inside either origin ladder.
+
+  ``unresolved`` and ``not_evaluated`` stay DISTINCT because they argue for
+  different remediations ("we checked and it was wrong" vs "we did not check"),
+  and collapsing them would record a refusal that never happened. Neither is the
+  zero value: :class:`gecko.find_start.ChainPlan` gives ``status`` no default, so
+  "nobody set it" cannot read as "checked and fine".
+
 Both ladders are CLOSED: adding a value is a design decision (anti-poisoning
-review), not a convenience edit.
+review), not a convenience edit. So is ``ChainStatus``.
 """
 
 from __future__ import annotations
@@ -41,6 +58,7 @@ __all__ = [
     "CrossApiProvenance",
     "ProgramProvenanceTier",
     "AccountProvenance",
+    "ChainStatus",
 ]
 
 # --- API surface ladder ---------------------------------------------------------
@@ -71,3 +89,14 @@ ProgramProvenanceTier = Literal["extracted", "recovered", "manual"]
 # true, and an account whose origin we cannot state honestly is exactly the kind of thing
 # this ladder exists to prevent.
 AccountProvenance = Literal["extracted", "recovered", "cross_surface", "flagged"]
+
+# --- chain/plan status ------------------------------------------------------------
+# The verdict on a multi-instruction plan. NOT a member of either ladder above: those
+# are per-account and answer "where did this come from", while this answers "can this
+# sequence be executed as given". Adding a member here is the same closed-vocabulary
+# design decision (anti-poisoning review), not a convenience edit.
+#
+# ``not_evaluated`` is the FAIL-CLOSED member and must be reachable only by an explicit
+# assignment: a consumer decides on ``status == "ordered"`` (a positive test), never on
+# truthiness and never on a ``!=`` denylist — every member is a non-empty, truthy string.
+ChainStatus = Literal["ordered", "unresolved", "not_evaluated"]
