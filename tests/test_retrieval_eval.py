@@ -15,8 +15,11 @@ from pathlib import Path
 
 import pytest
 
+from gecko.find_start import ChainPlan, FindStartResult, StartPoint, candidate_name
 from gecko.retrieval_eval import (
+    GoldenRow,
     GoldenSetError,
+    _gold_rank,
     classify_miss,
     default_golden_text,
     evaluate_golden,
@@ -198,6 +201,111 @@ def test_classify_wired_with_overlap_below_k_is_a_misrank() -> None:
     assert cause == "misrank"
 
 
+# --- _gold_rank: what counts as a served point -----------------------------------
+
+_NO_CHAIN = ChainPlan(
+    name="",
+    status="not_evaluated",
+    verdict="NOT_EVALUATED",
+    steps=(),
+    links=(),
+    unresolved=(),
+    note="fixture",
+)
+
+
+def _point(kind: str, program: str, instruction: str | None) -> StartPoint:
+    """A minimal ranked point — only kind/program/instruction matter to _gold_rank."""
+    return StartPoint(
+        kind=kind,  # type: ignore[arg-type]
+        program=program,
+        program_id="Prog1111",
+        instruction=instruction,
+        next_tool=None,
+        score=1,
+        why=(),
+        inputs=(),
+        derive_plan=(),
+        preludes=(),
+        gaps=(),
+        execute=None,
+        serve="fixture",
+        chain=_NO_CHAIN,
+    )
+
+
+def _result(*points: StartPoint, no_start: bool = False) -> FindStartResult:
+    return FindStartResult(starts=points, catalog=(), no_start=no_start, note="fixture")
+
+
+def test_gold_rank_does_not_credit_a_guess_that_matches_the_gold() -> None:
+    """A guess is below the retrieval floor — a closest-candidate, NOT a start.
+    Crediting it as retrieval inflates MRR with a call the router refused to serve.
+
+    The result-level ``no_start`` flag cannot catch this: a result can serve a
+    genuine start for one program AND carry a demoted guess for the gold's.
+    """
+    result = _result(
+        _point("start", "meteora", "swap"),
+        _point("guess", "pumpfun", "buy"),
+    )
+    row = GoldenRow("purchase that memecoin", "pumpfun", "buy")
+    assert result.no_start is False  # the flag the old code checked says "served"
+    assert _gold_rank(result, row) is None
+
+
+def test_gold_rank_credits_a_surface_card_as_a_genuine_served_point() -> None:
+    """``surface`` is a hedge ("start from this program's derive tools"), not a
+    below-floor guess — and a golden row with ``gold_instruction is None`` names
+    exactly that card as gold. Skipping it would freeze a false negative."""
+    result = _result(
+        _point("start", "meteora", "swap"),
+        _point("surface", "ore", None),
+    )
+    row = GoldenRow("stake my tokens on ore", "ore", None)
+    assert _gold_rank(result, row) == 2
+
+
+def test_gold_rank_keeps_the_1_based_index_over_the_served_list() -> None:
+    """Skipping a guess must not re-index: rank is the position the caller sees."""
+    result = _result(
+        _point("guess", "metadao_ico", "fund"),
+        _point("start", "pumpfun", "buy"),
+    )
+    row = GoldenRow("buy the token", "pumpfun", "buy")
+    assert _gold_rank(result, row) == 2
+
+
+def test_gold_rank_still_returns_none_when_nothing_cleared_the_floor() -> None:
+    result = _result(_point("guess", "pumpfun", "buy"), no_start=True)
+    row = GoldenRow("snipe a fresh pump launch", "pumpfun", "buy")
+    assert _gold_rank(result, row) is None
+
+
+def test_gold_rank_only_ever_removes_credit_over_the_golden_set() -> None:
+    """C3/C4: the fix is instrumentation, not recovery. Every credited rank is
+    still the raw positional index of the gold in ``result.starts`` (no
+    re-indexing, no newly-credited row) — the change is removal only."""
+    report = evaluate_golden()
+    for outcome in report.rows:
+        served = outcome.record.top_candidates
+        gold_name = candidate_name(
+            outcome.row.gold_program or "", outcome.row.gold_instruction
+        )
+        naive = next(
+            (
+                rank
+                for rank, candidate in enumerate(served, 1)
+                if candidate.name == gold_name
+            ),
+            None,
+        )
+        if outcome.gold_rank is not None:
+            # credited ⇒ same index the naive scan found, and not a guess
+            assert outcome.gold_rank == naive
+            assert served[outcome.gold_rank - 1].kind != "guess"
+
+
 # --- the golden replay against the real router -----------------------------------
 
 
@@ -246,6 +354,28 @@ def test_evaluate_golden_pins_the_showcase_rows() -> None:
     nonsense = by_intent["flumbuzzle the quantum wombat"]
     assert nonsense.cause == "hit"  # the floor honestly rejected it
     assert nonsense.gold_rank is None
+
+
+def test_the_bonding_paraphrase_is_a_refusal_not_a_rank_4_retrieval() -> None:
+    """The gold pumpfun/buy IS served for this paraphrase — but demoted to a
+    ``guess``, i.e. the router explicitly declined to call it a start. It stays a
+    recorded misrank (genuine paraphrase evidence); what it must NOT do is
+    contribute 1/4 of a hit to MRR for a call we refused to serve."""
+    by_intent = {o.row.intent: o for o in evaluate_golden().rows}
+    row = by_intent["purchase some of that new memecoin before it bonds"]
+    served = {c.name: c.kind for c in row.record.top_candidates}
+    assert served.get("pumpfun/buy") == "guess"
+    assert row.gold_rank is None
+    assert row.cause == "misrank"  # the cause vocabulary is untouched
+
+
+def test_surface_gold_rows_keep_their_ranks() -> None:
+    """The `surface`-as-gold rows (``gold_instruction is None``) must keep
+    counting — they are genuine served points, not below-floor guesses."""
+    by_intent = {o.row.intent: o for o in evaluate_golden().rows}
+    assert by_intent["stake my tokens on ore"].gold_rank == 1
+    assert by_intent["mine ore and claim the rewards"].gold_rank == 2
+    assert by_intent["refund my contribution from a failed ico"].gold_rank == 1
 
 
 def test_evaluate_golden_aggregates_are_consistent() -> None:
