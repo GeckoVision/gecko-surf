@@ -28,6 +28,9 @@ all, and the cap no-ops on the accounts it does not name.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from gecko.pda import derive_pda
@@ -177,6 +180,90 @@ def test_neither_ata_claims_the_program_declared_it(
         f"{account} is derived by the SPL associated-token rule from caller-supplied "
         "inputs; `extracted` would claim the let_me_buy artifact declared this address"
     )
+
+
+#: The program's Anchor IDL, verbatim, as comprehension received it (the hosted project
+#: surface — a third-party mirror, not the on-chain IDL account; the config's own notes
+#: already carry that provenance). Checked in so the "not established from source" claim
+#: below is auditable against an artifact rather than asserted in prose.
+IDL_FIXTURE = Path(__file__).parent / "fixtures" / "let_me_buy_idl.json"
+
+
+def _idl() -> dict:
+    return json.loads(IDL_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_the_idl_fixture_is_this_program() -> None:
+    idl = _idl()
+    assert idl["address"] == PROGRAM_ID
+    assert idl["metadata"]["name"] == "let_me_buy"
+
+
+def test_the_store_name_constraint_is_carried_and_says_it_is_observed_only() -> None:
+    """The live probe found a name the program refuses. What it did NOT find is the RULE.
+
+    Two names were tested — one rejected, one accepted — and they differ by a single
+    underscore. Two data points do not separate "no underscore" from "alphanumeric only"
+    from "no character outside a-z0-9" from something else entirely, and a config that
+    stated any of those would be inventing a constraint an agent would then trust.
+
+    So the constraint is carried as an OBSERVATION with ``established_from_source`` false,
+    at the ``manual`` tier. ``extracted``/``recovered`` would both claim the program's own
+    artifact or source said this, and neither did.
+    """
+    program = _let_me_buy()
+    constraint = program.arg_constraints["store_name"]
+    assert constraint.origin == "manual"
+    assert constraint.established_from_source is False
+    assert "gecko_coffee" in constraint.observed_rejected
+    assert "geckocoffee" in constraint.observed_accepted
+    lowered = constraint.note.lower()
+    assert "observed" in lowered
+    assert "not established" in lowered
+
+
+def test_the_idl_states_no_constraint_on_store_name() -> None:
+    """The source side of the same claim, checked against the artifact.
+
+    Every instruction that takes ``store_name`` declares it as a bare ``string``: no
+    length, no charset, no pattern. An Anchor IDL has no vocabulary for a value
+    constraint at all, so the check behind 6009 lives in Rust the IDL does not carry —
+    which is exactly why the constraint above may not be labelled source-derived.
+    """
+    idl = _idl()
+    seen = 0
+    for instruction in idl["instructions"]:
+        for arg in instruction.get("args", ()):
+            if arg["name"].lstrip("_") == "store_name":
+                seen += 1
+                assert arg["type"] == "string", (
+                    f"{instruction['name']}.{arg['name']} is no longer a bare string — "
+                    "if the artifact grew a constraint, the config may finally state one"
+                )
+                assert set(arg) == {"name", "type"}
+    assert seen == len(idl["instructions"])  # all eight take it
+
+
+def test_the_idl_gives_length_its_own_error_code() -> None:
+    """A fact that IS established from the artifact, and the reason it is stated as a
+    fact and not as the rule: 6007 StringTooLong and 6009 InvalidStoreName are distinct
+    declared codes, so "too long" is a different answer than what ``gecko_coffee`` got.
+    That narrows the space; it does not name the check."""
+    codes = {error["name"]: error["code"] for error in _idl()["errors"]}
+    assert codes["StringTooLong"] == 6007
+    assert codes["InvalidStoreName"] == 6009
+
+
+def test_the_constraint_never_claims_a_source_derived_tier() -> None:
+    """The gate condition, mechanical: an observation may not wear a tier that implies
+    the program said it. ``_arg_constraints_from_dict`` refuses the contradiction at load
+    time; this pins the packaged bytes on the honest side of it."""
+    program = _let_me_buy()
+    for name, constraint in program.arg_constraints.items():
+        if not constraint.established_from_source:
+            assert constraint.origin == "manual", (
+                f"{name} is observed-only and may not carry {constraint.origin!r}"
+            )
 
 
 def test_the_two_atas_are_a_pair_and_credit_different_owners() -> None:
