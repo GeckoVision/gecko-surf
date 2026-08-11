@@ -55,6 +55,17 @@ And a gate placed after the simulation still MINTS a passing Receipt for a poiso
 before withholding the bytes — and that Receipt is a portable artifact this module hands
 out on purpose, so it outlives the refusal.
 
+AND WHY A BAD BUILD IS NOT AN EXCEPTION. The gate above is only worth having if the
+caller does not have to catch anything else. ``prepare_handoff`` used to promise "never
+raises for a bad build" while calling :func:`~gecko.simulate.simulate` unwrapped, and
+that function raises on a builder that returns nothing and on a node that is down. The
+caller's fix for that is ``except Exception`` — which also catches
+:class:`~gecko.signing_gate.SigningRefused` and converts the poisoned-tool refusal into
+a caught error and a retry. The bypass would not be written by an attacker; it would be
+written by an honest caller, for a reason this module handed them. So a build or
+transport failure now returns a withheld plan carrying a Receipt that claims nothing,
+and the quarantine refusal is the only thing left to catch.
+
 WHAT THIS DOES NOT MAKE TRUE. Required arguments close OMISSION: there is no
 ``verdict=None`` that quietly means unchecked. They do not close FABRICATION — see the
 residual in :mod:`gecko.signing_gate`. And this wires a control into a lane nobody walks
@@ -84,8 +95,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .networks import UNKNOWN_NETWORK, Network
+from .rpc import RpcError
 from .signing_gate import SigningRefused, gate_surface_tool
-from .simulate import BuildCall, BuiltTx, Receipt, RpcCall, simulate
+from .simulate import BuildCall, BuiltTx, Receipt, RpcCall, SimulateError, simulate
 from .surface import Surface
 from .txbind import BindingStrength, TxDecodeError, _decode, evaluate_tx
 
@@ -242,11 +254,20 @@ def prepare_handoff(
     and yields ``structural``. Whether that is strong enough is the CALLER's call, made at
     :func:`verify_handoff` where the ``require`` argument has no default.
 
-    Never raises for a bad build or an undecodable transaction: a handoff that throws is
-    one someone wraps in ``try/except`` and bypasses. Every failure path withholds bytes.
-    The ONE exception is :class:`~gecko.signing_gate.SigningRefused`, below, and it is an
-    exception for the opposite reason: it fires before a Receipt exists, so a returned
-    refusal would have to invent one.
+    Never raises for a bad build, a failed transport or an undecodable transaction: a
+    handoff that throws is one someone wraps in ``try/except`` and bypasses. Every such
+    failure withholds bytes and returns a plan whose Receipt claims nothing (see
+    :func:`_unobserved`). The ONE exception is
+    :class:`~gecko.signing_gate.SigningRefused`, below, and it is an exception for the
+    opposite reason: it fires before a Receipt exists, so a returned refusal would have
+    to invent one.
+
+    A caller that nevertheless writes ``except Exception`` around this call MUST put
+    ``except SigningRefused`` ahead of it, or the quarantine refusal is swallowed and
+    retried. The point of the paragraph above is that after this change there is no
+    longer a reason to write that ``except`` at all: the faults an unattended loop
+    actually meets — a builder that returns nothing, a node that is down or rate-limited
+    — now come back as withheld plans.
     """
     # THE QUARANTINE GATE — first statement in the body, before the builder, before the
     # RPC, before any Receipt exists.
@@ -278,15 +299,27 @@ def prepare_handoff(
         captured.append(built)
         return built
 
-    receipt = simulate(
-        plan,
-        rpc_url=rpc_url,
-        rpc_call=rpc_call,
-        build_call=capturing_build,
-        track=track,
-        network=network,
-        replace_blockhash=replace_blockhash,
-    )
+    # THE BUILD PATH — a failure here is WITHHELD, never raised. See `_unobserved` for
+    # why the Receipt it returns is honest rather than fabricated, and the module
+    # docstring for why an exception on this path is the caller's bypass, not ours.
+    try:
+        receipt = simulate(
+            plan,
+            rpc_url=rpc_url,
+            rpc_call=rpc_call,
+            build_call=capturing_build,
+            track=track,
+            network=network,
+            replace_blockhash=replace_blockhash,
+        )
+    except (SimulateError, RpcError) as exc:
+        # The type name only. A builder's or a node's error text is untrusted input that
+        # may carry a URL, a prompt, or a fragment of the request body.
+        return _withheld(
+            _unobserved(),
+            f"the transaction could not be built or simulated "
+            f"({type(exc).__name__}); no run was observed, so nothing is attested",
+        )
     if not captured:  # pragma: no cover - simulate always builds before it simulates
         return _withheld(receipt, "the builder produced no transaction")
     built = captured[-1]
@@ -392,6 +425,42 @@ def _lazy_default_build() -> BuildCall:
     from .simulate import _default_build_call
 
     return _default_build_call
+
+
+def _unobserved() -> Receipt:
+    """A Receipt for a run that was ATTEMPTED and produced nothing. Every field claims
+    nothing.
+
+    :mod:`gecko.signing_gate` argues — correctly — that returning a refusal at the
+    quarantine gate would have to FABRICATE a Receipt, inventing a status and a network
+    for a run that never happened. That argument does not extend to here, and the
+    difference is the whole justification for this function: at the gate nothing was
+    attempted, so any Receipt is an invention; here a build and a simulation WERE
+    attempted and failed, so a Receipt whose every field is the member that claims
+    nothing is a true sentence about that attempt.
+
+    "Claims nothing" is the load-bearing part, so it is spelled out rather than defaulted:
+    ``status="unknown"``, ``network=UNKNOWN_NETWORK`` (NOT the caller's asserted network —
+    a failed build must not travel to the signing gate carrying a network somebody
+    asserted about a run that did not happen), no binding, no strength, no slot, no units.
+    Every downstream gate refuses it: :func:`verify_handoff` refuses for want of a
+    binding, and ``unknown`` is not in :data:`~gecko.networks.APPROVABLE_NETWORKS`.
+    """
+    return Receipt(
+        status="unknown",
+        err=None,
+        revert_class=None,
+        units_consumed=None,
+        sol_delta=None,
+        tokens_received=None,
+        logs_tail=(),
+        network_label="no simulation ran — the build or the transport failed (not mainnet)",
+        message_binding=None,
+        binding_strength=None,
+        lookup_resolution=None,
+        network=UNKNOWN_NETWORK,
+        observed_slot=None,
+    )
 
 
 def _withheld(receipt: Receipt, reason: str) -> PreparedPlan:
