@@ -120,3 +120,73 @@ jobs:
           else
             echo "recall corpus not present on this ref (lands in the corpus PR)"
           fi
+
+  # The CODE GRAPH. Separate job because it needs node, not uv, and because it must never
+  # gate a merge on an advisory signal.
+  #
+  # WHY THIS EXISTS. `graphify-out/` is gitignored, so the graph is rebuilt locally by
+  # whoever needs it — and a locally-rebuilt artifact is exactly the kind that goes stale
+  # without anyone noticing. It bit us: an index two days old reported `gate_surface_tool`
+  # and `verify_handoff` as having no production callers. Both were true when it was built
+  # and false by the time it was read, and the wrong answer was indistinguishable from a
+  # right one. This job cannot keep a developer's local copy fresh (nothing is committed to
+  # compare against), so it does the two things CI actually can:
+  #
+  #   1. proves the extraction still works on main — catching the day it silently breaks,
+  #      which is the failure that would make every future graph answer quietly wrong;
+  #   2. publishes a fresh graph as an artifact, so anyone can download today's rather
+  #      than trusting whatever their laptop built last week.
+  #
+  # `update --no-cluster` is deliberate: no LLM, no API key, deterministic, and fast.
+  # Clustering and community labelling are the parts that need a model; navigation and
+  # reachability do not.
+  code-graph:
+    name: code graph (advisory)
+    runs-on: ubuntu-latest
+    # Advisory ONLY. A structural insight must never block a correctness fix — and a gate
+    # nobody can turn off is a gate people learn to route around.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # graphify is a PYTHON tool on PyPI as `graphifyy` (double y) — not an npm package.
+      # The first version of this job assumed node and failed with `graphify: command not
+      # found`, which is what guessing an ecosystem instead of checking one costs.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install graphify
+        run: |
+          uv tool install graphifyy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Fail loudly here rather than three steps later with a confusing error.
+      - name: Confirm graphify is on PATH
+        run: graphify --help > /dev/null
+
+      # Re-extract from the code that is actually on this ref. Fails loudly if extraction
+      # breaks; that failure is the signal worth having.
+      - name: Rebuild the graph
+        run: graphify update . --no-cluster
+
+      # Same-endpoint edge collapse silently merges distinct relationships into one, which
+      # would make `affected` and `path` answer confidently and wrongly — the exact class
+      # of defect this repo keeps finding in its own controls.
+      - name: Diagnose edge collapse
+        run: graphify diagnose multigraph --json || true
+
+      # Cohesion signal, printed not enforced. AgentApiClient was degree 526 against a
+      # next-highest of 164 when this landed; that is a fact worth seeing on every merge,
+      # not a rule worth failing on.
+      - name: Architectural hubs
+        run: graphify god-nodes --top 10 || true
+
+      - name: Publish the graph
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-graph-${{ github.sha }}
+          path: graphify-out/graph.json
+          retention-days: 14
+          if-no-files-found: warn
