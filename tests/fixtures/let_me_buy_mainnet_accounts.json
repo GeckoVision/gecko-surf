@@ -1,0 +1,185 @@
+{
+  "_note": "Recorded truth: what mainnet ACTUALLY executed for let_me_buy make_purchase. Control-plane invariant #1 (CLAUDE.md) \u2014 this file carries ONLY a signature, the instruction index within that transaction, and the ordered account pubkeys of that one instruction. No response body, no logs, no pre/post balances, no amounts, no keys. Fetched read-only via getTransaction through gecko.rpc; regenerate with GECKO_CHAIN_REFETCH=1 (see tests/test_let_me_buy_chain_agreement.py).",
+  "transactions": [
+    {
+      "signature": "5cjBs5VE8WVVctG2EoUkYiRkW92sXkoT4YsNxszWC9CE3sK7triTJ5vnY6TrcQ2BRPYUtWsd3LtTnyieUfn8Hw2Y",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "3HrXPry37q5bcaa5C3m543bHLShpMxu7LF4KbRjBJN4i",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "354WAM71nFwmfHu3gfwPo66SudD6hXRBqg8hpzzbCjRk",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "4yBoPqPc6YqPQjEeC7RGXtgCH9XG9zyx7CXYQ4WdTijbrLWDvE8Yo4eKFU4JAannDtcZJY4BdJN9J1J6mnmrsrsv",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "3GvCjqxuy5KBuyLRL4f9SKpJrETMNhM6FP4fXBpTzzQJVDW6tXvpfAovy4zFn3j4fSMh2VeJ8VAdxWVuak5Jwi5R",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "3MM7QMLzpoZNcN2JSnBcSxDiWeDWJgbMHe7pHNcGfw6EAKXLTz5kEuAwg6pbxCnVgTzjBFfcEFFo1BQs2RVGcHwb",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "zXsDSEQtZt24FkT4eeNpiu4aCB1HXUKPKCeEG291CdHPj6NnfhZzu1zkvvunrCBu7ei2uhoRtmytMDMD9kXF5C8",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "o6Da6NZQe4DFag8VNEGHqCY3zuYocfdWT7n7Z7tqNbAJFBg69pNsCSiN51HeDuouW6T6XQeHicVZaWrpsdRFSi9",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "3VrHHuzi2gC5QjnXBdWRAb5nhDkEPowVuZBnMNCqac8Ty2NeuykAQm7GA44qXfUt5TzCL5yQH4Ussi6nvKqpDi2u",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "4QBnD6Yc6sGYzeCVmbi9CpJoZdRfjBEtwMRt8XWVdjpeXwBrM2ApQmHKUACTvX2t3FNxyDqErZNDTY3ifuwE8iRj",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "2NBodoD8VNg1wqUXaxNQJUKTpZ9gkmM445d9NZFXLygaYuxtDyDQsH2MSp8Mdd3BYHci9Q6EPMaCJBGBQWaP5a1B",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "33NkTQ5uJL85AtpsLMbWJu9L1PT9dKA4jEm5bFW9b2TpKcP7pb3br2up1KiZWmrzBzyPHvWS98rEwpKv7ac3WLW1",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "3i92aBEYsbHBotKcpaB8SxWDWEULp2SuQcqyeShY8sDCzFWQq4MLaN6URreG4QdBF3qRGR3eSYpqQR72kD2wAMrs",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    },
+    {
+      "signature": "5XHQCMgbN3uBQpgA7HJJNsC6S1r2b4QHNcvturPn9EoEV1FMSJCExcmrMff2m36vyDeTrw5XR57VqBQTp4RNyCrM",
+      "instruction_index": 0,
+      "accounts": [
+        "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy",
+        "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB",
+        "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+      ]
+    }
+  ]
+}
