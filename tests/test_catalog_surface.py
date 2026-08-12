@@ -41,9 +41,16 @@ def _surface(extra: dict[str, bytes] | None = None) -> OrquestraCatalogSurface:
 # --- duck-typed MCP surface -----------------------------------------------------
 
 
-def test_surface_lists_the_three_catalog_tools() -> None:
+def test_surface_lists_the_catalog_tools() -> None:
     names = [t["name"] for t in _surface().list_tools()]
-    assert names == ["find_start", "list_programs", "comprehend_program"]
+    assert names == [
+        "find_start",
+        "list_programs",
+        "comprehend_program",
+        # The pre-flight: it plans and verifies, and hands back UNSIGNED bytes. Its own
+        # boundary is pinned in tests/test_prepare_purchase_tool.py.
+        "prepare_purchase",
+    ]
 
 
 def test_find_start_tool_routes_the_pump_intent() -> None:
