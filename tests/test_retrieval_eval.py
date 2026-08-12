@@ -9,6 +9,7 @@ intent text.
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -24,6 +25,7 @@ from gecko.find_start import (
 )
 from gecko.retrieval_eval import (
     EVAL_LIMIT,
+    SERVE_LIMIT,
     GoldenRow,
     GoldenSetError,
     _gold_rank,
@@ -445,6 +447,80 @@ def test_the_floors_are_exact_fractions_not_rounded_literals() -> None:
     )
     assert 0.9091 > 30 / 33, (
         "0.9091 rounds UP — `recall@3 >= 0.9091` is False at parity"
+    )
+
+
+# --- R-2: wrong-instruction accepts, at the limit production serves --------------
+
+
+def test_wrong_instruction_accepts_is_zero_at_the_limit_production_serves() -> None:
+    """R-2. A metric that had to be BUILT — it was a name in a plan, not a symbol.
+
+    A ceiling of 0 is meaningful here rather than aspirational: the router currently never
+    offers the wrong instruction FIRST on the right program, for any of the 30
+    instruction-level golden rows, at either limit. So any change that starts doing so
+    fires this immediately.
+
+    Recall cannot express the same thing. Recall asks where the gold ranked and is
+    satisfied by a rank-2 hit even when the FIRST actionable offer would execute a
+    different instruction on the same program — which is precisely the call an agent
+    following "first-call-correct" would make.
+    """
+    report = evaluate_golden()
+    assert report.directional == 30, "the denominator moved — re-derive the ceiling"
+    assert report.wrong_instruction_accepts == 0, (
+        "the first actionable offer on the right program is the wrong action for "
+        f"{report.wrong_instruction_accepts} row(s)"
+    )
+
+
+def test_the_metric_is_read_at_serve_limit_not_eval_limit() -> None:
+    """SERVE_LIMIT is what production gives an agent; EVAL_LIMIT is deeper by design."""
+    assert SERVE_LIMIT == 5
+    assert EVAL_LIMIT == 10
+    from gecko.find_start import find_start as _fs
+
+    assert inspect.signature(_fs).parameters["limit"].default == SERVE_LIMIT, (
+        "SERVE_LIMIT must track find_start's production default"
+    )
+
+
+def test_the_router_refuses_at_serve_limit_what_it_serves_at_eval_limit() -> None:
+    """Why the shallow call has to be MADE, not truncated from the deep one.
+
+    The floor is limit-sensitive, so ``find_start(intent, limit=10).starts[:5]`` is not
+    ``find_start(intent, limit=5).starts``. This is not a corner case: 7 of the 46 golden
+    rows differ between the two, and for at least one the router REFUSES at 5 (
+    ``no_start``) while serving a start at 10.
+
+    The consequence is the honest reading of the R-2 finding: every rank in the report
+    above is measured at a depth no agent is given, so the report is systematically more
+    optimistic than production. This test pins that gap so it cannot widen unnoticed, and
+    it is the reason :func:`count_wrong_instruction_accepts` re-queries at SERVE_LIMIT.
+    """
+    rows = load_golden(default_golden_text())
+    truncation_differs = 0
+    refused_shallow_served_deep = []
+
+    for row in rows:
+        shallow = find_start(row.intent, limit=SERVE_LIMIT)
+        deep = find_start(row.intent, limit=EVAL_LIMIT)
+        shallow_keys = [(p.program, p.instruction, p.kind) for p in shallow.starts]
+        deep_prefix = [
+            (p.program, p.instruction, p.kind) for p in deep.starts[:SERVE_LIMIT]
+        ]
+        if shallow_keys != deep_prefix or shallow.no_start != deep.no_start:
+            truncation_differs += 1
+        if shallow.no_start and not deep.no_start:
+            refused_shallow_served_deep.append(row.intent)
+
+    assert truncation_differs, (
+        "truncation now equals a shallow call — if the floor stopped being "
+        "limit-sensitive, count_wrong_instruction_accepts can stop re-querying"
+    )
+    assert refused_shallow_served_deep, (
+        "no row is refused at SERVE_LIMIT but served at EVAL_LIMIT — the "
+        "eval-vs-production gap this pins has closed, which is good news to record"
     )
 
 
