@@ -1438,6 +1438,55 @@ def _tracked_lamports(value: Any) -> int | None:
     return None
 
 
+def _arrays_said_nothing(report: TokenDeltaReport | None) -> bool:
+    """Did the balance arrays decline to state a token leg at all?
+
+    Two cases, and NEITHER is "nothing moved": the key was absent (``None`` — not tracked),
+    or it was present and null (``balances-null`` — the node declining a read). An
+    ``unmeasurable`` report for any OTHER reason is the arrays having spoken and said "we
+    saw something we will not reduce to a number", and that answer stands: a Token-2022
+    transfer-fee refusal must not be talked out of by an instruction sum that cannot see
+    the fee either.
+    """
+    if report is None:
+        return True
+    return report.status == "unmeasurable" and all(
+        refusal.reason == "balances-null" for refusal in report.refusals
+    )
+
+
+def _traced_token_delta(
+    built: Any, value: Mapping[str, Any]
+) -> TokenDeltaReport | None:
+    """The ``instruction-trace`` fallback, or ``None`` if it cannot be attempted.
+
+    Needs the FEE PAYER, decoded locally from the same bytes that were simulated — never
+    read off the response, which is the untrusted side of this exchange and would be
+    choosing the account its own numbers get attributed to.
+
+    Also counts TOP-LEVEL token instructions, because ``innerInstructions`` carries only
+    CPIs and a top-level transfer would otherwise read as zero. It is a count rather than a
+    sum on purpose: the amount lives in argument bytes ``DecodedInstruction`` discards by
+    design, so the honest thing to pass on is "there were some", which refuses.
+    """
+    try:
+        from .txbind import decode_message
+
+        decoded = decode_message(built.tx, encoding=built.encoding)
+    except Exception:  # noqa: BLE001 - an undecodable message earns no fallback, not a guess
+        return None
+    top_level = sum(
+        1
+        for instruction in decoded.instructions
+        if instruction.program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID)
+    )
+    return parse_token_deltas_from_instructions(
+        value,
+        fee_payer=decoded.fee_payer,
+        top_level_token_instructions=top_level,
+    )
+
+
 def simulate(
     plan: Mapping[str, Any],
     *,
@@ -1498,6 +1547,11 @@ def simulate(
         # — and inherit its ~150-slot expiry along with it.
         "replaceRecentBlockhash": replace_blockhash,
         "commitment": "processed",
+        # The CPI trace, for the FALLBACK basis only. Asked for unconditionally because a
+        # node cannot be asked for it retroactively: by the time the balance arrays are
+        # discovered to be absent, this simulation is over. It costs a larger response and
+        # buys the difference between a hard refusal and a measurement.
+        "innerInstructions": True,
     }
     if tracked:
         sim_config["accounts"] = {"encoding": "base64", "addresses": tracked}
@@ -1554,6 +1608,16 @@ def simulate(
     # NOT TRACKED, never zero. A Token-2022 mint whose extensions were not read, or whose
     # extensions make the delta not the debit, comes back REFUSED rather than numbered.
     token_delta = parse_token_deltas(value, mint_extensions=mint_extensions)
+    # THE ARRAYS WIN WHENEVER THEY SPEAK. The instruction trace is consulted only where the
+    # arrays said nothing at all — absent, or present and null — which is a hard refusal
+    # downstream today. It therefore can only move refuse -> (measure | refuse), and never
+    # overrides an answer: an arrays refusal for any other reason is the strong basis
+    # saying "we saw something we will not put a number on", and an instruction sum that
+    # cannot see it either has no standing to disagree.
+    if _arrays_said_nothing(token_delta):
+        traced = _traced_token_delta(built, value)
+        if traced is not None:
+            token_delta = traced
 
     # SUPERSEDED by token_delta and permanently None. A bare int carries no mint and no
     # decimals, so it cannot be compared against anything safely; leaving it fillable

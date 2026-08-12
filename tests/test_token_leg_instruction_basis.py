@@ -21,6 +21,7 @@ import pytest
 from gecko.simulate import (
     TOKEN_2022_PROGRAM_ID,
     TOKEN_PROGRAM_ID,
+    TokenDeltaRefusal,
     TokenDeltaReport,
     TokenDeltaUnmeasurable,
     TokenMovement,
@@ -389,3 +390,246 @@ def test_the_default_basis_is_the_strong_one() -> None:
     assert TokenDeltaReport(status="measured", movements=(), refusals=()).basis == (
         "token-balances"
     )
+
+
+# ----------------------------------------------------------------------------------------
+# "wired" is not "reaches the caller" — the selection rule, through simulate()
+# ----------------------------------------------------------------------------------------
+
+
+def test_the_arrays_win_whenever_they_speak() -> None:
+    """Constraint 1. An arrays refusal must not be talked out of by an instruction sum.
+
+    A Token-2022 transfer-fee refusal is the arrays saying "we saw something we will not
+    reduce to a number". The instruction path cannot see that fee either, so letting it
+    answer here would replace a correct refusal with a confident wrong number.
+    """
+    from gecko.simulate import _arrays_said_nothing
+
+    spoke = TokenDeltaReport(
+        status="unmeasurable",
+        movements=(),
+        refusals=(
+            TokenDeltaRefusal(reason="transfer-fee", mint=MINT, detail="fee extension"),
+        ),
+    )
+    assert _arrays_said_nothing(spoke) is False
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        None,
+        TokenDeltaReport(
+            status="unmeasurable",
+            movements=(),
+            refusals=(
+                TokenDeltaRefusal(reason="balances-null", mint=None, detail="declined"),
+            ),
+        ),
+    ],
+    ids=["key-absent", "present-and-null"],
+)
+def test_only_an_absent_or_declined_arrays_read_yields_to_the_fallback(
+    report: TokenDeltaReport | None,
+) -> None:
+    """The two cases that are NOT "nothing moved", and the only two the fallback may cover."""
+    from gecko.simulate import _arrays_said_nothing
+
+    assert _arrays_said_nothing(report) is True
+
+
+def test_a_measured_zero_from_the_arrays_is_not_yielded_to_the_fallback() -> None:
+    """An observed zero is an ANSWER. Re-deriving it from instructions could only weaken it."""
+    from gecko.simulate import _arrays_said_nothing
+
+    assert (
+        _arrays_said_nothing(
+            TokenDeltaReport(status="measured", movements=(), refusals=())
+        )
+        is False
+    )
+
+
+def test_the_fee_payer_is_decoded_locally_and_never_read_off_the_response() -> None:
+    """The node must not choose which account its own numbers get attributed to.
+
+    ``_traced_token_delta`` takes the payer from the simulated BYTES. If it read a field
+    off the response instead, a node could name the payer as the authority of every
+    movement and every drain would attribute cleanly.
+    """
+    import inspect
+
+    from gecko.simulate import _traced_token_delta
+
+    source = inspect.getsource(_traced_token_delta)
+    assert "decode_message" in source
+    assert "built.tx" in source
+    # No response field is consulted for identity — only the instruction list is read from
+    # ``value``, and that happens inside the parser.
+    for forbidden in ('value.get("feePayer")', 'value["feePayer"]', "accountKeys"):
+        assert forbidden not in source
+
+
+# ----------------------------------------------------------------------------------------
+# F1e — the falsifier where it actually has to hold: simulate() -> Receipt -> the GATE
+#
+# Everything above tests the parser. A parser that refuses correctly and a signing path
+# that authorizes anyway is the exact failure this project keeps naming: "wired" is not
+# "reaches the caller". These two run the whole seam, and they are a matched pair — the
+# refusal is only meaningful because the counterexample beside it is authorized on the
+# same wiring, the same policy and the same ledger.
+# ----------------------------------------------------------------------------------------
+
+
+_DEX = "Vote111111111111111111111111111111111111111"
+_DEST = "SysvarRent111111111111111111111111111111111"
+_SWAP_DISC = bytes([0xA3, 0x34, 0xC8, 0xE7, 0x8C, 0x03, 0x45, 0xBA])
+
+
+def _unsigned_tx() -> str:
+    """One allowlisted NON-token top-level call, fee payer ``PAYER``, base64, unsigned.
+
+    Non-token on purpose: the drain under test must exist ONLY as a CPI, which is the
+    whole reason the balance arrays are the normal way to see it and the instruction trace
+    is a fallback. A top-level token instruction refuses for a different reason and would
+    make this pass for the wrong one.
+    """
+    import base64
+
+    from solders.hash import Hash
+    from solders.instruction import AccountMeta, Instruction
+    from solders.message import Message
+    from solders.pubkey import Pubkey
+    from solders.transaction import Transaction
+
+    payer = Pubkey.from_string(PAYER)
+    metas = [
+        AccountMeta(payer, is_signer=True, is_writable=True),
+        AccountMeta(Pubkey.from_string(_DEST), is_signer=False, is_writable=True),
+    ]
+    instruction = Instruction(Pubkey.from_string(_DEX), _SWAP_DISC + b"\x10" * 8, metas)
+    message = Message.new_with_blockhash([instruction], payer, Hash.default())
+    return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
+
+
+def _receipt_from_inner(*instructions: Any) -> Any:
+    """Run the REAL ``simulate()`` over a response that has CPIs and no balance arrays.
+
+    No ``preTokenBalances``/``postTokenBalances`` key at all — the not-tracked state that
+    stock ``simulateTransaction`` returns and the only state the fallback may cover.
+    """
+    from gecko.networks import UNKNOWN_NETWORK
+    from gecko.simulate import BuiltTx, simulate
+
+    encoded = _unsigned_tx()
+    value = {
+        "err": None,
+        "unitsConsumed": 42_000,
+        "logs": ["Program log: swap", "Program success"],
+        "accounts": [{"lamports": 900}],
+        "innerInstructions": [{"index": 0, "instructions": list(instructions)}],
+    }
+
+    def rpc(_url: str, method: str, _params: list[Any]) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return {"result": {"value": {"lamports": 1_000}}}
+        if method == "simulateTransaction":
+            return {"result": {"value": value}}
+        raise AssertionError(f"unexpected method {method}")
+
+    return (
+        encoded,
+        simulate(
+            {"feePayer": PAYER, "accounts": {}, "args": {}},
+            rpc_url="http://127.0.0.1:8899",
+            rpc_call=rpc,
+            build_call=lambda _plan: BuiltTx(tx=encoded, encoding="base64"),
+            track=[PAYER],
+            network=UNKNOWN_NETWORK,
+        ),
+    )
+
+
+def _authorizing_gate() -> Any:
+    """A policy that says YES to this exact transaction, so only the token leg can refuse.
+
+    Every other predicate is satisfied deliberately: the program and discriminator are
+    allowlisted, the destination is allowlisted, the mint is capped generously enough to
+    admit the drain if an amount for it ever reached the caps. If this gate refuses, it
+    refused on the token leg.
+    """
+    from gecko.spend_policy import (
+        AllowedInstruction,
+        InMemorySpendLedger,
+        SpendPolicy,
+        SpendPolicyGate,
+        TokenCap,
+        TokenCaps,
+    )
+
+    return SpendPolicyGate(
+        policy=SpendPolicy(
+            authorized=True,
+            per_transaction_cap_lamports=100_000_000,
+            hourly_cap_lamports=1_000_000_000,
+            daily_cap_lamports=1_000_000_000,
+            max_transactions_per_day=5,
+            allowed_instructions=frozenset(
+                {AllowedInstruction(program_id=_DEX, discriminator=_SWAP_DISC)}
+            ),
+            allowed_destinations=frozenset({_DEST}),
+            token_caps=TokenCaps.of(
+                (
+                    TokenCap(
+                        mint=MINT,
+                        decimals=6,
+                        per_transaction_raw=100_000_000,
+                        hourly_raw=100_000_000,
+                        daily_raw=100_000_000,
+                    ),
+                )
+            ),
+        ),
+        ledger=InMemorySpendLedger(),
+    )
+
+
+def test_the_cpi_drain_reaches_the_gate_as_a_refusal_and_never_as_a_zero() -> None:
+    """F1e end to end. The delegate drain must come out of the SEAM unauthorized.
+
+    Without the authority check this is the shipped hazard in full: the report is
+    ``measured`` with no outflows, the gate reads an observed zero, zero passes every cap,
+    and a transaction that empties the payer's ATA is authorized for signing.
+    """
+    encoded, receipt = _receipt_from_inner(_checked(authority=DELEGATE))
+
+    assert receipt.token_delta is not None
+    assert receipt.token_delta.basis == "instruction-trace", (
+        "the arrays were absent, so this number can only have come from the CPI trace"
+    )
+    assert receipt.token_delta.status == "unmeasurable"
+
+    verdict = _authorizing_gate().authorize(encoded, receipt, now=1_000.0)
+    assert verdict.authorized is False
+    assert verdict.code == "amount-unresolvable"
+
+
+def test_the_same_wiring_authorizes_when_the_payer_is_the_authority() -> None:
+    """The counterexample. Without it, the test above passes on a gate that refuses all.
+
+    Same transaction, same policy, same fallback path, one field different — and now a
+    real 25 USDC outflow is priced and charged. This is what proves F1 RECOVERED a
+    measurement rather than merely adding a new way to say no.
+    """
+    encoded, receipt = _receipt_from_inner(_checked(authority=PAYER))
+
+    assert receipt.token_delta is not None
+    assert receipt.token_delta.basis == "instruction-trace"
+    assert receipt.token_delta.status == "measured"
+
+    verdict = _authorizing_gate().authorize(encoded, receipt, now=1_000.0)
+    assert verdict.authorized is True, verdict.reason
+    assert [(spend.mint, spend.raw) for spend in verdict.outflow_tokens] == [
+        (MINT, 25_000_000)
+    ]
