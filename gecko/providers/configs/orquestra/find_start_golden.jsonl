@@ -36,3 +36,11 @@
 {"intent": "list a new product in my shop", "gold_program": "let_me_buy", "gold_instruction": "add_product", "note": "'shop' names nothing in any card — the card says store"}
 {"intent": "mark the order as delivered to the customer", "gold_program": "let_me_buy", "gold_instruction": "mark_as_delivered", "note": "the second step of the purchase chain; 'order'/'customer' are not card terms"}
 {"intent": "set up a storefront so people can pay me by qr code", "gold_program": "let_me_buy", "gold_instruction": "initialize", "note": "true paraphrase of initialize — 'set up'/'storefront'/'qr'"}
+{"intent": "buy a house", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'buy' names pumpfun's instruction AND let_me_buy's api_id. Nothing on chain sells houses — the floor must reject it"}
+{"intent": "sell my car", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'sell' names pumpfun's instruction. A car is not an SPL token"}
+{"intent": "deliver my mail", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'deliver' folds out of let_me_buy's mark_as_delivered. Postal mail is not a store receipt"}
+{"intent": "purchase a coffee machine on amazon", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'purchase' names let_me_buy's make_purchase. An off-chain retailer is not a let_me_buy storefront"}
+{"intent": "add a product to my shopify store", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries identity terms: 'add'/'product'/'store' name let_me_buy's add_product. A hosted SaaS catalog is not an on-chain store account"}
+{"intent": "swap my shift with a coworker", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'swap' names meteora's instruction. A work rota is not a DLMM pool"}
+{"intent": "buy groceries for the week", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'buy'. Groceries are not tokens and no wired program serves them"}
+{"intent": "sell my old laptop to a coworker", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'sell'. A second-hand laptop sale is not a bonding-curve exit"}
