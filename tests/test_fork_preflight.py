@@ -15,6 +15,7 @@ is the FIRST deliverable; the surfpool run is the last check, never the debugger
 from __future__ import annotations
 
 import ast
+import re
 import base64
 from pathlib import Path
 from typing import Any
@@ -501,6 +502,60 @@ def _code_identifiers(path: Path) -> set[str]:
     return identifiers
 
 
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """The ``id()`` of every string constant that is a DOCSTRING, so a scan can skip them.
+
+    Excluding docstrings is load-bearing, not tidiness: ``gecko/fork_preflight.py``
+    legitimately names ``sendTransaction`` in its module docstring to promise it never
+    issues one. A scan that cannot tell prose from code is RED on unmutated main, which
+    makes it a guard nobody can keep.
+    """
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+        ):
+            continue
+        first = next(iter(node.body), None)
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            docstrings.add(id(first.value))
+    return docstrings
+
+
+def _code_string_words(path: Path) -> set[str]:
+    """Every WORD appearing in a string literal the module's code evaluates, docstrings
+    excluded.
+
+    ``_code_identifiers`` walks names, attributes and aliases — so a banned method moved
+    into a string (``_METHOD = "sendTransaction"``) and referenced only through the
+    variable was invisible to it. The identifier scan saw ``_METHOD``; nothing saw the
+    value.
+
+    Split on non-identifier characters rather than compared whole, so a name embedded in a
+    larger literal (``{"method": "sendTransaction"}``, an f-string fragment) is still seen.
+    Matched per WORD rather than by substring because the forbidden set contains ``sign``:
+    a substring test fires on ``signature``, ``design`` and ``assign``, which is why the
+    raw whole-file substring scan is RED on unmutated main and could never be kept.
+    Residual, named rather than left to be discovered: a literal assembled from fragments
+    (``"send" + "Transaction"``) still passes. That is a deliberate act, not an idiom.
+    """
+    tree = ast.parse(path.read_text())
+    skip = _docstring_nodes(tree)
+    words: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in skip
+        ):
+            words.update(re.split(r"[^0-9A-Za-z_]+", node.value))
+    return words - {""}
+
+
 def test_no_sign_or_broadcast_path_in_the_preflight_runner() -> None:
     # S5: the banned-token guard, extended to cover this module and its thin script.
     # "State-advancing" means simulateTransaction plus carried-forward account overrides
@@ -527,6 +582,11 @@ def test_no_sign_or_broadcast_path_in_the_preflight_runner() -> None:
     for path in sources:
         leaked = forbidden & _code_identifiers(path)
         assert not leaked, f"{path.name} must not reference {sorted(leaked)} in code"
+        # A guard that only reads identifiers is escaped by moving the name into a value.
+        in_literals = forbidden & _code_string_words(path)
+        assert not in_literals, (
+            f"{path.name} must not carry {sorted(in_literals)} in a string literal"
+        )
 
 
 def test_the_runner_persists_nothing() -> None:
