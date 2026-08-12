@@ -38,7 +38,12 @@ from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.signer import SignerProfile, SigningAttestation, TransactionSigner  # noqa: E402
 from gecko.simulate import BuiltTx  # noqa: E402
-from gecko.spend_policy import InMemorySpendLedger, SpendPolicyGate  # noqa: E402
+from gecko.spend_policy import (  # noqa: E402
+    AdvisorySpendLedger,
+    FileSpendLedger,
+    InMemorySpendLedger,
+    SpendPolicyGate,
+)
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -115,6 +120,35 @@ def http_build_call(request: object) -> BuiltTx:
     )
 
 
+#: Where a rolling cap remembers itself when nobody says otherwise. Under the user's own
+#: config directory rather than a temp path, because a budget that a reboot clears is not
+#: a budget.
+DEFAULT_LEDGER_PATH = str(Path.home() / ".gecko" / "spend-ledger.jsonl")
+
+#: The one value that opts OUT of durability. Spelled like a sentinel so it cannot be
+#: reached by a typo in a path.
+EPHEMERAL_LEDGER = ":memory:"
+
+
+def build_ledger(path: str | None) -> AdvisorySpendLedger:
+    """The ledger for this run. Durable unless the caller explicitly asks otherwise.
+
+    The polarity is the point. A rolling cap kept in memory is not a cap — restart the
+    process and the day's budget is new, which on a rolling deploy means the daily cap
+    resets every time the task is replaced. So durability is what you get by saying
+    nothing, and the ephemeral ledger has to be named.
+
+    ONE HONEST LIMIT: this is a FILE. It survives a process restart, and on a host with
+    persistent storage it survives a reboot. On ECS Fargate the task's disk does NOT
+    survive task REPLACEMENT, so a rolling deploy still starts a fresh window unless this
+    path points at persistent storage (EFS) or the ledger is moved to a shared store. The
+    file form fixes the crash-loop; it does not by itself fix the deploy.
+    """
+    if path == EPHEMERAL_LEDGER:
+        return InMemorySpendLedger()
+    return FileSpendLedger(path=path or DEFAULT_LEDGER_PATH)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rpc-url", required=True)
@@ -128,6 +162,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--keypair", type=Path, required=True)
+    parser.add_argument(
+        "--ledger",
+        default=None,
+        help=(
+            "Where the rolling spend windows are remembered. Defaults to "
+            f"{DEFAULT_LEDGER_PATH} so a restart does not hand the agent a fresh daily "
+            f"cap. Pass {EPHEMERAL_LEDGER!r} for an in-process ledger that forgets — "
+            "fine for a one-shot run, never for anything long-lived."
+        ),
+    )
     parser.add_argument("--store", default="jonasbar")
     parser.add_argument("--product", default="Water")
     parser.add_argument("--table", type=int, default=11)
@@ -168,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             usdc_per_transaction_raw=args.max_usdc_raw,
         ),
-        ledger=InMemorySpendLedger(),
+        ledger=build_ledger(args.ledger),
     )
     signer = TransactionSigner(
         backend=backend,
