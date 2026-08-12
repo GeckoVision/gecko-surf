@@ -206,6 +206,34 @@ def test_a_known_but_unpriceable_instruction_refuses(kind: str) -> None:
     assert report.refusals[0].reason == "instruction-not-priceable"
 
 
+@pytest.mark.parametrize("kind", ["transfer", "burn", "closeAccount"])
+def test_an_unpriceable_type_is_refused_even_when_the_NODE_supplies_the_missing_fields(
+    kind: str,
+) -> None:
+    """The allowlist keys on the TYPE, and this is what proves it.
+
+    Written because the test above turned out to be vacuous: it omits ``mint`` and
+    ``tokenAmount``, so adding ``transfer`` to the priceable set left it green — the
+    refusal arrived by the missing-field path instead, with the same reason code. A
+    mutation that widened the allowlist was invisible.
+
+    It also encodes a real property rather than just closing a test hole. Some RPC
+    providers ENRICH a parsed ``transfer`` with the mint they looked up server-side.
+    Pricing that would mean pricing a movement from a value the NODE supplied rather than
+    one the instruction states — a node promoted to a trust root of a spend decision. The
+    type is refused no matter how complete the object looks.
+    """
+    enriched = _checked(kind=kind)
+    report = parse_token_deltas_from_instructions(_value(enriched), fee_payer=PAYER)
+    assert report is not None
+    assert report.status == "unmeasurable", (
+        f"{kind} must be refused on its TYPE, even carrying a node-supplied mint and "
+        f"tokenAmount"
+    )
+    assert report.refusals[0].reason == "instruction-not-priceable"
+    assert report.instruction_outflows == ()
+
+
 def test_an_instruction_outside_the_closed_allowlist_refuses() -> None:
     """The allowlist is CLOSED. "We have not heard of it" is not "it moved nothing"."""
     report = parse_token_deltas_from_instructions(
