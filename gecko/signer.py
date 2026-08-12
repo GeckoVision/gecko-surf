@@ -133,7 +133,7 @@ from .credentials import KeyHandle
 from .handoff import SignerHandoff, verify_handoff
 from .networks import UNKNOWN_NETWORK, Network
 from .simulate import Receipt
-from .spend_policy import SpendPolicyGate
+from .spend_policy import SpendPolicyGate, SpendVerdict
 from .txbind import (
     BindingStrength,
     TxDecodeError,
@@ -211,10 +211,20 @@ class SignerRefused(Exception):
     signable, so the ``try/except`` a caller reaches for is not a bypass here.
     """
 
-    def __init__(self, reason: str, *, code: RefusalCode) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        code: RefusalCode,
+        verdict: SpendVerdict | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.code = code
+        #: The gate's own verdict when the SPEND policy is what refused, so a caller can
+        #: report the typed answer without asking the gate a second time. `None` for every
+        #: other refusal — there was no spend decision to carry.
+        self.verdict = verdict
 
 
 @dataclass(frozen=True)
@@ -272,6 +282,10 @@ class SignedTransaction:
     binding: str
     strength: BindingStrength
     network: Network
+    #: The spend verdict THIS signature was gated on. Published so a caller does not have
+    #: to ask the gate a second time to learn what it decided — a second consultation
+    #: reserves the budget twice and silently halves every rolling cap.
+    spend_verdict: SpendVerdict | None = None
 
 
 @runtime_checkable
@@ -445,6 +459,7 @@ class TransactionSigner:
                 f"the spend policy did not authorise these bytes [{verdict.code}]: "
                 f"{verdict.reason}",
                 code="spend-not-authorized",
+                verdict=verdict,
             )
 
         signed_raw = _ask_backend(backend, raw, attestation)
@@ -456,6 +471,7 @@ class TransactionSigner:
             binding=attested,
             strength=strength,
             network=receipt.network,
+            spend_verdict=verdict,
         )
 
     def _configuration(self) -> tuple[SigningBackend, SignerProfile]:

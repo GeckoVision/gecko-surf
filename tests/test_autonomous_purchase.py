@@ -235,7 +235,11 @@ class FakeBackend:
 
 @dataclass
 class RecordingLedger:
-    """Wraps the real ledger and counts how many times a spend was actually RESERVED."""
+    """Wraps the real ledger and counts how many times a spend was actually RESERVED.
+
+    ``authorizations`` counts distinct gate consultations: the ledger is READ once per
+    `authorize()` call, so a second consultation is visible here even when the reserve is
+    suppressed by a wrapper."""
 
     inner: InMemorySpendLedger = field(default_factory=InMemorySpendLedger)
     reserves: int = 0
@@ -429,3 +433,52 @@ def test_the_default_policy_names_usdc_in_raw_base_units() -> None:
     assert isinstance(policy.token_caps, TokenCaps)
     assert policy.max_transactions_per_day is not None
     assert policy.missing_fields() == ()
+
+
+@dataclass
+class _CountingGate:
+    """Delegates to a real gate and counts how many times it was CONSULTED.
+
+    The ledger cannot answer this question: `_ChargeOnceLedger` suppresses the second
+    reserve, so a ledger-based count reads 1 whether the gate was asked once or twice.
+    Counting the authorization itself is what distinguishes a fixed design from a
+    repaired symptom.
+    """
+
+    inner: SpendPolicyGate = None  # type: ignore[assignment]
+    ledger: Any = None
+    #: A LIST, not an int: the loop calls `replace()` on the gate, and a copy would carry
+    #: its own counter. The shared reference is what makes the second consultation visible.
+    seen: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.ledger is None and self.inner is not None:
+            self.ledger = self.inner.ledger
+
+    @property
+    def authorizations(self) -> int:
+        return len(self.seen)
+
+    def authorize(self, *args: Any, **kwargs: Any) -> Any:
+        self.seen.append("authorize")
+        return self.inner.authorize(*args, **kwargs)
+
+
+def test_the_gate_is_consulted_exactly_once_per_purchase() -> None:
+    """One purchase, one authorization — not two answers reconciled after the fact.
+
+    `_ChargeOnceLedger` made the double-charge harmless by replaying the first decision to
+    the second identical call. That is a repair, not a design: the budget was still asked
+    twice, and any future caller wiring the gate itself would reintroduce the bug the
+    wrapper exists to hide. The signer already computes a verdict; the fix is to publish
+    it, so there is exactly one authorization per purchase and nothing to reconcile.
+    """
+    counting = _CountingGate(inner=_gate())
+    outcome, _backend, _rpc, _builds = _run(gate=counting)
+
+    assert isinstance(outcome, PurchaseSettled)
+    assert counting.authorizations == 1, (
+        f"the gate was consulted {counting.authorizations} times for one purchase; "
+        "the signer's verdict must be reused, not recomputed"
+    )
+    assert outcome.verdict is not None and outcome.verdict.authorized is True
