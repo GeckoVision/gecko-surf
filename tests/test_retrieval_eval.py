@@ -15,8 +15,15 @@ from pathlib import Path
 
 import pytest
 
-from gecko.find_start import ChainPlan, FindStartResult, StartPoint, candidate_name
+from gecko.find_start import (
+    ChainPlan,
+    FindStartResult,
+    StartPoint,
+    candidate_name,
+    find_start,
+)
 from gecko.retrieval_eval import (
+    EVAL_LIMIT,
     GoldenRow,
     GoldenSetError,
     _gold_rank,
@@ -376,6 +383,170 @@ def test_surface_gold_rows_keep_their_ranks() -> None:
     assert by_intent["stake my tokens on ore"].gold_rank == 1
     assert by_intent["mine ore and claim the rewards"].gold_rank == 2
     assert by_intent["refund my contribution from a failed ico"].gold_rank == 1
+
+
+# --- the measured floors (R-3) ---------------------------------------------------
+#
+# main had NO retrieval tripwire. ``test_evaluate_golden_aggregates_are_consistent``
+# only asserts the metrics lie in [0, 1] and are ordered, which recall 0.0 satisfies —
+# so retrieval could collapse completely and the suite would stay green.
+#
+# Written as EXACT FRACTIONS, never as rounded decimal literals. The floors that were
+# drafted on the abandoned R2 branch were `0.7576` and `0.9091`, both rounded UP from
+# 25/33 = 0.757575… and 30/33 = 0.909090… and both compared with `>=`. They therefore
+# FAILED at exact parity with the very measurement they were derived from. A fraction
+# cannot round the wrong way, which removes the defect class rather than the instance.
+#
+# Measured on main at 15b5044, cold. Raising any of these is a real improvement and the
+# floor should be raised with it; lowering one is a regression that has to be argued.
+RECALL_AT_1_FLOOR = 25 / 33
+RECALL_AT_3_FLOOR = 30 / 33
+MRR_FLOOR = 5 / 6
+
+# The precision side. These 8 are AUTHORED, not accidental: e6a6b20 ("out-of-scope rows
+# that carry an identity term — 8/8 false-accept") committed them to measure what the
+# floor lets through when an out-of-scope intent shares a term with a wired card. A
+# ceiling, not a floor: the number must not grow unnoticed, and driving it DOWN is the
+# improvement.
+FALSE_ACCEPT_CEILING = 8
+
+
+def test_the_measured_retrieval_floors_hold() -> None:
+    """The tripwire main did not have. Exact fractions, so parity passes."""
+    report = evaluate_golden()
+
+    assert report.scoreable == 33, "the recall denominator moved — re-derive the floors"
+    assert report.recall_at_1 >= RECALL_AT_1_FLOOR, (
+        f"recall@1 regressed: {report.recall_at_1} < {RECALL_AT_1_FLOOR}"
+    )
+    assert report.recall_at_3 >= RECALL_AT_3_FLOOR, (
+        f"recall@3 regressed: {report.recall_at_3} < {RECALL_AT_3_FLOOR}"
+    )
+    assert report.mrr >= MRR_FLOOR, f"MRR regressed: {report.mrr} < {MRR_FLOOR}"
+    assert report.false_accepts <= FALSE_ACCEPT_CEILING, (
+        f"the floor got looser: {report.false_accepts} > {FALSE_ACCEPT_CEILING}"
+    )
+
+
+def test_the_floors_are_exact_fractions_not_rounded_literals() -> None:
+    """The defect that made the drafted floors fail at parity, forbidden directly.
+
+    Each floor must be EQUAL to the measurement it was derived from, not merely near it.
+    A rounded-up decimal (0.7576 > 25/33) passes a human read and then fails `>=` against
+    its own source measurement. This catches that at the point of authorship.
+    """
+    assert RECALL_AT_1_FLOOR == 25 / 33
+    assert RECALL_AT_3_FLOOR == 30 / 33
+    assert MRR_FLOOR == 5 / 6
+
+    # The specific literals that were drafted, and why they could not work.
+    assert 0.7576 > 25 / 33, (
+        "0.7576 rounds UP — `recall@1 >= 0.7576` is False at parity"
+    )
+    assert 0.9091 > 30 / 33, (
+        "0.9091 rounds UP — `recall@3 >= 0.9091` is False at parity"
+    )
+
+
+# --- R-1: a directional inverse must not come first ------------------------------
+
+INVERSES = {
+    "buy": "sell",
+    "sell": "buy",
+    "deposit": "withdraw",
+    "withdraw": "deposit",
+}
+
+
+def _inverse_outranks_gold(
+    starts: tuple[StartPoint, ...],
+    *,
+    program: str,
+    instruction: str,
+    inverse: str,
+) -> bool:
+    """Is the gold's directional inverse served ABOVE the gold itself?
+
+    Positions are taken over served STARTS only. A ``guess`` is below the floor by
+    definition and is not offered as a place to begin, so it cannot out-rank anything.
+    """
+    served = [
+        (point.program, point.instruction) for point in starts if point.kind == "start"
+    ]
+    gold_at = next(
+        (i for i, key in enumerate(served) if key == (program, instruction)), None
+    )
+    inverse_at = next(
+        (i for i, key in enumerate(served) if key == (program, inverse)), None
+    )
+    if gold_at is None or inverse_at is None:
+        return False
+    return inverse_at < gold_at
+
+
+def test_a_directional_inverse_never_outranks_the_gold() -> None:
+    """R-1. ``exit my position`` must not be answered with ``buy`` ranked above ``sell``.
+
+    The golden set has carried this case since it was authored — row 10, noted "must not
+    land on buy" — with nothing asserting it. Recall cannot catch it: recall only asks
+    where the gold ranked, so a router that served the inverse FIRST would still be
+    credited with a rank-2 hit at k=3.
+
+    Scoped to the ORDER, and to a directional inverse of the gold on the SAME program.
+    Two narrower choices, both deliberate:
+
+    * A different program ranking near the gold is ordinary competition, not an
+      inversion. Forbidding that would forbid the router working at all.
+    * Serving the inverse BELOW the gold is not forbidden here — and it does happen:
+      ``pumpfun/buy`` and ``pumpfun/sell`` are both served as ``kind == "start"`` for
+      both directions of this pair, identically at limit 5 and limit 10. That is a real
+      residual, named rather than left to be discovered: an agent that picks a
+      lower-ranked start can still invert the user's intent. Suppressing an already-
+      served start is a router behaviour change with its own blast radius, and not a
+      test's call to make. What is guarded here is the property that actually inverts an
+      answer — the wrong direction cannot come first.
+
+    Checked at limit 5, which is what production serves, and at ``EVAL_LIMIT``.
+    """
+    checked = 0
+    for limit in (5, EVAL_LIMIT):
+        for row in load_golden(default_golden_text()):
+            inverse = INVERSES.get(row.gold_instruction or "")
+            if row.gold_program is None or row.gold_instruction is None:
+                continue
+            if inverse is None:
+                continue
+            checked += 1
+            assert not _inverse_outranks_gold(
+                find_start(row.intent, limit=limit).starts,
+                program=row.gold_program,
+                instruction=row.gold_instruction,
+                inverse=inverse,
+            ), (
+                f"{row.intent!r} wants {row.gold_program}/{row.gold_instruction} "
+                f"but is served {row.gold_program}/{inverse} first, at limit {limit}"
+            )
+
+    assert checked, "no directional golden row was exercised — the guard is vacuous"
+
+
+def test_the_inversion_predicate_fires_when_the_order_flips() -> None:
+    """R-1's counterexample. A guard that has never been RED is not known to work.
+
+    The router does not invert today, so the inverted case is constructed: the same two
+    points with ``buy`` moved above ``sell``. That is the shape a ranking change would
+    produce, and it is what the guard above exists to refuse.
+    """
+    sell = _point("start", "pumpfun", "sell")
+    buy = _point("start", "pumpfun", "buy")
+    subject = {"program": "pumpfun", "instruction": "sell", "inverse": "buy"}
+
+    assert not _inverse_outranks_gold((sell, buy), **subject)  # as main serves it
+    assert _inverse_outranks_gold((buy, sell), **subject)  # the regression
+
+    # Below the floor is not an offered start, so it cannot out-rank the gold.
+    demoted = _point("guess", "pumpfun", "buy")
+    assert not _inverse_outranks_gold((demoted, sell), **subject)
 
 
 def test_evaluate_golden_aggregates_are_consistent() -> None:
