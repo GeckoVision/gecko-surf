@@ -5,13 +5,20 @@ this surface serves the exploration problem itself: an agent that knows nothing
 about 40+ instructions across N programs asks ``find_start`` with a plain intent
 and gets the exact starting point (see :mod:`gecko.find_start`). Alongside it:
 ``list_programs`` (the wired programs + one validated catalog page) and
-``comprehend_program`` (the D-A auto-comprehend path for anything unwired).
+``comprehend_program`` (the D-A auto-comprehend path for anything unwired), and
+``prepare_purchase`` (:mod:`gecko.prepare_purchase` — plan, verify, hand back the
+UNSIGNED bytes; the caller signs).
 
 Thin by design — parse arguments, call the package, format output. Duck-typed
 ``list_tools``/``call_tool`` like every other surface. Keyless, control plane
 only: nothing here derives against a chain, signs, or broadcasts; everything
 fetched from the catalog is UNTRUSTED input (validated + capped in
 :mod:`gecko.orquestra_client`).
+
+THIS SURFACE IS SERVED PUBLICLY AND UNAUTHENTICATED. Anything mounted here is
+reachable by anyone on the internet, which is why no tool on it may hold a key,
+produce a signature, or send a transaction — and why the one tool that touches
+transaction bytes hands them back unsigned.
 """
 
 from __future__ import annotations
@@ -20,6 +27,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
+from ..prepare_purchase import PREPARE_PURCHASE_TOOL, prepare_purchase_result
+from ..rpc import RpcCall
+from ..simulate import BuildCall
 
 __all__ = ["OrquestraCatalogSurface"]
 
@@ -30,15 +40,20 @@ MAX_FIND_START_PAGES = 2
 
 @dataclass
 class OrquestraCatalogSurface:
-    """Duck-typed MCP surface: ``list_programs`` + ``find_start`` + ``comprehend_program``.
+    """Duck-typed MCP surface: ``list_programs`` + ``find_start`` +
+    ``comprehend_program`` + ``prepare_purchase``.
 
     ``client`` is injectable for offline tests; ``None`` builds the default
     catalog client lazily (so serving stays possible with no network until a
-    tool actually needs the catalog).
+    tool actually needs the catalog). ``purchase_build_call`` and
+    ``purchase_rpc_call`` are the same idea for the purchase pre-flight's two
+    transports, so that path is falsifiable with no network at all.
     """
 
     client: OrquestraClient | None = None
     find_start_pages: int = 1  # catalog pages consulted per find_start call
+    purchase_build_call: BuildCall | None = None
+    purchase_rpc_call: RpcCall | None = None
 
     surface_id = "orquestra:catalog"
 
@@ -50,7 +65,12 @@ class OrquestraCatalogSurface:
     # -- MCP surface --------------------------------------------------------
 
     def list_tools(self, **_kwargs: Any) -> list[dict[str, Any]]:
-        return [_FIND_START_TOOL, _LIST_PROGRAMS_TOOL, _COMPREHEND_TOOL]
+        return [
+            _FIND_START_TOOL,
+            _LIST_PROGRAMS_TOOL,
+            _COMPREHEND_TOOL,
+            PREPARE_PURCHASE_TOOL,
+        ]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         args = arguments or {}
@@ -60,6 +80,8 @@ class OrquestraCatalogSurface:
             return self._list_programs(args)
         if name == "comprehend_program":
             return self._comprehend_program(args)
+        if name == "prepare_purchase":
+            return self._prepare_purchase(args)
         return {"error": f"unknown tool {name!r}"}
 
     # -- tools --------------------------------------------------------------
@@ -135,6 +157,19 @@ class OrquestraCatalogSurface:
         except (OrquestraClientError, ValueError) as exc:
             out["catalog"] = {"error": str(exc)}
         return out
+
+    def _prepare_purchase(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Transport only: the whole pre-flight lives in :mod:`gecko.prepare_purchase`.
+
+        Every refusal is already structured there, so there is nothing to decide here —
+        which is the point: a public front door that made its own policy decisions would
+        be a second place the boundary could be wrong.
+        """
+        return prepare_purchase_result(
+            args,
+            build_call=self.purchase_build_call,
+            rpc_call=self.purchase_rpc_call,
+        )
 
     def _comprehend_program(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..orquestra_comprehend import ComprehendError, comprehend_project
