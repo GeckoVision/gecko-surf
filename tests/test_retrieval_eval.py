@@ -332,3 +332,84 @@ def test_cli_eval_retrieval_bad_path_fails_loud(
 
     assert eval_retrieval_main(["--golden", "/nonexistent/golden.jsonl"]) == 2
     assert "eval-retrieval:" in capsys.readouterr().err
+
+
+# --- R2: the measured floors, and the false-accept split by branch ----------------
+
+# The tree this change landed on measured recall@1 0.7576 (25/33) and recall@3 0.9091
+# (30/33) with 8/12 false accepts. Those are the ACCEPTANCE FLOORS, fixed in advance:
+# a retrieval change may raise them and may not lower them. They are asserted as
+# inequalities, not equalities — pinning today's exact number would make every future
+# improvement a test failure, and pinning it as a ceiling is how a tuning pass quietly
+# becomes a contract.
+RECALL_AT_1_FLOOR = 0.7576
+RECALL_AT_3_FLOOR = 0.9091
+FALSE_ACCEPT_CEILING = 8
+
+
+def test_the_measured_retrieval_floors_hold() -> None:
+    report = evaluate_golden()
+    assert report.recall_at_1 >= RECALL_AT_1_FLOOR, (
+        f"recall@1 {report.recall_at_1:.4f} over {report.scoreable} wired-gold rows "
+        f"regressed below the {RECALL_AT_1_FLOOR} this change landed on"
+    )
+    assert report.recall_at_3 >= RECALL_AT_3_FLOOR, (
+        f"recall@3 {report.recall_at_3:.4f} over {report.scoreable} wired-gold rows "
+        f"regressed below the {RECALL_AT_3_FLOOR} this change landed on"
+    )
+    assert report.false_accepts <= FALSE_ACCEPT_CEILING, (
+        f"{report.false_accepts}/{report.out_of_scope} out-of-scope intents cleared "
+        f"the floor (was {FALSE_ACCEPT_CEILING}/{report.out_of_scope})"
+    )
+
+
+def test_false_accepts_are_reported_split_by_floor_branch() -> None:
+    """A single bundled false-accept figure hides WHICH branch admitted each row, and
+    the two branches carry different risk: ``named`` needs no corroboration at all.
+
+    Both figures carry their denominator by construction — ``BranchCount`` has no
+    rendering that omits it.
+    """
+    from gecko.retrieval_eval import (
+        false_accepts_admitted_by_corroboration,
+        false_accepts_admitted_by_name,
+    )
+
+    report = evaluate_golden()
+    by_name = false_accepts_admitted_by_name(report)
+    by_corroboration = false_accepts_admitted_by_corroboration(report)
+
+    assert by_name.denominator == report.out_of_scope
+    assert by_corroboration.denominator == report.out_of_scope
+    assert str(by_name) == f"named={by_name.count}/{report.out_of_scope}"
+
+    # Measured on the R1 out-of-scope block: `named` admits 8 of 12, `corroborated`
+    # 2 of 12 (both of those are also named). The `named` branch is doing essentially
+    # all of the damage — "buy a house" carries `buy`, which names BOTH pumpfun's
+    # instruction and let_me_buy's api_id. That is a floor finding, not a ranker one.
+    assert by_name.count == 8
+    assert by_corroboration.count == 2
+    assert by_name.count + by_corroboration.count >= report.false_accepts
+
+
+def test_the_floor_refuses_exactly_the_rows_it_refused_before() -> None:
+    """Pins WHAT the floor refuses, so any retrieval change that moves it fails loudly
+    here rather than showing up as a quiet aggregate shift.
+
+    These four out-of-scope intents share no term with any card, so they are refused
+    on the score-0 path. The other eight DO carry an identity term and are admitted —
+    that is the standing floor defect the R1 rows were authored to expose, recorded
+    here as it is, not asserted as acceptable.
+    """
+    report = evaluate_golden()
+    refused = {
+        o.row.intent
+        for o in report.rows
+        if o.row.gold_program is None and not o.admissions
+    }
+    assert refused == {
+        "flumbuzzle the quantum wombat",
+        "what is the weather in lisbon",
+        "send ten usdc to my friend's wallet",
+        "stake sol with a validator",
+    }

@@ -11,9 +11,10 @@ flagged gaps, and the execute pointer at Orquestra's builder.
 
 Design constraints (do not weaken):
 
-- **Lexical, no vectors.** Scoring reuses :mod:`gecko.catalog`'s overlap engine
-  (the same engine that routes API intents). The semantic gate stays closed;
-  misses are *instrumented* (categorical only — never the intent text) so the
+- **Lexical, no vectors.** Ranking is BM25F over the card's own fields
+  (:class:`_CardLens`) — IDF, TF-saturation, length normalization and per-field
+  weights, all deterministic and offline. The semantic gate stays closed; misses
+  are *instrumented* (categorical only — never the intent text) so the
   lexical-vs-semantic evidence gate gets data instead of a guess.
 - **No fabrication.** Below the retrieval floor the answer is "no start found",
   with the closest candidates labeled GUESSES — never dressed up as starts.
@@ -27,13 +28,15 @@ Design constraints (do not weaken):
 from __future__ import annotations
 
 import json
+import math
+from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from importlib import resources
 from typing import Any, Callable, Literal, Mapping, Sequence
 
-from .catalog import Catalog, _tokens
+from .catalog import _token_list, _tokens
 from .ingest import Operation
-from .lexnorm import STOPWORDS, fold_tokens, normalize_query
+from .lexnorm import STOPWORDS, fold_token, fold_tokens, normalize_query
 from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
 from .program_graph import chain_order_with_cycle, derivation_order_with_cycle
@@ -55,7 +58,9 @@ __all__ = [
     "StartPoint",
     "CatalogCandidate",
     "CandidateRecord",
+    "FloorAdmission",
     "FloorKind",
+    "floor_admission",
     "MissCause",
     "MissRecord",
     "MissLogger",
@@ -1241,6 +1246,45 @@ def _distinguishing_terms(q_tokens: set[str], cards: Sequence["_Card"]) -> set[s
     return {term for term, count in frequency.items() if count <= ceiling}
 
 
+# WHICH branch of the retrieval floor admitted a card as a runnable start. CLOSED, and
+# reported rather than aggregated: a single "false accepts" figure hides which branch
+# moved, and the two branches carry different risk. ``named`` says the caller used a
+# term that NAMES the program or the instruction; ``corroborated`` says two independent
+# distinguishing terms agreed. ``both`` is not a stronger verdict, it is a fact about
+# the evidence — collapsing it into either branch would double-count or under-count it.
+FloorAdmission = Literal["named", "corroborated", "both", "refused"]
+
+
+def floor_admission(
+    matched: set[str], card: "_Card", distinguishing: set[str]
+) -> FloorAdmission:
+    """Which floor branch admits ``card`` on this evidence — SINGLE SOURCE OF TRUTH.
+
+    Pure, and deliberately separate from the constants it reads: the eval runner
+    classifies a false accept by calling THIS function, so "which branch let it in"
+    can never be answered by a second, drifting copy of the rule.
+
+    ``matched`` must be the UNEXPANDED overlap (``q_tokens & _card_terms(card)``). The
+    floor constants — one naming term, or two distinguishing ones — are not tunable
+    here; lowering either is a security-gate decision, not a retrieval one.
+    """
+    named = bool(matched & _identity_terms(card))
+    corroborated = len(matched & distinguishing) >= 2
+    if named and corroborated:
+        return "both"
+    if named:
+        return "named"
+    if corroborated:
+        return "corroborated"
+    return "refused"
+
+
+def _identity_text(card: "_Card") -> str:
+    """The text that NAMES a card — SINGLE SOURCE for both the ``identity`` field of
+    the ranker and the identity gate of the floor, so the two can never drift."""
+    return " ".join([card.api_id, card.instruction or "", card.intent_name or ""])
+
+
 def _identity_terms(card: "_Card") -> set[str]:
     """The terms that NAME this card — its program and its instruction.
 
@@ -1248,8 +1292,220 @@ def _identity_terms(card: "_Card") -> set[str]:
     action. Matching only surrounding prose is not: every DeFi program's description
     mentions tokens, swaps and USDC.
     """
-    parts = [card.api_id, card.instruction or "", card.intent_name or ""]
-    return fold_tokens(_tokens(" ".join(parts)))
+    return fold_tokens(_tokens(_identity_text(card)))
+
+
+# --- R2 lever 3: the lexical lens (BM25F over the card's FIELDS) ------------------
+#
+# The router used to rank on :meth:`gecko.catalog.CatalogEntry.score` — an overlap
+# COUNT over one glued term bag, where every matched term is worth exactly 1 (with a
+# double count for summary and operationId). Two consequences were measured on the
+# committed golden set, and both are structural rather than tunable:
+#
+#   * No length normalization. A program-SURFACE card's description is the whole
+#     program note plus every PDA name, so it absorbs terms an instruction card cannot
+#     carry, and it out-scored its own instruction on 4 of the 5 rows where the gold
+#     start ranked 2nd ("exchange tokens ... on meteora", "participate in the metadao
+#     ico", "commit usdc to a metadao launch ...", "set up a storefront ...").
+#   * No IDF in the RANKING. Document frequency was used in exactly one place —
+#     :func:`_distinguishing_terms`, a BINARY floor gate at df > len(cards)/2 — so
+#     between two terms that both pass it (`meteora`, df 4, and `token`, df 11) the
+#     ranker still counted them equal.
+#
+# BM25F fixes both with the standard machinery and no model: IDF weights a term by how
+# rare it is, TF-saturation stops a repeated term from dominating, per-field length
+# normalization prices a long field's match lower, and field weights say which part of
+# a card is intent-bearing. Everything below is deterministic and offline.
+
+_BM25_K1 = 1.5  # TF-saturation (Robertson default)
+_BM25_B = 0.75  # length-normalization strength
+
+# BM25F is real-valued; ``StartPoint.score`` is an int and the miss records/CLI print
+# it. Scaled and rounded, with a floor of 1 for any genuine match so that a score of 0
+# keeps meaning exactly one thing: no lexical evidence at all.
+_SCORE_SCALE = 1000
+
+# The FIELD MODEL. Four fields, all derived from text a card ALREADY carries — no card
+# text is re-authored to suit the ranker (card-vocabulary tuning is a measured dead end):
+#
+#   identity    — api_id + instruction + intent_name. The terms that NAME the card;
+#                 the only ones that select it rather than describe it. Weighted
+#                 highest, and the same text the floor's ``named`` gate reads.
+#   summary     — the authored first sentence: what this start DOES.
+#   description — an INSTRUCTION card's prose: what this one action does.
+#   notes       — a program-SURFACE card's prose. Same string slot, different field on
+#                 purpose: it is the whole program's note plus every PDA name, so it
+#                 describes every action the program can perform. A term matching it is
+#                 evidence about the PROGRAM, not about the action the caller asked for
+#                 — and the surface card is not an independent document competing with
+#                 its instructions, it is their parent, carrying the union of their
+#                 vocabulary. Weighted at half a real description for exactly that
+#                 reason; the parent should win only when no child does.
+#
+# Deliberately NOT separate fields: "action verbs" and "domain nouns". Splitting those
+# would mean re-authoring every card's text into buckets — the tuning lane already
+# measured as a dead end — and the weight difference it would buy is already bought by
+# `identity`, which is where the verb lives (`swap`, `buy`, `claim`, `initialize`).
+_CARD_FIELD_WEIGHTS: dict[str, float] = {
+    "identity": 3.0,
+    "summary": 2.0,
+    "description": 1.0,
+    "notes": 0.5,
+}
+
+# Length normalization is PER FIELD, and ``identity`` deliberately gets none.
+#
+# This is not a tuning knob, it is a correctness fix, and it was measured: with the
+# uniform b=0.75 the program-SURFACE card beat its own instruction card on every
+# pumpfun row (recall@1 0.7576 -> 0.6364). The reason is structural — the surface
+# card's identity field is one token (`pumpfun`) while the instruction card's is four
+# (`pumpfun buy plan_pumpfun_buy`), so length normalization read the more specific
+# NAME as the more verbose document and discounted it. That is exactly the case
+# Lucene omits norms for: on a short identifier field, extra tokens mean MORE
+# specificity, not padding. Prose keeps its norm — that is where verbosity really
+# does inflate a match, and it is the whole reason this lever exists.
+_CARD_FIELD_B: dict[str, float] = {
+    "identity": 0.0,
+    "summary": 0.5,
+    "description": _BM25_B,
+    "notes": _BM25_B,
+}
+
+
+def _card_fields(card: "_Card") -> dict[str, str]:
+    """The card's text, split into the scored fields. A card's prose lands in exactly
+    one of ``description``/``notes`` — which one is decided by what the card IS, never
+    by what it says."""
+    op = card.operation
+    surface = card.kind == "surface"
+    return {
+        "identity": _identity_text(card),
+        "summary": op.summary,
+        "description": "" if surface else op.description,
+        "notes": op.description if surface else "",
+    }
+
+
+def _field_terms(text: str) -> list[str]:
+    """Field terms WITH multiplicity (BM25 needs TF), on the shared folded vocabulary."""
+    return [fold_token(t) for t in _token_list(text)]
+
+
+@dataclass(frozen=True)
+class _Ranked:
+    """One ranked card. ``is_fallback`` (with ``score == 0``) marks a candidate from
+    the never-empty prior rather than a genuine lexical match — the same contract
+    :class:`gecko.catalog.ScoredEntry` carries, so the floor below reads identically."""
+
+    card: "_Card"
+    score: int
+    is_fallback: bool
+
+
+class _CardLens:
+    """BM25F over the wired cards. Built per call over the cards actually in play (16
+    today, and already filtered by any ``program`` hint) — so IDF and the average field
+    lengths describe THIS corpus, exactly as :func:`_distinguishing_terms` does."""
+
+    def __init__(self, cards: Sequence["_Card"]) -> None:
+        self._cards = list(cards)
+        self._fields = list(_CARD_FIELD_WEIGHTS)
+        self._counts: list[dict[str, Counter[str]]] = []
+        self._lens: list[dict[str, int]] = []
+        df: dict[str, int] = {}
+        total: dict[str, int] = dict.fromkeys(self._fields, 0)
+        for card in self._cards:
+            fields = _card_fields(card)
+            counts: dict[str, Counter[str]] = {}
+            lengths: dict[str, int] = {}
+            seen: set[str] = set()
+            for name in self._fields:
+                terms = _field_terms(fields[name])
+                counts[name] = Counter(terms)
+                lengths[name] = len(terms)
+                total[name] += len(terms)
+                seen |= set(terms)
+            for term in seen:  # df = cards carrying the term in ANY field
+                df[term] = df.get(term, 0) + 1
+            self._counts.append(counts)
+            self._lens.append(lengths)
+        n = len(self._cards)
+        # Lucene-style IDF: always positive, so a term on every card contributes ~0
+        # rather than a negative that could flip a ranking.
+        self._idf = {
+            t: math.log(1.0 + (n - d + 0.5) / (d + 0.5)) for t, d in df.items()
+        }
+        self._avg = {f: (total[f] / n if n else 0.0) for f in self._fields}
+
+    def _score_card(self, index: int, term_weights: Mapping[str, float]) -> float:
+        """Lucene's model, not textbook BM25F: each field is saturated INDEPENDENTLY,
+        the per-field scores are summed, and the total is scaled by a COORDINATION
+        factor — how much of the query this card actually answered.
+
+        Both departures from textbook BM25F exist to keep the one property the plain
+        overlap COUNT got right: answering more of the question beats answering one
+        part of it loudly.
+
+        * Per-field saturation. BM25F sums the field TFs first and saturates once, so
+          an unbounded field can raise the combined TF without limit — measured, the
+          pumpfun surface card (`pump` x7, `buy` x6 in its note) beat its own `buy`
+          instruction on every pumpfun row, recall@1 0.7576 -> 0.6364. Saturating per
+          field caps what any single field can contribute at that field's weight.
+        * Coordination. BM25 dropped Lucene's classic ``coord()``; on 3-6 term queries
+          against tiny documents, dropping it hurts. Measured: "stake my tokens on
+          ore" carries `stake` (the rarest term in the query, and the ONLY card that
+          answers it is the ore program surface — nothing is wired for staking), and
+          without coord a card matching two common terms in three fields outranked the
+          only card that answered the whole question.
+        """
+        counts = self._counts[index]
+        lengths = self._lens[index]
+        score = 0.0
+        matched = 0
+        askable = 0
+        for term, weight in term_weights.items():
+            idf = self._idf.get(term)
+            if idf is None:
+                # No card carries this term, so no card can be rewarded or punished
+                # for it — it leaves the coordination denominator entirely.
+                continue
+            askable += 1
+            field_score = 0.0
+            for name in self._fields:
+                tf = counts[name].get(term, 0)
+                if not tf:
+                    continue
+                avg = self._avg[name] or 1.0
+                b = _CARD_FIELD_B[name]
+                norm = 1.0 - b + b * (lengths[name] / avg)
+                saturated = (tf / norm) / (_BM25_K1 + tf / norm)
+                field_score += _CARD_FIELD_WEIGHTS[name] * saturated
+            if field_score > 0.0:
+                matched += 1
+            score += weight * idf * field_score
+        return score * (matched / askable) if askable else 0.0
+
+    def rank(self, term_weights: Mapping[str, float], *, limit: int) -> list[_Ranked]:
+        """Rank the cards; never empty when there are cards. Genuine hits first; with
+        no genuine hit the query-independent prior is returned flagged, at score 0."""
+        scored = [
+            (self._score_card(i, term_weights), card)
+            for i, card in enumerate(self._cards)
+        ]
+        matches = sorted(
+            ((s, c) for s, c in scored if s > 0.0),
+            key=lambda pair: (-pair[0], pair[1].operation.path),
+        )
+        if matches:
+            return [
+                _Ranked(c, max(1, round(s * _SCORE_SCALE)), False)
+                for s, c in matches[:limit]
+            ]
+        fallback = sorted(
+            self._cards,
+            key=lambda c: (0 if c.operation.method == "GET" else 1, c.operation.path),
+        )
+        return [_Ranked(c, 0, True) for c in fallback[:limit]]
 
 
 def _start_point(
@@ -1441,11 +1697,11 @@ def find_start(
         )
         return FindStartResult(starts=(), catalog=candidates, no_start=True, note=note)
 
-    by_op = {id(c.operation): c for c in cards}
-    scored = Catalog([c.operation for c in cards]).search_scored(
-        " ".join(sorted(q_tokens)), limit=limit
+    scored = _CardLens(cards).rank(
+        {term: 1.0 for term in q_tokens},
+        limit=limit,
     )
-    genuine = [se for se in scored if not se.is_fallback]
+    genuine = [r for r in scored if not r.is_fallback]
     if genuine:
         # The scorer's fallback flag is not a floor: a single incidental token overlap
         # clears it, and the result was presented as a RUNNABLE start. Require the match
@@ -1453,8 +1709,8 @@ def find_start(
         # only on terms everything shares is demoted to a guess, which is what it is.
         distinguishing = _distinguishing_terms(q_tokens, cards)
         points = []
-        for se in genuine:
-            card = by_op[id(se.entry.operation)]
+        for ranked in genuine:
+            card = ranked.card
             why = tuple(sorted(q_tokens & _card_terms(card)))
             matched = set(why)
             # A runnable start needs evidence the caller meant THIS program: either the
@@ -1462,18 +1718,17 @@ def find_start(
             # distinguishing terms. One shared noun is not evidence — "get me out of
             # hyUSD into USDC" matched metadao/fund on the single word "usdc" and was
             # served as a plan to run.
-            named = bool(matched & _identity_terms(card))
-            corroborated = len(matched & distinguishing) >= 2
+            admission = floor_admission(matched, card, distinguishing)
             # Only RUNNABLE cards are gated. A `surface` card already says "start from
             # this program's derive tools", which is a hedge, not a plan — demoting it
             # would erase the useful middle answer ("this program is plausibly relevant")
             # without preventing any harm.
-            gated = card.kind == "start" and not (named or corroborated)
+            gated = card.kind == "start" and admission == "refused"
             kind = "guess" if gated else card.kind
             points.append(
                 _start_point(
                     card,
-                    se.score,
+                    ranked.score,
                     why,
                     kind=kind,
                     cards=cards,
@@ -1508,14 +1763,14 @@ def find_start(
     # below the floor: honest no-start; the fallback candidates are labeled GUESSES
     guesses = tuple(
         _start_point(
-            by_op[id(se.entry.operation)],
+            ranked.card,
             0,
             (),
             kind="guess",
             cards=cards,
             verdicts=chain_verdicts,
         )
-        for se in scored
+        for ranked in scored
     )
     _miss(0, guesses)
     return FindStartResult(

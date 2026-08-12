@@ -422,3 +422,120 @@ def test_a_cyclic_account_is_flagged_in_the_derive_plan() -> None:
     )
     assert step.provenance == "flagged"
     assert "cycle" in step.note and "a, b" in step.note
+
+
+# --- R2: the lexical lens (field-weighted BM25F) ----------------------------------
+
+
+def test_an_instruction_outranks_its_own_program_surface() -> None:
+    """The parent/child field model, measured.
+
+    A program-SURFACE card carries the whole program note plus every PDA name, so on
+    a plain term COUNT it absorbs vocabulary no single instruction card can carry and
+    beats its own instruction. It did, on this exact intent: the old ranker served the
+    `metadao_ico` surface first and `metadao_ico/fund` — the thing the caller asked
+    for — second. The surface card is not an independent document competing with its
+    instructions; it is their parent, holding the union of their vocabulary, so it is
+    scored on a `notes` field at half a real description's weight.
+    """
+    result = find_start("participate in the metadao ico", limit=5)
+    assert not result.no_start
+    top = result.starts[0]
+    assert (top.program, top.instruction) == ("metadao_ico", "fund")
+    assert top.kind == "start"
+    # …and the surface is still offered, just not first: it is the honest fallback,
+    # not the answer.
+    assert any(
+        p.instruction is None and p.program == "metadao_ico" for p in result.starts
+    )
+
+
+def test_a_repeated_term_in_prose_cannot_outrank_a_name_match() -> None:
+    """The property per-field saturation buys, on cards built here so it cannot pass
+    by accident of the real corpus.
+
+    Textbook BM25F sums the per-field TFs and saturates ONCE, so an unbounded prose
+    field can raise the combined TF without limit — measured on the real cards, the
+    pumpfun surface (`pump` x7, `buy` x6 in its note) beat its own `buy` instruction
+    on every pumpfun row, dropping recall@1 to 0.6364. Saturating each field on its
+    own caps what any one field can contribute at that field's weight.
+    """
+    from gecko.find_start import _Card, _CardLens, _operation
+
+    def card(kind: str, api_id: str, instruction: str | None, prose: str) -> _Card:
+        return _Card(
+            kind=kind,  # type: ignore[arg-type]
+            api_id=api_id,
+            program_id="Prog111",
+            instruction=instruction,
+            intent_name=None,
+            inputs=(),
+            accounts=(),
+            pdas={},
+            spec=None,
+            notes=prose,
+            execute_url=None,
+            operation=_operation(
+                operation_id=instruction or api_id,
+                path=f"/{api_id}" + (f"/{instruction}" if instruction else ""),
+                summary="",
+                description=prose,
+                tags=[api_id],
+            ),
+        )
+
+    # `rank` takes ALREADY-FOLDED terms (what `_query_tokens` produces), so the term
+    # here is deliberately fold-stable — an unfolded one would score 0 on both cards
+    # and silently fall through to the never-empty prior instead of testing anything.
+    named = card("start", "widget", "sprocket", "does the thing")
+    shouty = card("start", "other", "unrelated", " ".join(["sprocket"] * 40))
+    ranked = _CardLens([named, shouty]).rank({"sprocket": 1.0}, limit=2)
+    assert not ranked[0].is_fallback
+    assert (ranked[0].card.api_id, ranked[0].card.instruction) == (
+        "widget",
+        "sprocket",
+    )
+    assert ranked[0].score > ranked[1].score
+
+
+def test_a_genuine_lexical_hit_never_scores_zero() -> None:
+    """Score 0 keeps meaning exactly one thing — no lexical evidence at all — so the
+    below-floor GUESS path stays distinguishable from a weak real match."""
+    from gecko.find_start import _CardLens, _query_tokens, _wired_cards
+
+    cards = _wired_cards()
+    ranked = _CardLens(cards).rank(
+        {t: 1.0 for t in _query_tokens("buy this token on pump")}, limit=5
+    )
+    assert ranked and not any(r.is_fallback for r in ranked)
+    assert all(r.score >= 1 for r in ranked)
+
+
+def test_the_never_empty_prior_still_answers_a_matchless_query() -> None:
+    """No genuine match must still return flagged candidates at score 0 — the 0/97
+    contract the overlap scorer carried, preserved by the lens."""
+    from gecko.find_start import _CardLens, _wired_cards
+
+    ranked = _CardLens(_wired_cards()).rank({"zzzqqxnothing": 1.0}, limit=3)
+    assert len(ranked) == 3
+    assert all(r.is_fallback and r.score == 0 for r in ranked)
+
+
+def test_floor_admission_is_a_closed_four_way_table() -> None:
+    """The floor's branch, as a pure function — the SINGLE source the router gates on
+    and the eval classifies false accepts with, so the two cannot drift.
+
+    The constants are pinned here on purpose: one naming term admits, and it takes TWO
+    distinguishing terms to admit without one. Loosening either is a security-gate
+    decision, and this table is where such a change becomes visible.
+    """
+    from gecko.find_start import floor_admission, _wired_cards
+
+    card = next(
+        c for c in _wired_cards() if (c.api_id, c.instruction) == ("meteora", "swap")
+    )
+    assert floor_admission({"swap"}, card, set()) == "named"
+    assert floor_admission({"a", "b"}, card, {"a", "b"}) == "corroborated"
+    assert floor_admission({"swap", "a", "b"}, card, {"a", "b"}) == "both"
+    assert floor_admission({"a"}, card, {"a"}) == "refused"  # one term is not two
+    assert floor_admission(set(), card, {"a", "b"}) == "refused"

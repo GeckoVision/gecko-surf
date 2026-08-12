@@ -27,23 +27,27 @@ import json
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .find_start import (
     CandidateRecord,
     FindStartResult,
+    FloorAdmission,
     FloorKind,
     MissCause,
     MissRecord,
     _card_terms,
     _Card,
+    _distinguishing_terms,
     _query_tokens,
     _wired_cards,
     candidate_name,
     find_start,
+    floor_admission,
 )
 
 __all__ = [
+    "BranchCount",
     "GoldenRow",
     "GoldenSetError",
     "RetrievalReport",
@@ -51,6 +55,8 @@ __all__ = [
     "classify_miss",
     "default_golden_text",
     "evaluate_golden",
+    "false_accepts_admitted_by_corroboration",
+    "false_accepts_admitted_by_name",
     "format_report",
     "load_golden",
 ]
@@ -98,6 +104,10 @@ class RowOutcome:
     margin: int
     floor: FloorKind
     record: MissRecord
+    #: Which floor branch admitted each RUNNABLE start served for this row, computed by
+    #: :func:`gecko.find_start.floor_admission` — the same function the router gates
+    #: with, never a second copy. Empty when nothing was served as a start.
+    admissions: tuple[FloorAdmission, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -211,9 +221,33 @@ def _gold_rank(result: FindStartResult, row: GoldenRow) -> int | None:
     return None
 
 
+def _admissions(
+    result: FindStartResult, cards: Sequence[_Card], q_tokens: set[str]
+) -> tuple[FloorAdmission, ...]:
+    """The floor branch that admitted each RUNNABLE start this row was served.
+
+    Recomputed with :func:`gecko.find_start.floor_admission` — the router's own gate,
+    on the router's own inputs — rather than re-derived here, so this can never report
+    a branch the router did not actually take."""
+    if result.no_start:
+        return ()
+    by_name = {(c.api_id, c.instruction): c for c in cards}
+    distinguishing = _distinguishing_terms(q_tokens, cards)
+    out: list[FloorAdmission] = []
+    for point in result.starts:
+        if point.kind != "start":
+            continue
+        card = by_name.get((point.program, point.instruction))
+        if card is None:
+            continue
+        out.append(floor_admission(q_tokens & _card_terms(card), card, distinguishing))
+    return tuple(out)
+
+
 def _evaluate_row(
     row: GoldenRow,
     cards_by_gold: Mapping[tuple[str, str | None], _Card],
+    cards: Sequence[_Card],
     wired_program_count: int,
     k: int,
 ) -> RowOutcome:
@@ -260,6 +294,7 @@ def _evaluate_row(
         margin=margin,
         floor=floor,
         record=record,
+        admissions=_admissions(result, cards, q_tokens),
     )
 
 
@@ -283,7 +318,7 @@ def evaluate_golden(
     wired_program_count = len({c.api_id for c in cards})
 
     outcomes = tuple(
-        _evaluate_row(row, cards_by_gold, wired_program_count, k) for row in rows
+        _evaluate_row(row, cards_by_gold, cards, wired_program_count, k) for row in rows
     )
 
     causes: dict[str, int] = {}
@@ -321,6 +356,58 @@ def evaluate_golden(
         out_of_scope=sum(1 for o in outcomes if o.row.gold_program is None),
         false_accepts=causes.get("false_accept", 0),
     )
+
+
+# --- the false-accept split (one function per floor branch) ----------------------
+
+
+@dataclass(frozen=True)
+class BranchCount:
+    """A count that CANNOT be quoted without its denominator.
+
+    A bare "false_accepts: 8" says nothing about whether 8 is out of 8 or out of 80,
+    and the out-of-scope block is small enough that the difference is the whole
+    finding. ``__str__`` is the only rendering, and it always prints both.
+    """
+
+    branch: str
+    count: int
+    denominator: int
+
+    def __str__(self) -> str:
+        return f"{self.branch}={self.count}/{self.denominator}"
+
+
+def _false_accept_rows(report: RetrievalReport) -> tuple[RowOutcome, ...]:
+    return tuple(o for o in report.rows if o.cause == "false_accept")
+
+
+def false_accepts_admitted_by_name(report: RetrievalReport) -> BranchCount:
+    """Out-of-scope rows admitted because a query term NAMED a program/instruction.
+
+    Denominator: every out-of-scope row. This is the branch that needs no
+    corroboration at all — one matched identity term is sufficient, on its own, for a
+    RUNNABLE start — so it is the branch a retrieval change is most likely to move by
+    accident, and the one that must be reported separately."""
+    rows = [o for o in _false_accept_rows(report) if _touched(o, ("named", "both"))]
+    return BranchCount("named", len(rows), report.out_of_scope)
+
+
+def false_accepts_admitted_by_corroboration(report: RetrievalReport) -> BranchCount:
+    """Out-of-scope rows admitted because two DISTINGUISHING terms agreed.
+
+    Denominator: every out-of-scope row. Rows where a served start was admitted on
+    BOTH branches are counted here AND in :func:`false_accepts_admitted_by_name` — the
+    two figures answer "did this branch admit it", not "which one gets the blame", so
+    they are not required to sum to the total."""
+    rows = [
+        o for o in _false_accept_rows(report) if _touched(o, ("corroborated", "both"))
+    ]
+    return BranchCount("corroborated", len(rows), report.out_of_scope)
+
+
+def _touched(outcome: RowOutcome, branches: tuple[str, ...]) -> bool:
+    return any(a in branches for a in outcome.admissions)
 
 
 # --- legible rendering (the CLI prints this verbatim) ----------------------------
@@ -386,5 +473,12 @@ def format_report(report: RetrievalReport) -> str:
             f"{report.out_of_scope} out-of-scope intents honestly rejected; "
             f"{report.false_accepts} false accept(s) — precision evidence about "
             "the floor, not the ranker."
+        )
+        by_name = false_accepts_admitted_by_name(report)
+        by_corroboration = false_accepts_admitted_by_corroboration(report)
+        lines.append(
+            f"  admitted by branch: {by_name} | {by_corroboration} "
+            "(a row admitted on both branches is counted in both; the split, not the "
+            "total, is what says which branch a change moved)"
         )
     return "\n".join(lines) + "\n"
