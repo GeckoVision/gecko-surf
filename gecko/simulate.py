@@ -15,6 +15,23 @@ mirroring ``scripts/subscribe.py``).
 Control-plane invariant #1: the Receipt is RETURNED to the caller and stored NOWHERE.
 No payload, pubkey, or log line is persisted by this module. ``revert_class`` strings are
 a stable vocabulary (the future D2 corpus is CATEGORICAL-only — out of scope here).
+
+KNOWN LIMITS of the token leg (:func:`parse_token_deltas`) — state them here so a caller
+sizing a spend cap knows where the measurement stops:
+
+* **An account absent from BOTH ``preTokenBalances`` and ``postTokenBalances`` is
+  invisible.** The delta is computed from the rows the node sends; an account it never
+  mentions produces no movement, and the report reads ``measured`` with no outflow for it.
+  We refuse the asymmetric case (in pre, gone from post → ``post-balance-missing``)
+  because the pre row is evidence the account exists; the symmetric case leaves no
+  evidence at all, so there is nothing to notice. A caller whose cap must cover a
+  specific mint has to check that mint APPEARS in the movements rather than trusting a
+  clean report to mean "and nothing else moved either".
+* **The three payload shapes are three different facts** and are never collapsed: key
+  absent → ``None`` (NOT TRACKED); ``[]`` → measured, nothing moved; ``null`` → the
+  ``balances-null`` refusal. The reasoning is at the guard in ``parse_token_deltas``.
+* **Amounts are only as good as the declared decimals.** A mint declaring two different
+  scales anywhere in one report is refused rather than reconciled.
 """
 
 from __future__ import annotations
@@ -34,7 +51,16 @@ __all__ = [
     "REVERT_FAMILIES",
     "Receipt",
     "SimulateError",
+    "TOKEN_2022_PROGRAM_ID",
+    "TOKEN_DELTA_REFUSALS",
+    "TOKEN_PROGRAM_ID",
+    "TokenDeltaRefusal",
+    "TokenDeltaReport",
+    "TokenDeltaUnmeasurable",
+    "TokenMovement",
+    "TokenOutflow",
     "classify_revert",
+    "parse_token_deltas",
     "revert_family",
     "simulate",
 ]
@@ -91,6 +117,696 @@ _ACCOUNT_MARKERS = (
 )
 
 
+# --- the token leg: a delta denominated in the mint, or an explicit refusal ------------
+#
+# WHY THIS EXISTS: ``Receipt.sol_delta`` answers "how many lamports left the payer". A
+# USDC purchase moves ZERO lamports beyond fees, so a lamport-denominated cap reads a
+# 25-USDC drain as ~0 outflow. The token leg has to be measured in the MINT'S OWN units,
+# and where it cannot be measured honestly it must REFUSE — a zero standing in for
+# "could not measure" is the recurring bug this module is explicitly closing.
+#
+# WHERE THE NUMBERS COME FROM: the ``pre``/``postTokenBalances`` arrays of the simulation
+# value (the ``getTransaction`` meta shape, which fork RPCs mirror on
+# ``simulateTransaction``). Stock mainnet ``simulateTransaction`` does NOT return them —
+# against such an RPC the result is ``None`` (NOT TRACKED), never zero, and a caller that
+# needs an amount must refuse for want of one.
+#
+# NOTHING HERE IS PERSISTED (invariant #1). The values live on the returned Receipt for
+# the caller's own decision; only mint, decimals, owner and amounts are carried, never a
+# token-account address, instruction data, or any other payload.
+
+#: The two SPL token programs. Which one owns a mint is on-chain state that has to be
+#: READ; deriving anything under the wrong one yields a valid-looking address for an
+#: account that does not exist. A balance entry that names neither is FLAGGED, never
+#: defaulted to classic.
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+#: The CLOSED vocabulary of reasons a token delta is UNMEASURABLE. Every member means
+#: "the number we could compute would not be the truth", and each one is returned instead
+#: of a number — never alongside a zero.
+TOKEN_DELTA_REFUSALS: frozenset[str] = frozenset(
+    {
+        # Token-2022 extensions where the observed delta is not the debit, the transfer
+        # has effects the balances cannot see, or the balance is not readable at all.
+        "transfer-fee",
+        "transfer-hook",
+        "confidential-transfer",
+        "permanent-delegate",
+        "non-transferable",
+        "interest-bearing",
+        "ui-amount-scaled",
+        # An extension we do not model. Fails CLOSED: an unknown extension may redefine
+        # what a transfer does, and "we have not heard of it" is not "it is harmless".
+        "extension-unrecognised",
+        # Token-2022 mint whose extension set was never read. Unread is not "none" —
+        # assuming none is exactly the assume-classic bug.
+        "token-2022-extensions-unread",
+        # The owning program is absent or unrecognised, or the evidence contradicts it.
+        "token-program-unknown",
+        "token-program-mismatch",
+        # The payload disagrees with itself across pre/post, or is not the shape it
+        # claims. All RPC output is untrusted input.
+        "mint-inconsistent",
+        "decimals-inconsistent",
+        "owner-unresolved",
+        "malformed-balance",
+        # An account we saw BEFORE the transaction and were told nothing about after.
+        # Absent-from-post is not zero.
+        "post-balance-missing",
+        # The key was PRESENT and its value was ``null`` — the node declining to provide
+        # the data, which is not the node stating nothing moved. Distinct from
+        # ``malformed-balance`` on purpose: see ``parse_token_deltas``.
+        "balances-null",
+    }
+)
+
+#: Token-2022 extensions that change what a transfer DEBITS, what it TOUCHES, or what a
+#: balance MEANS — mapped to the refusal each one earns. Names are normalised (lowercase,
+#: punctuation stripped) so ``transferFeeConfig``/``transfer_fee_config`` are one key.
+_UNSOUND_EXTENSIONS: dict[str, str] = {
+    # The recipient is credited less than the sender is debited: delta != debit.
+    "transferfeeconfig": "transfer-fee",
+    "transferfeeamount": "transfer-fee",
+    # An extra program runs on transfer and may require accounts nobody declared; its
+    # side effects are invisible in the two balances.
+    "transferhook": "transfer-hook",
+    "transferhookaccount": "transfer-hook",
+    # The amounts are encrypted; pre/post carry no readable balance.
+    "confidentialtransfermint": "confidential-transfer",
+    "confidentialtransferaccount": "confidential-transfer",
+    "confidentialtransferfeeconfig": "confidential-transfer",
+    "confidentialtransferfeeamount": "confidential-transfer",
+    # A third party can move the tokens: the authority is not the signer's, so a delta
+    # here does not attribute the movement to the transaction we are gating.
+    "permanentdelegate": "permanent-delegate",
+    # Balances can change without a transfer having been possible at all.
+    "nontransferable": "non-transferable",
+    "nontransferableaccount": "non-transferable",
+    # The ui amount is a function of TIME, so the same raw amount renders differently at
+    # two moments; a ui number here would be a claim about when, not how much.
+    "interestbearingconfig": "interest-bearing",
+    "interestbearingmint": "interest-bearing",
+    # A multiplier sits between raw and ui, so our locally rendered ui would be wrong.
+    "scaleduiamountconfig": "ui-amount-scaled",
+    "scaleduiamount": "ui-amount-scaled",
+}
+
+#: Extensions REVIEWED and found not to change the delta-equals-debit relation or the
+#: raw→ui rendering. This list grows only by review: anything absent from BOTH tables is
+#: refused as ``extension-unrecognised``.
+_SOUND_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        "metadatapointer",
+        "tokenmetadata",
+        "mintcloseauthority",
+        "immutableowner",
+        "memotransfer",
+        "requiredmemoontransfer",
+        "defaultaccountstate",
+        "cpiguard",
+        "grouppointer",
+        "groupmemberpointer",
+        "tokengroup",
+        "tokengroupmember",
+    }
+)
+
+_BASE58_ALPHABET = frozenset(
+    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+)
+
+#: A mint's decimals are u8 on chain, but a mint claiming more than this is untrusted
+#: input rather than a mint, and we will not render a scale we have never seen.
+_MAX_DECIMALS = 18
+
+
+class TokenDeltaUnmeasurable(Exception):
+    """Raised when an amount is read off a report that REFUSED to measure one.
+
+    The whole point of the type: an unmeasurable delta has no number, and the caller
+    finds that out by being stopped, not by receiving a zero it will happily compare
+    against a cap.
+    """
+
+
+@dataclass(frozen=True)
+class TokenMovement:
+    """One token account's balance change, denominated in its mint.
+
+    ``pre_raw``/``post_raw``/``delta_raw`` are RAW base units (what the program moves);
+    ``ui_delta`` is rendered HERE from ``delta_raw`` and ``decimals`` and is never taken
+    from the RPC's ``uiAmount``/``uiAmountString`` — those are untrusted, and for an
+    interest-bearing mint they are a function of the moment they were read.
+
+    The field set is deliberately minimal: mint, owner, decimals, amounts. No token
+    account address, no account index, no payload (invariant #1).
+    """
+
+    mint: str
+    owner: str
+    decimals: int
+    pre_raw: int
+    post_raw: int
+    delta_raw: int
+    ui_delta: str
+
+
+@dataclass(frozen=True)
+class TokenOutflow:
+    """The NET amount of one mint that LEFT one owner, aggregated across their accounts.
+
+    ``raw`` is a positive magnitude in the mint's base units — the shape a per-mint cap
+    is written in. It is never lamports and must never be summed with lamports: a
+    6-decimal amount is a thousandth of the lamport it would be compared against.
+    """
+
+    mint: str
+    owner: str
+    decimals: int
+    raw: int
+    ui: str
+
+
+@dataclass(frozen=True)
+class TokenDeltaRefusal:
+    """WHY a token delta could not be measured — a closed-vocabulary reason plus the
+    public mint it concerns. Carries no owner, no account, no payload."""
+
+    reason: str
+    mint: str | None
+    detail: str
+
+    def __post_init__(self) -> None:
+        if self.reason not in TOKEN_DELTA_REFUSALS:
+            raise ValueError(
+                f"refusal reason outside the closed vocabulary: {self.reason!r}"
+            )
+
+
+@dataclass(frozen=True)
+class TokenDeltaReport:
+    """The token leg of a Receipt: what moved, or why we will not say.
+
+    THREE STATES, kept distinct on purpose — collapsing any two of them is the bug:
+
+    * ``Receipt.token_delta is None`` — NOT TRACKED. The simulation carried no token
+      balances at all (stock ``simulateTransaction`` returns none).
+    * ``status == "measured"`` with no movements — a real, observed zero: the balances
+      were there and nothing moved.
+    * ``status == "unmeasurable"`` — we saw something we cannot honestly reduce to a
+      number. ``outflows()``/``net_raw()`` RAISE here rather than return 0.
+
+    Fails closed as a whole: one refusal makes the entire report unmeasurable even beside
+    a cleanly measured mint, because nothing proves the refused mint is not the drain.
+    """
+
+    status: Literal["measured", "unmeasurable"]
+    movements: tuple[TokenMovement, ...]
+    refusals: tuple[TokenDeltaRefusal, ...]
+
+    def __post_init__(self) -> None:
+        if self.refusals and self.status != "unmeasurable":
+            raise ValueError("a report carrying refusals cannot be labelled measured")
+        if not self.refusals and self.status != "measured":
+            raise ValueError(
+                "a report with no refusal has nothing to be unmeasurable about"
+            )
+
+    def _require_measured(self) -> None:
+        if self.status != "measured":
+            reasons = ", ".join(sorted({refusal.reason for refusal in self.refusals}))
+            raise TokenDeltaUnmeasurable(
+                f"the token delta could not be measured ({reasons}); there is no amount "
+                "to read, and zero is not the answer"
+            )
+
+    def outflows(self) -> tuple[TokenOutflow, ...]:
+        """Net token OUTFLOW per (owner, mint), positive magnitudes, deterministic order.
+
+        Raises :class:`TokenDeltaUnmeasurable` unless the whole report is measured.
+        """
+        self._require_measured()
+        nets: dict[tuple[str, str], list[int]] = {}
+        decimals: dict[tuple[str, str], int] = {}
+        for movement in self.movements:
+            key = (movement.owner, movement.mint)
+            nets.setdefault(key, []).append(movement.delta_raw)
+            decimals[key] = movement.decimals
+        out: list[TokenOutflow] = []
+        for key in sorted(nets):
+            net = sum(nets[key])
+            if net >= 0:
+                continue
+            owner, mint = key
+            out.append(
+                TokenOutflow(
+                    mint=mint,
+                    owner=owner,
+                    decimals=decimals[key],
+                    raw=-net,
+                    ui=_render_ui(-net, decimals[key]),
+                )
+            )
+        return tuple(out)
+
+    def net_raw(self, *, mint: str, owner: str) -> int:
+        """The signed net raw delta of ``mint`` for ``owner`` (0 = observed no change).
+
+        Raises :class:`TokenDeltaUnmeasurable` unless the whole report is measured — the
+        zero this returns is only ever an OBSERVED zero.
+        """
+        self._require_measured()
+        return sum(
+            movement.delta_raw
+            for movement in self.movements
+            if movement.mint == mint and movement.owner == owner
+        )
+
+
+def _render_ui(raw: int, decimals: int) -> str:
+    """Render a raw base-unit amount at ``decimals`` — locally, exactly, no float."""
+    if decimals == 0:
+        return str(raw)
+    sign = "-" if raw < 0 else ""
+    magnitude = abs(raw)
+    scale = 10**decimals
+    return f"{sign}{magnitude // scale}.{magnitude % scale:0{decimals}d}"
+
+
+def _is_base58_pubkey(value: Any) -> bool:
+    """A base58 string of pubkey length. NOT proof of a mint — the floor below which the
+    string is certainly not one."""
+    return (
+        isinstance(value, str)
+        and 32 <= len(value) <= 44
+        and all(char in _BASE58_ALPHABET for char in value)
+    )
+
+
+def _raw_amount(value: Any) -> int | None:
+    """The RPC's ``uiTokenAmount.amount`` as a non-negative int, or ``None``.
+
+    A balance is a decimal STRING of base units on the wire. A float is not truncated, a
+    bool is not an int here (``isinstance(True, int)`` is True in Python), a negative is
+    not a balance, and nothing is coerced — an unreadable amount refuses.
+
+    ``.isdecimal()``, NOT ``.isdigit()``. ``str.isdigit()`` is True for characters that
+    are digits in the Unicode sense but that ``int()`` then rejects — superscripts like
+    "\u00b2", for instance. That combination turned untrusted RPC output into a
+    ``ValueError`` escaping this module rather than the ``malformed-balance`` refusal the
+    caller is documented to receive. ``.isdecimal()`` is exactly the set ``int()`` accepts
+    (modulo the leading sign, which a balance may not carry anyway).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """One validated pre/post token-balance row. Internal; never leaves this module."""
+
+    mint: str
+    owner: str
+    decimals: int
+    raw: int
+    program_id: str
+
+
+def _validate_entry(entry: Any) -> _Entry | TokenDeltaRefusal:
+    """Validate ONE untrusted balance row into an ``_Entry``, or the refusal it earns."""
+    if not isinstance(entry, Mapping):
+        return TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=None,
+            detail="a token balance entry was not an object",
+        )
+    mint = entry.get("mint")
+    if not _is_base58_pubkey(mint):
+        return TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=None,
+            detail="a token balance names no base58 mint; a string is not a mint",
+        )
+    assert isinstance(mint, str)  # narrowed by _is_base58_pubkey
+    program_id = entry.get("programId")
+    if program_id not in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
+        return TokenDeltaRefusal(
+            reason="token-program-unknown",
+            mint=mint,
+            detail=(
+                "the balance does not name a known token program, and which program owns "
+                "a mint is read, never assumed"
+            ),
+        )
+    assert isinstance(program_id, str)
+    owner = entry.get("owner")
+    if not _is_base58_pubkey(owner):
+        return TokenDeltaRefusal(
+            reason="owner-unresolved",
+            mint=mint,
+            detail="the balance names no owner, so the delta belongs to nobody",
+        )
+    assert isinstance(owner, str)
+    amount_obj = entry.get("uiTokenAmount")
+    if not isinstance(amount_obj, Mapping):
+        return TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=mint,
+            detail="the balance carries no uiTokenAmount object",
+        )
+    decimals = amount_obj.get("decimals")
+    if (
+        isinstance(decimals, bool)
+        or not isinstance(decimals, int)
+        or not 0 <= decimals <= _MAX_DECIMALS
+    ):
+        return TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=mint,
+            detail=(
+                "the balance carries no usable decimals; an amount at the wrong scale is "
+                "a well-formed number for the wrong quantity of money"
+            ),
+        )
+    raw = _raw_amount(amount_obj.get("amount"))
+    if raw is None:
+        return TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=mint,
+            detail="the balance amount is not a non-negative base-unit integer",
+        )
+    return _Entry(
+        mint=mint, owner=owner, decimals=decimals, raw=raw, program_id=program_id
+    )
+
+
+def _normalise_extension(name: str) -> str:
+    return "".join(char for char in name.lower() if char.isalnum())
+
+
+def _extension_refusal(
+    mint: str,
+    program_id: str,
+    mint_extensions: Mapping[str, Sequence[str]] | None,
+) -> TokenDeltaRefusal | None:
+    """Decide whether this mint's EXTENSION state makes the measurement unsound.
+
+    Extensions are on-chain state and arrive here as evidence the caller READ (the
+    ``extension`` names of a ``getAccountInfo`` ``jsonParsed`` mint). No evidence for a
+    Token-2022 mint is a refusal, not an assumption of none.
+    """
+    declared = None if mint_extensions is None else mint_extensions.get(mint)
+    if program_id == TOKEN_PROGRAM_ID:
+        if declared:
+            return TokenDeltaRefusal(
+                reason="token-program-mismatch",
+                mint=mint,
+                detail=(
+                    "extension evidence was supplied for a mint the balance says is owned "
+                    "by the classic token program, which has no extensions; the two "
+                    "readings contradict each other"
+                ),
+            )
+        return None
+    if declared is None:
+        return TokenDeltaRefusal(
+            reason="token-2022-extensions-unread",
+            mint=mint,
+            detail=(
+                "a Token-2022 mint whose extension set was never read; unread is not "
+                "none, and several extensions make the delta not the debit"
+            ),
+        )
+    for name in declared:
+        if not isinstance(name, str):
+            return TokenDeltaRefusal(
+                reason="extension-unrecognised",
+                mint=mint,
+                detail="an extension name was not a string",
+            )
+        key = _normalise_extension(name)
+        reason = _UNSOUND_EXTENSIONS.get(key)
+        if reason is not None:
+            return TokenDeltaRefusal(
+                reason=reason,
+                mint=mint,
+                detail=(
+                    f"the mint carries the {name} extension, so the balance delta is not "
+                    "the amount debited by the signer"
+                ),
+            )
+        if key not in _SOUND_EXTENSIONS:
+            return TokenDeltaRefusal(
+                reason="extension-unrecognised",
+                mint=mint,
+                detail=(
+                    f"the mint carries {name}, an extension this engine does not model; "
+                    "an unmodelled extension may redefine what a transfer does"
+                ),
+            )
+    return None
+
+
+def _index_balances(
+    rows: Any,
+) -> tuple[dict[int, Any], TokenDeltaRefusal | None]:
+    """Key an untrusted balance array by ``accountIndex``. A duplicate or unusable index
+    is refused rather than resolved by last-write-wins."""
+    indexed: dict[int, Any] = {}
+    if not isinstance(rows, list):
+        return indexed, TokenDeltaRefusal(
+            reason="malformed-balance",
+            mint=None,
+            detail="a token balance array was not a list",
+        )
+    for row in rows:
+        index = row.get("accountIndex") if isinstance(row, Mapping) else None
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            return indexed, TokenDeltaRefusal(
+                reason="malformed-balance",
+                mint=None,
+                detail="a token balance carries no usable accountIndex",
+            )
+        if index in indexed:
+            return indexed, TokenDeltaRefusal(
+                reason="malformed-balance",
+                mint=None,
+                detail=f"two token balances claim account index {index}",
+            )
+        indexed[index] = row
+    return indexed, None
+
+
+def parse_token_deltas(
+    value: Mapping[str, Any],
+    *,
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+) -> TokenDeltaReport | None:
+    """Turn a simulation ``value``'s pre/post token balances into a typed delta.
+
+    Returns ``None`` — NOT TRACKED — when the value carries neither array: that is the
+    stock ``simulateTransaction`` case, and it must not be confused with "nothing moved".
+
+    ``mint_extensions`` is the caller's READING of each Token-2022 mint's extension set
+    (the ``extension`` names from ``getAccountInfo`` ``jsonParsed``). It is an input, not
+    a network call: this function makes none. A Token-2022 mint missing from it refuses.
+
+    Everything in ``value`` is untrusted transport output: shapes are checked, numbers are
+    never coerced, and any disagreement between the pre and post rows for one account is a
+    refusal rather than a resolved conflict.
+    """
+    has_pre = "preTokenBalances" in value
+    has_post = "postTokenBalances" in value
+    if not has_pre and not has_post:
+        return None
+
+    refusals: list[TokenDeltaRefusal] = []
+
+    # THREE SHAPES, THREE DIFFERENT FACTS — measured against api.mainnet-beta.solana.com
+    # (a ``let_me_buy make_purchase`` that moves tokens returned two populated rows at 6
+    # decimals; a ``let_me_buy initialize`` that touches no token account returned
+    # ``[]``/``[]`` for both; ``null`` was produced by neither):
+    #
+    # * KEY ABSENT      -> NOT TRACKED. Handled above: ``None``, never zero.
+    # * EMPTY ARRAY []  -> MEASURED, nothing moved. A POSITIVE fact from the node about a
+    #   real transaction, and it must NOT refuse — ``initialize`` produces exactly this
+    #   and has to stay signable. Falls through to the normal path below, where zero rows
+    #   yield zero movements and no refusal.
+    # * null            -> REFUSE, under its own reason. ``null`` is the node DECLINING to
+    #   provide the data, which is not the node stating nothing moved. We cannot tell "no
+    #   token movement" from "not computed", and an SPL spend reading as zero outflow
+    #   defeats the cap — so the safe direction is to refuse. It is NOT reused as
+    #   ``malformed-balance`` (that means "the payload is the wrong shape", a different
+    #   operator action) and it is NOT silently read as ``[]``. Measurement says ``null``
+    #   does not occur on the standard mainnet RPC for either the token or the non-token
+    #   case, so this refusal costs nothing operationally while closing the dangerous
+    #   direction.
+    if (has_pre and value.get("preTokenBalances") is None) or (
+        has_post and value.get("postTokenBalances") is None
+    ):
+        return TokenDeltaReport(
+            status="unmeasurable",
+            movements=(),
+            refusals=(
+                TokenDeltaRefusal(
+                    reason="balances-null",
+                    mint=None,
+                    detail=(
+                        "a token balance array was present but null; the node declined to "
+                        "provide the data, which is not a statement that nothing moved"
+                    ),
+                ),
+            ),
+        )
+
+    pre_rows, pre_refusal = _index_balances(value.get("preTokenBalances", []))
+    if pre_refusal is not None:
+        refusals.append(pre_refusal)
+    post_rows, post_refusal = _index_balances(value.get("postTokenBalances", []))
+    if post_refusal is not None:
+        refusals.append(post_refusal)
+
+    # Every decimals value declared for each mint, across BOTH arrays and ALL accounts —
+    # checked once after the loop. See the disagreement guard below for why.
+    declared_decimals: dict[str, set[int]] = {}
+
+    movements: list[TokenMovement] = []
+    for index in sorted(set(pre_rows) | set(post_rows)):
+        pre_entry: _Entry | None = None
+        if index in pre_rows:
+            validated = _validate_entry(pre_rows[index])
+            if isinstance(validated, TokenDeltaRefusal):
+                refusals.append(validated)
+                continue
+            pre_entry = validated
+            declared_decimals.setdefault(validated.mint, set()).add(validated.decimals)
+
+        # An account absent from PRE did not hold the mint before this transaction — the
+        # first-time-buyer ATA created in-flight. Its pre balance is 0, a fact, and
+        # skipping it would be the zero-for-unmeasured bug wearing a different costume.
+        if index not in post_rows:
+            refusals.append(
+                TokenDeltaRefusal(
+                    reason="post-balance-missing",
+                    mint=pre_entry.mint if pre_entry else None,
+                    detail=(
+                        "an account with a balance before the transaction is absent from "
+                        "the post balances; absent is not zero"
+                    ),
+                )
+            )
+            continue
+
+        validated_post = _validate_entry(post_rows[index])
+        if isinstance(validated_post, TokenDeltaRefusal):
+            refusals.append(validated_post)
+            continue
+        post_entry = validated_post
+        declared_decimals.setdefault(post_entry.mint, set()).add(post_entry.decimals)
+
+        pre_raw = 0
+        if pre_entry is not None:
+            if pre_entry.mint != post_entry.mint:
+                refusals.append(
+                    TokenDeltaRefusal(
+                        reason="mint-inconsistent",
+                        mint=post_entry.mint,
+                        detail="the same account names two different mints across pre/post",
+                    )
+                )
+                continue
+            if pre_entry.program_id != post_entry.program_id:
+                refusals.append(
+                    TokenDeltaRefusal(
+                        reason="token-program-mismatch",
+                        mint=post_entry.mint,
+                        detail="pre and post disagree on which token program owns the mint",
+                    )
+                )
+                continue
+            if pre_entry.owner != post_entry.owner:
+                refusals.append(
+                    TokenDeltaRefusal(
+                        reason="owner-unresolved",
+                        mint=post_entry.mint,
+                        detail="pre and post disagree on the token account's owner",
+                    )
+                )
+                continue
+            pre_raw = pre_entry.raw
+
+        extension_refusal = _extension_refusal(
+            post_entry.mint, post_entry.program_id, mint_extensions
+        )
+        if extension_refusal is not None:
+            refusals.append(extension_refusal)
+            continue
+
+        delta = post_entry.raw - pre_raw
+        movements.append(
+            TokenMovement(
+                mint=post_entry.mint,
+                owner=post_entry.owner,
+                decimals=post_entry.decimals,
+                pre_raw=pre_raw,
+                post_raw=post_entry.raw,
+                delta_raw=delta,
+                ui_delta=_render_ui(delta, post_entry.decimals),
+            )
+        )
+
+    # THE DECIMALS DISAGREEMENT GUARD — whole-report, not per-account.
+    #
+    # A mint's decimals are immutable on-chain state, so ONE mint means ONE scale. Checking
+    # only the pre vs post rows of a SINGLE account left the dangerous case open: two
+    # DIFFERENT accounts of the same (owner, mint) could each be internally consistent
+    # while declaring 6 and 9. ``outflows()`` summed their raw deltas and stamped whichever
+    # decimals it happened to see last onto the total — 50_000_000 raw rendered as
+    # "0.050000000" instead of "50.000000", a silent 1000x UNDER-report against any
+    # ui-denominated cap, with ``status="measured"`` and no refusal to warn anyone.
+    #
+    # So a disagreement ANYWHERE in the report is a refusal, never a resolved conflict: we
+    # cannot know which reading is the true scale, and picking one is picking an amount.
+    # This subsumes the old per-account pre/post check (a disagreement across one
+    # account's two rows is a same-mint disagreement), which is why there is no longer a
+    # separate one — two guards emitting for one fact would double-count the refusal.
+    for mint in sorted(declared_decimals):
+        if len(declared_decimals[mint]) < 2:
+            continue
+        scales = ", ".join(str(d) for d in sorted(declared_decimals[mint]))
+        refusals.append(
+            TokenDeltaRefusal(
+                reason="decimals-inconsistent",
+                mint=mint,
+                detail=(
+                    f"the report declares more than one decimals value ({scales}) for one "
+                    "mint; a mint's scale is immutable, so at least one reading is wrong "
+                    "and an amount rendered at the wrong scale is the wrong amount"
+                ),
+            )
+        )
+    inconsistent = {mint for mint, seen in declared_decimals.items() if len(seen) > 1}
+    if inconsistent:
+        # Drop the movements of a mint whose scale is in dispute. The report is already
+        # unmeasurable, but a movement carrying one of two contradictory scales is a
+        # half-truth sitting on the object for someone to read off it.
+        movements = [
+            movement for movement in movements if movement.mint not in inconsistent
+        ]
+
+    return TokenDeltaReport(
+        status="unmeasurable" if refusals else "measured",
+        movements=tuple(movements),
+        refusals=tuple(refusals),
+    )
+
+
 class SimulateError(Exception):
     """A build or transport failure that is NOT a program revert — e.g. the builder
     returned no transaction. A program revert is not an error: it is a Receipt with
@@ -119,6 +835,15 @@ class Receipt:
     4. ``network`` — D2. Structured, closed vocabulary, the ONLY network input the gate
        reads. Defaults to ``unknown``, which approves nothing.
     5. ``observed_slot`` — D6. Recorded, never enforced.
+    6. ``token_delta`` — G6. The TYPED token leg: what moved, in which mint, at which
+       scale — or an explicit refusal. ``None`` means NOT TRACKED, never zero.
+
+    ``tokens_received`` in group 1 is SUPERSEDED by ``token_delta`` and is now
+    permanently ``None`` from :func:`simulate`. It stays on the dataclass only because
+    other modules construct Receipts positionally; it must never become a second, weaker
+    source an amount can be read from, because an ``int`` there carries no mint and no
+    decimals — a bare 25000000 is 25 USDC or 0.025 of a 9-decimal mint, and nothing on
+    the field says which.
     """
 
     status: Literal["pass", "fail", "unknown"]
@@ -169,6 +894,19 @@ class Receipt:
     #: still does not expire. Named ``observed_slot`` rather than anything ending in
     #: ``_at``/``_valid`` so it cannot be misread as a freshness guarantee.
     observed_slot: int | None = None
+    #: The TOKEN leg of this simulation — G6. ``sol_delta`` beside it answers only "how
+    #: many lamports left the payer", which for a USDC purchase is ~0 while 25 USDC
+    #: leaves the account: a lamport-denominated cap reads that drain as nothing.
+    #:
+    #: THREE STATES, none of them interchangeable. ``None`` = NOT TRACKED (the simulation
+    #: carried no token balances at all — the stock ``simulateTransaction`` case); a
+    #: report with ``status="measured"`` and no movements = an OBSERVED zero; a report
+    #: with ``status="unmeasurable"`` = we will not put a number on it, and reading one
+    #: off it raises rather than returning 0.
+    #:
+    #: Control-plane: mint, decimals, owner and amounts only. No token-account address,
+    #: no payload, and it is not projected into the corpus.
+    token_delta: TokenDeltaReport | None = None
 
 
 def _custom_code(err: Any) -> int | None:
@@ -314,6 +1052,7 @@ def simulate(
     network_label: str = _DEFAULT_NETWORK_LABEL,
     network: Network,
     replace_blockhash: bool = True,
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
 
@@ -414,8 +1153,15 @@ def simulate(
         if pre_lamports is not None and post_lamports is not None:
             sol_delta = post_lamports - pre_lamports
 
-    # tokens_received stays best-effort: only a decoded tracked token account would fill
-    # it, which is out of scope until a token-account decode is wired — never fabricated.
+    # The token leg, denominated in each mint rather than in lamports. ``None`` here means
+    # the simulation carried no token balances (stock simulateTransaction returns none) —
+    # NOT TRACKED, never zero. A Token-2022 mint whose extensions were not read, or whose
+    # extensions make the delta not the debit, comes back REFUSED rather than numbered.
+    token_delta = parse_token_deltas(value, mint_extensions=mint_extensions)
+
+    # SUPERSEDED by token_delta and permanently None. A bare int carries no mint and no
+    # decimals, so it cannot be compared against anything safely; leaving it fillable
+    # would recreate the weaker parallel source token_delta exists to replace.
     tokens_received: int | None = None
 
     return Receipt(
@@ -432,4 +1178,5 @@ def simulate(
         lookup_resolution=resolution,
         network=network,
         observed_slot=observed_slot,
+        token_delta=token_delta,
     )
