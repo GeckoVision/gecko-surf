@@ -371,30 +371,66 @@ class PrivyBackend:
         return transport(request, headers)
 
 
+#: The four names, resolved identically whether they live in the OS keychain or the
+#: environment. Listed once so the "what is missing" message and the lookup cannot drift.
+CONFIG_NAMES = ("PRIVY_APP_ID", "PRIVY_APP_SECRET", "PRIVY_WALLET_ID")
+OPTIONAL_CONFIG_NAMES = ("PRIVY_AUTHORIZATION_KEY", "PRIVY_NETWORK")
+
+
+def resolve_config(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Read the configuration through Gecko's own credential chain: keyring → command → env.
+
+    The app secret belongs in the OS keychain, not in a shell profile, and this is the
+    resolver every other Gecko credential already uses (``gecko auth set PRIVY_APP_SECRET``).
+    Passing ``env`` explicitly bypasses the chain entirely — that is what the offline suite
+    does, so no test can reach a real keychain.
+
+    A miss is an empty string, never a crash: the caller reports WHICH names are missing,
+    which is more useful than the first one that failed.
+    """
+    if env is not None:
+        return {
+            name: (env.get(name) or "").strip()
+            for name in CONFIG_NAMES + OPTIONAL_CONFIG_NAMES
+        }
+
+    from gecko.credentials import CredentialError, CredentialRef, default_resolver
+
+    resolver = default_resolver()
+    resolved: dict[str, str] = {}
+    for name in CONFIG_NAMES + OPTIONAL_CONFIG_NAMES:
+        try:
+            resolved[name] = (resolver.resolve(CredentialRef(api=name)) or "").strip()
+        except CredentialError:
+            # A miss in the keychain still lets the environment answer, and the env
+            # backend is already the chain's last link — so this is a real absence.
+            resolved[name] = (os.environ.get(name) or "").strip()
+    return resolved
+
+
 def from_env(
     env: Mapping[str, str] | None = None, *, network: str | None = None
 ) -> PrivyBackend:
-    """Build a backend from the environment, or raise naming the missing variable.
+    """Build a backend from the credential chain, or raise naming every missing variable.
 
-    Every variable is required except the authorization key. A missing one is an error and
-    never a default: a backend that half-configures itself is the failure mode the whole
-    "absence of configuration is a refusal" rule exists to prevent.
+    Every name is required except the authorization key and the network. A missing one is
+    an error and never a default: a backend that half-configures itself is the failure
+    mode the whole "absence of configuration is a refusal" rule exists to prevent.
     """
-    source = os.environ if env is None else env
-    missing = [
-        name
-        for name in ("PRIVY_APP_ID", "PRIVY_APP_SECRET", "PRIVY_WALLET_ID")
-        if not (source.get(name) or "").strip()
-    ]
+    source = resolve_config(env)
+    missing = [name for name in CONFIG_NAMES if not source.get(name)]
     if missing:
-        raise PrivyBackendError(f"not configured: {', '.join(missing)} unset or empty")
+        raise PrivyBackendError(
+            f"not configured: {', '.join(missing)} — set each with "
+            f"`gecko auth set <NAME>` (OS keychain) or export it"
+        )
     resolved = coerce_network(
         network if network is not None else source.get("PRIVY_NETWORK")
     )
     return PrivyBackend(
-        wallet_id=source["PRIVY_WALLET_ID"].strip(),
-        app_id=source["PRIVY_APP_ID"].strip(),
-        app_secret=source["PRIVY_APP_SECRET"].strip(),
+        wallet_id=source["PRIVY_WALLET_ID"],
+        app_id=source["PRIVY_APP_ID"],
+        app_secret=source["PRIVY_APP_SECRET"],
         network=resolved,
-        authorization_key=(source.get("PRIVY_AUTHORIZATION_KEY") or "").strip() or None,
+        authorization_key=source.get("PRIVY_AUTHORIZATION_KEY") or None,
     )
