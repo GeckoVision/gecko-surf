@@ -29,12 +29,12 @@ THE ORDER, AND WHY EACH STEP IS WHERE IT IS:
    ASSERTED. Nothing here infers a network: a fork proxy answers at any hostname.
 5. Require a passing receipt AND an ``exact`` binding. Anything weaker attests a message
    that is not the one about to be signed.
-6. Ask the configured :class:`~gecko.spend_policy.SpendPolicyGate`. ``agent_supplied_policy``
-   is pinned to the literal ``None``: that argument exists to be refused, and a loop that
-   forwarded one it received would have re-opened the widening path the gate closes.
-7. Sign through :class:`~gecko.signer.TransactionSigner`, which re-verifies and asks the
-   gate AGAIN on its own account. We do not skip that; we make it cheap (see
-   :class:`_ChargeOnceLedger`).
+6+7. Sign through :class:`~gecko.signer.TransactionSigner`, which asks the configured
+   :class:`~gecko.spend_policy.SpendPolicyGate` and publishes the verdict it gated on.
+   That is the ONLY consultation: the gate reserves budget when it approves, so asking it
+   a second time to learn what it decided writes two ledger rows for one purchase and
+   silently halves every rolling cap. ``agent_supplied_policy`` is pinned to the literal
+   ``None`` inside the signer: that argument exists to be refused.
 8. Send, confirm, and report predicted CU beside consumed CU.
 
 WHAT THIS MODULE DOES NOT DO. It holds no key: the signature comes from a
@@ -56,7 +56,7 @@ from __future__ import annotations
 import base64
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from .handoff import verify_handoff
@@ -67,16 +67,12 @@ from .rpc import RpcCall, default_rpc_call
 from .signer import SignerRefused, TransactionSigner
 from .simulate import BuildCall, BuiltTx, Receipt, simulate
 from .spend_policy import (
-    AdvisorySpendLedger,
     AllowedInstruction,
     SpendPolicy,
     SpendPolicyGate,
     SpendVerdict,
     TokenCap,
     TokenCaps,
-    TokenSpend,
-    VelocityDecision,
-    VelocityLimits,
 )
 
 # `_message_of` is imported rather than re-implemented so that "which wire layout is this"
@@ -319,70 +315,6 @@ class PurchaseRefused:
 PurchaseOutcome = PurchaseSettled | PurchaseRefused
 
 
-# --------------------------------------------------------------------------------------
-# The advisory counter, charged once per purchase.
-# --------------------------------------------------------------------------------------
-
-
-@dataclass
-class _ChargeOnceLedger:
-    """Forwards the FIRST reserve and replays its answer to the second, identical one.
-
-    The gate is consulted twice per purchase and that is deliberate: this loop asks it to
-    get a typed verdict, and :meth:`~gecko.signer.TransactionSigner.sign` asks it again on
-    its own account so that no caller can reach a key without an authorization answer. But
-    :meth:`~gecko.spend_policy.SpendPolicyGate.authorize` RESERVES budget when it approves,
-    so two approvals would write two rows for one purchase — silently halving every rolling
-    cap the human authored, and doing it in the conservative direction where nobody notices
-    until a legitimate purchase is refused.
-
-    So the second call is answered from the first. This does not weaken the signer's check:
-    the replay is only valid for the SAME subject — identical lamports, identical limits,
-    identical per-mint amounts — and anything else refuses. A third call refuses too. One
-    instance serves exactly one :func:`run_purchase` invocation and is never shared.
-    """
-
-    inner: AdvisorySpendLedger
-    _decision: VelocityDecision | None = field(default=None, init=False)
-    _subject: tuple[int, VelocityLimits, tuple[TokenSpend, ...]] | None = field(
-        default=None, init=False
-    )
-    _calls: int = field(default=0, init=False)
-
-    def reserve(
-        self,
-        *,
-        at: float,
-        lamports: int,
-        limits: VelocityLimits,
-        tokens: tuple[TokenSpend, ...] = (),
-    ) -> VelocityDecision:
-        self._calls += 1
-        subject = (lamports, limits, tokens)
-        if self._calls == 1:
-            self._subject = subject
-            self._decision = self.inner.reserve(
-                at=at, lamports=lamports, limits=limits, tokens=tokens
-            )
-            return self._decision
-        if self._calls > 2 or self._decision is None or subject != self._subject:
-            return VelocityDecision(
-                within=False,
-                reason=(
-                    "the advisory counter was asked to reserve a different spend than the "
-                    "one this run already reserved; one purchase reserves once, and a "
-                    "second subject inside one run is refused rather than counted"
-                ),
-                code="ledger-unreadable",
-            )
-        return self._decision
-
-
-# --------------------------------------------------------------------------------------
-# The loop.
-# --------------------------------------------------------------------------------------
-
-
 def run_purchase(
     *,
     network: Network,
@@ -491,44 +423,47 @@ def run_purchase(
             predicted_units=receipt.units_consumed,
         )
 
-    # 6. AUTHORIZATION. `agent_supplied_policy` is the literal None — see the module
-    #    docstring. The gate is wrapped so the signer's own second call replays this answer
-    #    instead of charging the budget twice.
-    run_gate = spend_gate
-    if spend_gate.ledger is not None:
-        run_gate = replace(spend_gate, ledger=_ChargeOnceLedger(spend_gate.ledger))
-    verdict = run_gate.authorize(
-        handoff.transaction_base64,
-        receipt,
-        now=now,
-        agent_supplied_policy=None,
-    )
-    if not verdict.authorized:
-        return PurchaseRefused(
-            code="spend-refused",
-            reason=f"[{verdict.code}] {verdict.reason}",
-            network=network,
-            receipt=receipt,
-            verdict=verdict,
-            predicted_units=receipt.units_consumed,
-        )
-
-    # 7. SIGN. The signer re-verifies at `exact` and asks the gate again on its own account;
-    #    both are kept, and neither is skipped because this loop already did something like
-    #    them. `current_slot` is observed HERE because a network round trip inside a
-    #    security decision turns that decision into a timeout.
+    # 6+7. AUTHORISE AND SIGN — ONE consultation, not two.
+    #
+    #  The gate RESERVES budget when it approves. This loop used to authorise on its own
+    #  account and then hand the signer a gate that asked again, so one purchase wrote two
+    #  ledger rows and silently halved every rolling cap. A wrapper that replayed the first
+    #  answer to the second call hid that, but the budget was still asked twice and any
+    #  caller wiring the gate itself would have reintroduced it.
+    #
+    #  The signer already computes the verdict, and it is the consultation that MATTERS —
+    #  it is the one a signature cannot be produced without. So it is the only one, and it
+    #  now publishes its answer on the result and on the refusal.
     current_slot = _current_slot(call, rpc_url)
     try:
-        signed = replace(signer, spend_gate=run_gate).sign(
-            handoff, receipt=receipt, current_slot=current_slot
-        )
+        signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
     except SignerRefused as refusal:
+        # A spend refusal keeps its own typed code and carries the gate's finer verdict;
+        # every other refusal is the signer's own and has no spend decision to report.
+        spend_refusal = refusal.code == "spend-not-authorized"
         return PurchaseRefused(
-            code="signer-refused",
+            code="spend-refused" if spend_refusal else "signer-refused",
             reason=f"[{refusal.code}] {refusal.reason}",
             network=network,
             receipt=receipt,
-            verdict=verdict,
+            verdict=refusal.verdict,
+            predicted_units=receipt.units_consumed,
+        )
+    verdict = signed.spend_verdict
+    if verdict is None:
+        # Unreachable while the signer always gates — an unconfigured gate is itself a
+        # refusal there. Kept as a refusal rather than a cast: a settled purchase carrying
+        # no verdict would be a signature nobody can account for, and narrowing that away
+        # to satisfy a type checker is how an unexplained signature becomes normal.
+        return PurchaseRefused(
+            code="signer-refused",
+            reason=(
+                "the signer produced a signature but published no spend verdict; "
+                "a settled purchase must be able to say what authorised it"
+            ),
+            network=network,
+            receipt=receipt,
+            verdict=None,
             predicted_units=receipt.units_consumed,
         )
 
