@@ -23,7 +23,12 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
-from gecko.simulate import Receipt
+from gecko.simulate import (
+    Receipt,
+    TokenDeltaRefusal,
+    TokenDeltaReport,
+    TokenMovement,
+)
 from gecko.spend_policy import (
     AdvisorySpendLedger,
     AllowedInstruction,
@@ -32,6 +37,8 @@ from gecko.spend_policy import (
     SpendPolicy,
     SpendPolicyGate,
     SpendVerdict,
+    TokenCap,
+    TokenCaps,
 )
 from gecko.txbind import DecodedMessage, decode_message
 
@@ -67,7 +74,48 @@ def _tx(
     return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
 
 
-def _receipt(*, sol_delta: int | None = -1_000) -> Receipt:
+#: A 6-decimal mint, and the raw amounts that make the fold visible: 25 USDC is
+#: 25,000,000 raw, which is 0.025 SOL if anybody ever adds it to a lamport window.
+MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+ONE_USDC = 1_000_000
+TWENTY_FIVE_USDC = 25_000_000
+
+
+def _measured(*movements: TokenMovement) -> TokenDeltaReport:
+    """A token leg that was READ. No movements is an OBSERVED zero, never "not tracked"."""
+    return TokenDeltaReport(status="measured", movements=movements, refusals=())
+
+
+def _movement(
+    *,
+    mint: str = MINT,
+    owner: str = str(PAYER),
+    decimals: int = 6,
+    delta_raw: int = -TWENTY_FIVE_USDC,
+) -> TokenMovement:
+    return TokenMovement(
+        mint=mint,
+        owner=owner,
+        decimals=decimals,
+        pre_raw=100_000_000,
+        post_raw=100_000_000 + delta_raw,
+        delta_raw=delta_raw,
+        ui_delta=str(delta_raw),
+    )
+
+
+def _receipt(
+    *,
+    sol_delta: int | None = -1_000,
+    token_delta: TokenDeltaReport | None = None,
+    track_tokens: bool = True,
+) -> Receipt:
+    """A receipt whose TOKEN leg was read as well as its lamport one.
+
+    ``track_tokens=False`` is the NOT-TRACKED state — ``token_delta is None``, which is
+    what stock ``simulateTransaction`` produces and which this gate refuses on a
+    token-capable message rather than reading as zero.
+    """
     return Receipt(
         status="pass",
         err=None,
@@ -77,6 +125,25 @@ def _receipt(*, sol_delta: int | None = -1_000) -> Receipt:
         tokens_received=None,
         logs_tail=(),
         network_label="simulated (fork/RPC snapshot — not mainnet)",
+        token_delta=(
+            (token_delta if token_delta is not None else _measured())
+            if track_tokens
+            else None
+        ),
+    )
+
+
+def _token_caps() -> TokenCaps:
+    return TokenCaps.of(
+        (
+            TokenCap(
+                mint=MINT,
+                decimals=6,
+                per_transaction_raw=ONE_USDC,
+                hourly_raw=2 * ONE_USDC,
+                daily_raw=4 * ONE_USDC,
+            ),
+        )
     )
 
 
@@ -91,6 +158,7 @@ def _policy(**overrides: Any) -> SpendPolicy:
             {AllowedInstruction(program_id=str(PROGRAM), discriminator=TRANSFER_DISC)}
         ),
         "allowed_destinations": frozenset({str(DEST)}),
+        "token_caps": _token_caps(),
     }
     base.update(overrides)
     return SpendPolicy(**base)
@@ -542,6 +610,212 @@ def test_an_unreadable_ledger_refuses_rather_than_counting_zero(tmp_path: Path) 
 
 
 # --------------------------------------------------------------------------------------
+# CAP 5 — PER-MINT TOKEN CAPS, IN THE MINT'S OWN RAW BASE UNITS
+# --------------------------------------------------------------------------------------
+
+
+def test_a_token_drain_that_moves_almost_no_lamports_is_refused() -> None:
+    """THE BUG, at this level. 25 USDC out; the lamport leg is a 1,000-lamport fee.
+
+    Every lamport-denominated cap in this policy authorises this transaction. Only a cap
+    written in the mint's own units can see it.
+    """
+    verdict = _gate().authorize(
+        _tx(), _receipt(token_delta=_measured(_movement())), now=1_000.0
+    )
+    assert verdict.authorized is False
+    assert verdict.code == "over-per-transaction-token-cap"
+    assert verdict.outflow_lamports == 1_000, (
+        "the lamport figure must stay a LAMPORT figure — the moment a raw token amount "
+        "is folded in here, 25 USDC starts reading as 0.025 SOL"
+    )
+
+
+def test_a_raw_token_amount_never_enters_the_lamport_windows() -> None:
+    """A fold would spend the hourly LAMPORT budget on a token transfer.
+
+    Four half-USDC spends are authorised; the lamport windows must show only the four
+    1,000-lamport fees, not 2,000,000 raw units of somebody else's denomination.
+    """
+    gate = _gate(_policy(hourly_cap_lamports=10_000))
+    for index in range(4):
+        verdict = gate.authorize(
+            _tx(),
+            _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
+            now=1_000.0 + index,
+        )
+        assert verdict.authorized is True, f"call {index}: {verdict.reason}"
+        assert verdict.outflow_lamports == 1_000
+    assert [spend.mint for spend in verdict.outflow_tokens] == [MINT]
+    assert [spend.raw for spend in verdict.outflow_tokens] == [500_000]
+
+
+def test_a_mint_the_policy_never_named_refuses() -> None:
+    other = "So11111111111111111111111111111111111111112"
+    verdict = _gate().authorize(
+        _tx(),
+        _receipt(token_delta=_measured(_movement(mint=other, delta_raw=-1))),
+        now=1_000.0,
+    )
+    assert verdict.authorized is False
+    assert verdict.code == "mint-not-allowlisted"
+
+
+def test_a_decimals_disagreement_refuses_rather_than_rescaling() -> None:
+    """A raw cap means nothing without the scale it was written at."""
+    verdict = _gate().authorize(
+        _tx(),
+        _receipt(token_delta=_measured(_movement(decimals=2, delta_raw=-100))),
+        now=1_000.0,
+    )
+    assert verdict.authorized is False
+    assert verdict.code == "token-decimals-mismatch"
+
+
+def test_an_unauthored_token_cap_map_refuses_as_incomplete() -> None:
+    """ "No cap that is unlimited because nobody thought about it", extended to cap 5."""
+    verdict = _gate(_policy(token_caps=None)).authorize(_tx(), _receipt(), now=1_000.0)
+    assert verdict.authorized is False
+    assert verdict.code == "policy-incomplete"
+    assert "token_caps" in verdict.reason
+
+
+def test_an_authored_empty_map_is_a_sentence_and_refuses_any_token_movement() -> None:
+    """``TokenCaps.none()`` is authored; an absent map is not. They are different answers.
+
+    With ``none()`` the policy is COMPLETE — a lamport-only transaction is authorised —
+    and any token outflow at all is refused as an unlisted mint.
+    """
+    gate = _gate(_policy(token_caps=TokenCaps.none()))
+    assert gate.authorize(_tx(), _receipt(), now=1_000.0).authorized is True
+
+    moving = gate.authorize(
+        _tx(), _receipt(token_delta=_measured(_movement(delta_raw=-1))), now=1_001.0
+    )
+    assert moving.authorized is False
+    assert moving.code == "mint-not-allowlisted"
+
+
+def test_an_unmeasurable_token_leg_refuses_rather_than_reading_zero() -> None:
+    """S2's third state. ``outflows()`` raises here, and a raise is not a zero."""
+    unmeasurable = TokenDeltaReport(
+        status="unmeasurable",
+        movements=(),
+        refusals=(
+            TokenDeltaRefusal(
+                reason="transfer-hook",
+                mint=MINT,
+                detail="an extra program runs on transfer; the balances cannot see it",
+            ),
+        ),
+    )
+    verdict = _gate().authorize(_tx(), _receipt(token_delta=unmeasurable), now=1_000.0)
+    assert verdict.authorized is False
+    assert verdict.code == "amount-unresolvable"
+
+
+def test_an_untracked_token_leg_refuses_on_a_token_capable_message() -> None:
+    """``None`` is NOT TRACKED, and stock ``simulateTransaction`` returns exactly that."""
+    verdict = _gate().authorize(_tx(), _receipt(track_tokens=False), now=1_000.0)
+    assert verdict.authorized is False
+    assert verdict.code == "token-leg-not-measured"
+
+
+def test_an_untracked_token_leg_is_a_FACT_when_no_program_could_move_a_token() -> None:
+    """The one derivation, and it is a derivation rather than an exemption.
+
+    A message built only from the System program has no token leg to measure: that
+    program cannot invoke another. Anything else — Memo included, deliberately — is
+    treated as token-capable.
+    """
+    system = Pubkey.from_string("11111111111111111111111111111111")
+    policy = _policy(
+        allowed_instructions=frozenset(
+            {
+                AllowedInstruction(
+                    program_id=str(system), discriminator=b"\x02\x00\x00\x00"
+                )
+            }
+        )
+    )
+    verdict = _gate(policy).authorize(
+        _tx(program=system, data=b"\x02\x00\x00\x00" + b"\x10" * 8),
+        _receipt(track_tokens=False),
+        now=1_000.0,
+    )
+    assert verdict.authorized is True, verdict.reason
+
+
+def test_the_per_mint_velocity_binds_in_the_mints_own_units() -> None:
+    """The `singleTxLimit` lesson again: a per-tx token cap of X is defeated by N of X."""
+    gate = _gate()
+    for index in range(4):
+        verdict = gate.authorize(
+            _tx(),
+            _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
+            now=1_000.0 + index,
+        )
+        assert verdict.authorized is True, f"call {index}: {verdict.reason}"
+    fifth = gate.authorize(
+        _tx(),
+        _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
+        now=1_004.0,
+    )
+    assert fifth.authorized is False
+    assert fifth.code == "over-hourly-token-cap"
+
+
+def test_a_token_row_carries_a_mint_and_never_an_owner_or_a_binding(
+    tmp_path: Path,
+) -> None:
+    """Invariant #1 on the ledger schema. A mint is a public program-surface identifier;
+    an owner, a token-account address, a binding or a payload is not, and none may appear.
+    """
+    path = tmp_path / "spend.jsonl"
+    verdict = _gate(ledger=FileSpendLedger(str(path))).authorize(
+        _tx(),
+        _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
+        now=1_000.0,
+    )
+    assert verdict.authorized is True
+
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {frozenset(row) for row in rows} == {
+        frozenset({"at", "lamports"}),
+        frozenset({"at", "mint", "raw"}),
+    }
+    token_row = next(row for row in rows if "mint" in row)
+    assert token_row["mint"] == MINT
+    assert token_row["raw"] == 500_000
+    for row in rows:
+        assert not (set(row) & {"owner", "account", "binding", "tx", "payload"})
+
+
+def test_a_ledger_row_with_a_field_this_module_cannot_account_for_refuses(
+    tmp_path: Path,
+) -> None:
+    """A malformed line stays a LedgerError — never a skipped line, never a smaller total.
+
+    Written with an OWNER, because that is the field most likely to be added by somebody
+    who wants better attribution and is exactly the one invariant #1 forbids.
+    """
+    path = tmp_path / "spend.jsonl"
+    path.write_text(
+        json.dumps({"at": 1_000.0, "mint": MINT, "raw": 1, "owner": str(PAYER)}) + "\n",
+        encoding="utf-8",
+    )
+    verdict = _gate(ledger=FileSpendLedger(str(path))).authorize(
+        _tx(), _receipt(), now=1_001.0
+    )
+    assert verdict.authorized is False
+    assert verdict.code == "ledger-unreadable"
+
+
+# --------------------------------------------------------------------------------------
 # VERIFICATION AND AUTHORIZATION ARE DIFFERENT PREDICATES
 # --------------------------------------------------------------------------------------
 
@@ -565,7 +839,10 @@ def test_the_gate_reads_no_verification_field_off_the_receipt() -> None:
         "observed_slot",
     ):
         assert verification_field not in read_attributes, verification_field
+    # The AMOUNT fields, and only those. ``token_delta`` joined ``sol_delta`` when cap 5
+    # landed: it is what the transaction MOVES, not a claim about whether it will land.
     assert "sol_delta" in read_attributes
+    assert "token_delta" in read_attributes
 
 
 def test_an_authorized_verdict_carries_no_bytes() -> None:
