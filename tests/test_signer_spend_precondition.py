@@ -29,7 +29,7 @@ import base64
 import inspect
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -388,9 +388,30 @@ def test_sign_has_no_parameter_through_which_a_verdict_or_a_policy_can_arrive() 
         "force",
     }
     assert not (set(params) & forbidden_names), f"a verdict can arrive: {set(params)}"
-    forbidden_types = (SpendVerdict, SpendPolicy, SpendPolicyGate)
-    for parameter in params.values():
-        assert parameter.annotation not in forbidden_types, parameter.name
+
+    def mentions(annotation: Any, forbidden: type) -> bool:
+        """Does this annotation carry ``forbidden`` anywhere — including inside a union?
+
+        Membership in a bare tuple only catches the annotation written bare. ``SpendVerdict
+        | None`` is a ``types.UnionType``, equal to no member of the tuple, so it passed.
+        One level of ``get_args`` is not enough either: it flattens ``list[SpendVerdict] |
+        None`` to ``(list[SpendVerdict], NoneType)``, neither of which is the forbidden
+        type. The recursion is what closes it.
+
+        Compared by IDENTITY, as in the sibling guard at
+        ``tests/test_autonomous_purchase.py``. A substring test would be wrong in both
+        directions: it flags ``SpendPolicyGate`` where that is the allowed configuration
+        seam, and it misses an alias that spells the type another way.
+        """
+        if annotation is forbidden:
+            return True
+        return any(mentions(arg, forbidden) for arg in get_args(annotation))
+
+    for name, parameter in params.items():
+        for forbidden in (SpendVerdict, SpendPolicy, SpendPolicyGate):
+            assert not mentions(parameter.annotation, forbidden), (
+                f"{name} can carry a {forbidden.__name__}"
+            )
 
 
 def test_the_gate_is_asked_over_the_REVERIFIED_bytes_not_the_handoff_bytes() -> None:
