@@ -63,6 +63,7 @@ __all__ = [
     "TokenOutflow",
     "classify_revert",
     "parse_token_deltas",
+    "parse_token_deltas_from_instructions",
     "revert_family",
     "simulate",
 ]
@@ -192,10 +193,20 @@ TOKEN_DELTA_REFUSALS: frozenset[str] = frozenset(
         # Summing only what we recognise silently drops the rest, and "we have not heard
         # of it" is not "it moved nothing".
         "instruction-unrecognised",
-        # A recognised instruction that states no amount — ``closeAccount`` drains the
-        # entire remaining balance and the instruction does not say how much that is.
-        # Only the BALANCES know, and under this basis they are exactly what is missing.
-        "amount-absent",
+        # A recognised token instruction that does not state enough to price the movement.
+        # The ``detail`` names exactly what is missing, because the cases differ and the
+        # difference is the useful part:
+        #   * unchecked ``transfer`` states no MINT and no decimals — production decoders
+        #     recover them from ``preTokenBalances``, which under this basis is precisely
+        #     what is absent;
+        #   * ``burn`` states a mint but no decimals;
+        #   * ``closeAccount`` drains the whole remaining balance and states no amount;
+        #   * a TOP-LEVEL token instruction states its amount only in argument bytes, and
+        #     the local decoder keeps the selector alone by design (invariant #1), so the
+        #     amount is unavailable without holding payload.
+        # Every one of them is refused rather than skipped, because a skipped movement
+        # sums to zero and zero is an amount that passes every cap.
+        "instruction-not-priceable",
     }
 )
 
@@ -349,6 +360,15 @@ class TokenDeltaReport:
     movements: tuple[TokenMovement, ...]
     refusals: tuple[TokenDeltaRefusal, ...]
     basis: TokenDeltaBasis = "token-balances"
+    #: Outflows stated DIRECTLY. The ``instruction-trace`` basis only.
+    #:
+    #: An instruction states a DELTA and has no before or after, while
+    #: :class:`TokenMovement` requires ``pre_raw`` and ``post_raw``. Building a movement
+    #: from an instruction would mean inventing both, and an invented balance in the path
+    #: that authorises spending is exactly the fabrication this module refuses elsewhere.
+    #: :class:`TokenOutflow` is already the right shape, so that basis produces it directly
+    #: and leaves ``movements`` empty.
+    instruction_outflows: tuple[TokenOutflow, ...] = ()
 
     def __post_init__(self) -> None:
         if self.refusals and self.status != "unmeasurable":
@@ -356,6 +376,18 @@ class TokenDeltaReport:
         if not self.refusals and self.status != "measured":
             raise ValueError(
                 "a report with no refusal has nothing to be unmeasurable about"
+            )
+        # The two bases fill different fields and must never be mixed. A report holding
+        # both would have two answers to "how much left", and the aggregation below would
+        # silently return only one of them.
+        if self.basis == "token-balances" and self.instruction_outflows:
+            raise ValueError(
+                "a token-balances report states movements, not direct outflows"
+            )
+        if self.basis == "instruction-trace" and self.movements:
+            raise ValueError(
+                "an instruction-trace report states direct outflows, not movements — an "
+                "instruction has no before-and-after to build a movement from"
             )
 
     def _require_measured(self) -> None:
@@ -372,6 +404,11 @@ class TokenDeltaReport:
         Raises :class:`TokenDeltaUnmeasurable` unless the whole report is measured.
         """
         self._require_measured()
+        if self.basis == "instruction-trace":
+            # Already aggregated by the parser, which had to net a mint's movements to
+            # decide whether anything left at all. Re-aggregating an empty ``movements``
+            # here would return () and read as an observed zero.
+            return self.instruction_outflows
         nets: dict[tuple[str, str], list[int]] = {}
         decimals: dict[tuple[str, str], int] = {}
         for movement in self.movements:
@@ -402,6 +439,16 @@ class TokenDeltaReport:
         zero this returns is only ever an OBSERVED zero.
         """
         self._require_measured()
+        if self.basis == "instruction-trace":
+            # Summing ``movements`` would return 0 for every query, and a fabricated
+            # observed-zero is the failure this basis is built to avoid. Only outflows are
+            # known here, so a mint with no recorded outflow reads as 0 and one with an
+            # outflow reads as the negative magnitude actually recorded.
+            return -sum(
+                outflow.raw
+                for outflow in self.instruction_outflows
+                if outflow.mint == mint and outflow.owner == owner
+            )
         return sum(
             movement.delta_raw
             for movement in self.movements
@@ -830,6 +877,330 @@ def parse_token_deltas(
         movements=tuple(movements),
         refusals=tuple(refusals),
     )
+
+
+#: The token instructions that state everything needed to price the movement they make:
+#: a mint, an amount, and the decimals that amount is denominated in — all in the
+#: instruction itself, with no balance lookup.
+#:
+#: IT IS THE ``Checked`` VARIANTS AND ONLY THEM, and that is a property of the wire format
+#: rather than a choice. Unchecked ``transfer`` carries ``source``, ``destination``,
+#: ``authority`` and ``amount`` — no mint, no decimals. Production decoders recover the
+#: mint by looking the source account up in a map built from ``preTokenBalances``; under
+#: this basis those arrays are exactly what is missing, so there is nothing to look it up
+#: in. ``burn`` names a mint but no decimals.
+#:
+#: The practical consequence is stated plainly rather than discovered later: this basis
+#: recovers ``*Checked`` traffic and refuses the rest. Since it runs only where the answer
+#: today is already a refusal, refusing is the status quo and never a regression — but it
+#: is a much narrower recovery than "the CPI comes back fully parsed" suggests.
+_PRICEABLE_TOKEN_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"transferChecked", "burnChecked"}
+)
+
+#: Recognised, definitely a token operation, and NOT priceable from the instruction. Kept
+#: as an explicit set rather than folded into the unrecognised branch so the refusal can
+#: say WHICH of the two things happened — "we do not know this instruction" and "we know it
+#: and it does not state enough" are different bugs to chase.
+_KNOWN_UNPRICEABLE: frozenset[str] = frozenset(
+    {
+        "transfer",
+        "burn",
+        "closeAccount",
+        "mintTo",
+        "mintToChecked",
+        "approve",
+        "approveChecked",
+        "revoke",
+        "setAuthority",
+        "syncNative",
+        "initializeAccount",
+        "initializeAccount2",
+        "initializeAccount3",
+        "withdrawWithheldTokensFromAccounts",
+        "withdrawWithheldTokensFromMint",
+        "harvestWithheldTokensToMint",
+    }
+)
+
+_TOKEN_PROGRAM_NAMES: frozenset[str] = frozenset({"spl-token", "spl-token-2022"})
+
+
+def _ix_refusal(reason: str, mint: str | None, detail: str) -> TokenDeltaRefusal:
+    return TokenDeltaRefusal(reason=reason, mint=mint, detail=detail)
+
+
+def _mint_of(info: Mapping[str, Any]) -> str | None:
+    candidate = info.get("mint")
+    return candidate if isinstance(candidate, str) and candidate else None
+
+
+def parse_token_deltas_from_instructions(
+    value: Mapping[str, Any],
+    *,
+    fee_payer: str,
+    top_level_token_instructions: int = 0,
+) -> TokenDeltaReport | None:
+    """Sum the token leg from ``jsonParsed`` inner instructions. A STRICT FALLBACK.
+
+    Returns ``None`` — NOT TRACKED — when the response carries no ``innerInstructions`` key
+    at all, exactly as :func:`parse_token_deltas` does for the balance arrays. The caller
+    uses this only where the arrays are absent, which is a hard refusal today, so every
+    outcome here is either that same refusal or an answer we did not have before. It can
+    never lower an amount that is currently authorized.
+
+    WHY THIS IS THE WEAKER BASIS, IN ONE FACT. The arrays state, per token ACCOUNT, the
+    OWNER and the balance change. An instruction states the AUTHORITY that signed it. Under
+    SPL delegation those differ: an ``approve`` lets a delegate move tokens out of an
+    account it does not own. So a movement whose authority is not the fee payer cannot be
+    attributed here either way, and it is REFUSED rather than filtered — a filtered
+    movement sums to zero, a summed zero is an observed zero, and zero passes every cap.
+    That is the whole reason ``authority-not-payer`` exists.
+
+    ``top_level_token_instructions`` is how many TOP-LEVEL instructions belong to a token
+    program. Any at all is a refusal. ``innerInstructions`` carries only CPIs, so a
+    top-level transfer is invisible here and would read as zero — but its amount cannot be
+    recovered either, because the local decoder keeps a selector and discards the argument
+    bytes on purpose (:class:`~gecko.txbind.DecodedInstruction`, invariant #1). Refusing is
+    the only answer that neither holds payload nor reads a real transfer as nothing.
+
+    Everything in ``value`` is untrusted transport output. Amounts are read as decimal
+    STRINGS and never coerced from a float: ``uiAmount`` is a JSON number and a u64 past
+    2^53 does not survive one.
+    """
+    if "innerInstructions" not in value:
+        return None
+
+    refusals: list[TokenDeltaRefusal] = []
+    if top_level_token_instructions:
+        refusals.append(
+            _ix_refusal(
+                "instruction-not-priceable",
+                None,
+                f"{top_level_token_instructions} top-level token instruction(s) are "
+                f"present; innerInstructions carries only CPIs, and a top-level amount "
+                f"lives in argument bytes the local decoder discards by design",
+            )
+        )
+
+    inner = value.get("innerInstructions")
+    if inner is None:
+        # PRESENT and null — the node declining, which is not the node saying there were no
+        # CPIs. The same distinction ``balances-null`` draws for the arrays.
+        return TokenDeltaReport(
+            status="unmeasurable",
+            movements=(),
+            refusals=(
+                _ix_refusal(
+                    "balances-null",
+                    None,
+                    "innerInstructions was present and null; a declined read is not an "
+                    "empty one",
+                ),
+            ),
+            basis="instruction-trace",
+        )
+    if not isinstance(inner, list):
+        return TokenDeltaReport(
+            status="unmeasurable",
+            movements=(),
+            refusals=(
+                _ix_refusal(
+                    "malformed-balance",
+                    None,
+                    f"innerInstructions is {type(inner).__name__}, not a list",
+                ),
+            ),
+            basis="instruction-trace",
+        )
+
+    # (mint, decimals) -> summed raw amount leaving the fee payer.
+    debits: dict[tuple[str, int], int] = {}
+    for group in inner:
+        if not isinstance(group, Mapping):
+            refusals.append(
+                _ix_refusal(
+                    "malformed-balance",
+                    None,
+                    "an innerInstructions entry is not an object",
+                )
+            )
+            continue
+        instructions = group.get("instructions")
+        if not isinstance(instructions, list):
+            refusals.append(
+                _ix_refusal(
+                    "malformed-balance",
+                    None,
+                    "an innerInstructions entry carries no instruction list",
+                )
+            )
+            continue
+        for instruction in instructions:
+            _read_token_instruction(instruction, fee_payer, debits, refusals)
+
+    if refusals:
+        # Fails closed as a WHOLE, like the arrays path: one refusal makes the report
+        # unmeasurable even beside a cleanly summed mint, because nothing proves the
+        # refused instruction is not the drain.
+        return TokenDeltaReport(
+            status="unmeasurable",
+            movements=(),
+            refusals=tuple(refusals),
+            basis="instruction-trace",
+        )
+    return TokenDeltaReport(
+        status="measured",
+        movements=(),
+        refusals=(),
+        basis="instruction-trace",
+        instruction_outflows=tuple(
+            TokenOutflow(
+                mint=mint,
+                owner=fee_payer,
+                decimals=decimals,
+                raw=raw,
+                ui=_render_ui(raw, decimals),
+            )
+            for (mint, decimals), raw in sorted(debits.items())
+            if raw > 0
+        ),
+    )
+
+
+def _read_token_instruction(
+    instruction: Any,
+    fee_payer: str,
+    debits: dict[tuple[str, int], int],
+    refusals: list[TokenDeltaRefusal],
+) -> None:
+    """Fold one parsed inner instruction into ``debits``, or append the refusal it earns.
+
+    Anything that is not a token program is ignored outright — a Jupiter route or a System
+    transfer is not a token movement and its absence from this sum is a fact, not a gap.
+    Everything that IS a token program either prices or refuses; there is no third branch,
+    which is what keeps an unrecognised instruction from silently summing to zero.
+    """
+    if not isinstance(instruction, Mapping):
+        refusals.append(
+            _ix_refusal(
+                "malformed-balance", None, "an inner instruction is not an object"
+            )
+        )
+        return
+
+    if instruction.get("program") not in _TOKEN_PROGRAM_NAMES and instruction.get(
+        "programId"
+    ) not in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
+        return
+
+    parsed = instruction.get("parsed")
+    if not isinstance(parsed, Mapping):
+        # A token-program instruction the node did not parse. Its data is opaque here, and
+        # an opaque token instruction is not a harmless one.
+        refusals.append(
+            _ix_refusal(
+                "instruction-unrecognised",
+                None,
+                "a token-program instruction arrived unparsed, so what it does is not "
+                "stated; an unparsed token instruction is not an inert one",
+            )
+        )
+        return
+
+    kind = parsed.get("type")
+    info = parsed.get("info")
+    if not isinstance(kind, str) or not isinstance(info, Mapping):
+        refusals.append(
+            _ix_refusal(
+                "instruction-unrecognised",
+                None,
+                "a parsed token instruction states no type or no info",
+            )
+        )
+        return
+
+    if kind not in _PRICEABLE_TOKEN_INSTRUCTIONS:
+        refusals.append(
+            _ix_refusal(
+                "instruction-not-priceable"
+                if kind in _KNOWN_UNPRICEABLE
+                else "instruction-unrecognised",
+                _mint_of(info),
+                f"the token instruction {kind!r} does not state a mint, an amount and its "
+                f"decimals together, so the movement it makes cannot be priced from the "
+                f"instruction alone",
+            )
+        )
+        return
+
+    # -- from here the instruction is one we can price, if its fields hold up -----------
+    authority = info.get("authority")
+    if not isinstance(authority, str) or not authority:
+        # A multisig states ``multisigAuthority`` plus ``signers`` instead. Refused rather
+        # than resolved: whether the payer is meaningfully the authority of an m-of-n set
+        # is a judgement, and the token leg of a simulation is not where it gets made.
+        refusals.append(
+            _ix_refusal(
+                "authority-not-payer",
+                _mint_of(info),
+                f"the {kind} states no single authority (a multisig states "
+                f"multisigAuthority and signers); who signed it is not established here",
+            )
+        )
+        return
+    if authority != fee_payer:
+        refusals.append(
+            _ix_refusal(
+                "authority-not-payer",
+                _mint_of(info),
+                f"the {kind} was authorised by an account that is not the fee payer; an "
+                f"instruction names its authority and not the source account's owner, and "
+                f"under delegation those differ — so this movement cannot be attributed, "
+                f"and a movement dropped here would sum to zero",
+            )
+        )
+        return
+
+    mint = _mint_of(info)
+    if mint is None:
+        refusals.append(
+            _ix_refusal("instruction-not-priceable", None, f"the {kind} states no mint")
+        )
+        return
+
+    amount_field = info.get("tokenAmount")
+    if not isinstance(amount_field, Mapping):
+        refusals.append(
+            _ix_refusal(
+                "instruction-not-priceable",
+                mint,
+                f"the {kind} states no tokenAmount object",
+            )
+        )
+        return
+
+    raw_text = amount_field.get("amount")
+    decimals = amount_field.get("decimals")
+    # ``amount`` is a decimal STRING on the wire and is parsed as one. Reading ``uiAmount``
+    # instead would route a u64 through a JSON float, and a balance past 2^53 does not
+    # survive that — silently, and downward, which is the direction a cap does not catch.
+    if not isinstance(raw_text, str) or not raw_text.isdigit():
+        refusals.append(
+            _ix_refusal(
+                "malformed-balance", mint, f"the {kind} amount is not a decimal string"
+            )
+        )
+        return
+    if isinstance(decimals, bool) or not isinstance(decimals, int) or decimals < 0:
+        refusals.append(
+            _ix_refusal(
+                "malformed-balance", mint, f"the {kind} states no usable decimals"
+            )
+        )
+        return
+
+    debits[(mint, decimals)] = debits.get((mint, decimals), 0) + int(raw_text)
 
 
 class SimulateError(Exception):
