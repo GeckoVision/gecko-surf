@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 from .networks import UNKNOWN_NETWORK, Network
+from .provenance import TokenDeltaBasis
 from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
 from .txbind import LookupResolution
 
@@ -54,6 +55,7 @@ __all__ = [
     "TOKEN_2022_PROGRAM_ID",
     "TOKEN_DELTA_REFUSALS",
     "TOKEN_PROGRAM_ID",
+    "TokenDeltaBasis",
     "TokenDeltaRefusal",
     "TokenDeltaReport",
     "TokenDeltaUnmeasurable",
@@ -178,6 +180,22 @@ TOKEN_DELTA_REFUSALS: frozenset[str] = frozenset(
         # the data, which is not the node stating nothing moved. Distinct from
         # ``malformed-balance`` on purpose: see ``parse_token_deltas``.
         "balances-null",
+        # --- the ``instruction-trace`` basis only (see parse_token_deltas_from_instructions)
+        # A recognised token movement signed by an account that is NOT the fee payer.
+        # An instruction states its AUTHORITY, and under delegation an authority is not
+        # the source account's owner — so this basis cannot attribute the movement to the
+        # payer either way. It REFUSES rather than filtering: a filtered movement sums to
+        # zero, a summed zero is an "observed zero", and zero passes every cap. That is
+        # the whole reason this basis needs its own refusal.
+        "authority-not-payer",
+        # An ``spl-token``/``spl-token-2022`` instruction outside the closed allowlist.
+        # Summing only what we recognise silently drops the rest, and "we have not heard
+        # of it" is not "it moved nothing".
+        "instruction-unrecognised",
+        # A recognised instruction that states no amount — ``closeAccount`` drains the
+        # entire remaining balance and the instruction does not say how much that is.
+        # Only the BALANCES know, and under this basis they are exactly what is missing.
+        "amount-absent",
     }
 )
 
@@ -319,11 +337,18 @@ class TokenDeltaReport:
 
     Fails closed as a whole: one refusal makes the entire report unmeasurable even beside
     a cleanly measured mint, because nothing proves the refused mint is not the drain.
+
+    ``basis`` says WHERE the numbers came from, because the two sources are not equally
+    strong and a reader comparing two receipts must be able to tell which they hold. It
+    defaults to ``token-balances`` — the strong source, and what every producer used
+    before the fallback existed — so a report that never thought about provenance cannot
+    accidentally claim the weaker one.
     """
 
     status: Literal["measured", "unmeasurable"]
     movements: tuple[TokenMovement, ...]
     refusals: tuple[TokenDeltaRefusal, ...]
+    basis: TokenDeltaBasis = "token-balances"
 
     def __post_init__(self) -> None:
         if self.refusals and self.status != "unmeasurable":
