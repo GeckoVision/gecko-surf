@@ -49,6 +49,7 @@ __all__ = [
     "RetrievalReport",
     "RowOutcome",
     "classify_miss",
+    "count_wrong_instruction_accepts",
     "default_golden_text",
     "evaluate_golden",
     "format_report",
@@ -62,6 +63,18 @@ _GOLDEN_RESOURCE = ("orquestra", "find_start_golden.jsonl")
 # gold start ranked anywhere among the wired cards gets a real rank, and a
 # misrank (rank > k) is distinguishable from "absent entirely".
 EVAL_LIMIT = 10
+
+# What PRODUCTION serves. ``find_start``'s own default is 5 and no production caller
+# overrides it (``gecko/providers/catalog_surface.py`` passes no limit), so every metric
+# derived from ``EVAL_LIMIT`` describes a depth no agent is ever given.
+#
+# The two are kept BOTH, not reconciled to one, because they answer different questions
+# and the difference is itself a measurement: rank resolution needs depth (a misrank must
+# stay distinguishable from absent), while precision must be read at the depth that ships.
+# The gap is not cosmetic — the router REFUSES rows at 5 that it serves at 10, so a
+# truncation of the deeper result is not equivalent to a shallow call and the shallow call
+# has to be made. See :func:`count_wrong_instruction_accepts`.
+SERVE_LIMIT = 5
 
 # Rows above the range hint that the "small committed fixture" is drifting into a
 # corpus; keep the golden set reviewable.
@@ -118,6 +131,11 @@ class RetrievalReport:
     semantic_evidence: int  # misrank + vocabulary_gap — the only flip evidence
     out_of_scope: int
     false_accepts: int
+
+    # Precision of the FIRST actionable offer, measured at ``SERVE_LIMIT``. See
+    # :func:`count_wrong_instruction_accepts`. ``directional`` is its denominator.
+    wrong_instruction_accepts: int
+    directional: int
 
 
 def default_golden_text() -> str:
@@ -227,6 +245,57 @@ def _gold_rank(result: FindStartResult, row: GoldenRow) -> int | None:
     return None
 
 
+def count_wrong_instruction_accepts(
+    rows: tuple[GoldenRow, ...],
+    cards_by_gold: Mapping[tuple[str, str | None], _Card],
+    *,
+    limit: int = SERVE_LIMIT,
+) -> tuple[int, int]:
+    """How often the FIRST actionable offer on the right program is the WRONG action.
+
+    Returns ``(accepts, denominator)``. Recall cannot express this: recall asks where the
+    gold ranked, and is satisfied by a rank-2 hit even when the thing offered FIRST would
+    execute a different instruction on the same program. An agent that takes the first
+    offer — which is what "first-call-correct" means — is the case this measures.
+
+    Read at ``limit`` = :data:`SERVE_LIMIT`, the depth production actually serves, because
+    that is where an accept can reach an agent. A truncation of the ``EVAL_LIMIT`` result
+    would NOT do: the router's floor is limit-sensitive, so a shallow call is a different
+    question and has to be asked directly.
+
+    Scoped to INSTRUCTION-level golds. A row whose gold is the program's surface card
+    (``gold_instruction is None``) has no wrong-instruction reading — "start from this
+    program" and "call this instruction" are different kinds of answer, and comparing them
+    counts a category error as a defect. Measured before scoping, this returned 3, all
+    three of them surface-gold rows. Scoped, it returns 0.
+
+    Only ``kind == "start"`` points count. A ``surface`` is not an instruction and a
+    ``guess`` is below the floor, so neither is an actionable offer.
+    """
+    accepts = 0
+    denominator = 0
+    for row in rows:
+        if row.gold_program is None or row.gold_instruction is None:
+            continue
+        if (row.gold_program, row.gold_instruction) not in cards_by_gold:
+            continue  # coverage gap — wiring, not ranking
+        denominator += 1
+        result = find_start(row.intent, limit=limit)
+        if result.no_start:
+            continue  # an honest refusal is not an accept
+        first = next(
+            (
+                point
+                for point in result.starts
+                if point.kind == "start" and point.program == row.gold_program
+            ),
+            None,
+        )
+        if first is not None and first.instruction != row.gold_instruction:
+            accepts += 1
+    return accepts, denominator
+
+
 def _evaluate_row(
     row: GoldenRow,
     cards_by_gold: Mapping[tuple[str, str | None], _Card],
@@ -325,6 +394,10 @@ def evaluate_golden(
         else 0.0
     )
 
+    wrong_instruction_accepts, directional = count_wrong_instruction_accepts(
+        rows, cards_by_gold
+    )
+
     return RetrievalReport(
         rows=outcomes,
         k=k,
@@ -336,6 +409,8 @@ def evaluate_golden(
         semantic_evidence=causes.get("misrank", 0) + causes.get("vocabulary_gap", 0),
         out_of_scope=sum(1 for o in outcomes if o.row.gold_program is None),
         false_accepts=causes.get("false_accept", 0),
+        wrong_instruction_accepts=wrong_instruction_accepts,
+        directional=directional,
     )
 
 
@@ -402,5 +477,12 @@ def format_report(report: RetrievalReport) -> str:
             f"{report.out_of_scope} out-of-scope intents honestly rejected; "
             f"{report.false_accepts} false accept(s) — precision evidence about "
             "the floor, not the ranker."
+        )
+    if report.directional:
+        lines.append(
+            f"wrong-instruction accepts: {report.wrong_instruction_accepts}/"
+            f"{report.directional} — how often the FIRST actionable offer on the right "
+            f"program is the wrong action, read at limit {SERVE_LIMIT} (what production "
+            f"serves), not {EVAL_LIMIT} (what the ranks above are measured at)."
         )
     return "\n".join(lines) + "\n"
