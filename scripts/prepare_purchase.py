@@ -47,6 +47,7 @@ from gecko.landing import (  # noqa: E402
     priority_fee_microlamports,
 )
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
+from gecko.plan_refusals import check_plan_accounts  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.simulate import simulate  # noqa: E402
 from gecko.txbind import evaluate_tx  # noqa: E402
@@ -55,6 +56,11 @@ USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 SYSTEM_PROGRAM = "11111111111111111111111111111111"
+
+#: The pair the distinctness rule is registered under. Named rather than inlined so the
+#: refusal and the request can never drift onto different instructions.
+LET_ME_BUY_API_ID = "let_me_buy"
+MAKE_PURCHASE = "make_purchase"
 
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
 #: From the published demo — the store's own accounts, unchanged. Only the buyer is ours.
@@ -102,19 +108,28 @@ def token_balance(account: str, rpc_url: str) -> float:
 def build_instruction(
     signer: str, sender_token_account: str, product: str, table: int
 ) -> dict:
+    """Ask the builder for the instruction — but only for a plan that survives the check.
+
+    The refusal runs against the resolved map and BEFORE the request, because ``/build``
+    is not the authority on whether a plan is sane: it answered ``HTTP 200`` to a purchase
+    whose sender and recipient token accounts were the same address. Judging the response
+    instead would mean the wrong plan had already left this machine.
+    """
+    accounts = {
+        "receipts": STORE_RECEIPTS,
+        "signer": signer,
+        "authority": STORE_AUTHORITY,
+        "mint": USDC,
+        "sender_token_account": sender_token_account,
+        "recipient_token_account": STORE_TOKEN_ACCOUNT,
+        "token_program": TOKEN_PROGRAM,
+        "system_program": SYSTEM_PROGRAM,
+        "associated_token_program": ATA_PROGRAM,
+    }
+    check_plan_accounts(LET_ME_BUY_API_ID, MAKE_PURCHASE, accounts)
     body = json.dumps(
         {
-            "accounts": {
-                "receipts": STORE_RECEIPTS,
-                "signer": signer,
-                "authority": STORE_AUTHORITY,
-                "mint": USDC,
-                "sender_token_account": sender_token_account,
-                "recipient_token_account": STORE_TOKEN_ACCOUNT,
-                "token_program": TOKEN_PROGRAM,
-                "system_program": SYSTEM_PROGRAM,
-                "associated_token_program": ATA_PROGRAM,
-            },
+            "accounts": accounts,
             "args": {
                 "store_name": "jonasbar",
                 "product_name": product,
