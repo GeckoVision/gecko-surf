@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 import textwrap
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -536,11 +537,34 @@ def test_a_gate_with_no_ledger_refuses() -> None:
 
 
 def test_the_velocity_counter_is_labelled_advisory(tmp_path: Path) -> None:
-    """C6: it ships labelled ADVISORY until its storage owner is settled."""
+    """C6: it ships labelled ADVISORY until its storage owner is settled.
+
+    The word alone is not enough. "advisory" also appears in the overview near the top of
+    the module docstring, so asserting only on it let the entire RESIDUALS section be
+    deleted with the suite still green (measured: 51 passed) — the label survived while
+    the reason it is only a label went away. A reader would then find a counter labelled
+    advisory and no statement of what makes it inexact.
+
+    So the two claims that make the label mean something are pinned by name. Whitespace is
+    folded because they are prose and wrap wherever the paragraph reflows.
+
+    Deliberately NOT pinned: the paragraph's clause that a binding "may not enter the
+    ledger". Decision D-B ruled that a one-way digest of a binding is correctness
+    metadata and may, which is what unblocks idempotency (B3). Pinning a sentence that is
+    scheduled to change would make this guard fight the work. The two claims below stay
+    true until the counter is actually made idempotent, and when it is, this test SHOULD
+    go red.
+    """
     source = _SPEND_POLICY_SOURCE.read_text(encoding="utf-8")
     docstring = ast.get_docstring(ast.parse(source)) or ""
     assert "advisory" in docstring.lower()
     assert "ADVISORY" in source
+
+    folded = " ".join(docstring.split()).lower()
+    for claim in ("the retry double-reserves", "over-counts on retries"):
+        assert claim in folded, (
+            f"the residual that makes ADVISORY meaningful is gone: {claim}"
+        )
 
 
 def test_the_counter_is_cumulative_across_PROCESSES_though_not_beyond_the_agent(
@@ -830,19 +854,23 @@ def test_the_gate_reads_no_verification_field_off_the_receipt() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
     }
-    for verification_field in (
-        "message_binding",
-        "binding_strength",
-        "network",
-        "status",
-        "lookup_resolution",
-        "observed_slot",
-    ):
-        assert verification_field not in read_attributes, verification_field
-    # The AMOUNT fields, and only those. ``token_delta`` joined ``sol_delta`` when cap 5
+    # The AMOUNT fields, and ONLY those. ``token_delta`` joined ``sol_delta`` when cap 5
     # landed: it is what the transaction MOVES, not a claim about whether it will land.
-    assert "sol_delta" in read_attributes
-    assert "token_delta" in read_attributes
+    amount_fields = {"sol_delta", "token_delta"}
+    assert amount_fields <= read_attributes, "the gate must still read what it charges"
+
+    # Closed against the dataclass, not against a hand-kept list of six names. The list
+    # could only forbid what someone had thought to add to it, so a SECOND amount source
+    # — ``receipt.tokens_received``, a real Receipt field it did not mention — was read
+    # straight past it. Deriving the set from ``fields(Receipt)`` forbids every field the
+    # gate has no business reading, including fields that do not exist yet: a new one
+    # arrives forbidden and has to be argued for here.
+    receipt_fields = {field.name for field in fields(Receipt)}
+    read_off_the_receipt = receipt_fields & read_attributes
+    assert read_off_the_receipt == amount_fields, (
+        "the gate reads a Receipt field that is not an amount: "
+        f"{sorted(read_off_the_receipt - amount_fields)}"
+    )
 
 
 def test_an_authorized_verdict_carries_no_bytes() -> None:
