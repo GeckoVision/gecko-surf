@@ -33,7 +33,12 @@ from gecko.autonomous_purchase import (
     default_spend_policy,
     run_purchase,
 )
-from gecko.signer import SignerProfile, SigningAttestation, TransactionSigner
+from gecko.signer import (
+    DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+    SignerProfile,
+    SigningAttestation,
+    TransactionSigner,
+)
 from gecko.simulate import BuiltTx
 from gecko.spend_policy import (
     InMemorySpendLedger,
@@ -272,7 +277,12 @@ def _gate(token_cap_raw: int = 1_000_000, ledger: Any = None) -> SpendPolicyGate
 def _signer(gate: SpendPolicyGate, backend: FakeBackend) -> TransactionSigner:
     return TransactionSigner(
         backend=backend,
-        profile=SignerProfile(name="local", network="fork", authorized=True),
+        # A member of the SignerProfileName vocabulary. "local" was not one — and the name
+        # travels to the backend inside SigningAttestation.profile, which is what an
+        # external signer keys its own policy on.
+        profile=SignerProfile(
+            name=DEVELOPER_KEYPAIR_FILE_PROFILE_NAME, network="fork", authorized=True
+        ),
         spend_gate=gate,
     )
 

@@ -3,7 +3,16 @@
     uv run python scripts/autonomous_purchase.py --network fork \
         --rpc-url http://127.0.0.1:8999 --keypair ~/.gecko/wallets/txodds-subscriber.json
 
-THIS SCRIPT IS THIN ON PURPOSE. It parses flags, wires a local signing backend, calls
+    uv run python scripts/autonomous_purchase.py --network fork \
+        --rpc-url http://127.0.0.1:8999 --privy      # key stays in Privy's enclave
+
+TWO KEY HOLDERS, NEVER BOTH AND NEVER NEITHER. ``--keypair`` reads a file on this machine;
+``--privy`` asks a Privy server wallet to sign, so no key exists here at all
+(``scripts/privy_backend.py``). Naming both, or naming neither, stops the run — a signer
+that picks its own key source when the caller was ambiguous is the fall-back the seam
+exists to forbid.
+
+THIS SCRIPT IS THIN ON PURPOSE. It parses flags, wires a signing backend, calls
 :func:`gecko.autonomous_purchase.run_purchase`, and prints. Every decision — the plan
 refusal, the binding, the spend policy, the signature — is made inside the package. If a
 rule ever appears in this file, it belongs in ``gecko/`` instead.
@@ -36,7 +45,14 @@ from gecko.autonomous_purchase import (  # noqa: E402
 )
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
-from gecko.signer import SignerProfile, SigningAttestation, TransactionSigner  # noqa: E402
+from gecko.signer import (  # noqa: E402
+    DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+    EXTERNAL_SIGNER_PROFILE_NAME,
+    SignerProfile,
+    SigningAttestation,
+    SigningBackend,
+    TransactionSigner,
+)
 from gecko.simulate import BuiltTx  # noqa: E402
 from gecko.spend_policy import (  # noqa: E402
     AdvisorySpendLedger,
@@ -44,6 +60,8 @@ from gecko.spend_policy import (  # noqa: E402
     InMemorySpendLedger,
     SpendPolicyGate,
 )
+from scripts.privy_backend import PrivyBackendError  # noqa: E402
+from scripts.privy_backend import from_env as privy_from_env  # noqa: E402
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -161,7 +179,22 @@ def main(argv: list[str] | None = None) -> int:
             "proxy answers at any hostname, so the URL is evidence of nothing."
         ),
     )
-    parser.add_argument("--keypair", type=Path, required=True)
+    parser.add_argument(
+        "--keypair",
+        type=Path,
+        default=None,
+        help="Sign locally with this keypair file. Mutually exclusive with --privy.",
+    )
+    parser.add_argument(
+        "--privy",
+        action="store_true",
+        help=(
+            "Sign with a Privy server wallet instead of a local file — the key stays in "
+            "Privy's enclave and never exists here. Reads PRIVY_APP_ID, PRIVY_APP_SECRET "
+            "and PRIVY_WALLET_ID from the environment; the wallet's address is fetched "
+            "from Privy, never asserted. Privy is asked to SIGN, never to broadcast."
+        ),
+    )
     parser.add_argument(
         "--ledger",
         default=None,
@@ -196,10 +229,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     network = coerce_network(args.network)
 
-    if not args.keypair.exists():
-        print(f"STOP: no keypair at {args.keypair}")
-        return 2
-    backend = LocalKeypairBackend(args.keypair)
+    # WHICH key holder. Exactly one, named explicitly: a run that could fall back from one
+    # signer to another is the fall-back the seam exists to forbid.
+    backend: SigningBackend
+    if args.privy:
+        if args.keypair is not None:
+            print("STOP: pass --privy or --keypair, never both")
+            return 2
+        try:
+            backend = privy_from_env(network=args.network)
+        except PrivyBackendError as exc:
+            print(f"STOP: {exc}")
+            return 2
+        profile_name = EXTERNAL_SIGNER_PROFILE_NAME
+    else:
+        if args.keypair is None:
+            print(
+                "STOP: pass --keypair <path> (or --privy to sign with a Privy wallet)"
+            )
+            return 2
+        if not args.keypair.exists():
+            print(f"STOP: no keypair at {args.keypair}")
+            return 2
+        backend = LocalKeypairBackend(args.keypair)
+        profile_name = DEVELOPER_KEYPAIR_FILE_PROFILE_NAME
     buyer = backend.pubkey
     buyer_ata = derive_ata(buyer, USDC)
     recipient = buyer_ata if args.self_transfer else STORE_TOKEN_ACCOUNT
@@ -216,7 +269,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     signer = TransactionSigner(
         backend=backend,
-        profile=SignerProfile(name="local", network=network, authorized=True),
+        # The profile NAME is vocabulary, not a label: it travels to the backend inside
+        # SigningAttestation.profile, which is what an external signer keys its own policy
+        # on. This used to read "local", a member of no vocabulary at all.
+        profile=SignerProfile(name=profile_name, network=network, authorized=True),
         spend_gate=gate,
     )
     plan = PurchasePlan(
