@@ -89,6 +89,7 @@ def _tx(
     program: str = TOKEN_PROGRAM,
     data: bytes = TRANSFER_CHECKED + b"\x40\x78\x7d\x01\x00\x00\x00\x00\x06",
     writable: tuple[str, ...] = (SOURCE_ATA, DEST_ATA),
+    blockhash: str = REAL_BLOCKHASH,
 ) -> str:
     """An UNSIGNED transfer-shaped transaction, base64. No key exists in this helper."""
     from solders.instruction import AccountMeta, Instruction
@@ -99,7 +100,19 @@ def _tx(
         for key in writable
     ]
     instruction = Instruction(Pubkey.from_string(program), data, metas)
-    return assemble_unsigned_tx([instruction], payer, blockhash=REAL_BLOCKHASH).tx
+    return assemble_unsigned_tx([instruction], payer, blockhash=blockhash).tx
+
+
+def _distinct_tx(index: int) -> str:
+    """The Nth DIFFERENT transaction: one plan, its own blockhash, its own bytes.
+
+    Needed since B3 made the spend reservation idempotent on exact bytes. Calling ``_tx()``
+    N times used to stand in for "N transactions" and now correctly means "one transaction
+    submitted N times" — at most one of which can settle, because they share a signature.
+    """
+    from solders.hash import Hash
+
+    return _tx(blockhash=str(Hash.from_bytes(bytes([index + 1]) * 32)))
 
 
 def _movement(
@@ -633,11 +646,15 @@ def test_the_velocity_windows_bind_across_signatures_in_the_mints_own_units() ->
 
     Four half-USDC spends fit under the 2-USDC hourly token bound; the fifth does not,
     and it is refused at the seam with no bytes handed over.
+
+    Each is a DISTINCT transaction. Four signatures over identical bytes would be four
+    copies of one transaction, only one of which can ever land, and since B3 the ledger
+    charges those once — correctly, and not what this test is about.
     """
-    tx = _tx()
     gate = _gate()
     for index in range(4):
         backend = _FakeBackend()
+        tx = _distinct_tx(index)
         receipt = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
         _signer(backend, spend_gate=gate).sign(
             _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
@@ -645,6 +662,7 @@ def test_the_velocity_windows_bind_across_signatures_in_the_mints_own_units() ->
         assert len(backend.calls) == 1, f"signature {index} should have been produced"
 
     fifth = _FakeBackend()
+    tx = _distinct_tx(4)
     receipt = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
     with pytest.raises(SignerRefused) as excinfo:
         _signer(fifth, spend_gate=gate).sign(

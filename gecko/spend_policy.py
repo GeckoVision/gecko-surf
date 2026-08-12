@@ -115,14 +115,21 @@ that authorises a drain it cannot see.
 
 RESIDUALS, NAMED RATHER THAN LEFT FOR A READER TO DISCOVER.
 
-* **The retry double-reserves.** :meth:`SpendPolicyGate.authorize` reserves velocity
-  budget and the caller (:mod:`gecko.signer`) calls it once per attempt. A backend that
-  refuses — a locked keychain, an unreachable custody API — is a refusal the caller may
-  retry, and the retry reserves a SECOND time for the same transaction. It is not made
-  idempotent, because the only key that identifies "the same transaction" is its message
-  binding, and a binding may not enter the ledger (invariant #1 — see the ledger note
-  below). So the counter OVER-counts on retries: it errs toward refusing, which is the
-  right direction, and it is stated here rather than described as exact.
+* **A retry that refreshes its blockhash still double-reserves.** The identical-bytes
+  retry no longer does: :meth:`SpendPolicyGate.authorize` derives an ``exact`` message
+  binding (``_dedupe_key``) and the ledger treats a repeat within ``DEDUPE_SECONDS`` as
+  the replay it is. What made that possible was a founder ruling (D-B) permitting a
+  one-way digest into the ledger; the previous text here said it was impossible because
+  "a binding may not enter the ledger", and that premise is what changed, not the
+  reasoning built on it.
+
+  The remaining case is a retry that had to re-quote — a backend refusal handled minutes
+  later, past blockhash validity. Its bytes differ, so its digest differs, and it reserves
+  again. This is NOT closed, and closing it with a ``structural`` binding would be a
+  regression rather than a fix: structural digests are stable across re-quoting, so two
+  transfers a human deliberately made twice would collapse into one reservation and the
+  second would spend no budget. Over-counting a rare re-quoted retry errs toward refusing;
+  under-counting a repeated transfer errs toward a cap bypass. The direction is chosen.
 * **Outflows from accounts the fee payer does not own are not charged.** The per-mint cap
   is applied to outflows whose owner is the message's fee payer — the account the signer
   separately proved it controls. A DEX vault paying tokens INTO us is an outflow of some
@@ -134,9 +141,16 @@ RESIDUALS, NAMED RATHER THAN LEFT FOR A READER TO DISCOVER.
 
 This module holds no key, signs nothing, sends nothing, and stores no transaction. A
 ledger row carries a timestamp and an amount, and — for a token row — the MINT, which is
-a public program-surface identifier. It never carries an owner, a token-account address,
-a message binding or a payload, and :func:`_read_entries` refuses any row it cannot fully
-account for rather than skipping it.
+a public program-surface identifier. It never carries an owner, a token-account address
+or a payload, and :func:`_read_entries` refuses any row it cannot fully account for
+rather than skipping it.
+
+A lamport row ALSO carries a one-way ``exact`` message binding for as long as
+``DEDUPE_SECONDS``, which is what makes the reservation idempotent. That is a deliberate
+narrowing of the sentence above, granted by founder ruling D-B, and it is bounded on
+purpose: the digest is erased on the next reserve after the window, so the file is a list
+of amounts for a day and a list of WHICH transactions for fifteen minutes. It is still
+never a payload and never a party — a hash does not name a counterparty.
 """
 
 from __future__ import annotations
@@ -146,7 +160,7 @@ import json
 import os
 import time
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -157,6 +171,7 @@ from .txbind import (
     TxDecodeError,
     UnresolvedLookupError,
     decode_message,
+    message_binding,
 )
 
 __all__ = [
@@ -182,6 +197,21 @@ __all__ = [
 #: worth in two minutes across the boundary.
 HOUR_SECONDS = 3_600.0
 DAY_SECONDS = 86_400.0
+
+#: How long an identical retry is recognised as the SAME transaction rather than a second
+#: one. Deliberately far shorter than ``DAY_SECONDS``, and that gap is the point.
+#:
+#: A dedupe key only matches BYTE-IDENTICAL messages, and byte-identical means the same
+#: blockhash, which a cluster accepts for roughly 60-90 seconds. After that a retry must
+#: carry a fresh blockhash, so its digest differs and no window length would have matched
+#: it. A longer window therefore buys no additional deduplication — it only keeps the
+#: correlatable part of the row alive longer.
+#:
+#: So the digest is dropped from a row once this elapses (see ``_expire_digests``) while
+#: the row itself survives for the full day. That is what keeps the concession D-B granted
+#: as narrow as it can be: the budget file remains a list of amounts and times for 24
+#: hours, and is a list of WHICH transactions for fifteen minutes.
+DEDUPE_SECONDS = 900.0
 
 #: Every reason this gate declines, as a closed vocabulary. "Could not be read" and "was
 #: read and was fine" are different answers and must never share a code.
@@ -488,12 +518,24 @@ class AdvisorySpendLedger(Protocol):
         lamports: int,
         limits: VelocityLimits,
         tokens: tuple[TokenSpend, ...] = (),
+        digest: str | None = None,
     ) -> VelocityDecision:
         """Check every rolling window and, if within all of them, record the spend.
 
         ``tokens`` is per-mint and denominated in each mint's raw base units. It is a
         SEPARATE argument from ``lamports`` and stays separate all the way down: an
         implementation that adds the two has silently re-denominated the caps.
+
+        ``digest`` makes the reservation IDEMPOTENT: if a live row within
+        ``DEDUPE_SECONDS`` already carries it, this call records nothing and reports
+        ``within`` true, because the budget for these exact bytes was already taken.
+
+        It must be DERIVED from the transaction, never chosen by the caller. A
+        caller-chosen key is a request to spend for free — reuse one value across
+        different transactions and every one after the first reads as a replay. The one
+        caller in this package passes an ``exact`` message binding for that reason.
+        ``None`` disables deduplication and reserves unconditionally, which is the
+        over-counting behaviour this argument exists to fix and remains the safe default.
 
         The commit is all-or-nothing. A lamport window that passes while a mint window
         refuses must record NOTHING, or a refused transaction has spent budget.
@@ -510,14 +552,25 @@ class _LedgerEntry:
     """One reserved spend. ``mint`` is ``None`` for the lamport row.
 
     A public mint address is a program-surface identifier and may be recorded (it is what
-    makes a per-mint window possible at all). An owner, a token-account address, a message
-    binding or a payload may NOT — invariant #1, and a binding here would additionally
-    turn the budget file into a log of what was signed.
+    makes a per-mint window possible at all). An owner, a token-account address or a
+    payload may NOT — invariant #1.
+
+    ``digest`` IS a message binding, and it is here by an explicit founder ruling (D-B)
+    that reverses what this docstring used to say. The objection was never that a one-way
+    hash leaks a payload — it cannot — but that a file of bindings is a log of what was
+    signed, correlatable by anyone who also holds the transaction. That objection is real
+    and is answered by BOUNDING it rather than by denying it: the digest is erased from
+    the row after ``DEDUPE_SECONDS`` while the amount and timestamp live for the full day.
+
+    It is carried on the LAMPORT row only. There is exactly one of those per transaction,
+    which makes it the natural identity anchor; repeating it on each mint row would be the
+    same fact stored N times, free to disagree with itself.
     """
 
     at: float
     amount: int
     mint: str | None
+    digest: str | None = None
 
 
 def _window_decision(
@@ -649,13 +702,17 @@ class InMemorySpendLedger:
         lamports: int,
         limits: VelocityLimits,
         tokens: tuple[TokenSpend, ...] = (),
+        digest: str | None = None,
     ) -> VelocityDecision:
         self._entries = [
             entry for entry in self._entries if entry.at > at - DAY_SECONDS
         ]
+        if _is_replay(self._entries, at, digest):
+            return _REPLAY
+        self._entries = _expire_digests(self._entries, at)
         decision = _window_decision(self._entries, at, lamports, limits, tokens)
         if decision.within:
-            self._entries.extend(_rows_for(at, lamports, tokens))
+            self._entries.extend(_rows_for(at, lamports, tokens, digest))
         return decision
 
 
@@ -686,6 +743,7 @@ class FileSpendLedger:
         lamports: int,
         limits: VelocityLimits,
         tokens: tuple[TokenSpend, ...] = (),
+        digest: str | None = None,
     ) -> VelocityDecision:
         directory = os.path.dirname(os.path.abspath(self.path))
         if directory:
@@ -698,15 +756,23 @@ class FileSpendLedger:
                 handle.seek(0)
                 entries = _read_entries(handle.read(), self.path)
                 kept = [entry for entry in entries if entry.at > at - DAY_SECONDS]
-                decision = _window_decision(kept, at, lamports, limits, tokens)
-                if decision.within:
-                    # All-or-nothing: the lamport row and every mint row are appended
-                    # together, under the one lock, or none of them is.
-                    kept.extend(_rows_for(at, lamports, tokens))
-                if len(kept) != len(entries) or decision.within:
+                # Read the digest BEFORE expiring any, and under the same lock as the
+                # append. A replay check that is not inside the lock is the double-spend
+                # it was added to prevent, just with more steps.
+                replay = _is_replay(kept, at, digest)
+                rows = _expire_digests(kept, at)
+                if replay:
+                    decision = _REPLAY
+                else:
+                    decision = _window_decision(rows, at, lamports, limits, tokens)
+                    if decision.within:
+                        # All-or-nothing: the lamport row and every mint row are appended
+                        # together, under the one lock, or none of them is.
+                        rows = rows + _rows_for(at, lamports, tokens, digest)
+                if rows != entries:
                     handle.seek(0)
                     handle.truncate()
-                    for entry in kept:
+                    for entry in rows:
                         handle.write(json.dumps(_row_json(entry)) + "\n")
                     handle.flush()
                     os.fsync(handle.fileno())
@@ -716,23 +782,74 @@ class FileSpendLedger:
 
 
 def _rows_for(
-    at: float, lamports: int, tokens: tuple[TokenSpend, ...]
+    at: float,
+    lamports: int,
+    tokens: tuple[TokenSpend, ...],
+    digest: str | None = None,
 ) -> list[_LedgerEntry]:
     """The rows one authorized transaction writes: one lamport row, one row per mint.
 
     Exactly one lamport row per transaction, always — it is what the daily COUNT bound is
-    taken over, so a transaction that moved zero lamports still writes it.
+    taken over, so a transaction that moved zero lamports still writes it. That uniqueness
+    is also why ``digest`` rides on it and on nothing else.
     """
-    rows = [_LedgerEntry(at=at, amount=lamports, mint=None)]
+    rows = [_LedgerEntry(at=at, amount=lamports, mint=None, digest=digest)]
     rows.extend(
         _LedgerEntry(at=at, amount=spend.raw, mint=spend.mint) for spend in tokens
     )
     return rows
 
 
+def _expire_digests(entries: list[_LedgerEntry], at: float) -> list[_LedgerEntry]:
+    """Drop the digest from rows older than ``DEDUPE_SECONDS``, keeping the amounts.
+
+    The row still counts against the day; it simply stops saying WHICH transaction it was.
+    Runs on every reserve, so expiry is driven by use rather than by a background job that
+    may never run — a ledger nobody touches keeps its digests, and a ledger nobody touches
+    is also one nobody is spending from.
+    """
+    cutoff = at - DEDUPE_SECONDS
+    return [
+        replace(entry, digest=None)
+        if entry.digest is not None and entry.at <= cutoff
+        else entry
+        for entry in entries
+    ]
+
+
+def _is_replay(entries: list[_LedgerEntry], at: float, digest: str | None) -> bool:
+    """Has this exact transaction already reserved budget inside the dedupe window?
+
+    ``None`` is never a replay. Two rows that have both had their digests expired must not
+    match each other, which is what comparing ``None`` to ``None`` would do — turning
+    every old row into a free pass for every future one.
+    """
+    if digest is None:
+        return False
+    cutoff = at - DEDUPE_SECONDS
+    return any(
+        entry.digest == digest and entry.at > cutoff
+        for entry in entries
+        if entry.digest is not None
+    )
+
+
+#: The answer a replay gets. ``within`` is true because the budget was ALREADY taken for
+#: these bytes; the windows are deliberately not re-evaluated, since re-checking would add
+#: the same amount on top of its own reservation and could refuse a legitimate retry.
+_REPLAY = VelocityDecision(
+    within=True,
+    reason="these exact transaction bytes already reserved velocity budget within the "
+    "dedupe window; the reservation is idempotent and was not taken a second time",
+)
+
+
 def _row_json(entry: _LedgerEntry) -> dict[str, Any]:
     if entry.mint is None:
-        return {"at": entry.at, "lamports": entry.amount}
+        row: dict[str, Any] = {"at": entry.at, "lamports": entry.amount}
+        if entry.digest is not None:
+            row["d"] = entry.digest
+        return row
     return {"at": entry.at, "mint": entry.mint, "raw": entry.amount}
 
 
@@ -743,11 +860,16 @@ def _read_entries(text: str, where: str) -> list[_LedgerEntry]:
     corrupted or truncated ledger read as a smaller total, which is the fail-open shaped
     exactly like a fresh start.
 
-    Two row shapes and no others, matched on the EXACT key set: ``{at, lamports}`` and
-    ``{at, mint, raw}``. A row carrying an extra key is refused rather than read past —
-    an unrecognised field is either a schema this code does not understand or something
-    that should never have been written here (an owner, an address, a binding), and both
-    are reasons to stop rather than to sum what is left.
+    Three row shapes and no others, matched on the EXACT key set: ``{at, lamports}``,
+    ``{at, lamports, d}`` and ``{at, mint, raw}``. A row carrying an extra key is refused
+    rather than read past — an unrecognised field is either a schema this code does not
+    understand or something that should never have been written here (an owner, an
+    address, a payload), and both are reasons to stop rather than to sum what is left.
+
+    ``d`` is OPTIONAL on the lamport row rather than required, in both directions. A
+    ledger written before deduplication existed stays readable, so upgrading does not
+    read as a corrupt file and refuse every transaction; and a row whose digest has
+    expired is the same shape as one that never had it.
     """
     entries: list[_LedgerEntry] = []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -766,9 +888,19 @@ def _read_entries(text: str, where: str) -> list[_LedgerEntry]:
         when = record.get("at")
         if isinstance(when, bool) or not isinstance(when, (int, float)):
             raise LedgerError(f"spend ledger line {number} has no usable timestamp")
-        if keys == {"at", "lamports"}:
+        digest: str | None = None
+        if keys in ({"at", "lamports"}, {"at", "lamports", "d"}):
             mint: str | None = None
             amount = record.get("lamports")
+            if "d" in keys:
+                stored = record.get("d")
+                if not isinstance(stored, str) or not stored:
+                    raise LedgerError(
+                        f"spend ledger line {number} has an unusable dedupe digest; a "
+                        f"row that half-identifies a transaction is refused, not read "
+                        f"as an unidentified one"
+                    )
+                digest = stored
         elif keys == {"at", "mint", "raw"}:
             mint = record.get("mint")
             amount = record.get("raw")
@@ -781,7 +913,9 @@ def _read_entries(text: str, where: str) -> list[_LedgerEntry]:
             )
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             raise LedgerError(f"spend ledger line {number} has no usable amount")
-        entries.append(_LedgerEntry(at=float(when), amount=amount, mint=mint))
+        entries.append(
+            _LedgerEntry(at=float(when), amount=amount, mint=mint, digest=digest)
+        )
     del where
     return entries
 
@@ -1075,7 +1209,9 @@ class SpendPolicyGate:
         # The cumulative cap runs LAST and is the only predicate with a side effect. A
         # transaction refused by any earlier check must not spend velocity budget: a
         # counter that ticks on refusals is a denial-of-service an attacker drives.
-        return _reserve(ledger, policy, outflow, resolved, moment)
+        return _reserve(
+            ledger, policy, outflow, resolved, moment, _dedupe_key(transaction_base64)
+        )
 
 
 def _resolve_token_outflows(
@@ -1124,18 +1260,59 @@ def _resolve_token_outflows(
     return tuple(outflow for outflow in outflows if outflow.owner == payer)
 
 
+def _dedupe_key(transaction_base64: str | bytes) -> str | None:
+    """The idempotency key for these bytes: an ``exact`` message binding, or ``None``.
+
+    DERIVED FROM THE SUBJECT, NEVER SUPPLIED. There is no parameter on
+    :meth:`SpendPolicyGate.authorize` through which a key could arrive, and that is the
+    whole safety property: a caller-chosen key reused across different transactions would
+    make every one after the first read as an already-paid replay. Here "same key" means
+    "same bytes" by construction, so the class of forgery does not exist.
+
+    ``exact`` RATHER THAN ``structural``, and the difference is the entire design.
+    ``structural`` normalises the blockhash to zero, so it is stable across re-quoting the
+    same plan — which sounds like what deduplication wants and is in fact a hole. Two
+    transfers a human deliberately made twice are structurally identical, so they would
+    collapse into ONE reservation and the second would spend no budget. That is a cap
+    bypass reachable by repeating a transfer.
+
+    ``exact`` cannot do that, and the reason is not caution but arithmetic: byte-identical
+    messages carry the same blockhash and produce the same signature, and a cluster
+    rejects a duplicate signature. Two calls that match here could never both have
+    settled, so counting them once is not a concession — it is correct.
+
+    The cost is a NAMED RESIDUAL, not a silent one: a retry that refreshes its blockhash
+    has different bytes, so it is not recognised and reserves again. The counter still
+    over-counts there. That is the safe direction and it is stated in the module docstring.
+
+    Returns ``None`` rather than raising. A key that cannot be computed means the
+    reservation is simply not deduplicated, which is exactly the behaviour that shipped
+    before this existed; refusing a legitimate transaction because an anti-over-counting
+    measure was unavailable would trade a small accounting error for a denial of service.
+    """
+    try:
+        return message_binding(transaction_base64, strength="exact")
+    except Exception:  # noqa: BLE001 - see the docstring: no key is a valid answer here
+        return None
+
+
 def _reserve(
     ledger: AdvisorySpendLedger,
     policy: SpendPolicy,
     outflow: int,
     token_outflows: tuple[TokenOutflow, ...],
     moment: float,
+    digest: str | None = None,
 ) -> SpendVerdict:
     """Cap 2 — the ADVISORY rolling windows, checked and committed under one lock.
 
     The per-mint bounds travel beside the lamport ones and are never added to them. The
     bounds are taken from the authored caps, so a mint that reached here without one is a
     disagreement between two code paths and the ledger refuses it rather than counting it.
+
+    ``digest`` deduplicates a retry of the identical transaction; see
+    :meth:`AdvisorySpendLedger.reserve`. It is passed through untouched — deriving it is
+    the caller's job and validating it is nobody's, because it is not a claim.
     """
     caps = policy.token_caps
     token_limits = tuple(
@@ -1153,7 +1330,7 @@ def _reserve(
     )
     try:
         decision = ledger.reserve(
-            at=moment, lamports=outflow, limits=limits, tokens=tokens
+            at=moment, lamports=outflow, limits=limits, tokens=tokens, digest=digest
         )
     except LedgerError as exc:
         return _refuse(
@@ -1169,13 +1346,20 @@ def _reserve(
             outflow_lamports=outflow,
             outflow_tokens=tokens,
         )
+    reason = (
+        "within the per-transaction cap, the allowlisted (program, instruction) "
+        "pairs, the allowlisted destinations, the per-mint token caps, and the "
+        "ADVISORY rolling bounds"
+    )
+    if decision is _REPLAY:
+        # "Allowed, and charged" and "allowed, because already charged" are different
+        # facts, and the second is the one somebody reconciling a budget needs to see.
+        # Reporting the generic sentence would make an idempotent pass indistinguishable
+        # from a fresh reservation in exactly the log they would be reading.
+        reason = f"{reason} — {decision.reason}"
     return SpendVerdict(
         authorized=True,
-        reason=(
-            "within the per-transaction cap, the allowlisted (program, instruction) "
-            "pairs, the allowlisted destinations, the per-mint token caps, and the "
-            "ADVISORY rolling bounds"
-        ),
+        reason=reason,
         outflow_lamports=outflow,
         outflow_tokens=tokens,
     )

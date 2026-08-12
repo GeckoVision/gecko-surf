@@ -251,10 +251,11 @@ class RecordingLedger:
         lamports: int,
         limits: VelocityLimits,
         tokens: tuple[Any, ...] = (),
+        digest: str | None = None,
     ) -> VelocityDecision:
         self.reserves += 1
         return self.inner.reserve(
-            at=at, lamports=lamports, limits=limits, tokens=tokens
+            at=at, lamports=lamports, limits=limits, tokens=tokens, digest=digest
         )
 
 
