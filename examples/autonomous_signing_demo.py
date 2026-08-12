@@ -46,10 +46,13 @@ RESIDUALS THIS DEMO DOES NOT CLOSE, printed at the end of every run:
 1. ``SignerHandoff`` is a plain frozen dataclass with public fields. The type closes
    OMISSION, not FABRICATION: a caller can hand-build one with ``approved=True`` and any
    bytes it likes. Closing it needs provenance ON the verdict, which is not built.
-2. The spend policy is enforced by THIS ORCHESTRATOR, not by the signer. ``sign`` takes no
-   ``SpendVerdict``, so a caller that walks the pipeline without step 3 signs an
-   unauthorised transaction that verifies perfectly. The refusal in scenario (a) is real,
-   and it is the caller's to keep — which is why the ordering has a test naming it.
+2. The spend policy is now a PRECONDITION of signing (G7): ``TransactionSigner`` holds the
+   gate and asks it itself, over the re-verified bytes, so a caller that walks the pipeline
+   without step 3 no longer signs — it is refused for want of an authorization answer. The
+   orchestrator still asks FIRST, which is why scenario (a) refuses before the builder's
+   bytes ever reach the seam. What remains open is the RETRY: each attempt reserves
+   velocity budget again for the same transaction, because the only key that identifies
+   "the same transaction" is its binding and a binding may not enter the spend ledger.
 
 Control plane only: no transaction, receipt, attestation or key is stored or logged.
 """
@@ -79,6 +82,7 @@ from gecko.spend_policy import (
     InMemorySpendLedger,
     SpendPolicy,
     SpendPolicyGate,
+    TokenCaps,
 )
 from gecko.surface import Surface
 
@@ -201,6 +205,10 @@ def authored_policy() -> SpendPolicy:
             {AllowedInstruction(SYSTEM_PROGRAM, TRANSFER_SELECTOR)}
         ),
         allowed_destinations=frozenset({DESTINATION}),
+        # This agent moves lamports and nothing else — authored as a SENTENCE. An absent
+        # map would be an unauthored cap and would refuse; an empty authored one refuses
+        # any token movement by name.
+        token_caps=TokenCaps.none(),
     )
 
 
@@ -514,9 +522,10 @@ def run_attempt(leg: DemoLeg, spec: AttemptSpec) -> ScenarioResult:
     * the quarantine gate runs inside ``prepare_handoff`` as its first statement, so a
       poisoned tool is refused before the builder is reached and before any Receipt for it
       can exist — a Receipt is a portable artifact that outlives a later refusal;
-    * the spend policy runs BEFORE the signer. It is not inside the signer (``sign`` takes
-      no ``SpendVerdict``), so this ordering is the caller's to keep, which is why it has a
-      test naming the mutation.
+    * the spend policy runs BEFORE the signer — and, since G7, ALSO inside it: the same
+      gate is handed to ``TransactionSigner``, which asks it over the re-verified bytes
+      immediately before the backend. Asking here as well is what keeps scenario (a)'s
+      refusal ahead of the seam, and the mutation test below still names the ordering.
 
     ``SigningRefused`` is caught FIRST and by name. A caller that wrote a broad
     ``except Exception`` here would swallow the quarantine refusal and retry it; the
@@ -534,6 +543,9 @@ def run_attempt(leg: DemoLeg, spec: AttemptSpec) -> ScenarioResult:
             network=spec.expects_network,
             authorized=True,
         ),
+        # G7: the SAME gate, held by the seam. A signer built without one refuses
+        # everything — absence of an authorization answer is not a permission.
+        spend_gate=policy_gate,
     )
     plan = {"from": PAYER, "to": DESTINATION, "lamports": spec.lamports}
 
@@ -771,8 +783,10 @@ def render(results: Sequence[ScenarioResult], banner: Sequence[str]) -> str:
         "FABRICATION: a caller can hand-build one with approved=True and any bytes."
     )
     out.append(
-        "  2. The spend policy is enforced by this orchestrator, not by the signer — "
-        "sign() takes no SpendVerdict, so step 3 is the caller's to keep."
+        "  2. The signer now HOLDS the spend gate and asks it itself: sign() takes no "
+        "SpendVerdict, and one it is not configured with is a refusal. What is still "
+        "open is the retry — a backend fault the caller retries reserves the velocity "
+        "budget twice for the same transaction."
     )
     out.append(
         "  3. The 'exact' binding strength is derived from the caller's own "
