@@ -37,6 +37,8 @@ output is treated as untrusted and type-checked before it is believed.
 
 from __future__ import annotations
 
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Literal, Mapping, Sequence
 
@@ -257,9 +259,10 @@ def minimum_balance_for_rent_exemption(
 
 
 def _account_info(
-    address: str, *, rpc_url: str, rpc_call: RpcCall
+    address: str, *, rpc_url: str, rpc_call: RpcCall | None
 ) -> Mapping[str, Any] | None:
-    response = rpc_call(rpc_url, "getAccountInfo", [address, {"encoding": "base64"}])
+    call = rpc_call or default_rpc_call
+    response = call(rpc_url, "getAccountInfo", [address, {"encoding": "base64"}])
     result = response.get("result")
     value = result.get("value") if isinstance(result, Mapping) else None
     return value if isinstance(value, Mapping) else None
@@ -278,7 +281,7 @@ def _data_length(value: Mapping[str, Any]) -> int:
 
 
 def check_funding(
-    requirement: FundingRequirement, *, rpc_url: str, rpc_call: RpcCall
+    requirement: FundingRequirement, *, rpc_url: str, rpc_call: RpcCall | None = None
 ) -> str | None:
     """``None`` if the account is present and rent-solvent, else the refusal sentence.
 
@@ -319,25 +322,42 @@ def check_funding(
 # --- the override seam ------------------------------------------------------
 
 
-def surfnet_overlay(
-    rpc_url: str, rpc_call: RpcCall | None = None, *, data_encoding: str = "base64"
-) -> OverlayApply:
+def surfnet_overlay(rpc_url: str, rpc_call: RpcCall | None = None) -> OverlayApply:
     """An :data:`OverlayApply` backed by surfpool's ``surfnet_setAccount`` cheatcode.
 
     A cheatcode is a LOCAL validator state edit, not a transaction: no keypair, no
     signature, no broadcast, and it exists only on the fork. An RPC that does not know
     the method raises :class:`OverlayUnsupported` — the caller must not degrade to
     "carry on without state", which is the shared-pre-state bug wearing a shrug.
+
+    THE ONE TRANSCODE IN THE PATH, AND IT IS NOT OPTIONAL. ``simulateTransaction``
+    returns account data as base64; ``surfnet_setAccount`` decodes ``AccountUpdate.data``
+    as HEX. Measured against surfpool 1.1.1 — sending base64 answers
+    ``code=-32602 Invalid hex data provided: Invalid character 'v' at position 1``, and
+    every chained step then refuses. (Gecko's own comprehended surfpool spec at
+    ``examples/surfpool/spec`` calls this field "base-58 / byte string", which is wrong
+    on both counts; that spec is a docs-derived draft, and this is the measurement.)
+    The encoding is therefore fixed here rather than exposed as a parameter — a knob
+    whose only correct setting is one value is a way to get it wrong.
     """
     validate_rpc_url(rpc_url)
     call = rpc_call or default_rpc_call
 
     def apply_overlay(states: Mapping[str, AccountState]) -> None:
         for address, state in states.items():
+            try:
+                data_hex = b64decode(state.data_base64, validate=True).hex()
+            except (BinasciiError, ValueError) as exc:
+                # Writing an empty account instead would be a silent state edit to
+                # something the chain never produced — worse than not advancing at all.
+                raise OverlayUnsupported(
+                    f"post-execution data for {address} is not decodable base64, so it "
+                    f"cannot be transcoded to the hex surfnet_setAccount wants ({exc})"
+                ) from exc
             update = {
                 "lamports": state.lamports,
                 "owner": state.owner,
-                "data": state.data_base64,
+                "data": data_hex,
                 "executable": state.executable,
             }
             try:

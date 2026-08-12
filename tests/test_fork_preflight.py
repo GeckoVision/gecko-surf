@@ -85,12 +85,26 @@ class FakeFork:
             return {"result": self.rent_minimum}
         if method == "surfnet_setAccount":
             pubkey, update = params[0], params[1]
+            # surfpool decodes AccountUpdate.data as HEX. It says so by rejecting
+            # anything else: `Invalid hex data provided: Invalid character 'v' at
+            # position 1` — the 'v' being base64 output. The repo's comprehended
+            # surfpool spec calls this field "base-58 / byte string", which is wrong;
+            # the fake enforces the real contract so the bug cannot come back offline.
+            from gecko.rpc import RpcError
+
+            try:
+                raw = bytes.fromhex(update["data"])
+            except ValueError as exc:
+                raise RpcError(
+                    "JSON-RPC surfnet_setAccount failed: code=-32602 "
+                    f'message="Invalid hex data provided: {exc}"'
+                ) from exc
             current = dict(self.state.get(pubkey) or _account(0))
             current.update(
                 {
                     "lamports": update["lamports"],
                     "owner": update["owner"],
-                    "data": [update["data"], "base64"],
+                    "data": [base64.b64encode(raw).decode(), "base64"],
                 }
             )
             self.state[pubkey] = current
@@ -239,6 +253,43 @@ def test_an_absent_overlay_seam_refuses_instead_of_sharing_pre_state() -> None:
     assert "overlay" in (report.steps[1].refusal or "").lower()
     assert report.ok is False
     assert report.exit_code != 0
+
+
+def test_surfnet_overlay_writes_account_data_as_hex_not_base64() -> None:
+    # Measured against surfpool 1.1.1 on a mainnet fork: base64 data is rejected with
+    # `code=-32602 Invalid hex data provided: Invalid character 'v' at position 1`.
+    # The account state arrives from simulateTransaction as base64, so the overlay is
+    # the one place that transcodes it — get this wrong and every chained step refuses.
+    seen: list[Any] = []
+
+    def recording(url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        seen.append((method, params))
+        return {"result": {"value": None}}
+
+    payload = b"\xde\xad\xbe\xef"
+    surfnet_overlay(RPC, recording)(
+        {
+            RECEIPTS: AccountState(
+                RECEIPTS, 7, SYSTEM, base64.b64encode(payload).decode(), False
+            )
+        }
+    )
+    method, params = seen[0]
+    assert method == "surfnet_setAccount"
+    assert params[1]["data"] == "deadbeef"
+    assert params[1]["lamports"] == 7
+
+
+def test_surfnet_overlay_refuses_post_state_it_cannot_transcode() -> None:
+    # An undecodable data blob must not be written as an empty account: that is a
+    # silent state edit to something the chain never produced.
+    def recording(url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        return {"result": {"value": None}}
+
+    with pytest.raises(OverlayUnsupported):
+        surfnet_overlay(RPC, recording)(
+            {RECEIPTS: AccountState(RECEIPTS, 7, SYSTEM, "not base64 !!", False)}
+        )
 
 
 def test_surfnet_overlay_raises_overlay_unsupported_when_the_rpc_rejects_it() -> None:
