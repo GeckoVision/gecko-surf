@@ -29,10 +29,42 @@ from gecko.retrieval_eval import (
 
 def test_committed_golden_set_loads_and_is_small() -> None:
     rows = load_golden(default_golden_text())
-    assert 15 <= len(rows) <= 40  # small, reviewable — a fixture, not a corpus
+    # Small, reviewable — a fixture, not a corpus. The ceiling moved 40 -> 60 when the
+    # out-of-scope block was widened from 4 rows to 12: the original four carry NO term
+    # that names a wired program or instruction, so they only ever exercised the
+    # score-0 path and the floor's `named` branch was never measured at all.
+    assert 15 <= len(rows) <= 60
     # it covers every wired program AND deliberately-out-of-scope intents
     programs = {r.gold_program for r in rows}
     assert {"pumpfun", "meteora", "ore", "metadao_ico", None} <= programs
+
+
+def test_out_of_scope_rows_exercise_the_named_branch_of_the_floor() -> None:
+    """The out-of-scope block must contain intents that DO carry an identity term.
+
+    This pins a property of the FIXTURE, not a verdict about the ranker: an
+    out-of-scope set whose rows share no term with any card can only ever prove the
+    score-0 path, and would report a perfect floor while the `named` branch — one
+    matched instruction name is sufficient, on its own, for a RUNNABLE start — sits
+    entirely unmeasured. What these rows currently do is reported in the eval, not
+    asserted here; asserting a rate would freeze today's (bad) number as the contract.
+    """
+    from gecko.find_start import _card_terms, _identity_terms, _query_tokens
+    from gecko.find_start import _wired_cards
+
+    identity = set()
+    for card in _wired_cards():
+        if card.kind == "start":
+            identity |= _identity_terms(card) & _card_terms(card)
+    with_identity = [
+        r
+        for r in load_golden(default_golden_text())
+        if r.gold_program is None and (_query_tokens(r.intent) & identity)
+    ]
+    assert len(with_identity) >= 8, (
+        "the out-of-scope block must keep at least 8 rows carrying an identity term, "
+        "or the floor's `named` branch stops being measured"
+    )
 
 
 def test_golden_set_includes_unwired_golds_for_coverage_gap_rows() -> None:
