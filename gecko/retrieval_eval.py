@@ -200,10 +200,26 @@ def classify_miss(
 
 def _gold_rank(result: FindStartResult, row: GoldenRow) -> int | None:
     """1-based rank of the gold start among GENUINE served points (guesses are
-    below the floor — they never count as retrieval)."""
+    below the floor — they never count as retrieval).
+
+    ``result.no_start`` is not enough on its own: it says "nothing at all cleared
+    the floor", but a result can serve a genuine start for one program AND carry
+    the gold's own point demoted to ``guess`` — a closest-candidate the router
+    explicitly declined to call a start. Crediting that as retrieval scores a call
+    we refused to serve, so each point's own ``kind`` is checked too.
+
+    ``surface`` is NOT skipped: it is a genuine served point (a wired program to
+    start from via its derive/graph tools), and a golden row with
+    ``gold_instruction is None`` names exactly that card as gold.
+
+    Skipped guesses are NOT re-indexed away — the rank stays the position over
+    ``result.starts`` that the caller actually sees.
+    """
     if result.no_start:
         return None
     for rank, point in enumerate(result.starts, 1):
+        if point.kind == "guess":
+            continue
         if point.program == row.gold_program and point.instruction == (
             row.gold_instruction
         ):
