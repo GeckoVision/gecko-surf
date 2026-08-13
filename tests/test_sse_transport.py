@@ -178,3 +178,34 @@ def test_a_zero_cap_lets_everything_through() -> None:
     live: dict[str, int] = {}
 
     assert all(http_server._sse_try_acquire(live, "1.2.3.4", 0) for _ in range(50))
+
+
+def test_both_sse_doors_are_gated_when_a_gate_is_wired() -> None:
+    """SSE is TWO endpoints, so gating one of them gates nothing.
+
+    The stream is opened with `GET /sse`; every request the client then makes goes to
+    `POST /messages/?session_id=...`. Gating only the GET leaves the session id in a query
+    string as the sole authorization for every subsequent call — a capability URL, on a
+    surface whose whole point is that a key is required. The SDK has its own owner check,
+    but it compares `scope["user"]`, which this gate never sets, so both sides are None
+    and it always passes.
+    """
+    from unittest.mock import Mock
+
+    from starlette.routing import Mount, Route
+
+    routes = http_server._sse_routes(Mock(), Mock())
+
+    for route in routes:
+        app = (
+            route.app if isinstance(route, Mount) else getattr(route, "endpoint", None)
+        )
+        # Starlette wraps a Route's endpoint, so reach for the gate on either shape.
+        gated = isinstance(app, http_server._GeckoKeyGateASGI) or isinstance(
+            getattr(route, "endpoint", None), http_server._GeckoKeyGateASGI
+        )
+        assert gated, (
+            f"{getattr(route, 'path', route)} is reachable without the gecko key; "
+            "both halves of the SSE transport must be gated or neither is"
+        )
+    assert isinstance(routes[0], Route) and isinstance(routes[1], Mount)
