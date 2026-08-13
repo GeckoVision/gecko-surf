@@ -1,0 +1,226 @@
+/* The house slide style for Gecko explainer stills — the visual grammar the Arazzo
+   Initiative slides use (dark navy, cyan headings, panelled operations, callout boxes),
+   rendered in Gecko's own palette so the two read as siblings rather than a copy.
+
+   1477x803 to match the source deck's frame. Rendered by render_slides.sh via headless
+   Chrome; nothing here is interactive. */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap");
+
+:root {
+  --bg: #0a0f1a;          /* Gecko blue — the house frame */
+  --panel: #0d1117;
+  --panel-2: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --dim: #8b949e;
+  --cyan: #35c2d4;        /* Gecko cyan — headings, the transformation arrow */
+  --mint: #7ee7c7;        /* callouts, as the source deck uses mint for API calls */
+  --green: #00d75f;
+  --amber: #ffd700;
+  --red: #ff5f5f;
+  --violet: #bc8cff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  width: 1477px;
+  height: 803px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  overflow: hidden;
+  position: relative;
+}
+
+h1 {
+  font-size: 52px;
+  font-weight: 700;
+  color: var(--cyan);
+  letter-spacing: -0.5px;
+  line-height: 1.05;
+}
+
+.slide { padding: 44px 56px; height: 100%; display: flex; flex-direction: column; }
+.body { display: flex; gap: 40px; flex: 1; min-height: 0; margin-top: 28px;
+        max-height: 615px; }  /* leaves the footer band clear */
+.col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.lede { font-size: 23px; line-height: 1.45; color: var(--text); }
+.lede .q { color: var(--cyan); font-weight: 600; }
+.sub { font-size: 17px; color: var(--dim); line-height: 1.5; margin-top: 10px; }
+
+ol.steps { list-style: none; counter-reset: s; margin-top: 22px; }
+ol.steps li {
+  counter-increment: s;
+  font-size: 21px;
+  line-height: 1.35;
+  margin-bottom: 17px;
+  padding-left: 44px;
+  position: relative;
+}
+ol.steps li::before {
+  content: counter(s) ".";
+  position: absolute;
+  left: 0;
+  color: var(--green);
+  font-weight: 700;
+}
+ol.steps li small { display: block; font-size: 15px; color: var(--dim); margin-top: 3px; }
+
+/* --- an operations panel, the deck's "pets / adoptions" card ------------------------ */
+.panel {
+  background: #f5f9ff;
+  border-radius: 16px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.35);
+}
+.panel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.panel-head .name { font-family: "JetBrains Mono", monospace; font-size: 19px; color: #1c2530; font-weight: 700; }
+.panel-head .desc { font-size: 13px; color: #5b6673; }
+
+.op {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: #eaf3ff;
+  border: 1px solid #c7ddf5;
+  border-radius: 9px;
+  padding: 8px 11px;
+  margin-bottom: 7px;
+}
+.op.write { background: #e8f7ee; border-color: #b9e3cb; }
+.op.gate  { background: #fdf0f0; border-color: #f2c9c9; }
+.badge {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #2f81f7;
+  border-radius: 5px;
+  padding: 5px 11px;
+  min-width: 76px;
+  text-align: center;
+  letter-spacing: 0.4px;
+}
+.badge.write { background: #2da44e; }
+.badge.gate  { background: #cf222e; }
+.op .path { font-family: "JetBrains Mono", monospace; font-size: 14px; color: #1c2530; font-weight: 700; }
+.op .note  { font-size: 12.5px; color: #5b6673; }
+.op .prov {
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: #2da44e;
+  background: #e8f7ee;
+  border: 1px solid #b9e3cb;
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+/* --- code, the deck's left-hand YAML column ----------------------------------------- */
+.code {
+  background: #05080f;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #c9d1d9;
+  overflow: hidden;
+}
+.code .k { color: var(--cyan); }
+.code .s { color: var(--mint); }
+.code .n { color: var(--amber); }
+.code .c { color: #6e7681; }
+.code .hl { background: rgba(53, 194, 212, 0.13); display: inline-block; width: 100%; }
+
+.codehead {
+  font-size: 13px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  margin-bottom: 9px;
+  font-weight: 600;
+}
+
+/* --- the graph, the deck's right-hand diagram --------------------------------------- */
+.node {
+  background: var(--panel-2);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 15px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.node .sub2 { font-size: 12.5px; color: var(--dim); font-weight: 400; margin-top: 3px; font-family: "JetBrains Mono", monospace; }
+.callout {
+  background: var(--mint);
+  color: #06231c;
+  border-radius: 8px;
+  padding: 9px 13px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 700;
+  position: relative;
+}
+.callout::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 15px;
+  border: 5px solid transparent;
+  border-right-color: var(--mint);
+}
+.group {
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 15px 15px 13px;
+  position: relative;
+  margin-bottom: 15px;
+}
+.group > .label {
+  position: absolute;
+  top: -11px;
+  left: 15px;
+  background: var(--bg);
+  padding: 0 9px;
+  font-size: 13.5px;
+  color: var(--cyan);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.row { display: flex; align-items: center; gap: 13px; }
+.arrow-down { text-align: center; color: var(--dim); font-size: 19px; line-height: 1; margin: 7px 0; }
+
+/* --- the transformation arrow, the deck's big curved cyan sweep --------------------- */
+.sweep { display: flex; align-items: center; justify-content: center; width: 132px; flex: none; }
+
+/* --- footer ------------------------------------------------------------------------- */
+.foot {
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  bottom: 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+.foot .brand { color: var(--cyan); font-weight: 700; letter-spacing: 0.8px; }
+.foot .tag { color: var(--dim); }
+.pill {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 3px 9px;
+  border: 1px solid;
+}
+.pill.ex { color: var(--green); border-color: rgba(0, 215, 95, 0.45); background: rgba(0, 215, 95, 0.09); }
+.pill.re { color: var(--amber); border-color: rgba(255, 215, 0, 0.42); background: rgba(255, 215, 0, 0.08); }
+.pill.fl { color: var(--red); border-color: rgba(255, 95, 95, 0.42); background: rgba(255, 95, 95, 0.08); }

@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="slide_style.css">
+<title>Gecko — the IDL becomes a graph</title>
+
+<div class="slide" style="padding-top:34px">
+  <h1 style="font-size:44px">This <span style="color:var(--dim)">→</span> becomes this</h1>
+  <div class="sub" style="margin-top:8px;font-size:16px">
+    The artifact your agent is handed, and the call graph Gecko derives from it.
+    Every line on both sides is real.
+  </div>
+
+  <div class="body" style="margin-top:20px;gap:0">
+    <!-- LEFT: the artifact -->
+    <div class="col" style="max-width:520px">
+      <div class="codehead">what the agent gets — the anchor IDL</div>
+      <div class="code" style="font-size:12px;line-height:1.5">
+<span class="c"># make_purchase, verbatim from the program's own on-chain IDL</span><br>
+<span class="k">name</span>: make_purchase<br>
+<span class="k">discriminator</span>: <span class="n">[193,62,227,136,105,212,201,20]</span><br>
+<span class="k">accounts</span>:<br>
+&nbsp;- <span class="k">name</span>: receipts<br>
+&nbsp;&nbsp;&nbsp;<span class="k">writable</span>: <span class="n">true</span><br>
+&nbsp;&nbsp;&nbsp;<span class="k">pda</span>:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">seeds</span>:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- <span class="k">kind</span>: const<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">value</span>: <span class="n">[114,101,99,101,105,112,116,115]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- <span class="k">kind</span>: arg<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">path</span>: store_name<br>
+&nbsp;- <span class="k">name</span>: signer<br>
+&nbsp;&nbsp;&nbsp;<span class="k">writable</span>: <span class="n">true</span> &nbsp;<span class="k">signer</span>: <span class="n">true</span><br>
+&nbsp;- <span class="k">name</span>: authority &nbsp;<span class="c"># who is this?</span><br>
+&nbsp;- <span class="k">name</span>: mint<br>
+&nbsp;- <span class="k">name</span>: sender_token_account &nbsp;<span class="c"># ?</span><br>
+&nbsp;- <span class="k">name</span>: recipient_token_account <span class="c"># ?</span><br>
+&nbsp;- <span class="k">name</span>: token_program<br>
+&nbsp;- <span class="k">name</span>: system_program<br>
+&nbsp;- <span class="k">name</span>: associated_token_program<br>
+<span class="k">args</span>: [store_name, product_name, table_number]<br>
+<br>
+<span class="c"># and the store itself: 4,908 opaque bytes</span><br>
+<span class="c"># AAAB9v8Kq2Zn0uQ4… base64</span>
+      </div>
+      <div class="sub" style="margin-top:12px;font-size:14.5px">
+        It names the accounts. It does <b>not</b> say which address each one is, which
+        order to derive them in, or what happens next.
+      </div>
+    </div>
+
+    <!-- THE SWEEP -->
+    <div class="sweep">
+      <svg width="132" height="200" viewBox="0 0 132 200" fill="none">
+        <defs>
+          <marker id="head" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+            <polygon points="0 0, 7 3.5, 0 7" fill="#35c2d4"/>
+          </marker>
+        </defs>
+        <path d="M8 150 C 44 150, 52 74, 116 66" stroke="#35c2d4" stroke-width="7"
+              stroke-linecap="round" fill="none" marker-end="url(#head)"/>
+      </svg>
+    </div>
+
+    <!-- RIGHT: the graph -->
+    <div class="col">
+      <div class="codehead">what gecko derives — the call graph</div>
+
+      <div class="group">
+        <span class="label">chain: sell_and_deliver</span>
+        <div class="row">
+          <div class="node" style="flex:1">make_purchase
+            <div class="sub2">store_name · product_name · table_number</div>
+          </div>
+          <div class="callout">9 accounts, dependency-ordered<br>6 derived · 3 pinned program ids</div>
+        </div>
+        <div class="arrow-down">▼</div>
+        <div class="row">
+          <div class="node" style="flex:1">mark_as_delivered
+            <div class="sub2">receipt_id</div>
+          </div>
+          <div class="callout">settles a receipt_id only a<br>LANDED make_purchase wrote</div>
+        </div>
+        <div style="margin-top:13px;font-size:13.5px;color:var(--dim);line-height:1.5">
+          <b style="color:var(--cyan)">edge: receipts</b> — a DATA dependency, not an ordering
+          preference. <span class="pill ex">extracted</span><br>
+          <span style="color:#6e7681">refuted by:</span> a mark_as_delivered that settles a
+          receipt_id no make_purchase wrote.
+        </div>
+      </div>
+
+      <div class="group" style="margin-bottom:0">
+        <span class="label">derive plan — every account, with its origin</span>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.85">
+          <span style="color:var(--cyan)">receipts</span> &nbsp;PDA(['receipts', store_name])
+          <span class="pill ex">extracted</span><br>
+          <span style="color:var(--cyan)">sender_token_account</span> &nbsp;ATA(signer, mint)
+          <span class="pill ex">extracted</span> <span style="color:var(--red)">← DEBITED</span><br>
+          <span style="color:var(--cyan)">recipient_token_account</span> &nbsp;ATA(authority, mint)
+          <span class="pill ex">extracted</span> <span style="color:var(--green)">← CREDITED</span><br>
+          <span style="color:var(--dim)">+ 6 more · all extracted</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="brand">GECKO • CHECK THE CALL BEFORE IT COUNTS</span>
+    <span class="tag">every account derived offline · provenance on every edge</span>
+  </div>
+</div>
