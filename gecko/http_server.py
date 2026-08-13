@@ -927,10 +927,20 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
             _sse_release(live, ip)
         return _Response()
 
+    # BOTH halves carry the gate, or neither is gated. The stream is opened with a GET
+    # and every subsequent client message is a POST to `/messages/?session_id=...`, so
+    # gating only the GET leaves a session id in a query string as the sole authorization
+    # for every call that follows — a capability URL on a surface that exists to require
+    # a key. The SDK's own owner check does not save us: it compares `scope["user"]`,
+    # which this gate never sets (we are not the SDK's bearer middleware), so both sides
+    # are None and it always passes.
     endpoint = _handle_sse if gate is None else _GeckoKeyGateASGI(_handle_sse, gate)
+    messages = transport.handle_post_message
+    if gate is not None:
+        messages = _GeckoKeyGateASGI(messages, gate)
     return [
         _Route(SSE_PATH, endpoint=endpoint),
-        _Mount(SSE_MESSAGE_PATH, app=transport.handle_post_message),
+        _Mount(SSE_MESSAGE_PATH, app=messages),
     ]
 
 
