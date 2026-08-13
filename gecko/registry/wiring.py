@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from .keys import KeyStore, Mailer
+from .wallets import MongoWalletDirectory
 
 logger = logging.getLogger("gecko.registry")
 
@@ -70,4 +71,27 @@ def build_keystore_from_env() -> KeyStore | None:
         )
     except Exception:  # noqa: BLE001 - registry must not take the server down
         logger.warning("registry: keystore init failed (redacted)")
+        return None
+
+
+def build_wallet_directory_from_env() -> MongoWalletDirectory | None:
+    """The hosted ``account_id -> wallet`` directory, or ``None`` when unconfigured.
+
+    ``None`` is the KEYLESS configuration (roadmap mode A): with no directory, the buyer
+    is whatever the caller supplied, which is correct for a surface that hands back
+    unsigned bytes. Absence disables the lookup; it never turns a lookup into a guess.
+
+    Fails soft on init only. Once a directory exists, a lookup that cannot be answered
+    raises rather than reporting "no binding" — see :class:`.wallets.MongoWalletDirectory`.
+    """
+    uri = os.environ.get("MONGODB_URI")
+    if not uri:
+        return None
+    try:
+        from pymongo import MongoClient
+
+        db: Any = MongoClient(uri, serverSelectionTimeoutMS=2000)["gecko_registry"]
+        return MongoWalletDirectory(collection=db["wallets"])
+    except Exception:  # noqa: BLE001 - registry must not take the server down
+        logger.warning("registry: wallet directory init failed (redacted)")
         return None

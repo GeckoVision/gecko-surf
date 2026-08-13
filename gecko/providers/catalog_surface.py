@@ -27,10 +27,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
-from ..prepare_purchase import PREPARE_PURCHASE_TOOL, prepare_purchase_result
+from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..rpc import RpcCall
 from ..simulate import BuildCall
+from ..wallet_binding import WalletDirectory
 
 __all__ = ["OrquestraCatalogSurface"]
 
@@ -49,12 +50,19 @@ class OrquestraCatalogSurface:
     tool actually needs the catalog). ``purchase_build_call`` and
     ``purchase_rpc_call`` are the same idea for the purchase pre-flight's two
     transports, so that path is falsifiable with no network at all.
+
+    ``wallets`` is the ``account_id -> wallet`` directory. ``None`` (the default,
+    and what the public unauthenticated mount serves) means the caller supplies
+    the buyer, which is correct for unsigned bytes. Wired, the buyer of an
+    account that has bound a wallet is LOOKED UP rather than accepted — see
+    :mod:`gecko.prepare_purchase`.
     """
 
     client: OrquestraClient | None = None
     find_start_pages: int = 1  # catalog pages consulted per find_start call
     purchase_build_call: BuildCall | None = None
     purchase_rpc_call: RpcCall | None = None
+    wallets: WalletDirectory | None = None
 
     surface_id = "orquestra:catalog"
 
@@ -70,11 +78,22 @@ class OrquestraCatalogSurface:
             _FIND_START_TOOL,
             _LIST_PROGRAMS_TOOL,
             _COMPREHEND_TOOL,
-            PREPARE_PURCHASE_TOOL,
+            # The schema states the buyer rule THIS mount enforces, so an agent does not
+            # have to be refused to learn it.
+            prepare_purchase_tool(buyer_bound=self.wallets is not None),
             LIST_STORES_TOOL,
         ]
 
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+    def call_tool(
+        self, name: str, arguments: dict[str, Any], *, account: str | None = None
+    ) -> Any:
+        """``account`` is the AUTHENTICATED caller's id, supplied by the transport.
+
+        Keyword-only and defaulted to ``None`` because it can only ever come from the
+        gate that verified the caller — never from ``arguments``, which are the caller's
+        own word. ``None`` is the honest state of the public mount today: it is
+        unauthenticated, so it has no account to pass and every call is mode A.
+        """
         args = arguments or {}
         if name == "find_start":
             return self._find_start(args)
@@ -83,7 +102,7 @@ class OrquestraCatalogSurface:
         if name == "comprehend_program":
             return self._comprehend_program(args)
         if name == "prepare_purchase":
-            return self._prepare_purchase(args)
+            return self._prepare_purchase(args, account=account)
         if name == "list_stores":
             return list_stores_result(args, rpc_call=self.purchase_rpc_call)
         return {"error": f"unknown tool {name!r}"}
@@ -162,17 +181,22 @@ class OrquestraCatalogSurface:
             out["catalog"] = {"error": str(exc)}
         return out
 
-    def _prepare_purchase(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_purchase(
+        self, args: dict[str, Any], *, account: str | None = None
+    ) -> dict[str, Any]:
         """Transport only: the whole pre-flight lives in :mod:`gecko.prepare_purchase`.
 
         Every refusal is already structured there, so there is nothing to decide here —
         which is the point: a public front door that made its own policy decisions would
-        be a second place the boundary could be wrong.
+        be a second place the boundary could be wrong. That includes the buyer binding:
+        this hands over the account and the directory and judges neither.
         """
         return prepare_purchase_result(
             args,
             build_call=self.purchase_build_call,
             rpc_call=self.purchase_rpc_call,
+            account=account,
+            wallets=self.wallets,
         )
 
     def _comprehend_program(self, args: dict[str, Any]) -> dict[str, Any]:
