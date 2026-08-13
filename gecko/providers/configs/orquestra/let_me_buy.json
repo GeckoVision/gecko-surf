@@ -43,8 +43,8 @@
     },
     "pda_origins": {
       "receipts": "extracted",
-      "sender_token_account": "recovered",
-      "recipient_token_account": "recovered"
+      "sender_token_account": "extracted",
+      "recipient_token_account": "extracted"
     }
   }
 }
