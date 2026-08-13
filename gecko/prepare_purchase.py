@@ -32,6 +32,22 @@ THE ORDER, AND WHY:
 7. Refuse anything weaker than a passing receipt with an exact binding, and return no
    transaction when it does. A caller cannot accidentally sign a refusal.
 
+WHO THE BUYER IS, AND WHO GETS TO SAY SO. Two configurations, one code path:
+
+* **No account, or an account with no wallet bound** — the caller SUPPLIES the buyer.
+  Correct here, and unchanged: these are bytes for somebody else's wallet to sign, so
+  their owner is the only one who can name it.
+* **An account with a bound wallet** (:mod:`gecko.wallet_binding`) — the buyer is LOOKED
+  UP from that binding and the caller's word is not taken for it, because a caller could
+  otherwise name an address they do not own. A supplied ``buyer`` that MATCHES is fine; a
+  supplied ``buyer`` that differs is REFUSED rather than quietly replaced — a silent
+  substitution would hand back a receipt attesting a transaction the caller did not ask
+  for. A directory that cannot be read refuses too: "I could not look it up" must never
+  read as "there is no binding".
+
+That lookup is an IDENTITY record, not custody. It resolves a public key; it holds no
+key and reaches no signer, so everything the first paragraph claims still holds.
+
 WHAT A PASSING RESULT DOES NOT SAY. It does not say this is the purchase the user wanted.
 It says the transaction is well-formed and would land against the state observed at that
 slot. And it says so for about a minute: an exact binding dies with its blockhash, which
@@ -45,6 +61,7 @@ logs, no node response body, no credentials, and nothing is written anywhere.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -65,11 +82,13 @@ from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
 from .rpc import RpcCall, RpcError
 from .simulate import BuildCall, BuiltTx, SimulateError, simulate
+from .wallet_binding import WalletBindingError, WalletDirectory
 
 __all__ = [
     "PREPARE_PURCHASE_TOOL",
     "PrepareRefusalCode",
     "prepare_purchase_result",
+    "prepare_purchase_tool",
 ]
 
 #: The pair the distinctness rule is registered under. Named rather than inlined so the
@@ -92,7 +111,13 @@ ORQUESTRA_API_BASE = "https://api.orquestra.dev/api"
 #: define its own spellings for the shared ones.
 PrepareRefusalCode = (
     PurchaseRefusalCode
-    | Literal["network-not-asserted", "store-unknown", "argument-invalid"]
+    | Literal[
+        "network-not-asserted",
+        "store-unknown",
+        "argument-invalid",
+        "buyer-not-bound",
+        "wallet-directory-unavailable",
+    ]
 )
 
 
@@ -229,6 +254,62 @@ def _pubkey_or_none(value: Any) -> str | None:
         return None
 
 
+def _resolve_buyer(
+    args: Mapping[str, Any], account: str | None, wallets: WalletDirectory | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """(buyer, refusal). The FIRST line: whose address may this transaction spend from?
+
+    A bound account's buyer comes from the record, never from the request. The three
+    outcomes that are not "use the caller's word" are all refusals, never substitutions:
+    a mismatch, an unreadable directory, and an unparseable ``buyer``.
+    """
+    supplied_raw = args.get("buyer")
+    supplied = _pubkey_or_none(supplied_raw)
+    if supplied_raw is not None and supplied is None:
+        # The caller ASSERTED something and it was not an address. That is an argument
+        # error whatever the account is bound to — silently preferring the binding here
+        # would build a plan the caller never described.
+        return None, _refuse(
+            "argument-invalid",
+            "`buyer` must be a base58 Solana pubkey — the PUBLIC key of the wallet that "
+            "will sign. Never a secret key, and nothing here can use one.",
+        )
+
+    binding = None
+    if account and account.strip() and wallets is not None:
+        try:
+            binding = wallets.wallet_for(account)
+        except WalletBindingError as exc:
+            # Fail CLOSED. Falling through to the caller-supplied buyer would mean an
+            # unreachable directory downgrades a looked-up buyer into an asserted one.
+            return None, _refuse("wallet-directory-unavailable", str(exc))
+
+    if binding is None:
+        # Mode A: no account, or an account that has bound no wallet. These bytes are for
+        # a wallet we know nothing about, so its owner names it.
+        if supplied is None:
+            return None, _refuse(
+                "argument-invalid",
+                "`buyer` must be a base58 Solana pubkey — the PUBLIC key of the wallet "
+                "that will sign. Never a secret key, and nothing here can use one.",
+            )
+        return supplied, None
+
+    if supplied is not None and supplied != binding.pubkey:
+        # Names both ROLES and neither VALUE: echoing the supplied address back would
+        # reflect untrusted input, and naming the bound one would make a refusal an
+        # oracle for the wallet behind an account id.
+        return None, _refuse(
+            "buyer-not-bound",
+            "the `buyer` you supplied is not the wallet bound to your account. The "
+            "buyer is looked up from your session, not taken from the request, so an "
+            "address you do not own cannot be named — and substituting yours silently "
+            "would hand you a receipt for a transaction you did not ask for. Omit "
+            "`buyer` to use your bound wallet.",
+        )
+    return binding.pubkey, None
+
+
 def _resolve_rpc_url(raw: Any, network: Network) -> tuple[str | None, str | None]:
     """(url, refusal reason). A caller-supplied URL is guarded; a default is pinned."""
     if isinstance(raw, str) and raw.strip():
@@ -308,6 +389,8 @@ def prepare_purchase_result(
     *,
     build_call: BuildCall | None = None,
     rpc_call: RpcCall | None = None,
+    account: str | None = None,
+    wallets: WalletDirectory | None = None,
 ) -> dict[str, Any]:
     """Plan, verify, and hand back the UNSIGNED transaction. Never raises for an answer.
 
@@ -316,7 +399,13 @@ def prepare_purchase_result(
     transaction, because those are answers a caller must handle. A transport failure comes
     back as ``{"error": ...}`` in the surface's own style, redacted to the failure class.
 
-    ``build_call``/``rpc_call`` are injected seams: the whole path is falsifiable offline.
+    ``account`` is the AUTHENTICATED caller's stable id (:class:`gecko.keyauth.AuthDecision`
+    ``.account``) — resolved by the transport, never read from ``arguments``, since an
+    argument is just the caller's word. With ``wallets``, it decides the buyer; without
+    either, the caller-supplied ``buyer`` is used exactly as before.
+
+    ``build_call``/``rpc_call``/``wallets`` are injected seams: the whole path is
+    falsifiable offline.
     """
     args = arguments or {}
 
@@ -357,13 +446,9 @@ def prepare_purchase_result(
         return _refuse("argument-invalid", "`product` is required (the product's name)")
     product = product.strip()[:_MAX_PRODUCT_CHARS]
 
-    buyer = _pubkey_or_none(args.get("buyer"))
+    buyer, buyer_refusal = _resolve_buyer(args, account, wallets)
     if buyer is None:
-        return _refuse(
-            "argument-invalid",
-            "`buyer` must be a base58 Solana pubkey — the PUBLIC key of the wallet that "
-            "will sign. Never a secret key, and nothing here can use one.",
-        )
+        return buyer_refusal or _refuse("argument-invalid", "no usable `buyer`")
 
     table = args.get("table", 0)
     if isinstance(table, bool) or not isinstance(table, int) or not 0 <= table <= 255:
@@ -542,6 +627,24 @@ def _http_build_call(plan: Mapping[str, Any]) -> BuiltTx:
     return _default_build_call(plan)
 
 
+#: What ``buyer`` means when the caller is the only one who can name it (mode A).
+_BUYER_SUPPLIED = (
+    "the PUBLIC key of the wallet that will sign and pay. Never a secret key — nothing "
+    "here can use one."
+)
+
+#: ...and what it means when this deployment can look the caller's wallet up. The schema
+#: states the rule the server enforces: an agent should not have to be REFUSED to learn it.
+_BUYER_BOUND = (
+    "OPTIONAL here: if your account has a wallet bound to it, omit this and that wallet "
+    "is used — the buyer is looked up from your session, not taken from your word. If "
+    "you do supply it, it must MATCH your bound wallet or the call is REFUSED (it is "
+    "never silently replaced). With no bound wallet this is required, and is the PUBLIC "
+    "key of the wallet that will sign and pay. Never a secret key — nothing here can "
+    "use one."
+)
+
+
 PREPARE_PURCHASE_TOOL: dict[str, Any] = {
     "name": "prepare_purchase",
     "description": (
@@ -569,13 +672,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                 "description": f"the storefront's name; wired: {sorted(WIRED_STORES)}",
             },
             "product": {"type": "string", "description": "the product's name"},
-            "buyer": {
-                "type": "string",
-                "description": (
-                    "the PUBLIC key of the wallet that will sign and pay. Never a secret "
-                    "key — nothing here can use one."
-                ),
-            },
+            "buyer": {"type": "string", "description": _BUYER_SUPPLIED},
             "network": {
                 "type": "string",
                 "enum": ["mainnet", "devnet", "testnet", "fork"],
@@ -602,3 +699,22 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+def prepare_purchase_tool(*, buyer_bound: bool = False) -> dict[str, Any]:
+    """The tool definition, honest about which buyer rule THIS deployment enforces.
+
+    ``buyer_bound`` is set by the surface when a wallet directory is wired. It changes
+    nothing about what the tool DOES — it changes what the schema admits, so an agent
+    reads the rule rather than discovering it by being refused.
+
+    Returns a fresh dict every call: a caller that mutated a shared constant would edit
+    the schema every other surface serves.
+    """
+    tool: dict[str, Any] = deepcopy(PREPARE_PURCHASE_TOOL)
+    if not buyer_bound:
+        return tool
+    schema: dict[str, Any] = tool["inputSchema"]
+    schema["properties"]["buyer"]["description"] = _BUYER_BOUND
+    schema["required"] = [name for name in schema["required"] if name != "buyer"]
+    return tool
