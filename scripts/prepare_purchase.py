@@ -50,23 +50,27 @@ from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.plan_refusals import check_plan_accounts  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.simulate import simulate  # noqa: E402
+from gecko.store_accounts import (  # noqa: E402
+    StoreAccounts,
+    StoreResolutionError,
+    derive_ata,
+    purchase_accounts,
+    purchase_args,
+    resolve_store,
+)
 from gecko.txbind import evaluate_tx  # noqa: E402
-
-USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-SYSTEM_PROGRAM = "11111111111111111111111111111111"
 
 #: The pair the distinctness rule is registered under. Named rather than inlined so the
 #: refusal and the request can never drift onto different instructions.
 LET_ME_BUY_API_ID = "let_me_buy"
 MAKE_PURCHASE = "make_purchase"
 
+#: The store this script bought from before it could be told which one to buy from. Kept
+#: as the DEFAULT of ``--store`` so every documented invocation still means what it meant;
+#: it is now a name that gets resolved, not three addresses that get pasted.
+DEFAULT_STORE = "jonasbar"
+
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
-#: From the published demo — the store's own accounts, unchanged. Only the buyer is ours.
-STORE_RECEIPTS = "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V"
-STORE_AUTHORITY = "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V"
-STORE_TOKEN_ACCOUNT = "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY"
 
 
 def _rpc(url: str, method: str, params: list) -> dict:
@@ -80,21 +84,6 @@ def _rpc(url: str, method: str, params: list) -> dict:
     return default_rpc_call(url, method, params)
 
 
-def derive_ata(owner: str, mint: str) -> str:
-    """The associated token account — a PDA, so it is derived, never guessed."""
-    from solders.pubkey import Pubkey
-
-    address, _bump = Pubkey.find_program_address(
-        [
-            bytes(Pubkey.from_string(owner)),
-            bytes(Pubkey.from_string(TOKEN_PROGRAM)),
-            bytes(Pubkey.from_string(mint)),
-        ],
-        Pubkey.from_string(ATA_PROGRAM),
-    )
-    return str(address)
-
-
 def token_balance(account: str, rpc_url: str) -> float:
     try:
         response = default_rpc_call(rpc_url, "getTokenAccountBalance", [account])
@@ -106,35 +95,26 @@ def token_balance(account: str, rpc_url: str) -> float:
 
 
 def build_instruction(
-    signer: str, sender_token_account: str, product: str, table: int
+    store: StoreAccounts, signer: str, sender_token_account: str, table: int
 ) -> dict:
     """Ask the builder for the instruction — but only for a plan that survives the check.
+
+    ``store`` carries every store-side address AND the name that goes in the instruction,
+    checked to belong together when it was constructed. That pairing used to be three
+    module constants next to a ``store_name`` string, which is how a run once named one
+    store and paid another.
 
     The refusal runs against the resolved map and BEFORE the request, because ``/build``
     is not the authority on whether a plan is sane: it answered ``HTTP 200`` to a purchase
     whose sender and recipient token accounts were the same address. Judging the response
     instead would mean the wrong plan had already left this machine.
     """
-    accounts = {
-        "receipts": STORE_RECEIPTS,
-        "signer": signer,
-        "authority": STORE_AUTHORITY,
-        "mint": USDC,
-        "sender_token_account": sender_token_account,
-        "recipient_token_account": STORE_TOKEN_ACCOUNT,
-        "token_program": TOKEN_PROGRAM,
-        "system_program": SYSTEM_PROGRAM,
-        "associated_token_program": ATA_PROGRAM,
-    }
+    accounts = purchase_accounts(store, buyer=signer, sender=sender_token_account)
     check_plan_accounts(LET_ME_BUY_API_ID, MAKE_PURCHASE, accounts)
     body = json.dumps(
         {
             "accounts": accounts,
-            "args": {
-                "store_name": "jonasbar",
-                "product_name": product,
-                "table_number": table,
-            },
+            "args": purchase_args(store, table=table),
             "feePayer": signer,
         }
     ).encode("utf-8")
@@ -154,7 +134,21 @@ def main(argv: list[str] | None = None) -> int:
         "--signer", required=True, help="YOUR wallet pubkey (public only)."
     )
     parser.add_argument("--rpc-url", required=True, help="A mainnet RPC URL.")
-    parser.add_argument("--product", default="Water")
+    parser.add_argument(
+        "--store",
+        default=DEFAULT_STORE,
+        help=(
+            "which storefront to buy from, by name. It selects the ACCOUNTS too — the "
+            "receipts PDA, the merchant authority and the token account that gets "
+            "credited are read from that store's own on-chain account. Defaults to "
+            f"{DEFAULT_STORE!r}, the store this script used to hardcode."
+        ),
+    )
+    parser.add_argument(
+        "--product",
+        default="Water",
+        help="the product to buy. It must be on that store's menu, or the run stops.",
+    )
     parser.add_argument("--table", type=int, default=11)
     parser.add_argument(
         "--max-usdc",
@@ -173,7 +167,16 @@ def main(argv: list[str] | None = None) -> int:
             "attest a message that can no longer land."
         ),
     )
-    parser.add_argument("--price-usdc", type=float, default=0.1)
+    parser.add_argument(
+        "--price-usdc",
+        type=float,
+        default=None,
+        help=(
+            "What one purchase costs, for the --max-usdc arithmetic. Defaults to the "
+            "price the STORE lists on chain for this product, so the ceiling is checked "
+            "against the real number rather than a remembered one."
+        ),
+    )
     parser.add_argument(
         "--network",
         required=True,
@@ -189,23 +192,44 @@ def main(argv: list[str] | None = None) -> int:
     if args.count < 1:
         print("STOP: --count must be at least 1.")
         return 2
-    planned = args.count * args.price_usdc
+
+    # WHICH store, resolved from the name before any arithmetic: the price, the mint, the
+    # merchant and the credited token account are all facts of the store's own account, so
+    # every number below is that store's. A name nobody deployed, or a product that store
+    # does not list, stops here — never silently on some other store's accounts.
+    try:
+        store = resolve_store(
+            args.store, rpc_url=args.rpc_url, rpc_call=default_rpc_call
+        ).accounts_for(args.product)
+    except StoreResolutionError as exc:
+        print(f"STOP: {exc}")
+        return 2
+    price = (
+        args.price_usdc
+        if args.price_usdc is not None
+        else store.product.price_raw / 10**store.product.decimals
+    )
+    planned = args.count * price
     if planned > args.max_usdc + 1e-9:
         print(
-            f"STOP: {args.count} x {args.price_usdc} USDC = {planned:.2f}, over the "
+            f"STOP: {args.count} x {price} = {planned:.2f}, over the "
             f"--max-usdc ceiling of {args.max_usdc}."
             "\nThe ceiling binds the WHOLE run, not one purchase — that is the point of it."
         )
         return 2
 
-    ata = derive_ata(args.signer, USDC)
+    ata = derive_ata(args.signer, store.mint)
     balance = token_balance(ata, args.rpc_url)
     print(f"signer          {args.signer}")
-    print(f"USDC account    {ata}")
-    print(f"balance         {balance} USDC")
+    print(f"store           {store.store_name}  ({store.receipts})")
+    print(f"paying          {store.token_account}  (authority {store.authority})")
+    print(f"product         {store.product.name} at {store.product.price_ui}")
+    print(f"token account   {ata}")
+    print(f"balance         {balance}")
     if balance <= 0:
         print(
-            "\nSTOP: that account holds no USDC — fund it before preparing a purchase."
+            "\nSTOP: that account holds none of the mint this product is priced in — "
+            f"fund it before preparing a purchase ({store.mint})."
         )
         return 2
     if balance > args.max_usdc:
@@ -218,14 +242,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.count > 1:
         print(
-            f"\nplan            {args.count} purchases x {args.price_usdc} USDC "
-            f"= {planned:.2f} USDC total (ceiling {args.max_usdc})"
+            f"\nplan            {args.count} purchases x {price} "
+            f"= {planned:.2f} total (ceiling {args.max_usdc})"
         )
 
     for round_number in range(1, args.count + 1):
         if args.count > 1:
             print(f"\n{'-' * 62}\n  ROUND {round_number} of {args.count}\n{'-' * 62}")
-        code = _prepare_one(args, ata)
+        code = _prepare_one(args, ata, store)
         if code != 0:
             print(
                 f"\nSTOPPED at round {round_number} of {args.count}. Nothing further was "
@@ -244,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _prepare_one(args: argparse.Namespace, ata: str) -> int:
+def _prepare_one(args: argparse.Namespace, ata: str, store: StoreAccounts) -> int:
     """One purchase: build, fetch a fresh blockhash and fee, simulate live, approve, stop.
 
     Everything up to the signature and nothing past it. Returns 0 when the receipt
@@ -254,7 +278,7 @@ def _prepare_one(args: argparse.Namespace, ata: str) -> int:
     # `choices` already closed the set on the parser; this narrows the type for the two
     # call sites below without a cast, and stays fail-closed if the flag is ever widened.
     network = coerce_network(args.network)
-    built = build_instruction(args.signer, ata, args.product, args.table)
+    built = build_instruction(store, args.signer, ata, args.table)
     serialized = built.get("serializedTransaction")
     if not serialized:
         print("\nSTOP: the builder returned no serializedTransaction.")
