@@ -88,6 +88,10 @@ def _receipt(tx: str) -> Receipt:
         network="mainnet",
         observed_slot=SLOT,
         token_delta=TokenDeltaReport(status="measured", movements=(), refusals=()),
+        # B2. Stated out loud because this file's subject is the Privy backend, not the
+        # Receipt's authority: without it every test here would refuse at
+        # ``receipt-not-simulated`` and prove nothing about the compose.
+        origin="simulated",
     )
 
 

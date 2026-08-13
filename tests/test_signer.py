@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import base64
 import inspect
+from dataclasses import fields as dataclass_fields
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -36,7 +38,7 @@ from gecko.signer import (
     SignedTransaction,
     TransactionSigner,
 )
-from gecko.simulate import Receipt, TokenDeltaReport
+from gecko.simulate import BuiltTx, Receipt, TokenDeltaReport, simulate
 from gecko.spend_policy import (
     AllowedInstruction,
     InMemorySpendLedger,
@@ -98,7 +100,84 @@ def _receipt(
         network=network,  # type: ignore[arg-type]
         observed_slot=observed_slot,
         token_delta=TokenDeltaReport(status="measured", movements=(), refusals=()),
+        # B2: written OUT LOUD, once, in the fixture this whole file signs through. Every
+        # hand-written ``simulated`` is meant to be greppable — this is one of them, and it
+        # is a fixture standing in for a run that did not happen. The tests that care about
+        # that distinction use :func:`_receipt_naming_no_origin` or the real engine.
+        origin="simulated",
     )
+
+
+def _receipt_naming_no_origin(tx: str) -> Receipt:
+    """The fabricator's Receipt: every field filled in, and ``origin`` never mentioned.
+
+    Built by DROPPING the key rather than by passing ``"asserted"``, and the difference is
+    the whole test. Passing the fail-closed value explicitly would still refuse if somebody
+    flipped the dataclass default to ``"simulated"`` — it would be testing the branch, not
+    the default. Somebody hand-building a Receipt does not write a field they have never
+    heard of, so neither does this.
+    """
+    genuine = _receipt(tx)
+    stated = {
+        field.name: getattr(genuine, field.name)
+        for field in dataclass_fields(Receipt)
+        if field.name != "origin"
+    }
+    return Receipt(**stated)
+
+
+#: A local address that :func:`~gecko.rpc.validate_rpc_url` accepts and that nothing ever
+#: dials: every RPC on this path is the injected fake below.
+OFFLINE_RPC = "http://127.0.0.1:8899"
+
+
+def _simulate_offline(tx: str) -> Receipt:
+    """A GENUINE Receipt — produced by :func:`simulate`, over injected transports.
+
+    The point of routing through the real engine rather than the ``_receipt`` factory is
+    that ``origin`` is written by the code under test. A helper that stamped it here would
+    make the positive control agree with itself.
+
+    ``replace_blockhash=False`` because the signer demands ``exact``, and the node's answer
+    is shaped like a real ``simulateTransaction`` result: a slot in ``context``, a lamport
+    leg for the tracked account, and EMPTY token-balance arrays — an observed zero, which
+    is what a memo transaction moves. ``[]`` and ``null`` are different facts here; the
+    second one refuses.
+    """
+
+    def rpc_call(url: str, method: str, params: Any) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return {"result": {"value": {"lamports": 1_000_000}}}
+        return {
+            "result": {
+                "context": {"slot": SLOT},
+                "value": {
+                    "err": None,
+                    "unitsConsumed": 5_000,
+                    "logs": ["Program log: memo", "Program success"],
+                    "accounts": [{"lamports": 995_000}],
+                    "preTokenBalances": [],
+                    "postTokenBalances": [],
+                },
+            }
+        }
+
+    receipt = simulate(
+        {"instruction": "memo"},
+        rpc_url=OFFLINE_RPC,
+        rpc_call=rpc_call,
+        build_call=lambda _plan: BuiltTx(tx=tx, encoding="base64"),
+        track=[PAYER],
+        network="mainnet",
+        replace_blockhash=False,
+    )
+    # The preconditions the signer's OTHER checks need, so a failure in this helper reads
+    # as a broken fixture rather than as a broken control.
+    assert receipt.status == "pass"
+    assert receipt.binding_strength == "exact"
+    assert receipt.observed_slot == SLOT
+    assert receipt.sol_delta == -5_000
+    return receipt
 
 
 def _spend_gate() -> SpendPolicyGate:
@@ -615,24 +694,111 @@ def test_the_module_docstring_states_the_fabrication_residual_honestly() -> None
     assert "structurally cannot" not in doc.lower()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN RESIDUAL (C1, option ii): SignerHandoff is freely constructible — no "
-        "__post_init__, no provenance token — so a hand-built handoff paired with a "
-        "hand-built Receipt satisfies every check this signer can make. Closing it "
-        "requires making the handoff unforgeable in gecko/handoff.py, which is outside "
-        "this change's file scope. When that lands, this test flips to XPASS and fails, "
-        "which is how we find out."
-    ),
-)
-def test_a_hand_built_handoff_is_refused() -> None:
-    """The fabrication case. It is NOT refused today; the xfail records that."""
+def test_a_hand_built_receipt_is_refused() -> None:
+    """B2. A Receipt nobody simulated cannot reach a signature.
+
+    THIS TEST USED TO AIM AT THE HANDOFF, as a strict ``xfail``, and it was aimed at the
+    wrong object. ``sign`` runs ``verify_handoff`` itself and re-derives every fact it
+    needs from its own verification result plus the Receipt; the handoff contributes only
+    ``approved`` and the bytes. A hand-built handoff carrying a genuine Receipt is
+    therefore the production shape with one extra allocation, and refusing it was never
+    possible or desirable. The freely-constructible input that MATTERS is the Receipt.
+
+    TWO MUTATIONS TURN THIS RED. Flip ``Receipt.origin``'s default to ``"simulated"``, or
+    delete the ``receipt.origin != "simulated"`` check from ``sign``. Either way this
+    fabricated Receipt — a real binding over real bytes, a plausible slot, an innocent
+    lamport leg — is signed. The first mutation is only visible because the fixture NAMES
+    NO ORIGIN; see :func:`_receipt_naming_no_origin`.
+    """
     backend = _FakeBackend()
     tx = _tx()
-    receipt = _receipt(tx)
-    with pytest.raises(SignerRefused):
-        _signer(backend).sign(_handoff(tx, receipt), receipt=receipt, current_slot=SLOT)
+    fabricated = _receipt_naming_no_origin(tx)
+    with pytest.raises(SignerRefused) as excinfo:
+        _signer(backend).sign(
+            _handoff(tx, fabricated), receipt=fabricated, current_slot=SLOT
+        )
+    assert excinfo.value.code == "receipt-not-simulated"
+    assert backend.calls == []
+
+
+def test_the_default_receipt_origin_is_the_one_that_refuses() -> None:
+    """The value reached by OMISSION must be the value that signs nothing.
+
+    A Receipt built by third-party code, or by code written against the older field set,
+    names no origin at all. What it gets by default decides whether that path refuses or
+    signs, so the default is asserted here directly rather than only through the signer.
+    """
+    from dataclasses import fields as dataclass_fields
+
+    origin_field = next(f for f in dataclass_fields(Receipt) if f.name == "origin")
+    assert origin_field.default == "asserted"
+
+
+def test_a_simulated_receipt_reaches_the_backend() -> None:
+    """THE POSITIVE CONTROL for B2, offline, through the real :func:`simulate`.
+
+    Without this, "it refuses a hand-built Receipt" is indistinguishable from "it refuses
+    everything", which is a green suite and a dead product. Nothing here is hand-stamped:
+    the Receipt's ``origin`` comes from ``simulate()`` writing it, over an injected
+    ``rpc_call`` and ``build_call``. No node is contacted.
+
+    MUTATION: remove ``origin="simulated"`` from ``simulate``'s Receipt construction and
+    this goes red at ``receipt-not-simulated``.
+    """
+    backend = _FakeBackend()
+    tx = _tx()
+    receipt = _simulate_offline(tx)
+    assert receipt.origin == "simulated", "the engine, not this test, wrote that word"
+
+    signed = _signer(backend).sign(
+        _handoff(tx, receipt), receipt=receipt, current_slot=SLOT + 1
+    )
+    assert len(backend.calls) == 1
+    assert signed.signer_pubkey == PAYER
+
+
+def test_a_hand_built_receipt_burns_no_velocity_budget() -> None:
+    """B2's ordering: the origin check is free, so it must run before the ledger writes.
+
+    Modelled on ``test_a_stale_receipt_is_refused_before_any_budget_is_reserved``. With one
+    transaction a day allowed, a refused fabrication must leave that one still available —
+    otherwise an attacker who can get nothing signed can still exhaust the day's budget by
+    replaying fabricated Receipts.
+
+    MUTATION: move the origin check below ``self._spend_gate().authorize(...)`` and the
+    second half of this test refuses at ``spend-not-authorized``.
+
+    THE TWO TRANSACTIONS ARE DIFFERENT ON PURPOSE, and this is the part that is easy to get
+    wrong. Since B3 the ledger's reservation is idempotent on the exact bytes, so a version
+    of this test that replayed ONE transaction would be dedupe-immune: the fabrication
+    would reserve, the retry would be recognised as the same transaction, and the ordering
+    mutation would sail through green. Distinct payloads (both still carrying the
+    allowlisted ``gecko`` prefix, which is matched as a prefix) make the second signature
+    a second charge.
+    """
+    gate = SpendPolicyGate(
+        policy=replace(_spend_gate().policy, max_transactions_per_day=1),  # type: ignore[arg-type]
+        ledger=InMemorySpendLedger(),
+    )
+    backend = _FakeBackend()
+
+    forged_tx = _tx(payload=b"gecko-fabricated")
+    fabricated = _receipt_naming_no_origin(forged_tx)
+    with pytest.raises(SignerRefused) as excinfo:
+        _signer(backend, spend_gate=gate).sign(
+            _handoff(forged_tx, fabricated), receipt=fabricated, current_slot=SLOT
+        )
+    assert excinfo.value.code == "receipt-not-simulated"
+    assert backend.calls == []
+
+    # The one transaction a day the policy allows is still there.
+    genuine_tx = _tx(payload=b"gecko-genuine")
+    genuine = _simulate_offline(genuine_tx)
+    signed = _signer(backend, spend_gate=gate).sign(
+        _handoff(genuine_tx, genuine), receipt=genuine, current_slot=SLOT
+    )
+    assert signed.signer_pubkey == PAYER
+    assert len(backend.calls) == 1
 
 
 def test_the_signer_module_never_broadcasts() -> None:

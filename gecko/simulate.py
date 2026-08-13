@@ -51,6 +51,7 @@ __all__ = [
     "BuiltTx",
     "REVERT_FAMILIES",
     "Receipt",
+    "ReceiptOrigin",
     "SimulateError",
     "TOKEN_2022_PROGRAM_ID",
     "TOKEN_DELTA_REFUSALS",
@@ -1349,6 +1350,23 @@ class SimulateError(Exception):
     ``status="fail"`` and a ``revert_class``. Messages never echo a raw request body."""
 
 
+#: Where a Receipt's contents CAME FROM — B2. Declared here, beside the only dataclass it
+#: describes, and imported by every consumer; the shared-Literal house rule forbids a
+#: second spelling of this set.
+#:
+#: ``simulated`` is stamped by :func:`simulate` and by nothing else. ``asserted`` is what a
+#: Receipt says when somebody filled its fields in: a hand-built object, a default
+#: construction, a third-party producer, or :func:`gecko.handoff._unobserved`'s true report
+#: of a run that produced nothing. The word is deliberately not a quality judgement — an
+#: asserted Receipt may be perfectly accurate — it names the AUTHORITY behind the fields.
+#:
+#: NOT named ``provenance``: :mod:`gecko.provenance` owns that word for the two evidence
+#: ladders, and a third meaning of it on the Receipt is how a reader ends up comparing this
+#: against ``DECLARED``/``MEASURED``. NOT named ``basis`` either: ``TokenDeltaBasis``
+#: already means "which source the token leg was read from".
+ReceiptOrigin = Literal["simulated", "asserted"]
+
+
 @dataclass(frozen=True)
 class Receipt:
     """The legible outcome of simulating a built transaction against a state snapshot.
@@ -1373,6 +1391,8 @@ class Receipt:
     5. ``observed_slot`` — D6. Recorded, never enforced.
     6. ``token_delta`` — G6. The TYPED token leg: what moved, in which mint, at which
        scale — or an explicit refusal. ``None`` means NOT TRACKED, never zero.
+    7. ``origin`` — B2. Whether :func:`simulate` produced these fields or somebody
+       asserted them. Defaults to ``asserted``, which the signer refuses.
 
     ``tokens_received`` in group 1 is SUPERSEDED by ``token_delta`` and is now
     permanently ``None`` from :func:`simulate`. It stays on the dataclass only because
@@ -1443,6 +1463,24 @@ class Receipt:
     #: Control-plane: mint, decimals, owner and amounts only. No token-account address,
     #: no payload, and it is not projected into the corpus.
     token_delta: TokenDeltaReport | None = None
+    #: B2 — did :func:`simulate` produce these fields, or did somebody state them?
+    #:
+    #: THE DEFAULT IS ``asserted``, and that direction is the whole control. Every other
+    #: field on this dataclass is a fact about a run; this one is a fact about the fields.
+    #: A Receipt reached by omission — hand-built in a test, default-constructed by a
+    #: caller, produced by third-party code written against an older field set — says
+    #: ``asserted``, and :meth:`gecko.signer.TransactionSigner.sign` refuses it. The value
+    #: you get by not thinking about it is the one that signs nothing.
+    #:
+    #: There is deliberately NO ``Receipt.simulated(...)`` constructor. Every
+    #: ``origin="simulated"`` written by hand is greppable, so the set of places that claim
+    #: a run they did not do stays a searchable inventory rather than a habit.
+    #:
+    #: WHAT IT DOES NOT CLOSE: :func:`simulate` takes an injected ``rpc_call``, so a caller
+    #: with code execution in this process can mint a genuinely-stamped Receipt from a node
+    #: it wrote itself. The stamp attests that OUR FUNCTION RAN. It never attests that a
+    #: node answered.
+    origin: ReceiptOrigin = "asserted"
 
 
 def _custom_code(err: Any) -> int | None:
@@ -1788,4 +1826,8 @@ def simulate(
         network=network,
         observed_slot=observed_slot,
         token_delta=token_delta,
+        # B2. The ONE place this word is written by the engine. It says "these fields came
+        # out of this function", not "a node answered" — `rpc_call` is injectable, so the
+        # second sentence is not ours to make.
+        origin="simulated",
     )

@@ -396,6 +396,10 @@ def _signable(payer: str) -> tuple[Any, Any, Any]:
         network="mainnet",
         observed_slot=SLOT,
         token_delta=TokenDeltaReport(status="measured", movements=(), refusals=()),
+        # B2. Stated out loud because this file's subject is the keychain backend, not the
+        # Receipt's authority: without it every test here would refuse at
+        # ``receipt-not-simulated`` before the keychain was ever reached.
+        origin="simulated",
     )
     handoff = SignerHandoff(
         approved=True,

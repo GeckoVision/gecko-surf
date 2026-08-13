@@ -173,6 +173,11 @@ def _receipt(
         network="fork",
         observed_slot=observed_slot,
         token_delta=token_delta if token_delta is not None else _measured(),
+        # B2. This file's subject is the SPEND predicate, so every receipt here has to get
+        # past the origin check to reach it — a file where everything refused for the wrong
+        # reason would be a green suite proving nothing about caps. The refusal itself is
+        # owned by ``tests/test_signer.py``.
+        origin="simulated",
     )
 
 
@@ -600,43 +605,61 @@ def test_a_receipt_with_no_lamport_delta_still_refuses() -> None:
 # ----------------------------------------------------------------------------------------
 
 
+#: WHY EVERY ORDERING TEST BELOW USES TWO DIFFERENT TRANSACTIONS.
+#:
+#: Both of these tests used to refuse one transaction and then re-sign THE SAME BYTES, and
+#: that made them blind to the mutation they are named after. Since B3 the reservation is
+#: idempotent on the exact bytes: whether or not the refused attempt reserved budget, the
+#: second attempt is recognised as a replay of it and charges nothing, so the "one
+#: transaction a day is still available" assertion passes either way. Measured, not
+#: reasoned — moving ``_check_receipt_age`` and the fee-payer check below the spend gate
+#: both left this file fully green.
+#:
+#: A second DISTINCT transaction is a second charge, which is the only version of this
+#: assertion that can fail when the ordering is wrong.
+_STALE_TX, _FRESH_TX = _distinct_tx(101), _distinct_tx(102)
+_FOREIGN_TX, _OURS_TX = _distinct_tx(103), _distinct_tx(104)
+
+
 def test_a_stale_receipt_is_refused_before_any_budget_is_reserved() -> None:
     """The age bound is cheaper than the ledger and must run first. If it did not, an
     attacker who cannot get anything signed could still exhaust the day's budget by
     replaying stale receipts."""
     backend = _FakeBackend()
-    tx = _tx()
-    stale = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
+    stale = _receipt(_STALE_TX, token_delta=_measured(_movement(delta_raw=-500_000)))
     gate = _gate(_policy(max_transactions_per_day=1))
     signer = _signer(backend, spend_gate=gate)
 
     with pytest.raises(SignerRefused) as excinfo:
-        signer.sign(_handoff(tx, stale), receipt=stale, current_slot=SLOT + 100_000)
+        signer.sign(
+            _handoff(_STALE_TX, stale), receipt=stale, current_slot=SLOT + 100_000
+        )
     assert excinfo.value.code == "receipt-too-old"
 
     # The one transaction a day the policy allows is still available.
-    fresh = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
-    signed = signer.sign(_handoff(tx, fresh), receipt=fresh, current_slot=SLOT)
+    fresh = _receipt(_FRESH_TX, token_delta=_measured(_movement(delta_raw=-500_000)))
+    signed = signer.sign(_handoff(_FRESH_TX, fresh), receipt=fresh, current_slot=SLOT)
     assert signed.signer_pubkey == PAYER
 
 
 def test_a_foreign_fee_payer_is_refused_before_any_budget_is_reserved() -> None:
     """The fee-payer check is the other cheap one. Same reasoning, different check."""
     backend = _FakeBackend(pubkey=FOREIGN)
-    tx = _tx()
-    receipt = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
+    receipt = _receipt(
+        _FOREIGN_TX, token_delta=_measured(_movement(delta_raw=-500_000))
+    )
     gate = _gate(_policy(max_transactions_per_day=1))
 
     with pytest.raises(SignerRefused) as excinfo:
         _signer(backend, spend_gate=gate).sign(
-            _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+            _handoff(_FOREIGN_TX, receipt), receipt=receipt, current_slot=SLOT
         )
     assert excinfo.value.code == "fee-payer-not-controlled"
 
     ours = _FakeBackend()
-    fresh = _receipt(tx, token_delta=_measured(_movement(delta_raw=-500_000)))
+    fresh = _receipt(_OURS_TX, token_delta=_measured(_movement(delta_raw=-500_000)))
     _signer(ours, spend_gate=gate).sign(
-        _handoff(tx, fresh), receipt=fresh, current_slot=SLOT
+        _handoff(_OURS_TX, fresh), receipt=fresh, current_slot=SLOT
     )
     assert len(ours.calls) == 1
 

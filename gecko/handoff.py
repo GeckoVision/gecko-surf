@@ -445,6 +445,12 @@ def _unobserved() -> Receipt:
     asserted about a run that did not happen), no binding, no strength, no slot, no units.
     Every downstream gate refuses it: :func:`verify_handoff` refuses for want of a
     binding, and ``unknown`` is not in :data:`~gecko.networks.APPROVABLE_NETWORKS`.
+
+    ``origin="asserted"`` belongs in that list and is written out for the same reason. It
+    is not a demotion of this Receipt — it is the only true thing to say about fields no
+    simulation produced. Stamping ``simulated`` here to keep a caller moving would make
+    the word mean "a Receipt from gecko" instead of "a run happened", which is the whole
+    distinction :data:`~gecko.simulate.ReceiptOrigin` exists to carry.
     """
     return Receipt(
         status="unknown",
@@ -460,6 +466,7 @@ def _unobserved() -> Receipt:
         lookup_resolution=None,
         network=UNKNOWN_NETWORK,
         observed_slot=None,
+        origin="asserted",
     )
 
 
