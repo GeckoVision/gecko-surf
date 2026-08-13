@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="slide_style.css">
+<title>Gecko — the use case</title>
+
+<div class="slide">
+  <h1>The Use Case, on a Program</h1>
+
+  <div class="body">
+    <div class="col">
+      <div class="lede">
+        <span class="q">›</span> Buy a real product from a storefront that lives
+        <b>on Solana</b> — in one sentence of English.
+      </div>
+
+      <div class="lede" style="margin-top:26px"><span class="q">›</span> Steps:</div>
+      <ol class="steps">
+        <li>Find where it is sold
+          <small>read every storefront's own on-chain account</small></li>
+        <li>Derive the nine accounts
+          <small>offline, from seed recipes — nothing guessed</small></li>
+        <li>Check the call before it counts
+          <small>simulate the exact bytes → a receipt</small></li>
+        <li>Sign and settle
+          <small>the key never leaves its enclave</small></li>
+      </ol>
+
+      <div class="sub" style="margin-top:26px">
+        The same shape a workflow spec describes for HTTP APIs — except the operations
+        here are <b>program instructions</b>, and the accounts have to be
+        <b>derived</b> before any of them can be called.
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="panel">
+        <div class="panel-head">
+          <span class="name">let_me_buy</span>
+          <span class="desc">a storefront program — stand up a store, list products, take payment</span>
+        </div>
+        <div class="op">
+          <span class="badge">INIT</span>
+          <span class="path">initialize</span>
+          <span class="note">3 accounts · creates the store</span>
+        </div>
+        <div class="op write">
+          <span class="badge write">WRITE</span>
+          <span class="path">add_product</span>
+          <span class="note">4 accounts · lists a product + price</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <span class="name">the purchase</span>
+          <span class="desc">where the money moves — and where a guess costs you</span>
+        </div>
+        <div class="op write">
+          <span class="badge write">PAY</span>
+          <span class="path">make_purchase</span>
+          <span class="note">9 accounts · store_name, product_name, table_number</span>
+          <span class="prov">extracted</span>
+        </div>
+        <div class="op">
+          <span class="badge">SETTLE</span>
+          <span class="path">mark_as_delivered</span>
+          <span class="note">2 accounts · receipt_id</span>
+          <span class="prov">extracted</span>
+        </div>
+        <div class="op gate" style="margin-top:11px">
+          <span class="badge gate">REFUSED</span>
+          <span class="path">unknown store</span>
+          <span class="note">its authority lives inside the account — guessing pays the wrong person</span>
+        </div>
+      </div>
+
+      <div class="sub" style="margin-top:2px">
+        <b>9 accounts</b> for one purchase. Six are derived, three are pinned program ids —
+        and the two that move money are an easy pair to swap.
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="brand">GECKO • CHECK THE CALL BEFORE IT COUNTS</span>
+    <span class="tag">let_me_buy · BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya · Solana mainnet</span>
+  </div>
+</div>

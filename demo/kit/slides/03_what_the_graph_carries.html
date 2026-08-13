@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="slide_style.css">
+<title>Gecko — what the graph carries</title>
+
+<div class="slide" style="padding-top:34px">
+  <h1 style="font-size:44px">What the graph carries</h1>
+  <div class="sub" style="margin-top:8px;font-size:16px">
+    A workflow spec says <i>call these, in this order</i>. On a program that is not enough —
+    so every node also says <b>where it came from</b> and <b>what would prove it wrong</b>.
+  </div>
+
+  <div class="body" style="margin-top:22px">
+    <!-- LEFT: the structure -->
+    <div class="col" style="max-width:470px">
+      <div class="group" style="border-color:#2f81f7">
+        <span class="label" style="color:#79b8ff">surface</span>
+        <div style="font-size:15px;line-height:1.6">
+          program id · instructions · intents<br>
+          <span style="color:var(--dim);font-size:13.5px">what can be called at all</span>
+        </div>
+      </div>
+
+      <div class="group" style="border-color:var(--mint)">
+        <span class="label" style="color:var(--mint)">derive plan &nbsp;(per account)</span>
+        <div style="font-size:15px;line-height:1.7">
+          seed recipe &nbsp;·&nbsp; dependency order<br>
+          role &nbsp;·&nbsp; writable &nbsp;·&nbsp; signer<br>
+          <b style="color:var(--mint)">origin</b> —
+          <span class="pill ex">extracted</span>
+          <span class="pill re">recovered</span>
+          <span class="pill fl">flagged</span>
+          <div style="color:var(--dim);font-size:13px;margin-top:7px;line-height:1.5">
+            the artifact declared it → <b>theirs</b>. It was silent → <b>ours</b>.<br>
+            They disagree → <b>neither</b>.
+          </div>
+        </div>
+      </div>
+
+      <div class="group" style="border-color:var(--violet)">
+        <span class="label" style="color:var(--violet)">chain &nbsp;(the lifecycle)</span>
+        <div style="font-size:15px;line-height:1.6">
+          steps · links · <b>basis</b> · <b>refuted&nbsp;by</b><br>
+          <span style="color:var(--dim);font-size:13.5px">
+            every edge argues for itself and names its own counterexample</span>
+        </div>
+      </div>
+
+      <div class="group" style="border-color:var(--amber);margin-bottom:0">
+        <span class="label" style="color:var(--amber)">receipt &nbsp;(before it counts)</span>
+        <div style="font-size:15px;line-height:1.6">
+          status · compute units · revert class<br>
+          <b>binding</b> — the exact bytes, hashed<br>
+          <span style="color:var(--dim);font-size:13.5px">
+            expires with its blockhash, ~1 minute</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: the real payload -->
+    <div class="col">
+      <div class="codehead">the real answer, from the live surface</div>
+      <div class="code" style="font-size:12.5px;line-height:1.5">
+<span class="c">// find_start("buy water at the bar") → the start it chose</span><br>
+<span class="k">"program"</span>: <span class="s">"let_me_buy"</span>,<br>
+<span class="k">"instruction"</span>: <span class="s">"make_purchase"</span>,<br>
+<span class="k">"why"</span>: <span class="n">["buy", "storefront"]</span>,<br>
+<br>
+<span class="hl"><span class="k">"chain"</span>: { <span class="k">"name"</span>: <span class="s">"sell_and_deliver"</span>,</span><br>
+<span class="hl">&nbsp;&nbsp;<span class="k">"verdict"</span>: <span class="s">"NOT_EVALUATED"</span>,</span><br>
+<span class="hl">&nbsp;&nbsp;<span class="c">// the plan is reported, never claimed executable</span></span><br>
+<span class="hl">&nbsp;&nbsp;<span class="k">"links"</span>: [{</span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">"account"</span>: <span class="s">"receipts"</span>, <span class="k">"kind"</span>: <span class="s">"produces"</span>,</span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">"provenance"</span>: <span class="s">"extracted"</span>,</span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">"basis"</span>: <span class="s">"…account 0 of BOTH instructions,</span></span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="s">so the two calls address one account…"</span>,</span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">"refuted_by"</span>: <span class="s">"a mark_as_delivered that</span></span><br>
+<span class="hl">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="s">settles a receipt_id no make_purchase wrote"</span></span><br>
+<span class="hl">&nbsp;&nbsp;}] },</span><br>
+<br>
+<span class="k">"derive_plan"</span>: [<br>
+&nbsp;&nbsp;{ <span class="k">"account"</span>: <span class="s">"receipts"</span>,
+<span class="k">"provenance"</span>: <span class="s">"extracted"</span> },<br>
+&nbsp;&nbsp;{ <span class="k">"account"</span>: <span class="s">"sender_token_account"</span>, … },<br>
+&nbsp;&nbsp;<span class="c">// …7 more, dependency-ordered</span><br>
+],<br>
+<span class="k">"gaps"</span>: <span class="n">[]</span> &nbsp;<span class="c">// flagged honestly when they exist</span><br>
+      </div>
+      <div class="sub" style="margin-top:13px;font-size:14.5px">
+        <b style="color:var(--cyan)">NOT_EVALUATED</b> is the interesting field. Nothing here
+        pretends the chain was verified against landed transactions — because it was not.
+        A graph that only ever says <i>yes</i> tells you nothing about when to trust it.
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="brand">GECKO • CHECK THE CALL BEFORE IT COUNTS</span>
+    <span class="tag">mcp.geckovision.tech/orquestra/mcp · keyless, control-plane only</span>
+  </div>
+</div>
