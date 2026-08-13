@@ -51,6 +51,7 @@ __all__ = [
     "BuiltTx",
     "REVERT_FAMILIES",
     "Receipt",
+    "ReceiptOrigin",
     "SimulateError",
     "TOKEN_2022_PROGRAM_ID",
     "TOKEN_DELTA_REFUSALS",
@@ -1349,6 +1350,23 @@ class SimulateError(Exception):
     ``status="fail"`` and a ``revert_class``. Messages never echo a raw request body."""
 
 
+#: Where a Receipt's contents CAME FROM — B2. Declared here, beside the only dataclass it
+#: describes, and imported by every consumer; the shared-Literal house rule forbids a
+#: second spelling of this set.
+#:
+#: ``simulated`` is stamped by :func:`simulate` and by nothing else. ``asserted`` is what a
+#: Receipt says when somebody filled its fields in: a hand-built object, a default
+#: construction, a third-party producer, or :func:`gecko.handoff._unobserved`'s true report
+#: of a run that produced nothing. The word is deliberately not a quality judgement — an
+#: asserted Receipt may be perfectly accurate — it names the AUTHORITY behind the fields.
+#:
+#: NOT named ``provenance``: :mod:`gecko.provenance` owns that word for the two evidence
+#: ladders, and a third meaning of it on the Receipt is how a reader ends up comparing this
+#: against ``DECLARED``/``MEASURED``. NOT named ``basis`` either: ``TokenDeltaBasis``
+#: already means "which source the token leg was read from".
+ReceiptOrigin = Literal["simulated", "asserted"]
+
+
 @dataclass(frozen=True)
 class Receipt:
     """The legible outcome of simulating a built transaction against a state snapshot.
@@ -1373,6 +1391,11 @@ class Receipt:
     5. ``observed_slot`` — D6. Recorded, never enforced.
     6. ``token_delta`` — G6. The TYPED token leg: what moved, in which mint, at which
        scale — or an explicit refusal. ``None`` means NOT TRACKED, never zero.
+    7. ``origin`` — B2. Whether :func:`simulate` produced these fields or somebody
+       asserted them. Defaults to ``asserted``, which the signer refuses.
+    8. ``sol_delta_account`` — N1. WHOSE lamports ``sol_delta`` counted. Unqualified,
+       that number is an amount with no owner; the signer refuses one it cannot pin to
+       the fee payer.
 
     ``tokens_received`` in group 1 is SUPERSEDED by ``token_delta`` and is now
     permanently ``None`` from :func:`simulate`. It stays on the dataclass only because
@@ -1443,6 +1466,47 @@ class Receipt:
     #: Control-plane: mint, decimals, owner and amounts only. No token-account address,
     #: no payload, and it is not projected into the corpus.
     token_delta: TokenDeltaReport | None = None
+    #: B2 — did :func:`simulate` produce these fields, or did somebody state them?
+    #:
+    #: THE DEFAULT IS ``asserted``, and that direction is the whole control. Every other
+    #: field on this dataclass is a fact about a run; this one is a fact about the fields.
+    #: A Receipt reached by omission — hand-built in a test, default-constructed by a
+    #: caller, produced by third-party code written against an older field set — says
+    #: ``asserted``, and :meth:`gecko.signer.TransactionSigner.sign` refuses it. The value
+    #: you get by not thinking about it is the one that signs nothing.
+    #:
+    #: There is deliberately NO ``Receipt.simulated(...)`` constructor. Every
+    #: ``origin="simulated"`` written by hand is greppable, so the set of places that claim
+    #: a run they did not do stays a searchable inventory rather than a habit.
+    #:
+    #: WHAT IT DOES NOT CLOSE: :func:`simulate` takes an injected ``rpc_call``, so a caller
+    #: with code execution in this process can mint a genuinely-stamped Receipt from a node
+    #: it wrote itself. The stamp attests that OUR FUNCTION RAN. It never attests that a
+    #: node answered.
+    origin: ReceiptOrigin = "asserted"
+    #: WHOSE lamports ``sol_delta`` counted — N1. The account address, or ``None`` when
+    #: nothing was tracked and there is no delta to attribute.
+    #:
+    #: ``sol_delta`` is NOT the fee payer's by construction. It is ``track[0]``'s, and
+    #: nothing in :func:`simulate` ties ``track[0]`` to the message's fee payer — the
+    #: caller chooses what to track. Every real caller in this repo happens to pass the
+    #: payer, which made a lamport cap over ``sol_delta`` safe by CONVENTION rather than by
+    #: construction. The counterexample is quiet and total: track the RECIPIENT and
+    #: ``sol_delta`` is POSITIVE, so a policy computing ``outflow = -delta if delta < 0
+    #: else 0`` reads zero, every lamport cap passes, and nothing notices.
+    #:
+    #: Recording the account does not fix that here — it makes it CHECKABLE one hop later.
+    #: :meth:`gecko.signer.TransactionSigner.sign` establishes the three-way equality
+    #: ``sol_delta_account == fee_payer == backend.pubkey``, with the fee payer decoded
+    #: from the bytes rather than claimed.
+    #:
+    #: Named ``sol_delta_account``, not ``lamport_subject``: "subject" already means "the
+    #: bytes under test" in :mod:`gecko.handoff`, and one word for two things at a signing
+    #: seam is how a reader mis-binds a check.
+    #:
+    #: Control-plane: an address the CALLER already supplied via ``track``, echoed back so
+    #: its number can be attributed. It is not projected into the corpus.
+    sol_delta_account: str | None = None
 
 
 def _custom_code(err: Any) -> int | None:
@@ -1652,8 +1716,10 @@ def simulate(
 
     Never signs or broadcasts — ``simulateTransaction`` only. ``rpc_call`` and
     ``build_call`` are injectable so this is fully falsifiable offline. ``track`` is an
-    ordered list of accounts to snapshot (``track[0]`` powers ``sol_delta``). The Receipt
-    is returned, never stored.
+    ordered list of accounts to snapshot (``track[0]`` powers ``sol_delta``, and is
+    recorded on the Receipt as ``sol_delta_account`` — this function does not require it to
+    be the fee payer, so the number is only meaningful beside the account it belongs to).
+    The Receipt is returned, never stored.
 
     ``network`` is ASSERTED by the caller and never derived here — not from ``rpc_url``
     (a fork proxy answers at any hostname) and not from ``network_label`` (prose; the
@@ -1788,4 +1854,12 @@ def simulate(
         network=network,
         observed_slot=observed_slot,
         token_delta=token_delta,
+        # B2. The ONE place this word is written by the engine. It says "these fields came
+        # out of this function", not "a node answered" — `rpc_call` is injectable, so the
+        # second sentence is not ours to make.
+        origin="simulated",
+        # N1. `sol_delta` above is `tracked[0]`'s and nothing here makes that the fee
+        # payer, so the number travels with the account it belongs to. `None` when nothing
+        # was tracked, which is the same shape `sol_delta` itself takes.
+        sol_delta_account=tracked[0] if tracked else None,
     )

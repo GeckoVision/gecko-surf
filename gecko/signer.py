@@ -17,17 +17,34 @@ refusal, so a parameter of that type keeps "the bytes" and "the approval" welded
 object; a signer whose parameter is ``str`` lets a caller separate them, which is the
 entire window between simulation and signature that this seam exists to close.
 
+WHICH INPUT IS ACTUALLY LOAD-BEARING, BECAUSE IT IS NOT THE HANDOFF. :meth:`sign` runs
+:func:`~gecko.handoff.verify_handoff` ITSELF, below, and reads every downstream fact from
+its own verification result and from the ``receipt``. The handoff contributes exactly two
+things: ``approved`` and the bytes. Its ``binding``, ``strength``, ``status`` and
+``network`` are never read here. So a hand-built handoff carrying a genuine Receipt is the
+production shape with one extra allocation, and the freely-constructible input worth
+guarding is the **Receipt**.
+
 WHAT THAT DOES **NOT** MAKE TRUE — the residual, stated in the honest form already set at
 :mod:`gecko.signing_gate`. Required arguments of a required type close **OMISSION**: there
-is no ``transaction=...`` that quietly means "unchecked", and no default that signs. They
-do not close **FABRICATION**. :class:`~gecko.handoff.SignerHandoff` is a plain frozen
-dataclass with public fields, no ``__post_init__`` and no provenance token, so a caller can
-hand-build one with ``approved=True`` and any bytes it likes, pair it with a hand-built
-Receipt, and satisfy every check below. What would close it is a construction token minted
-inside :func:`~gecko.handoff.verify_handoff` and verified here — provenance ON the verdict,
-not merely the verdict's shape. That is not built. The residual is recorded as a strict
-``xfail`` in ``tests/test_signer.py::test_a_hand_built_handoff_is_refused``, which will
-start failing the day somebody closes it.
+is no ``transaction=...`` that quietly means "unchecked", and no default that signs.
+:data:`~gecko.simulate.ReceiptOrigin` extends that to the Receipt — the field defaults to
+``asserted`` and this seam refuses it, so a Receipt that was hand-built,
+default-constructed, or produced by third-party code cannot reach a signature unless a
+caller writes ``origin="simulated"`` out loud. That also closes the ACCIDENTAL forgery: a
+fixture or a helper that grew into production no longer signs by inheritance.
+
+It does not close **FABRICATION**. :func:`~gecko.simulate.simulate` accepts an injected
+``rpc_call``, which is what makes the whole engine falsifiable offline and also means a
+caller with code execution in this process can mint a genuinely-stamped Receipt from a
+node it wrote itself. The stamp attests that our function ran; it never attests that a
+node answered, and no in-process check can tell those apart — the process that would do
+the checking is the one that has been captured. It closes only where the party holding the
+key enforces the predicate itself, which is the external-signer profile: a custody backend
+reads :class:`SigningAttestation` and applies its own policy, on its own machine.
+:class:`~gecko.handoff.SignerHandoff` remains a plain frozen dataclass with public fields
+and no construction token; that is now a smaller hole than it looked, for the reason above,
+and it is still a hole.
 
 WHY A REFUSAL IS AN EXCEPTION HERE, AND A RETURN VALUE THERE. :mod:`gecko.handoff` warns
 that an exception is not a refusal object, because a caller's ``try/except`` around
@@ -36,9 +53,14 @@ a CHECK. Here it erases a RESULT: :class:`SignerRefused` has no payload slot, so
 it yields no bytes and no signature by construction. Every refusal below is asserted in the
 tests as *the backend was never reached*, not merely as *something was raised*.
 
-THREE THINGS THIS SEAM ENFORCES THAT NOTHING UPSTREAM CAN.
+FOUR THINGS THIS SEAM ENFORCES THAT NOTHING UPSTREAM CAN.
 
-1. **``exact``, demanded twice, because the label is caller-asserted.**
+1. **The Receipt was produced, not stated** — checked first, before anything about the
+   bytes. ``Receipt.origin`` defaults to ``asserted`` and only
+   :func:`~gecko.simulate.simulate` writes ``simulated``, so the value a Receipt carries by
+   omission refuses. Every other check on this path asks whether the bytes match the
+   Receipt; this one asks whether the Receipt is worth matching against.
+2. **``exact``, demanded twice, because the label is caller-asserted.**
    ``simulate.py:388`` derives ``exact`` from the caller's own ``replace_blockhash`` flag
    and never proves it against the chain, so a receipt can carry the strongest label and
    still attest a snapshot nobody re-checked. This module passes ``require="exact"`` to
@@ -46,12 +68,30 @@ THREE THINGS THIS SEAM ENFORCES THAT NOTHING UPSTREAM CAN.
    slot age. Two independent reasons to refuse a stale receipt; neither alone is
    load-bearing. ``Receipt.observed_slot`` was recorded-not-enforced until now — this is
    the first thing that reads it, and a receipt without one refuses.
-2. **Fee payer == the signer's own account, checked INSIDE the signer.** Signing for an
-   account you do not control produces a useless signature and burns a blockhash; more to
-   the point, a signer that will sign for anyone is a signer whose refusals are about the
-   bytes and never about the authority. Today the human does this by hand at
-   ``scripts/sign_and_send.py``; here the structure does it.
-3. **The backend's answer is re-bound before it leaves.** An external signer (option D,
+3. **Fee payer == the signer's own account — and the receipt's lamport account == both**,
+   checked INSIDE the signer. Signing for an account you do not control produces a useless
+   signature and burns a blockhash; more to the point, a signer that will sign for anyone
+   is a signer whose refusals are about the bytes and never about the authority. Today the
+   human does this by hand at ``scripts/sign_and_send.py``; here the structure does it.
+
+   N1 extends that one equality into three. ``Receipt.sol_delta`` is ``track[0]``'s, not
+   the payer's: :func:`~gecko.simulate.simulate` measures whatever the caller asked it to
+   track and never ties that to the message's fee payer. Every caller in this repo happens
+   to pass the payer, so the lamport caps were safe by CONVENTION. A receipt whose
+   ``track[0]`` was the RECIPIENT carries a POSITIVE ``sol_delta``, and
+   :mod:`gecko.spend_policy` computes ``outflow = -delta if delta < 0 else 0`` — zero —
+   so every lamport cap passes a drain of any size and nothing notices. So this seam
+   establishes ``receipt.sol_delta_account == fee_payer == backend.pubkey``, with the fee
+   payer decoded from the bytes rather than claimed.
+
+   THE RESIDUAL, because the check is HERE and not in the gate: a caller that consults
+   :meth:`~gecko.spend_policy.SpendPolicyGate.authorize` directly still gets its verdict
+   over an unqualified lamport amount, and that verdict is as wrong as it ever was. The
+   gate is deliberately not widened — its inputs are pinned by an exact-field test, and
+   that test is worth more than the convenience. What makes the residual tolerable is that
+   this signer is the ONLY path in this package to a signature: a verdict is not an
+   authorization to sign, and nothing acts on the gate's answer except through here.
+4. **The backend's answer is re-bound before it leaves.** An external signer (option D,
    the destination) is a different party, so signing is still a hop. What comes back is
    re-hashed and compared to the attested binding: a backend that returns a different
    message is refused after being called, and the caller gets nothing.
@@ -189,6 +229,8 @@ MAX_RECEIPT_AGE_SLOTS = 150
 RefusalCode = Literal[
     "not-configured",
     "not-authorized",
+    # B2 — the AUTHORITY of the input, asked before anything about the bytes.
+    "receipt-not-simulated",
     "handoff-not-approved",
     "handoff-carries-no-bytes",
     "handoff-not-verified",
@@ -197,6 +239,10 @@ RefusalCode = Literal[
     "receipt-too-old",
     "undecodable-transaction",
     "fee-payer-not-controlled",
+    # N1 — WHOSE lamports the receipt counted. "The receipt did not say" and "it said
+    # somebody else" are different answers and never share a code.
+    "receipt-lamport-subject-missing",
+    "receipt-lamport-subject-mismatch",
     # AUTHORIZATION — the second predicate, held and called here. "Nobody authored a
     # policy" and "the policy said no" are different answers and never share a code.
     "spend-policy-not-configured",
@@ -352,7 +398,10 @@ class TransactionSigner:
         ``receipt`` is passed separately because the handoff does not carry the recorded
         slot, and the age bound is one of the two independent freshness reasons. It must be
         the SAME Receipt the handoff was verified against — the re-verification below is
-        what makes that checkable rather than assumed.
+        what makes that checkable rather than assumed. It is also the load-bearing input
+        here (see the module note): the first check below asks whether a simulation
+        produced it at all, because the handoff's own fields are re-derived and its verdict
+        is re-taken.
 
         ``current_slot`` is the caller's live observation. It is not fetched here: a
         network round trip inside a security decision turns that decision into a timeout,
@@ -365,6 +414,21 @@ class TransactionSigner:
         the backend without one.
         """
         backend, profile = self._configuration()
+
+        # B2 — AUTHORITY OF THE INPUT, BEFORE IDENTITY OF THE BYTES. Every check below
+        # this line asks "are these the bytes the Receipt attests"; that question presumes
+        # the Receipt attests anything at all. A Receipt whose fields were stated rather
+        # than produced answers every one of them, because the caller wrote the answers.
+        #
+        # It is FIRST after the configuration check for two reasons: it is the prior
+        # question, and it is free and side-effect-free, so it trivially precedes the spend
+        # gate's budget reservation. A refused fabrication must cost no velocity budget.
+        if receipt.origin != "simulated":
+            raise SignerRefused(
+                f"this receipt reports origin={receipt.origin!r}: its fields were stated, "
+                f"not produced by a simulation run; re-simulate, it is free",
+                code="receipt-not-simulated",
+            )
 
         if not handoff.approved:
             raise SignerRefused(
@@ -403,6 +467,31 @@ class TransactionSigner:
                 "the fee payer on these bytes is not this signer's own account; refusing "
                 "to sign for an account it does not control",
                 code="fee-payer-not-controlled",
+            )
+        # N1 — ONE THREE-WAY EQUALITY, and it belongs here because this is where
+        # `fee_payer` exists as a fact DECODED FROM THE BYTES rather than as a claim. The
+        # line above proved `fee_payer == backend.pubkey`; these two prove
+        # `receipt.sol_delta_account == fee_payer`, and the chain closes.
+        #
+        # Without it the amount the spend policy charges is an amount with no owner.
+        # `simulate` measures `track[0]`, the caller picks `track`, and a receipt whose
+        # `track[0]` was the RECIPIENT carries a POSITIVE `sol_delta` — which the gate's
+        # `outflow = -delta if delta < 0 else 0` reads as zero. Every lamport cap then
+        # passes a drain of any size, silently.
+        lamport_account = receipt.sol_delta_account
+        if lamport_account is None:
+            raise SignerRefused(
+                "the receipt does not say whose lamports its sol_delta counted, so the "
+                "amount cannot be attributed to the paying account; 'we could not tell' "
+                "is never 'it was the payer'",
+                code="receipt-lamport-subject-missing",
+            )
+        if lamport_account != fee_payer:
+            raise SignerRefused(
+                "the receipt's sol_delta was measured on an account that is not the fee "
+                "payer of these bytes, so it is not this signature's outflow; re-simulate "
+                "with the paying account tracked first",
+                code="receipt-lamport-subject-mismatch",
             )
 
         attested = receipt.message_binding

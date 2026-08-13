@@ -43,9 +43,15 @@ word attached. The other three caps are controls.
 
 RESIDUALS THIS DEMO DOES NOT CLOSE, printed at the end of every run:
 
-1. ``SignerHandoff`` is a plain frozen dataclass with public fields. The type closes
-   OMISSION, not FABRICATION: a caller can hand-build one with ``approved=True`` and any
-   bytes it likes. Closing it needs provenance ON the verdict, which is not built.
+1. ``Receipt.origin`` (B2) closes OMISSION and the ACCIDENTAL forgery: the field defaults
+   to ``asserted`` and the signer refuses that, so a hand-built or default-constructed
+   Receipt cannot reach a signature. It does NOT close FABRICATION —
+   :func:`~gecko.simulate.simulate` accepts an injected ``rpc_call``, so a caller with code
+   execution in this process mints a genuinely-stamped Receipt from a node it wrote itself.
+   The stamp attests that our function ran, never that a node answered; that closes only
+   where the key holder enforces the predicate itself (the external-signer profile).
+   ``SignerHandoff`` remains freely constructible, which matters less than it reads:
+   ``sign`` re-verifies the handoff itself and reads every fact from the Receipt.
 2. The spend policy is now a PRECONDITION of signing (G7): ``TransactionSigner`` holds the
    gate and asks it itself, over the re-verified bytes, so a caller that walks the pipeline
    without step 3 no longer signs — it is refused for want of an authorization answer. The
@@ -779,8 +785,11 @@ def render(results: Sequence[ScenarioResult], banner: Sequence[str]) -> str:
     out.append("")
     out.append("RESIDUALS this run does NOT close:")
     out.append(
-        "  1. SignerHandoff is a plain frozen dataclass. The type closes OMISSION, not "
-        "FABRICATION: a caller can hand-build one with approved=True and any bytes."
+        "  1. Receipt.origin closes OMISSION, not FABRICATION: a hand-built or "
+        "default-constructed Receipt says 'asserted' and is refused, but simulate() takes "
+        "an injected rpc_call, so code running in this process can stamp a Receipt from a "
+        "node it wrote itself. The stamp says our function ran, never that a node "
+        "answered."
     )
     out.append(
         "  2. The signer now HOLDS the spend gate and asks it itself: sign() takes no "
