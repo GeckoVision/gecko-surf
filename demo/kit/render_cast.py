@@ -26,10 +26,24 @@ from PIL import Image, ImageDraw, ImageFont
 
 WIDTH, HEIGHT = 1200, 676
 FPS = 30
-COLS, ROWS = 80, 20  # the style contract: record casts at exactly 80x20
+# The DEFAULT grid (the original style contract). ``load_cast`` overrides these from the
+# cast's own header — a 90x24 recording renders at 90x24 with the cells scaled to fit the
+# same 1200x676 house frame, instead of wrapping at a grid it was never typed for.
+COLS, ROWS = 80, 20
 TERM_X, TERM_Y, TERM_W, TERM_H = 42, 38, 1116, 599
 CONTENT_X, CONTENT_Y = 72, 104
 CELL_W, CELL_H = 13, 26
+
+
+def _fit_grid(cols: int, rows: int) -> None:
+    """Adopt the cast's grid and rescale cells + fonts so it fits the fixed frame."""
+    global COLS, ROWS, CELL_W, CELL_H, MONO, MONO_BOLD
+    COLS, ROWS = cols, rows
+    CELL_W = min(13, (TERM_X + TERM_W - CONTENT_X - 4) // cols)
+    CELL_H = min(26, (TERM_Y + TERM_H - CONTENT_Y - 4) // rows)
+    size = max(10, int(CELL_W * 21 / 13))
+    MONO = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono.ttf", size)
+    MONO_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", size)
 
 BG = "#0A0F1A"  # Gecko blue — the house frame
 TERMINAL = "#0D1117"
@@ -64,6 +78,9 @@ UI_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSans-Bold.ttf", 16)
 
 def load_cast(path: Path) -> list[tuple[float, str]]:
     lines = path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    if header.get("width") and header.get("height"):
+        _fit_grid(int(header["width"]), int(header["height"]))
     events: list[tuple[float, str]] = []
     for line in lines[1:]:
         stamp, kind, payload = json.loads(line)
@@ -74,7 +91,17 @@ def load_cast(path: Path) -> list[tuple[float, str]]:
 
 def char_color(char: object) -> str:
     fg = str(getattr(char, "fg", "default"))
-    color = COLORS.get(fg, TEXT)
+    color = COLORS.get(fg)
+    if color is None and len(fg) == 6:
+        # pyte reports 256-color SGR (38;5;N) as the palette's bare hex — "00d7ff", not
+        # "45". Without this branch every house-palette color silently fell to TEXT.
+        try:
+            int(fg, 16)
+            color = f"#{fg}"
+        except ValueError:
+            color = TEXT
+    if color is None:
+        color = TEXT
     if getattr(char, "reverse", False):
         return TERMINAL
     if getattr(char, "bold", False) and fg == "default":
