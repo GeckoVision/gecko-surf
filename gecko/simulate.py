@@ -340,7 +340,8 @@ class TokenDeltaReport:
     THREE STATES, kept distinct on purpose — collapsing any two of them is the bug:
 
     * ``Receipt.token_delta is None`` — NOT TRACKED. The simulation carried no token
-      balances at all (stock ``simulateTransaction`` returns none).
+      balances at all: the node OMITTED the keys. Measured 2026-08-12, that is an older
+      node's behaviour — current mainnet (agave 4.2.0-rc.1) returns the arrays.
     * ``status == "measured"`` with no movements — a real, observed zero: the balances
       were there and nothing moved.
     * ``status == "unmeasurable"`` — we saw something we cannot honestly reduce to a
@@ -682,8 +683,9 @@ def parse_token_deltas(
 ) -> TokenDeltaReport | None:
     """Turn a simulation ``value``'s pre/post token balances into a typed delta.
 
-    Returns ``None`` — NOT TRACKED — when the value carries neither array: that is the
-    stock ``simulateTransaction`` case, and it must not be confused with "nothing moved".
+    Returns ``None`` — NOT TRACKED — when the value carries neither array: a node that
+    OMITS the keys (older agave; current mainnet returns them, measured 2026-08-12), and
+    it must not be confused with "nothing moved".
 
     ``mint_extensions`` is the caller's READING of each Token-2022 mint's extension set
     (the ``extension`` names from ``getAccountInfo`` ``jsonParsed``). It is an input, not
@@ -715,10 +717,13 @@ def parse_token_deltas(
     #   token movement" from "not computed", and an SPL spend reading as zero outflow
     #   defeats the cap — so the safe direction is to refuse. It is NOT reused as
     #   ``malformed-balance`` (that means "the payload is the wrong shape", a different
-    #   operator action) and it is NOT silently read as ``[]``. Measurement says ``null``
-    #   does not occur on the standard mainnet RPC for either the token or the non-token
-    #   case, so this refusal costs nothing operationally while closing the dangerous
-    #   direction.
+    #   operator action) and it is NOT silently read as ``[]``. WHAT THIS COSTS, measured
+    #   2026-08-12: mainnet (agave 4.2.0-rc.1) returns ``[]`` or populated arrays, never
+    #   null — but surfpool (1.1.1 through 1.5.0) nulls BOTH arrays on every simulation
+    #   (hardcoded over LiteSVM, whose TransactionMetadata has no token-balance fields),
+    #   so on a fork this refusal darkens every token-capable transaction. That cost is
+    #   real and accepted: the safe direction still refuses, and the instruction-trace
+    #   fallback deliberately triggers only on ABSENT keys so it cannot reopen this.
     if (has_pre and value.get("preTokenBalances") is None) or (
         has_post and value.get("postTokenBalances") is None
     ):
@@ -1430,7 +1435,7 @@ class Receipt:
     #: leaves the account: a lamport-denominated cap reads that drain as nothing.
     #:
     #: THREE STATES, none of them interchangeable. ``None`` = NOT TRACKED (the simulation
-    #: carried no token balances at all — the stock ``simulateTransaction`` case); a
+    #: carried no token balances at all — a node that omits the keys); a
     #: report with ``status="measured"`` and no movements = an OBSERVED zero; a report
     #: with ``status="unmeasurable"`` = we will not put a number on it, and reading one
     #: off it raises rather than returning 0.
@@ -1586,8 +1591,10 @@ def _arrays_said_nothing(report: TokenDeltaReport | None) -> bool:
     A node returning ``preTokenBalances: null`` beside a ``postTokenBalances`` showing the
     payer's Token-2022 account going from 100 USDC to zero turned a hard
     ``token-2022-extensions-unread`` refusal into an authorised 1 USDC spend. Accepting
-    only the ABSENT key removes the primitive at no cost: stock ``simulateTransaction``
-    omits the keys, it does not null them, so nothing that works today stops working.
+    only the ABSENT key removes the primitive at no cost to anything that AUTHORIZES
+    today (measured 2026-08-12): current mainnet supplies the arrays and never reaches
+    the fallback; surfpool nulls the keys and still refuses (the fork's token leg stays
+    dark, stated above); only a node that omits the keys — older agave — engages it.
     """
     return report is None
 
@@ -1746,7 +1753,7 @@ def simulate(
             sol_delta = post_lamports - pre_lamports
 
     # The token leg, denominated in each mint rather than in lamports. ``None`` here means
-    # the simulation carried no token balances (stock simulateTransaction returns none) —
+    # the simulation carried no token balances (the node omitted the keys) —
     # NOT TRACKED, never zero. A Token-2022 mint whose extensions were not read, or whose
     # extensions make the delta not the debit, comes back REFUSED rather than numbered.
     token_delta = parse_token_deltas(value, mint_extensions=mint_extensions)
