@@ -935,10 +935,38 @@ def _mint_of(info: Mapping[str, Any]) -> str | None:
     return candidate if isinstance(candidate, str) and candidate else None
 
 
+def _token_program_id_of(instruction: Mapping[str, Any]) -> str | None:
+    """Which token program ran this instruction — or ``None`` if the node was ambiguous.
+
+    Needed because the extension rule is program-specific: classic SPL mints have no
+    extensions and Token-2022 mints may have ones that make the delta not the debit. A
+    node that names a token program in ``program`` and something else in ``programId`` is
+    stating two contradictory things, and the resolution is neither of them.
+    """
+    program_id = instruction.get("programId")
+    name = instruction.get("program")
+    by_name = {
+        "spl-token": TOKEN_PROGRAM_ID,
+        "spl-token-2022": TOKEN_2022_PROGRAM_ID,
+    }.get(name if isinstance(name, str) else "")
+    if isinstance(program_id, str) and program_id in (
+        TOKEN_PROGRAM_ID,
+        TOKEN_2022_PROGRAM_ID,
+    ):
+        if by_name is not None and by_name != program_id:
+            return None
+        return program_id
+    if isinstance(program_id, str) and program_id:
+        return None  # a token program name over a foreign id — a contradiction
+    return by_name
+
+
 def parse_token_deltas_from_instructions(
     value: Mapping[str, Any],
     *,
     fee_payer: str,
+    account_keys: Sequence[str],
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
     top_level_token_instructions: int = 0,
 ) -> TokenDeltaReport | None:
     """Sum the token leg from ``jsonParsed`` inner instructions. A STRICT FALLBACK.
@@ -964,9 +992,56 @@ def parse_token_deltas_from_instructions(
     bytes on purpose (:class:`~gecko.txbind.DecodedInstruction`, invariant #1). Refusing is
     the only answer that neither holds payload nor reads a real transfer as nothing.
 
+    ``account_keys`` are the accounts the DECODED MESSAGE references, and they are what
+    keeps the mint from being whatever the node says it is. Under the arrays basis the mint
+    arrives attached to a balance row for a real account; here it is a string inside an
+    instruction the node also authored, so a node may name a mint the policy allowlists
+    generously while the movement is really a different, uncapped one — which converts
+    ``mint-not-allowlisted`` into an authorised spend. An inner instruction can only touch
+    accounts present in the outer message, and a message with a lookup table earns no
+    fallback at all, so membership here is a sound LOCAL check.
+
+    It is REQUIRED, with no default, and the asymmetry with ``mint_extensions`` beside it
+    is deliberate: an absent extension set means REFUSE, so its default is the safe
+    direction, while an absent account set would mean SKIP THE CHECK. A default that
+    silently drops a corroboration is how a caller who never thought about it ends up
+    looking exactly like one who did.
+
+    ``mint_extensions`` is the same caller-read extension evidence
+    :func:`parse_token_deltas` takes, and it is required here for the same reason: a
+    Token-2022 mint whose extensions were not read is refused, because several of them make
+    the delta not the debit. Leaving it out let this basis price a Token-2022 movement on no
+    extension evidence at all, silently repealing that rule for the whole fallback.
+
     Everything in ``value`` is untrusted transport output. Amounts are read as decimal
     STRINGS and never coerced from a float: ``uiAmount`` is a JSON number and a u64 past
     2^53 does not survive one.
+
+    **RESIDUALS — what this basis still cannot promise.** Written down rather than closed,
+    because each is a limit of the source and not a gap in the reading. Deleting this
+    paragraph does not make any of them go away.
+
+    * **THE AMOUNT REMAINS NODE-AUTHORED.** The mint is corroborated against the decoded
+      account keys and the authority against the fee payer, but the quantity cannot be
+      checked locally at all: it lives in argument bytes ``DecodedInstruction`` discards by
+      design (invariant #1). This basis bounds WHICH mint and WHOSE authority, never HOW
+      MUCH.
+    * **AN OMITTED CPI READS AS AN OBSERVED ZERO.** ``innerInstructions: []`` is taken as
+      the node stating there were no CPIs. A node that simply leaves a transfer out, or
+      labels a token CPI with a foreign ``program`` AND ``programId``, is believed. The
+      arrays basis was at least internally checkable across its pre and post rows; this one
+      has no second reading to disagree with.
+    * **A ZERO HERE IS WEAKER THAN A ZERO THERE.** ``net_raw() == 0`` under this basis means
+      "no priceable, payer-authorised CPI named this mint", NOT "the balance was observed
+      not to change".
+    * **ONLY THE ``*Checked`` VARIANTS ARE PRICEABLE**, which is why this basis is safe more
+      often than it is useful. An unchecked ``transfer`` states no mint and no decimals, and
+      the array that production decoders recover them from is precisely what is absent here.
+    * **PAIRING THE RECEIPT TO THE RIGHT BYTES IS THE OTHER GATE'S JOB.** ``owner`` is
+      stamped as the fee payer by construction, and the spend gate filters outflows on the
+      fee payer of the bytes IT was handed. Mismatched bytes therefore filter every traced
+      outflow away into an observed zero, and only the binding check in ``evaluate_tx``
+      catches that. Shared with the arrays basis, sharper here.
     """
     if "innerInstructions" not in value:
         return None
@@ -1037,7 +1112,14 @@ def parse_token_deltas_from_instructions(
             )
             continue
         for instruction in instructions:
-            _read_token_instruction(instruction, fee_payer, debits, refusals)
+            _read_token_instruction(
+                instruction,
+                fee_payer,
+                debits,
+                refusals,
+                account_keys=account_keys,
+                mint_extensions=mint_extensions,
+            )
 
     if refusals:
         # Fails closed as a WHOLE, like the arrays path: one refusal makes the report
@@ -1073,6 +1155,9 @@ def _read_token_instruction(
     fee_payer: str,
     debits: dict[tuple[str, int], int],
     refusals: list[TokenDeltaRefusal],
+    *,
+    account_keys: Sequence[str],
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
 ) -> None:
     """Fold one parsed inner instruction into ``debits``, or append the refusal it earns.
 
@@ -1169,6 +1254,42 @@ def _read_token_instruction(
         )
         return
 
+    # The mint the node NAMED must be an account the decoded message actually references.
+    # Without this the mint is pure node authorship: naming an allowlisted, generously
+    # capped mint while moving a different one turns ``mint-not-allowlisted`` into an
+    # authorised spend. A CPI can only touch accounts in the outer message, and an
+    # address-lookup-table message earns no fallback at all, so this holds locally.
+    if mint not in account_keys:
+        refusals.append(
+            _ix_refusal(
+                "instruction-not-priceable",
+                mint,
+                f"the {kind} names a mint the transaction does not reference; under this "
+                f"basis the mint is stated by the node rather than attached to a balance "
+                f"row, so an uncorroborated one is not priced",
+            )
+        )
+        return
+
+    program_id = _token_program_id_of(instruction)
+    if program_id is None:
+        refusals.append(
+            _ix_refusal(
+                "instruction-unrecognised",
+                mint,
+                f"the {kind} does not identify which token program ran it, and the two "
+                f"differ in whether a mint can carry extensions",
+            )
+        )
+        return
+    extension_refusal = _extension_refusal(mint, program_id, mint_extensions)
+    if extension_refusal is not None:
+        # The SAME rule the arrays basis applies. Omitting it here would have let the
+        # weaker basis price a Token-2022 movement on no extension evidence — repealing
+        # "unread is not none" for every mint the fallback ever sees.
+        refusals.append(extension_refusal)
+        return
+
     amount_field = info.get("tokenAmount")
     if not isinstance(amount_field, Mapping):
         refusals.append(
@@ -1185,14 +1306,28 @@ def _read_token_instruction(
     # ``amount`` is a decimal STRING on the wire and is parsed as one. Reading ``uiAmount``
     # instead would route a u64 through a JSON float, and a balance past 2^53 does not
     # survive that — silently, and downward, which is the direction a cap does not catch.
-    if not isinstance(raw_text, str) or not raw_text.isdigit():
+    #
+    # ``isdecimal`` and NOT ``isdigit``. ``"²".isdigit()`` is ``True`` and ``int("²")``
+    # raises, so the cheaper-looking predicate turns one node-supplied character into a
+    # ValueError out of ``simulate()`` instead of a refusal. ``_raw_amount`` already found
+    # and documented this on the arrays path (see its own note); this basis reintroduced it.
+    if not isinstance(raw_text, str) or not raw_text.isdecimal():
         refusals.append(
             _ix_refusal(
                 "malformed-balance", mint, f"the {kind} amount is not a decimal string"
             )
         )
         return
-    if isinstance(decimals, bool) or not isinstance(decimals, int) or decimals < 0:
+    # Bounded at ``_MAX_DECIMALS`` for the same reason the arrays path bounds it, plus one
+    # that is specific here: ``_render_ui`` computes ``10 ** decimals``, so an unbounded
+    # scale is a resource bomb a node triggers with one integer. Measured: ``decimals``
+    # of 10^6 spends 0.116s and returns a one-megabyte string. A scale above 18 could
+    # never match an authored cap anyway.
+    if (
+        isinstance(decimals, bool)
+        or not isinstance(decimals, int)
+        or not 0 <= decimals <= _MAX_DECIMALS
+    ):
         refusals.append(
             _ix_refusal(
                 "malformed-balance", mint, f"the {kind} states no usable decimals"
@@ -1441,22 +1576,27 @@ def _tracked_lamports(value: Any) -> int | None:
 def _arrays_said_nothing(report: TokenDeltaReport | None) -> bool:
     """Did the balance arrays decline to state a token leg at all?
 
-    Two cases, and NEITHER is "nothing moved": the key was absent (``None`` — not tracked),
-    or it was present and null (``balances-null`` — the node declining a read). An
-    ``unmeasurable`` report for any OTHER reason is the arrays having spoken and said "we
-    saw something we will not reduce to a number", and that answer stands: a Token-2022
-    transfer-fee refusal must not be talked out of by an instruction sum that cannot see
-    the fee either.
+    ONE case, and it is the absent key — ``None``, not tracked. Anything else is the arrays
+    having spoken, and that answer stands: a Token-2022 transfer-fee refusal must not be
+    talked out of by an instruction sum that cannot see the fee either.
+
+    IT USED TO ALSO ACCEPT ``balances-null``, and that was a hole, measured rather than
+    argued. :func:`parse_token_deltas` checks null FIRST and returns immediately, so a
+    single nulled array suppresses every stronger refusal the arrays would have raised.
+    A node returning ``preTokenBalances: null`` beside a ``postTokenBalances`` showing the
+    payer's Token-2022 account going from 100 USDC to zero turned a hard
+    ``token-2022-extensions-unread`` refusal into an authorised 1 USDC spend. Accepting
+    only the ABSENT key removes the primitive at no cost: stock ``simulateTransaction``
+    omits the keys, it does not null them, so nothing that works today stops working.
     """
-    if report is None:
-        return True
-    return report.status == "unmeasurable" and all(
-        refusal.reason == "balances-null" for refusal in report.refusals
-    )
+    return report is None
 
 
 def _traced_token_delta(
-    built: Any, value: Mapping[str, Any]
+    built: Any,
+    value: Mapping[str, Any],
+    *,
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
 ) -> TokenDeltaReport | None:
     """The ``instruction-trace`` fallback, or ``None`` if it cannot be attempted.
 
@@ -1483,6 +1623,8 @@ def _traced_token_delta(
     return parse_token_deltas_from_instructions(
         value,
         fee_payer=decoded.fee_payer,
+        account_keys=decoded.account_keys,
+        mint_extensions=mint_extensions,
         top_level_token_instructions=top_level,
     )
 
@@ -1615,7 +1757,7 @@ def simulate(
     # saying "we saw something we will not put a number on", and an instruction sum that
     # cannot see it either has no standing to disagree.
     if _arrays_said_nothing(token_delta):
-        traced = _traced_token_delta(built, value)
+        traced = _traced_token_delta(built, value, mint_extensions=mint_extensions)
         if traced is not None:
             token_delta = traced
 
