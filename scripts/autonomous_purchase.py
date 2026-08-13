@@ -60,18 +60,18 @@ from gecko.spend_policy import (  # noqa: E402
     InMemorySpendLedger,
     SpendPolicyGate,
 )
+from gecko.store_accounts import (  # noqa: E402
+    StoreResolutionError,
+    allowed_destinations,
+    derive_ata,
+    purchase_accounts,
+    purchase_args,
+    resolve_store,
+)
 from scripts.privy_backend import PrivyBackendError  # noqa: E402
 from scripts.privy_backend import from_env as privy_from_env  # noqa: E402
 
-USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-SYSTEM_PROGRAM = "11111111111111111111111111111111"
-
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
-STORE_RECEIPTS = "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V"
-STORE_AUTHORITY = "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V"
-STORE_TOKEN_ACCOUNT = "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY"
 
 
 class LocalKeypairBackend:
@@ -99,21 +99,6 @@ class LocalKeypairBackend:
         message = transaction.message
         signature = self._keypair.sign_message(bytes(message))
         return bytes(Transaction.populate(message, [signature]))
-
-
-def derive_ata(owner: str, mint: str) -> str:
-    """The associated token account — a PDA, so it is derived, never guessed."""
-    from solders.pubkey import Pubkey
-
-    address, _bump = Pubkey.find_program_address(
-        [
-            bytes(Pubkey.from_string(owner)),
-            bytes(Pubkey.from_string(TOKEN_PROGRAM)),
-            bytes(Pubkey.from_string(mint)),
-        ],
-        Pubkey.from_string(ATA_PROGRAM),
-    )
-    return str(address)
 
 
 def http_build_call(request: object) -> BuiltTx:
@@ -205,8 +190,21 @@ def main(argv: list[str] | None = None) -> int:
             "fine for a one-shot run, never for anything long-lived."
         ),
     )
-    parser.add_argument("--store", default="jonasbar")
-    parser.add_argument("--product", default="Water")
+    parser.add_argument(
+        "--store",
+        default="jonasbar",
+        help=(
+            "which storefront to buy from, by name. It selects the ACCOUNTS too — the "
+            "receipts PDA, the merchant authority and the token account that gets "
+            "credited are read from that store's own on-chain account, not from a "
+            "constant. A store nobody deployed refuses here."
+        ),
+    )
+    parser.add_argument(
+        "--product",
+        default="Water",
+        help="the product to buy. It must be on that store's menu, or the run stops.",
+    )
     parser.add_argument("--table", type=int, default=11)
     parser.add_argument(
         "--max-usdc-raw",
@@ -254,15 +252,26 @@ def main(argv: list[str] | None = None) -> int:
         backend = LocalKeypairBackend(args.keypair)
         profile_name = DEVELOPER_KEYPAIR_FILE_PROFILE_NAME
     buyer = backend.pubkey
-    buyer_ata = derive_ata(buyer, USDC)
-    recipient = buyer_ata if args.self_transfer else STORE_TOKEN_ACCOUNT
 
-    # The policy is authored HERE, before the run, by a human editing these numbers.
+    # WHICH store, resolved from the name BEFORE anything is built. The store's accounts,
+    # the instruction's `store_name` and the spend policy's destinations all come from this
+    # one object, so `--store` cannot select some of them and leave the rest pointing at
+    # another merchant. A name nobody deployed, or a product nobody listed, stops here.
+    try:
+        store = resolve_store(
+            args.store, rpc_url=args.rpc_url, rpc_call=default_rpc_call
+        ).accounts_for(args.product)
+    except StoreResolutionError as exc:
+        print(f"STOP: {exc}")
+        return 2
+    buyer_ata = derive_ata(buyer, store.mint)
+    recipient = buyer_ata if args.self_transfer else store.token_account
+
+    # The policy is authored HERE, before the run, by a human editing these numbers — but
+    # WHO may be paid is derived from the resolved store, never retyped.
     gate = SpendPolicyGate(
         policy=default_spend_policy(
-            allowed_destinations=frozenset(
-                {STORE_RECEIPTS, STORE_AUTHORITY, STORE_TOKEN_ACCOUNT, buyer_ata}
-            ),
+            allowed_destinations=allowed_destinations(store, buyer_ata=buyer_ata),
             usdc_per_transaction_raw=args.max_usdc_raw,
         ),
         ledger=build_ledger(args.ledger),
@@ -278,27 +287,17 @@ def main(argv: list[str] | None = None) -> int:
     plan = PurchasePlan(
         api_id="let_me_buy",
         instruction="make_purchase",
-        accounts={
-            "receipts": STORE_RECEIPTS,
-            "signer": buyer,
-            "authority": STORE_AUTHORITY,
-            "mint": USDC,
-            "sender_token_account": buyer_ata,
-            "recipient_token_account": recipient,
-            "token_program": TOKEN_PROGRAM,
-            "system_program": SYSTEM_PROGRAM,
-            "associated_token_program": ATA_PROGRAM,
-        },
-        args={
-            "store_name": args.store,
-            "product_name": args.product,
-            "table_number": args.table,
-        },
+        accounts=purchase_accounts(store, buyer=buyer, recipient=recipient),
+        args=purchase_args(store, table=args.table),
         fee_payer=buyer,
     )
 
     print(f"  buyer        {buyer}")
-    print(f"  USDC account {buyer_ata}")
+    print(f"  token acct   {buyer_ata}")
+    print(f"  store        {store.store_name}")
+    print(f"  receipts     {store.receipts}   (derived from the name, read from chain)")
+    print(f"  paying       {store.token_account}   (authority {store.authority})")
+    print(f"  product      {store.product.name} at {store.product.price_ui}")
     print(f"  network      {network}   (as you stated it, never inferred)")
     print(f"  USDC cap     {args.max_usdc_raw} raw (6 decimals)")
 

@@ -37,7 +37,12 @@ from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
 from gecko.simulate import BuiltTx, simulate  # noqa: E402
 from gecko.txbind import _b58decode, evaluate_tx  # noqa: E402
-from scripts.prepare_purchase import USDC, build_instruction, derive_ata  # noqa: E402
+from gecko.store_accounts import (  # noqa: E402
+    StoreResolutionError,
+    derive_ata,
+    resolve_store,
+)
+from scripts.prepare_purchase import DEFAULT_STORE, build_instruction  # noqa: E402
 
 
 def _rpc(url: str, method: str, params: list) -> dict:
@@ -48,6 +53,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--signer", required=True, help="Public key only.")
     parser.add_argument("--rpc-url", required=True)
+    parser.add_argument(
+        "--store",
+        default=DEFAULT_STORE,
+        help=(
+            "which storefront to buy from, by name — it selects that store's accounts "
+            "too, read from its own on-chain account."
+        ),
+    )
     parser.add_argument("--product", default="Water")
     parser.add_argument("--table", type=int, default=11)
     parser.add_argument(
@@ -66,12 +79,22 @@ def main(argv: list[str] | None = None) -> int:
     network = coerce_network(args.network)
 
     print("1. GECKO — derive the accounts this call needs")
-    ata = derive_ata(args.signer, USDC)
+    # Through THIS script's transport seam, so the whole run stays falsifiable offline
+    # from one injection point.
+    try:
+        store = resolve_store(
+            args.store, rpc_url=args.rpc_url, rpc_call=_rpc
+        ).accounts_for(args.product)
+    except StoreResolutionError as exc:
+        print(f"   STOP: {exc}")
+        return 2
+    ata = derive_ata(args.signer, store.mint)
     print(f"   signer       {args.signer}")
-    print(f"   USDC account {ata}   (derived, not looked up)")
+    print(f"   store        {store.store_name}  paying {store.token_account}")
+    print(f"   token acct   {ata}   (derived, not looked up)")
 
     print("\n2. ORQUESTRA — build the transaction")
-    built = build_instruction(args.signer, ata, args.product, args.table)
+    built = build_instruction(store, args.signer, ata, args.table)
     b58 = built.get("serializedTransaction")
     if not b58:
         print("   STOP: builder returned no serializedTransaction")

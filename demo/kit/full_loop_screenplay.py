@@ -53,7 +53,11 @@ DIM = "\033[2m"
 HOST = "https://mcp.geckovision.tech"
 MAINNET_RPC = "https://api.mainnet-beta.solana.com"
 BUYER = "HNUE5KKTcaT4BuG5zmXxTViKjwNaQTtNt2svumE1WCoi"
-STORE_AUTHORITY = "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V"
+#: The storefront this take buys from — a NAME. Its authority, its receipts account and
+#: the token account that gets credited are read from the chain (gecko/store_accounts.py),
+#: never pasted here, so naming a store and paying a different one is not expressible.
+STORE_NAME = "jonasbar"
+PRODUCT = "Water"
 
 #: The transaction the FULL loop settled on 2026-08-13 (mainnet #16, one call, no human,
 #: signed in an enclave — predicted 36,399 CU, the chain charged 36,399). Public data;
@@ -157,29 +161,20 @@ out(
 )
 
 from gecko.simulate import simulate  # noqa: E402
-from scripts.autonomous_purchase import (  # noqa: E402
-    ATA_PROGRAM,
-    STORE_RECEIPTS,
-    STORE_TOKEN_ACCOUNT,
-    SYSTEM_PROGRAM,
-    TOKEN_PROGRAM,
-    USDC,
-    http_build_call,
+from gecko.store_accounts import (  # noqa: E402
+    purchase_accounts,
+    purchase_args,
+    resolve_store,
 )
+from scripts.autonomous_purchase import http_build_call  # noqa: E402
 
+# The store's accounts come from its NAME, resolved against mainnet. Only the buyer's own
+# side is wrong here, and deliberately: the naive guess binds a WALLET where a token
+# account belongs, which is the revert this scene is about.
+STORE = resolve_store(STORE_NAME, rpc_url=MAINNET_RPC).accounts_for(PRODUCT)
 naive_request = {
-    "accounts": {
-        "receipts": STORE_RECEIPTS,
-        "signer": BUYER,
-        "authority": STORE_AUTHORITY,
-        "mint": USDC,
-        "sender_token_account": BUYER,  # the guess: a wallet is not a token account
-        "recipient_token_account": STORE_TOKEN_ACCOUNT,
-        "token_program": TOKEN_PROGRAM,
-        "system_program": SYSTEM_PROGRAM,
-        "associated_token_program": ATA_PROGRAM,
-    },
-    "args": {"store_name": "jonasbar", "product_name": "Water", "table_number": 3},
+    "accounts": purchase_accounts(STORE, buyer=BUYER, sender=BUYER),
+    "args": purchase_args(STORE, table=3),
     "feePayer": BUYER,
 }
 naive_built = http_build_call(naive_request)
@@ -425,7 +420,7 @@ if found:
         0.8,
     )
     put(f"  agent  USDC  {pre.get(BUYER, 0)} → {post.get(BUYER, 0)}", 0.6)
-    put(f"  store  USDC  {pre.get(STORE_AUTHORITY)} → {post.get(STORE_AUTHORITY)}", 1.2)
+    put(f"  store  USDC  {pre.get(STORE.authority)} → {post.get(STORE.authority)}", 1.2)
     exact = meta["computeUnitsConsumed"] == check.get("units_consumed")
     mark = GREEN + "✓" if exact else RED + "✗"
     put("")

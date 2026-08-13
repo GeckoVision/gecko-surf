@@ -28,11 +28,29 @@ from types import ModuleType
 import pytest
 
 from gecko.plan_refusals import PlanRefused
+from gecko.store_accounts import StoreAccounts
+from gecko.store_directory import StoreProduct
 
 _REPO = Path(__file__).resolve().parents[1]
 BUYER = "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy"
 #: Kept for reference: the address the live probe saw on BOTH sides of the collision.
 PROBE_COLLISION = "AzNx1xhhXNAWueYhuusvzYessN23RNXk1xfmU7iJ5rjB"
+USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+
+def _store() -> StoreAccounts:
+    """The published demo store, as the resolver would hand it over — no chain read.
+
+    A light fake rather than a mock: this is the real dataclass, so its own
+    receipts/token-account consistency check runs here too.
+    """
+    return StoreAccounts(
+        store_name="jonasbar",
+        product=StoreProduct(name="Water", price_raw=100_000, decimals=6, mint=USDC),
+        receipts="H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+        authority="8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+        token_account="FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+    )
 
 
 def _prepare_purchase() -> ModuleType:
@@ -63,17 +81,18 @@ def test_a_self_paying_purchase_is_refused_before_the_builder_is_asked(
 ) -> None:
     """The recorded trap: one owner bound twice, so the buyer pays themselves."""
     module = _prepare_purchase()
-    # This script hardcodes the store's recipient, so the collision is reached when the
-    # BUYER's token account resolves to that same address — i.e. the buyer is the shop.
-    # That is the identical fault the live probe hit on a store whose merchant and buyer
-    # were one wallet; only the route to it differs.
-    collides = module.STORE_TOKEN_ACCOUNT
+    # The recipient is the resolved store's token account, so the collision is reached
+    # when the BUYER's token account resolves to that same address — i.e. the buyer is the
+    # shop. That is the identical fault the live probe hit on a store whose merchant and
+    # buyer were one wallet; only the route to it differs.
+    store = _store()
+    collides = store.token_account
 
     with pytest.raises(PlanRefused) as refusal:
         module.build_instruction(
+            store=store,
             signer=BUYER,
             sender_token_account=collides,
-            product="coffee",
             table=1,
         )
 
@@ -97,7 +116,7 @@ def test_an_unresolved_token_account_is_refused_rather_than_skipped(
 
     with pytest.raises(PlanRefused) as refusal:
         module.build_instruction(
-            signer=BUYER, sender_token_account="", product="coffee", table=1
+            store=_store(), signer=BUYER, sender_token_account="", table=1
         )
 
     assert refusal.value.code == "account-unresolved"
@@ -132,10 +151,10 @@ def test_a_distinct_purchase_is_not_refused_and_does_reach_the_builder() -> None
     urllib.request.urlopen = capture  # type: ignore[assignment]
     try:
         result = module.build_instruction(
+            store=_store(),
             signer=BUYER,
             # A different address from the store's recipient — the real, honest case.
             sender_token_account="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
-            product="coffee",
             table=1,
         )
     finally:

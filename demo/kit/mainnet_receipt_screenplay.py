@@ -51,6 +51,10 @@ RPC = os.environ["GECKO_MAINNET_RPC"]
 #: The transaction this demo is about. Public, and checkable by anyone.
 SIGNATURE = "5cjBs5VE8WVVctG2EoUkYiRkW92sXkoT4YsNxszWC9CE3sK7triTJ5vnY6TrcQ2BRPYUtWsd3LtTnyieUfn8Hw2Y"
 WALLET = "3HrXPry37q5bcaa5C3m543bHLShpMxu7LF4KbRjBJN4i"
+#: The storefront and the item this take re-prices live. A NAME, not three addresses: the
+#: accounts are resolved from it (gecko/store_accounts.py).
+STORE = "jonasbar"
+PRODUCT = "Water"
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
 
 
@@ -66,35 +70,20 @@ def _rpc(url: str, method: str, params: list) -> dict:
 
 
 def _build() -> dict:
-    from scripts.prepare_purchase import (  # noqa: PLC0415
-        ATA_PROGRAM,
-        STORE_AUTHORITY,
-        STORE_RECEIPTS,
-        STORE_TOKEN_ACCOUNT,
-        SYSTEM_PROGRAM,
-        TOKEN_PROGRAM,
-        USDC,
-        derive_ata,
+    # The store's accounts are RESOLVED from its name against the same mainnet this take
+    # reads — they used to be pasted constants, which is how a run once named one store
+    # and handed the program another's accounts.
+    from gecko.store_accounts import (  # noqa: PLC0415
+        purchase_accounts,
+        purchase_args,
+        resolve_store,
     )
 
+    store = resolve_store(STORE, rpc_url=RPC, rpc_call=_rpc).accounts_for(PRODUCT)
     body = json.dumps(
         {
-            "accounts": {
-                "receipts": STORE_RECEIPTS,
-                "signer": WALLET,
-                "authority": STORE_AUTHORITY,
-                "mint": USDC,
-                "sender_token_account": derive_ata(WALLET, USDC),
-                "recipient_token_account": STORE_TOKEN_ACCOUNT,
-                "token_program": TOKEN_PROGRAM,
-                "system_program": SYSTEM_PROGRAM,
-                "associated_token_program": ATA_PROGRAM,
-            },
-            "args": {
-                "store_name": "jonasbar",
-                "product_name": "Water",
-                "table_number": 11,
-            },
+            "accounts": purchase_accounts(store, buyer=WALLET),
+            "args": purchase_args(store, table=11),
             "feePayer": WALLET,
         }
     ).encode("utf-8")

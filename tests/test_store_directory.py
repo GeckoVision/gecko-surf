@@ -67,15 +67,21 @@ def encode_store(
     products: list[tuple[str, int, int]] | None = None,
     receipts: int = 2,
     total: int = 2,
+    authority: str = AUTHORITY,
 ) -> bytes:
-    """A Receipts account in the IDL's own layout, discriminator included."""
+    """A Receipts account in the IDL's own layout, discriminator included.
+
+    ``authority`` is a parameter because a store's merchant is a per-store fact:
+    ``tests/test_store_accounts.py`` encodes several stores against one node and each must
+    carry its own, or a test would "pass" while every store shared one payee.
+    """
     listed = products if products is not None else [("Espresso", 100_000, 6)]
     body = receipts.to_bytes(4, "little") + b"".join(
         _receipt() for _ in range(receipts)
     )
     body += total.to_bytes(8, "little")
     body += _string(name)
-    body += _b58decode(AUTHORITY).rjust(32, b"\x00")
+    body += _b58decode(authority).rjust(32, b"\x00")
     body += len(listed).to_bytes(4, "little")
     for product_name, price, decimals in listed:
         body += price.to_bytes(8, "little")
