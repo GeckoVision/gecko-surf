@@ -178,6 +178,9 @@ def _receipt(
         # reason would be a green suite proving nothing about caps. The refusal itself is
         # owned by ``tests/test_signer.py``.
         origin="simulated",
+        # N1, same reasoning: the drain under test here is the TOKEN leg, so the lamport
+        # leg has to be attributable or every test would refuse before the caps ran.
+        sol_delta_account=PAYER,
     )
 
 

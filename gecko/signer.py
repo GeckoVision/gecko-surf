@@ -68,11 +68,29 @@ FOUR THINGS THIS SEAM ENFORCES THAT NOTHING UPSTREAM CAN.
    slot age. Two independent reasons to refuse a stale receipt; neither alone is
    load-bearing. ``Receipt.observed_slot`` was recorded-not-enforced until now — this is
    the first thing that reads it, and a receipt without one refuses.
-3. **Fee payer == the signer's own account, checked INSIDE the signer.** Signing for an
-   account you do not control produces a useless signature and burns a blockhash; more to
-   the point, a signer that will sign for anyone is a signer whose refusals are about the
-   bytes and never about the authority. Today the human does this by hand at
-   ``scripts/sign_and_send.py``; here the structure does it.
+3. **Fee payer == the signer's own account — and the receipt's lamport account == both**,
+   checked INSIDE the signer. Signing for an account you do not control produces a useless
+   signature and burns a blockhash; more to the point, a signer that will sign for anyone
+   is a signer whose refusals are about the bytes and never about the authority. Today the
+   human does this by hand at ``scripts/sign_and_send.py``; here the structure does it.
+
+   N1 extends that one equality into three. ``Receipt.sol_delta`` is ``track[0]``'s, not
+   the payer's: :func:`~gecko.simulate.simulate` measures whatever the caller asked it to
+   track and never ties that to the message's fee payer. Every caller in this repo happens
+   to pass the payer, so the lamport caps were safe by CONVENTION. A receipt whose
+   ``track[0]`` was the RECIPIENT carries a POSITIVE ``sol_delta``, and
+   :mod:`gecko.spend_policy` computes ``outflow = -delta if delta < 0 else 0`` — zero —
+   so every lamport cap passes a drain of any size and nothing notices. So this seam
+   establishes ``receipt.sol_delta_account == fee_payer == backend.pubkey``, with the fee
+   payer decoded from the bytes rather than claimed.
+
+   THE RESIDUAL, because the check is HERE and not in the gate: a caller that consults
+   :meth:`~gecko.spend_policy.SpendPolicyGate.authorize` directly still gets its verdict
+   over an unqualified lamport amount, and that verdict is as wrong as it ever was. The
+   gate is deliberately not widened — its inputs are pinned by an exact-field test, and
+   that test is worth more than the convenience. What makes the residual tolerable is that
+   this signer is the ONLY path in this package to a signature: a verdict is not an
+   authorization to sign, and nothing acts on the gate's answer except through here.
 4. **The backend's answer is re-bound before it leaves.** An external signer (option D,
    the destination) is a different party, so signing is still a hop. What comes back is
    re-hashed and compared to the attested binding: a backend that returns a different
@@ -221,6 +239,10 @@ RefusalCode = Literal[
     "receipt-too-old",
     "undecodable-transaction",
     "fee-payer-not-controlled",
+    # N1 — WHOSE lamports the receipt counted. "The receipt did not say" and "it said
+    # somebody else" are different answers and never share a code.
+    "receipt-lamport-subject-missing",
+    "receipt-lamport-subject-mismatch",
     # AUTHORIZATION — the second predicate, held and called here. "Nobody authored a
     # policy" and "the policy said no" are different answers and never share a code.
     "spend-policy-not-configured",
@@ -445,6 +467,31 @@ class TransactionSigner:
                 "the fee payer on these bytes is not this signer's own account; refusing "
                 "to sign for an account it does not control",
                 code="fee-payer-not-controlled",
+            )
+        # N1 — ONE THREE-WAY EQUALITY, and it belongs here because this is where
+        # `fee_payer` exists as a fact DECODED FROM THE BYTES rather than as a claim. The
+        # line above proved `fee_payer == backend.pubkey`; these two prove
+        # `receipt.sol_delta_account == fee_payer`, and the chain closes.
+        #
+        # Without it the amount the spend policy charges is an amount with no owner.
+        # `simulate` measures `track[0]`, the caller picks `track`, and a receipt whose
+        # `track[0]` was the RECIPIENT carries a POSITIVE `sol_delta` — which the gate's
+        # `outflow = -delta if delta < 0 else 0` reads as zero. Every lamport cap then
+        # passes a drain of any size, silently.
+        lamport_account = receipt.sol_delta_account
+        if lamport_account is None:
+            raise SignerRefused(
+                "the receipt does not say whose lamports its sol_delta counted, so the "
+                "amount cannot be attributed to the paying account; 'we could not tell' "
+                "is never 'it was the payer'",
+                code="receipt-lamport-subject-missing",
+            )
+        if lamport_account != fee_payer:
+            raise SignerRefused(
+                "the receipt's sol_delta was measured on an account that is not the fee "
+                "payer of these bytes, so it is not this signature's outflow; re-simulate "
+                "with the paying account tracked first",
+                code="receipt-lamport-subject-mismatch",
             )
 
         attested = receipt.message_binding

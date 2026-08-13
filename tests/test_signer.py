@@ -77,6 +77,8 @@ def _receipt(
     network: str = "mainnet",
     observed_slot: int | None = SLOT,
     binding: str | None = None,
+    sol_delta: int | None = -5_000,
+    sol_delta_account: str | None = PAYER,
 ) -> Receipt:
     return Receipt(
         status="pass",
@@ -88,7 +90,7 @@ def _receipt(
         # fixtures state the two facts every signable receipt has to carry: the lamports
         # that left (here, the signature fee) and a token leg that was READ — an empty
         # ``measured`` report is an OBSERVED zero, which is what a memo transaction moves.
-        sol_delta=-5_000,
+        sol_delta=sol_delta,
         tokens_received=None,
         logs_tail=(),
         network_label="simulated (fork/RPC snapshot — not mainnet)",
@@ -105,6 +107,10 @@ def _receipt(
         # is a fixture standing in for a run that did not happen. The tests that care about
         # that distinction use :func:`_receipt_naming_no_origin` or the real engine.
         origin="simulated",
+        # N1: WHOSE lamports the number above counted. The default is the fee payer, which
+        # is what every honest caller tracks; the tests that exercise the check pass the
+        # recipient, or ``None``.
+        sol_delta_account=sol_delta_account,
     )
 
 
@@ -476,6 +482,133 @@ def test_a_foreign_fee_payer_refuses() -> None:
     # The refusal names neither pubkey as a value judgement, but it must name the fact.
     assert "fee payer" in str(excinfo.value)
     assert backend.calls == []
+
+
+# --- N1: the lamport delta names the account it belongs to --------------------
+
+
+def test_the_gate_authorizes_a_delta_measured_on_the_recipient(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """THE COUNTEREXAMPLE, pinned before the refusal that answers it.
+
+    ``simulate`` measures ``track[0]``, the caller picks ``track``, and nothing makes
+    ``track[0]`` the fee payer. Track the RECIPIENT of a transfer and ``sol_delta`` is
+    POSITIVE — so ``outflow = -delta if delta < 0 else 0`` is zero, and the spend policy
+    authorizes it whatever the caps say. This test asserts the gate DOES authorize it, so
+    the refusal below is documented as a real hole being closed rather than a check being
+    added to something that already worked.
+
+    Nothing here signs: it asks the gate directly, which is exactly the residual the signer
+    docstring states — the gate's verdict over an unqualified amount is still wrong.
+    """
+    del recwarn
+    tx = _tx()
+    drained = _receipt(tx, sol_delta=+900_000_000, sol_delta_account=FOREIGN)
+    verdict = _spend_gate().authorize(tx, drained, agent_supplied_policy=None)
+    assert verdict.authorized is True, (
+        "the premise of N1 has changed: the gate no longer reads a positive delta as a "
+        "zero outflow, and this test should be re-derived rather than deleted"
+    )
+
+
+def test_a_lamport_delta_measured_on_another_account_refuses() -> None:
+    """N1. A number measured on somebody else's account is not this signature's outflow.
+
+    Same receipt the gate just authorized. The signer refuses it, because it is the only
+    place where the fee payer is a fact decoded from the bytes.
+
+    MUTATION: delete the ``lamport_account != fee_payer`` branch and these bytes are signed
+    with an outflow of zero.
+    """
+    backend = _FakeBackend()
+    tx = _tx()
+    drained = _receipt(tx, sol_delta=+900_000_000, sol_delta_account=FOREIGN)
+    with pytest.raises(SignerRefused) as excinfo:
+        _signer(backend).sign(_handoff(tx, drained), receipt=drained, current_slot=SLOT)
+    assert excinfo.value.code == "receipt-lamport-subject-mismatch"
+    assert backend.calls == []
+
+
+def test_a_receipt_that_names_no_lamport_account_refuses() -> None:
+    """ "We could not tell whose lamports those were" is never "they were the payer's".
+
+    The missing branch has its own code: a Receipt produced before this field existed, or
+    by a simulation that tracked nothing, states no account — and a signer that read that
+    as the payer would be exactly the convention this change replaces.
+
+    MUTATION: make the ``is None`` branch fall through and this signs.
+    """
+    backend = _FakeBackend()
+    tx = _tx()
+    unattributed = _receipt(tx, sol_delta_account=None)
+    with pytest.raises(SignerRefused) as excinfo:
+        _signer(backend).sign(
+            _handoff(tx, unattributed), receipt=unattributed, current_slot=SLOT
+        )
+    assert excinfo.value.code == "receipt-lamport-subject-missing"
+    assert backend.calls == []
+
+
+def test_the_receipt_names_the_account_its_lamport_delta_belongs_to() -> None:
+    """THE POSITIVE CONTROL for N1, offline, through the real :func:`simulate`.
+
+    The account is written by the engine from ``track[0]``, not by this test, and a signer
+    that refused everything would fail here.
+
+    MUTATION: stop stamping ``sol_delta_account`` in ``simulate`` and this goes red at
+    ``receipt-lamport-subject-missing``.
+    """
+    backend = _FakeBackend()
+    tx = _tx()
+    receipt = _simulate_offline(tx)
+    assert receipt.sol_delta_account == PAYER, "the engine, not this test, wrote that"
+
+    signed = _signer(backend).sign(
+        _handoff(tx, receipt), receipt=receipt, current_slot=SLOT + 1
+    )
+    assert len(backend.calls) == 1
+    assert signed.signer_pubkey == PAYER
+
+
+def test_a_mismatched_lamport_account_burns_no_velocity_budget() -> None:
+    """N1's ordering: the equality is free, so it must run before the ledger writes.
+
+    Two DISTINCT transactions, for the reason spelled out in
+    :func:`test_a_hand_built_receipt_burns_no_velocity_budget` — the reservation is
+    idempotent on exact bytes, so replaying one transaction would make this blind to the
+    mutation it is named after.
+
+    MUTATION: move the lamport-account check below ``self._spend_gate().authorize(...)``
+    and the second half refuses at ``spend-not-authorized``.
+    """
+    gate = SpendPolicyGate(
+        policy=replace(_spend_gate().policy, max_transactions_per_day=1),  # type: ignore[arg-type]
+        ledger=InMemorySpendLedger(),
+    )
+    backend = _FakeBackend()
+
+    foreign_tx = _tx(payload=b"gecko-foreign-delta")
+    misattributed = _receipt(
+        foreign_tx, sol_delta=+900_000_000, sol_delta_account=FOREIGN
+    )
+    with pytest.raises(SignerRefused) as excinfo:
+        _signer(backend, spend_gate=gate).sign(
+            _handoff(foreign_tx, misattributed),
+            receipt=misattributed,
+            current_slot=SLOT,
+        )
+    assert excinfo.value.code == "receipt-lamport-subject-mismatch"
+    assert backend.calls == []
+
+    # The one transaction a day the policy allows is still there.
+    genuine_tx = _tx(payload=b"gecko-attributed")
+    genuine = _simulate_offline(genuine_tx)
+    signed = _signer(backend, spend_gate=gate).sign(
+        _handoff(genuine_tx, genuine), receipt=genuine, current_slot=SLOT
+    )
+    assert signed.signer_pubkey == PAYER
+    assert len(backend.calls) == 1
 
 
 def test_an_undecodable_transaction_refuses_naming_the_decode() -> None:

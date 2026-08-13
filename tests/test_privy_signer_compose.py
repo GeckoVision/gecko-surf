@@ -72,7 +72,7 @@ def _tx(payer: str, payload: bytes = b"gecko") -> str:
     ).tx
 
 
-def _receipt(tx: str) -> Receipt:
+def _receipt(tx: str, payer: str) -> Receipt:
     return Receipt(
         status="pass",
         err=None,
@@ -92,6 +92,10 @@ def _receipt(tx: str) -> Receipt:
         # Receipt's authority: without it every test here would refuse at
         # ``receipt-not-simulated`` and prove nothing about the compose.
         origin="simulated",
+        # N1. The payer is generated per test here, so it has to be handed in: the signer
+        # requires ``sol_delta_account == fee_payer == backend.pubkey``, and a fixture that
+        # named a fixed address would refuse before Privy was ever asked.
+        sol_delta_account=payer,
     )
 
 
@@ -234,7 +238,7 @@ def test_an_isinstance_check_against_the_protocol_performs_IO() -> None:
 def test_a_transaction_is_signed_through_the_real_seam() -> None:
     payer = _payer()
     tx = _tx(payer)
-    receipt = _receipt(tx)
+    receipt = _receipt(tx, payer)
     privy = FakePrivy(payer)
 
     signed = _signer(privy, payer).sign(
@@ -257,7 +261,7 @@ def test_a_privy_that_returns_a_different_message_is_refused_by_the_seam() -> No
     """The seam's own check, exercised through this backend rather than assumed."""
     payer = _payer()
     tx = _tx(payer)
-    receipt = _receipt(tx)
+    receipt = _receipt(tx, payer)
     privy = FakePrivy(payer, mutate_message=True)
 
     with pytest.raises(SignerRefused) as caught:
@@ -270,7 +274,7 @@ def test_a_privy_that_returns_a_different_message_is_refused_by_the_seam() -> No
 def test_a_privy_fault_is_a_refusal_and_never_a_fallback() -> None:
     payer = _payer()
     tx = _tx(payer)
-    receipt = _receipt(tx)
+    receipt = _receipt(tx, payer)
 
     def unreachable(
         request: PrivyRequest, headers: Mapping[str, str]

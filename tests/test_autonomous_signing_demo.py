@@ -351,8 +351,13 @@ def test_the_output_calls_the_velocity_counter_ADVISORY() -> None:
 
 
 def test_the_output_names_the_residuals_this_run_does_not_close() -> None:
-    """C1, in the honest form: the handoff type closes OMISSION, not FABRICATION. A demo
-    that printed only its wins would be the half-closed control described as closed."""
+    """C1, in the honest form: the control closes OMISSION, not FABRICATION. A demo that
+    printed only its wins would be the half-closed control described as closed.
+
+    B2 moved WHICH object that sentence is about — the Receipt's ``origin``, not the
+    handoff's shape, because ``sign`` re-verifies the handoff itself and reads every fact
+    from the Receipt. The half it closes grew; the phrase this asserts did not, and must
+    not: a demo that stopped saying FABRICATION would be claiming the whole thing."""
     printed = _printed()
 
     assert "OMISSION, not FABRICATION" in printed

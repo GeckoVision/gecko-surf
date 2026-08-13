@@ -400,6 +400,9 @@ def _signable(payer: str) -> tuple[Any, Any, Any]:
         # Receipt's authority: without it every test here would refuse at
         # ``receipt-not-simulated`` before the keychain was ever reached.
         origin="simulated",
+        # N1. The signer requires ``sol_delta_account == fee_payer == backend.pubkey``, so
+        # this fixture attributes its lamport leg to the payer it built the message for.
+        sol_delta_account=payer,
     )
     handoff = SignerHandoff(
         approved=True,
