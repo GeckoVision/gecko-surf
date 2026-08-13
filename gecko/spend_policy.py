@@ -108,10 +108,11 @@ System and ComputeBudget programs, neither of which can CPI into a token program
 there is no token leg to measure and its absence is a fact rather than a blind spot.
 Anything else — including the Memo program, which is almost certainly inert and is
 deliberately not on a list whose every entry is a claim that can rot — is token-capable
-and refuses. **The consequence is deliberate and large: stock ``simulateTransaction``
-returns no token balances, so until a simulation carries them, every token-capable
-transaction refuses here.** That is the intended direction. The alternative is a gate
-that authorises a drain it cannot see.
+and refuses. **The consequence is deliberate: a simulation that carries no token
+balances makes every token-capable transaction refuse here.** Current mainnet DOES carry
+them (measured 2026-08-12, agave 4.2.0-rc.1) — which is why real purchases authorize —
+while surfpool nulls them, which is why a fork's token leg refuses today. That is the
+intended direction. The alternative is a gate that authorises a drain it cannot see.
 
 RESIDUALS, NAMED RATHER THAN LEFT FOR A READER TO DISCOVER.
 
