@@ -618,3 +618,59 @@ def test_mcp_export_arazzo_method() -> None:
     assert doc["arazzo"] == ARAZZO_VERSION
     assert is_executable(doc)
     assert McpSurface(client).export_arazzo("nope")["workflows"] == []
+
+
+# -- D4: the refusal carries its own resolution -----------------------------------------
+
+
+def test_an_arity_refusal_carries_the_proposal_that_would_resolve_it() -> None:
+    """A refusal that only says "no" leaves a reader to invent a resolution.
+
+    The ``unresolved-output-arity`` refusal now carries ``x-gecko-arity``: the two shapes
+    that would make a collection-valued binding expressible, and which of them we would be
+    willing to call verified. This is the content of the upstream proposal, published in
+    the artifact rather than only in a spec document nobody exports.
+    """
+    from gecko.arazzo import ARITY_PROPOSAL
+
+    surfaces, chain = _safe_chain(poisoned=False)
+    doc = to_arazzo(chain, graphs=tuple(s.graph for s in surfaces.values()))
+    arity = [
+        r for r in doc["x-gecko-refusals"] if r["kind"] == "unresolved-output-arity"
+    ]
+    assert arity, "the fixture no longer produces an arity refusal"
+    for refusal in arity:
+        assert refusal["x-gecko-arity"] == ARITY_PROPOSAL
+
+
+def test_the_proposal_says_it_is_a_proposal_and_names_its_unverified_tier() -> None:
+    """The dangerous half is the one that looks executable.
+
+    ``select`` is deterministic, which is exactly why it could be mistaken for verified.
+    The tier carries ``verified: False`` and the whole object carries a status saying no
+    Arazzo version defines either key — so a runtime that finds this cannot act on it by
+    accident, and a reader cannot quote the tier without its label.
+    """
+    from gecko.arazzo import ARITY_PROPOSAL
+
+    assert "PROPOSAL" in ARITY_PROPOSAL["status"]
+    assert "no Arazzo version" in ARITY_PROPOSAL["status"]
+    tiers = {t["key"]: t for t in ARITY_PROPOSAL["proposedTiers"]}
+    assert tiers["expect"]["verified"] is True
+    assert tiers["select"]["verified"] is False
+
+
+def test_the_proposal_is_immutable_so_one_export_cannot_edit_the_next() -> None:
+    """It is shared by reference across every refusal in every document."""
+    from gecko.arazzo import ARITY_PROPOSAL
+
+    with pytest.raises(TypeError):
+        ARITY_PROPOSAL["status"] = "tampered"  # type: ignore[index]
+
+
+def test_a_refused_document_still_does_not_validate_or_execute() -> None:
+    """The proposal is documentation ON a refusal — it must not soften the refusal."""
+    surfaces, chain = _safe_chain(poisoned=False)
+    doc = to_arazzo(chain, graphs=tuple(s.graph for s in surfaces.values()))
+    assert doc["workflows"] == []
+    assert is_executable(doc) is False

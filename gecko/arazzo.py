@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, Literal
 
 from .graph import ExplainEntry, Plan, PlanStep, SurfaceGraph
@@ -86,7 +87,74 @@ _PARAM_IN = ("path", "query", "header", "cookie")
 #: Deterministic precedence when one op declares the same name in two locations.
 _LOCATION_ORDER = ("path", "query", "body", "header", "cookie")
 
-__all__ = ["ARAZZO_VERSION", "RefusalKind", "is_executable", "to_arazzo"]
+__all__ = [
+    "ARAZZO_VERSION",
+    "ARITY_PROPOSAL",
+    "RefusalKind",
+    "is_executable",
+    "to_arazzo",
+]
+
+#: The two shapes that would let a collection-valued output be BOUND rather than refused,
+#: carried on every ``unresolved-output-arity`` refusal so the document states its own
+#: resolution instead of leaving a reader to invent one.
+#:
+#: NEITHER KEY EXISTS IN ANY PUBLISHED ARAZZO VERSION — checked against 1.0.0 and 1.1.0,
+#: which contain no ``for-each``, no ``iterate`` and no which-one expression. The
+#: specification's own worked example binds ``$response.body.data.pets[0].id``: index
+#: zero, which is deterministic AND arbitrary — it selects whichever element happened to
+#: sort first and then calls the result verified. That is exactly what this refusal
+#: exists to avoid, which is why the proposal is published here rather than adopted
+#: quietly under a vendor prefix and treated as settled.
+#:
+#: The two tiers are NOT equivalent and are deliberately kept apart:
+#:
+#: * ``expect: exactly-one`` is a claim that can be CHECKED at derive time — the surface
+#:   establishes that the collection holds one element, so the binding is verified, and a
+#:   response carrying two elements refuses at runtime instead of silently first-matching.
+#: * ``select`` is a deterministic predicate over the collection. It removes the
+#:   arbitrariness of index zero but establishes nothing: the author ASSERTS which element
+#:   is meant. It is therefore labelled ``verified: false``, and must stay labelled.
+#:
+#: Determinism is necessary and not sufficient — ``[0]`` is perfectly deterministic.
+ARITY_PROPOSAL: Mapping[str, Any] = MappingProxyType(
+    {
+        "problem": (
+            "the value lives in a collection and no published Arazzo version can say "
+            "WHICH element is meant; the specification's own example binds index 0"
+        ),
+        "proposedTiers": (
+            MappingProxyType(
+                {
+                    "key": "expect",
+                    "value": "exactly-one",
+                    "verified": True,
+                    "means": (
+                        "the surface establishes the collection holds exactly one "
+                        "element, so the binding is checkable at derive time and a "
+                        "multi-element response refuses at runtime rather than binding "
+                        "the first match"
+                    ),
+                }
+            ),
+            MappingProxyType(
+                {
+                    "key": "select",
+                    "value": "<deterministic predicate over the collection>",
+                    "verified": False,
+                    "means": (
+                        "the author states which element is meant. Deterministic, but "
+                        "asserted rather than established — it must stay labelled "
+                        "unverified"
+                    ),
+                }
+            ),
+        ),
+        "status": (
+            "PROPOSAL — defined by no Arazzo version; nothing may execute against it"
+        ),
+    }
+)
 
 
 def to_arazzo(
@@ -151,25 +219,32 @@ def to_arazzo(
                     }
                 )
             for field_name, why in unresolved_outputs:
-                refusals.append(
-                    {
-                        "kind": "unresolved-output-arity",
-                        "surfaceId": pstep.surface,
-                        "operationId": pstep.operation_id,
-                        "field": field_name,
-                        "emittedAsStep": False,
-                        "reason": (
-                            "the value lives inside a collection and Arazzo 1.0 has no "
-                            "`for-each` and no which-one expression, so no correct "
-                            "pointer exists; emitting `/0/` would bind whichever "
-                            "element sorted first and call it verified"
-                            if why == "many"
-                            else "the field's location in the response body was never "
-                            "established; the previous behaviour guessed the body root, "
-                            "which produced a plausible wrong pointer"
-                        ),
-                    }
-                )
+                refusal: dict[str, Any] = {
+                    "kind": "unresolved-output-arity",
+                    "surfaceId": pstep.surface,
+                    "operationId": pstep.operation_id,
+                    "field": field_name,
+                    "emittedAsStep": False,
+                    "reason": (
+                        "the value lives inside a collection and Arazzo 1.0 has no "
+                        "`for-each` and no which-one expression, so no correct "
+                        "pointer exists; emitting `/0/` would bind whichever "
+                        "element sorted first and call it verified"
+                        if why == "many"
+                        else "the field's location in the response body was never "
+                        "established; the previous behaviour guessed the body root, "
+                        "which produced a plausible wrong pointer"
+                    ),
+                }
+                if why == "many":
+                    # WHAT WOULD FIX IT, carried on the refusal itself. A refusal that
+                    # only says "no" leaves a reader to invent a resolution; this one
+                    # states the two shapes that would make the binding expressible and
+                    # which of them we would be willing to call verified. It is a
+                    # PROPOSAL and is marked as one — neither key is defined by any
+                    # published Arazzo version, so nothing may execute against it.
+                    refusal["x-gecko-arity"] = ARITY_PROPOSAL
+                refusals.append(refusal)
             steps.append(step)
 
     executable = plan is not None and not refusals and bool(steps)
