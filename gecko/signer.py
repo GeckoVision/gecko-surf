@@ -100,12 +100,15 @@ asked, so a transaction refused by a cheap check spends no velocity budget.
 
 WHAT THIS MODULE IS STILL NOT RESPONSIBLE FOR, SO NOBODY READS IT AS COVERED.
 
-* **The retry double-reserves.** A backend fault (locked keychain, unreachable custody
-  API) is a refusal a caller may retry, and each attempt reserves velocity budget again
-  for the same transaction. It is not deduplicated, because the only key that identifies
-  "the same transaction" is the message binding and a binding may not enter the spend
-  ledger. The counter therefore over-counts on retries — toward refusing, which is the
-  right direction, and said out loud rather than described as exact.
+* **A retry double-reserves only when it re-quotes.** A backend fault (locked keychain,
+  unreachable custody API) is a refusal a caller may retry. Retrying the SAME bytes is now
+  deduplicated by the spend gate, which derives an ``exact`` message binding and
+  recognises the replay — founder ruling D-B permitted the one-way digest into the ledger
+  that this previously said was forbidden. A retry that had to refresh its blockhash is
+  different bytes and does reserve again, so the counter still over-counts there. That
+  residual is kept deliberately rather than closed with a blockhash-insensitive digest,
+  which would let two intentionally-identical transfers collapse into one reservation;
+  see :mod:`gecko.spend_policy` for the full argument.
 * **What the spend gate itself cannot see**, which is documented in its own module: an
   RPC read may not decide a signature, so destinations are message account keys rather
   than resolved token-account owners, and the velocity counter is ADVISORY because the

@@ -31,17 +31,20 @@ from gecko.simulate import (
     TokenMovement,
 )
 from gecko.spend_policy import (
+    DEDUPE_SECONDS,
     AdvisorySpendLedger,
     AllowedInstruction,
     FileSpendLedger,
     InMemorySpendLedger,
+    LedgerError,
     SpendPolicy,
     SpendPolicyGate,
     SpendVerdict,
     TokenCap,
     TokenCaps,
+    VelocityLimits,
 )
-from gecko.txbind import DecodedMessage, decode_message
+from gecko.txbind import DecodedMessage, decode_message, message_binding
 
 _REPO = Path(__file__).resolve().parent.parent
 _SPEND_POLICY_SOURCE = _REPO / "gecko" / "spend_policy.py"
@@ -66,13 +69,28 @@ def _tx(
     program: Pubkey = PROGRAM,
     writable: tuple[Pubkey, ...] = (DEST,),
     payer: Pubkey = PAYER,
+    blockhash: Hash | None = None,
 ) -> str:
     """An UNSIGNED legacy transaction, base64. No key exists anywhere in this helper."""
     metas = [AccountMeta(payer, is_signer=True, is_writable=True)]
     metas += [AccountMeta(key, is_signer=False, is_writable=True) for key in writable]
     instruction = Instruction(program, data, metas)
-    message = Message.new_with_blockhash([instruction], payer, Hash.default())
+    message = Message.new_with_blockhash(
+        [instruction], payer, Hash.default() if blockhash is None else blockhash
+    )
     return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
+
+
+def _distinct_tx(index: int) -> str:
+    """The Nth DIFFERENT transaction. Same plan, its own blockhash, its own bytes.
+
+    The cumulative-cap tests below mean "N transactions" and used to say it by calling
+    ``_tx()`` N times. That worked only while the gate could not tell repetition from
+    distinctness. Now that a reservation is idempotent on exact bytes, N identical calls
+    are correctly ONE transaction submitted N times — at most one of which can settle,
+    because they share a signature — so a test that wants N of them has to build N.
+    """
+    return _tx(blockhash=Hash.from_bytes(bytes([index + 1]) * 32))
 
 
 #: A 6-decimal mint, and the raw amounts that make the fold visible: 25 USDC is
@@ -476,9 +494,11 @@ def test_n_transactions_each_under_the_per_tx_cap_still_hit_the_hourly_cap() -> 
     """The `singleTxLimit` lesson: a per-tx cap of X is defeated by N transactions of X."""
     gate = _gate(_policy(hourly_cap_lamports=3 * _CAP))
     for index in range(3):
-        verdict = gate.authorize(_tx(), _receipt(sol_delta=-_CAP), now=1_000.0 + index)
+        verdict = gate.authorize(
+            _distinct_tx(index), _receipt(sol_delta=-_CAP), now=1_000.0 + index
+        )
         assert verdict.authorized is True, f"call {index} should have passed"
-    fourth = gate.authorize(_tx(), _receipt(sol_delta=-_CAP), now=1_003.0)
+    fourth = gate.authorize(_distinct_tx(3), _receipt(sol_delta=-_CAP), now=1_003.0)
     assert fourth.authorized is False
     assert fourth.code == "over-hourly-cap"
 
@@ -514,9 +534,9 @@ def test_the_transaction_count_cap_binds_even_when_every_amount_is_tiny() -> Non
     gate = _gate(_policy(max_transactions_per_day=2))
     for index in range(2):
         assert gate.authorize(
-            _tx(), _receipt(sol_delta=-1), now=1_000.0 + index
+            _distinct_tx(index), _receipt(sol_delta=-1), now=1_000.0 + index
         ).authorized
-    third = gate.authorize(_tx(), _receipt(sol_delta=-1), now=1_002.0)
+    third = gate.authorize(_distinct_tx(2), _receipt(sol_delta=-1), now=1_002.0)
     assert third.authorized is False
     assert third.code == "over-daily-transaction-count"
 
@@ -545,15 +565,16 @@ def test_the_velocity_counter_is_labelled_advisory(tmp_path: Path) -> None:
     the reason it is only a label went away. A reader would then find a counter labelled
     advisory and no statement of what makes it inexact.
 
-    So the two claims that make the label mean something are pinned by name. Whitespace is
+    So the claims that make the label mean something are pinned by name. Whitespace is
     folded because they are prose and wrap wherever the paragraph reflows.
 
-    Deliberately NOT pinned: the paragraph's clause that a binding "may not enter the
-    ledger". Decision D-B ruled that a one-way digest of a binding is correctness
-    metadata and may, which is what unblocks idempotency (B3). Pinning a sentence that is
-    scheduled to change would make this guard fight the work. The two claims below stay
-    true until the counter is actually made idempotent, and when it is, this test SHOULD
-    go red.
+    THIS TEST WENT RED ON PURPOSE and was rewritten here. It used to pin "the retry
+    double-reserves" and "over-counts on retries", with a note saying that when the
+    counter was actually made idempotent it SHOULD fail. B3 made it idempotent on exact
+    bytes, so those two sentences are no longer true and pinning them would now force the
+    docstring to lie. What replaces them is the residual that is STILL true and the reason
+    the obvious closure of it was refused — because that reason is the part a future reader
+    is most likely to "fix" by reaching for a structural binding.
     """
     source = _SPEND_POLICY_SOURCE.read_text(encoding="utf-8")
     docstring = ast.get_docstring(ast.parse(source)) or ""
@@ -561,7 +582,7 @@ def test_the_velocity_counter_is_labelled_advisory(tmp_path: Path) -> None:
     assert "ADVISORY" in source
 
     folded = " ".join(docstring.split()).lower()
-    for claim in ("the retry double-reserves", "over-counts on retries"):
+    for claim in ("still double-reserves", "errs toward a cap bypass"):
         assert claim in folded, (
             f"the residual that makes ADVISORY meaningful is gone: {claim}"
         )
@@ -775,13 +796,13 @@ def test_the_per_mint_velocity_binds_in_the_mints_own_units() -> None:
     gate = _gate()
     for index in range(4):
         verdict = gate.authorize(
-            _tx(),
+            _distinct_tx(index),
             _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
             now=1_000.0 + index,
         )
         assert verdict.authorized is True, f"call {index}: {verdict.reason}"
     fifth = gate.authorize(
-        _tx(),
+        _distinct_tx(4),
         _receipt(token_delta=_measured(_movement(delta_raw=-500_000))),
         now=1_004.0,
     )
@@ -792,8 +813,12 @@ def test_the_per_mint_velocity_binds_in_the_mints_own_units() -> None:
 def test_a_token_row_carries_a_mint_and_never_an_owner_or_a_binding(
     tmp_path: Path,
 ) -> None:
-    """Invariant #1 on the ledger schema. A mint is a public program-surface identifier;
-    an owner, a token-account address, a binding or a payload is not, and none may appear.
+    """Invariant #1 on the ledger schema, as narrowed by D-B and no further.
+
+    A mint is a public program-surface identifier. An owner, a token-account address or a
+    payload is not, and none may appear. The one-way dedupe digest MAY appear, on the
+    lamport row only — and the point of this test after D-B is that the concession stops
+    exactly there: it did not become a licence to record everything about a transaction.
     """
     path = tmp_path / "spend.jsonl"
     verdict = _gate(ledger=FileSpendLedger(str(path))).authorize(
@@ -809,14 +834,306 @@ def test_a_token_row_carries_a_mint_and_never_an_owner_or_a_binding(
         if line.strip()
     ]
     assert {frozenset(row) for row in rows} == {
-        frozenset({"at", "lamports"}),
+        frozenset({"at", "lamports", "d"}),
         frozenset({"at", "mint", "raw"}),
     }
     token_row = next(row for row in rows if "mint" in row)
     assert token_row["mint"] == MINT
     assert token_row["raw"] == 500_000
+    # The digest rides the lamport row alone. A token row carrying it too would be the
+    # same fact stored twice, free to disagree with itself, and would additionally make
+    # the per-mint history the correlatable part.
+    assert "d" not in token_row
     for row in rows:
         assert not (set(row) & {"owner", "account", "binding", "tx", "payload"})
+
+    # It is a HASH, not the transaction. The bytes must not be recoverable from the row,
+    # and the cheapest way that could go wrong is somebody storing the base64 itself.
+    digest = next(row for row in rows if "mint" not in row)["d"]
+    assert digest != _tx()
+    assert _tx() not in json.dumps(rows)
+    assert len(digest) == 64 and set(digest) <= set("0123456789abcdef")
+
+
+# --------------------------------------------------------------------------------------
+# B3 — THE RESERVATION IS IDEMPOTENT ON EXACT BYTES
+# --------------------------------------------------------------------------------------
+
+
+def test_retrying_the_identical_transaction_reserves_budget_once() -> None:
+    """B3, the defect itself: a retried backend failure must not spend budget twice.
+
+    The cap here admits exactly one transaction. Before B3 the second call took a second
+    reservation and the third was refused for a budget that had never been spent, because
+    only one of three identical messages can ever settle — they share a signature.
+    """
+    gate = _gate(_policy(hourly_cap_lamports=_CAP, max_transactions_per_day=1))
+    same = _tx()
+    for attempt in range(3):
+        verdict = gate.authorize(same, _receipt(sol_delta=-_CAP), now=1_000.0 + attempt)
+        assert verdict.authorized is True, f"attempt {attempt}: {verdict.reason}"
+
+    # And the budget really is still only spent once: a DIFFERENT transaction is now
+    # refused, which is what proves the three above consumed one slot rather than none.
+    other = gate.authorize(_distinct_tx(9), _receipt(sol_delta=-_CAP), now=1_003.0)
+    assert other.authorized is False
+    assert other.code in {"over-hourly-cap", "over-daily-transaction-count"}
+
+
+def test_the_replay_says_it_did_not_reserve_again() -> None:
+    """The verdict distinguishes "allowed, and charged" from "allowed, already charged".
+
+    A replay that reported the ordinary success sentence would be indistinguishable from a
+    fresh reservation in a log, which is where somebody debugging a budget discrepancy
+    looks first.
+    """
+    gate = _gate(_policy(hourly_cap_lamports=2 * _CAP))
+    same = _tx()
+    first = gate.authorize(same, _receipt(sol_delta=-_CAP), now=1_000.0)
+    replay = gate.authorize(same, _receipt(sol_delta=-_CAP), now=1_001.0)
+    assert first.authorized is replay.authorized is True
+    assert "idempotent" in replay.reason
+    assert "idempotent" not in first.reason
+
+
+def test_two_distinct_transactions_are_never_collapsed() -> None:
+    """The other direction, and the one that would be a cap bypass if it broke.
+
+    Deduplication that matched too widely would let an agent spend N times on one
+    reservation. Same plan, same amount, same everything a policy reads — different bytes,
+    so two reservations.
+    """
+    gate = _gate(_policy(hourly_cap_lamports=_CAP, max_transactions_per_day=5))
+    assert gate.authorize(
+        _distinct_tx(0), _receipt(sol_delta=-_CAP), now=1_000.0
+    ).authorized
+    second = gate.authorize(_distinct_tx(1), _receipt(sol_delta=-_CAP), now=1_001.0)
+    assert second.authorized is False
+    assert second.code == "over-hourly-cap"
+
+
+def test_the_key_is_the_exact_binding_and_not_the_structural_one() -> None:
+    """WHY ``exact``: a structural binding would collapse two deliberate transfers.
+
+    ``structural`` normalises the blockhash to zero, so these two re-quotes of one plan
+    share a structural binding and differ in their exact one. If the ledger keyed on the
+    former, a human who sent the same amount twice on purpose would be charged once — a
+    cap bypass reachable by repetition. This pins the choice, not just its effect.
+    """
+    first, second = _distinct_tx(0), _distinct_tx(1)
+    assert message_binding(first, strength="structural") == message_binding(
+        second, strength="structural"
+    )
+    assert message_binding(first, strength="exact") != message_binding(
+        second, strength="exact"
+    )
+
+    # And the value actually written is the exact one.
+    ledger = InMemorySpendLedger()
+    _gate(_policy(hourly_cap_lamports=_CAP), ledger=ledger).authorize(
+        first, _receipt(sol_delta=-1), now=1_000.0
+    )
+    stored = [entry.digest for entry in ledger._entries if entry.digest is not None]
+    assert stored == [message_binding(first, strength="exact")]
+
+
+def test_a_retry_that_re_quotes_still_double_reserves_the_named_residual() -> None:
+    """The residual, pinned so nobody closes it the wrong way and calls that progress.
+
+    A retry handled past blockhash validity carries new bytes, so it is not recognised and
+    reserves again. That is NOT fixed here. It is the safe direction — over-counting errs
+    toward refusing — and the only way to close it is a blockhash-insensitive key, which
+    the test above shows would open a cap bypass. If this test ever goes red, read that
+    one before deciding it is an improvement.
+    """
+    gate = _gate(_policy(hourly_cap_lamports=_CAP, max_transactions_per_day=5))
+    assert gate.authorize(
+        _distinct_tx(0), _receipt(sol_delta=-_CAP), now=1_000.0
+    ).authorized
+    requoted = gate.authorize(_distinct_tx(1), _receipt(sol_delta=-_CAP), now=1_060.0)
+    assert requoted.authorized is False, (
+        "the re-quoted retry is a NAMED residual: it still reserves a second time"
+    )
+
+
+def test_the_dedupe_window_expires_and_the_amount_outlives_the_digest() -> None:
+    """After ``DEDUPE_SECONDS`` the row stops saying WHICH transaction it was.
+
+    Both halves matter. The digest going away is the data-governance bound that keeps D-B's
+    concession narrow; the amount staying is what keeps the daily cap a daily cap.
+    """
+    ledger = InMemorySpendLedger()
+    gate = _gate(_policy(daily_cap_lamports=2 * _CAP), ledger=ledger)
+    same = _tx()
+    assert gate.authorize(same, _receipt(sol_delta=-_CAP), now=1_000.0).authorized
+
+    later = 1_000.0 + DEDUPE_SECONDS + 1
+    assert gate.authorize(same, _receipt(sol_delta=-_CAP), now=later).authorized, (
+        "past the window these are two transactions, and both fit the daily cap"
+    )
+    # The first row survives with its amount and without its digest.
+    assert [entry.amount for entry in ledger._entries] == [_CAP, _CAP]
+    assert [entry.digest is None for entry in ledger._entries] == [True, False]
+
+    # The daily cap therefore still binds on the amounts that outlived their digests.
+    third = gate.authorize(_distinct_tx(7), _receipt(sol_delta=-_CAP), now=later + 1)
+    assert third.authorized is False
+    assert third.code == "over-daily-cap"
+
+
+def test_two_expired_digests_do_not_match_each_other() -> None:
+    """A ``None`` digest is never a replay — the hazard of comparing absence to absence.
+
+    Written because the natural implementation (``entry.digest == digest``) makes every
+    row whose digest expired a free pass for every future call that also has none. That is
+    a total bypass of the cumulative cap, reachable by waiting fifteen minutes.
+    """
+    ledger = InMemorySpendLedger()
+    limits = VelocityLimits(
+        hourly_lamports=10 * _CAP, daily_lamports=10 * _CAP, max_transactions_per_day=2
+    )
+    assert ledger.reserve(at=1_000.0, lamports=1, limits=limits, digest=None).within
+    assert ledger.reserve(at=1_001.0, lamports=1, limits=limits, digest=None).within
+    third = ledger.reserve(at=1_002.0, lamports=1, limits=limits, digest=None)
+    assert third.within is False, (
+        "two unkeyed reservations must both count; matching None to None would have "
+        "made the second a replay and left the count cap unreachable"
+    )
+
+
+def test_there_is_no_parameter_through_which_a_caller_could_choose_the_key() -> None:
+    """The PR-1-shaped hazard is absent by CONSTRUCTION, not by validation.
+
+    A caller-chosen idempotency key is a request to spend for free: reuse one value across
+    different transactions and everything after the first reads as already paid. No
+    validation can catch that, because the key would be well-formed. So ``authorize``
+    exposes no such parameter and the key is derived from the subject.
+    """
+    import inspect
+
+    parameters = set(inspect.signature(SpendPolicyGate.authorize).parameters)
+    assert parameters == {
+        "self",
+        "transaction_base64",
+        "receipt",
+        "now",
+        "agent_supplied_policy",
+    }
+    for forbidden in ("digest", "idempotency_key", "key", "nonce", "dedupe"):
+        assert forbidden not in parameters
+
+
+def test_the_digest_is_derived_from_the_bytes_and_not_from_the_receipt() -> None:
+    """G4 stays intact: the gate reads two AMOUNT fields off the receipt and no others.
+
+    The obvious way to build this would have been ``receipt.message_binding``, which is
+    already computed and sitting right there. It is also a VERIFICATION field, and letting
+    verification stand in for authorization is the substitution the module exists to
+    prevent — so the digest comes from the transaction argument the gate already decodes.
+    """
+    source = _SPEND_POLICY_SOURCE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    read = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "receipt"
+    }
+    assert read & {field.name for field in fields(Receipt)} == {
+        "sol_delta",
+        "token_delta",
+    }
+    assert "message_binding" not in read
+
+
+def test_a_ledger_written_before_dedupe_existed_is_still_readable(
+    tmp_path: Path,
+) -> None:
+    """Upgrading must not read as corruption. ``d`` is optional in both directions.
+
+    ``_read_entries`` refuses a row it cannot fully account for, and that refusal is a
+    total one — an unreadable ledger refuses every transaction. So adding a REQUIRED field
+    would have turned the first run after an upgrade into an outage whose message said the
+    budget file was corrupt.
+    """
+    path = tmp_path / "spend.jsonl"
+    path.write_text(
+        json.dumps({"at": 1_000.0, "lamports": _CAP}) + "\n"
+        f'{{"at": 1000.0, "mint": "{MINT}", "raw": 500000}}\n',
+        encoding="utf-8",
+    )
+    verdict = _gate(
+        _policy(hourly_cap_lamports=_CAP), ledger=FileSpendLedger(str(path))
+    ).authorize(_tx(), _receipt(sol_delta=-1), now=1_001.0)
+    assert verdict.authorized is False, "the legacy row still counts against the cap"
+    assert verdict.code == "over-hourly-cap"
+
+
+def test_a_row_whose_digest_is_the_wrong_shape_refuses_rather_than_reading_past(
+    tmp_path: Path,
+) -> None:
+    """Half-identifying a transaction is refused, not read as unidentified.
+
+    The permissive reading — treat an unusable ``d`` as absent — would make a truncated
+    write look like a row that never had a digest, so a retry of that transaction would
+    reserve a second time. Small, but it is the failure this whole change exists to remove.
+    """
+    path = tmp_path / "spend.jsonl"
+    path.write_text(
+        json.dumps({"at": 1_000.0, "lamports": 1, "d": ""}) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(LedgerError):
+        FileSpendLedger(str(path)).reserve(
+            at=1_001.0,
+            lamports=1,
+            limits=VelocityLimits(
+                hourly_lamports=_CAP,
+                daily_lamports=_CAP,
+                max_transactions_per_day=5,
+            ),
+        )
+
+
+def test_idempotency_holds_ACROSS_PROCESSES(tmp_path: Path) -> None:
+    """The retry that matters is the one after the process died and was restarted.
+
+    An in-process memo would cover a loop and miss exactly the case B3 is for: a backend
+    fault, an operator re-running the command. So the key lives in the shared file, and
+    this proves it by spending from three separate interpreters.
+    """
+    ledger_path = tmp_path / "spend.jsonl"
+    script = textwrap.dedent(
+        f"""
+        import sys
+        sys.path.insert(0, {str(_REPO)!r})
+        from gecko.spend_policy import FileSpendLedger, VelocityLimits
+        ledger = FileSpendLedger({str(ledger_path)!r})
+        limits = VelocityLimits(
+            hourly_lamports={_CAP},
+            daily_lamports={_CAP},
+            max_transactions_per_day=1,
+        )
+        decision = ledger.reserve(
+            at=1000.0, lamports={_CAP}, limits=limits, digest="deadbeef" * 8
+        )
+        print(decision.within)
+        """
+    )
+    outcomes = []
+    for _ in range(3):
+        completed = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
+        outcomes.append(completed.stdout.strip())
+    assert outcomes == ["True", "True", "True"], outcomes
+
+    rows = [
+        json.loads(line)
+        for line in ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1, f"three identical reserves wrote {len(rows)} rows: {rows}"
 
 
 def test_a_ledger_row_with_a_field_this_module_cannot_account_for_refuses(
