@@ -1,5 +1,5 @@
 """The packaged ``let_me_buy`` config: it loads by the normal path, it derives the
-account the chain confirmed, and its ATA recipes do not claim the program said them.
+account the chain confirmed, and every origin tier follows the artifact-precedence rule.
 
 Three separable claims, and the test keeps them separable on purpose:
 
@@ -17,9 +17,9 @@ Three separable claims, and the test keeps them separable on purpose:
 3. **Honesty of the origins** — every account in ``pdas`` has a ``pda_origins`` entry
    (absence is not neutral: find_start.py:499-500 hands back ``extracted`` for any account
    that merely HAS a node, and ``_apply_origin_cap`` returns the step untouched when the
-   account is missing from the map, find_start.py:562-563), and neither associated-token
-   account claims ``extracted``. An ATA address is SPL-standard-derived from the caller's
-   own owner/mint, not something this program's artifact stated.
+   account is missing from the map, find_start.py:562-563), and every tier follows the
+   artifact-precedence rule (founder-ruled 2026-08-13): declared by the artifact → theirs
+   (``extracted``); artifact silent → ours (``recovered``); the two disagree → flagged.
 
 CI-time scope, stated plainly: the completeness assertion here checks the PACKAGED bytes.
 It is not a runtime guarantee — the loader accepts a config with no ``pda_origins`` at
@@ -156,17 +156,32 @@ def test_every_pda_carries_an_origin_entry() -> None:
 
 
 @pytest.mark.parametrize("account,owner_seed", sorted(ATA_ACCOUNTS.items()))
-def test_neither_ata_claims_the_program_declared_it(
+def test_each_ata_tier_follows_the_artifact_precedence_rule(
     account: str, owner_seed: str
 ) -> None:
-    """G1: an associated-token address is SPL-standard-derived from
-    (owner, token_program, mint) under ``ATokenGPv...`` — the caller's own inputs run
-    through a rule that belongs to the ATA program, not a fact this program's artifact
-    stated. ``extracted`` would claim the latter, so it is refused for both.
+    """FOUNDER-RULED 2026-08-13 — the artifact-precedence rule, superseding this test's
+    earlier position (kept legible here because the history explains the rule):
 
-    The assertion runs on the EFFECTIVE origin, so deleting the entry from
-    ``pda_origins`` does not quietly pass: absence resolves to ``extracted`` and this
-    turns red.
+    * **If the artifact declares the recipe, go with theirs:** an IDL-declared pda block
+      is the program author's own statement of which account the instruction expects —
+      that constraint is THIS program's fact even when the derivation math (the SPL
+      associated-token rule) belongs to another program. Tier: ``extracted``.
+    * **If the artifact is silent, go with ours:** a hand-modelled recipe (pumpfun's
+      ATAs, whose IDL carries no block) caps at ``recovered``.
+    * **If both exist and disagree, neither wins:** ``flagged``. A disagreement between
+      the artifact and our model is the most interesting fact either source can produce,
+      and it is never resolved silently. (The three-way agreement test below is what
+      detects it for this config.)
+
+    The earlier position — that rule-ownership caps an ATA at ``recovered`` even when
+    the IDL declares its block — was held from 2026-08-11 until the founder ruled. Its
+    evidentiary ground (the fixture was a third-party mirror) fell on 2026-08-13 when
+    the on-chain IDL account was fetched and found byte-identical; its semantic ground
+    was overruled in favour of one tier meaning one thing everywhere: *where did the
+    recipe come from.*
+
+    The assertion still runs on the EFFECTIVE origin and still pins the recipe shape,
+    so a drifted seed list cannot hide behind the tier.
     """
     program = _let_me_buy()
     node = program.pdas[account]
@@ -176,9 +191,12 @@ def test_neither_ata_claims_the_program_declared_it(
         "token_program",
         "mint",
     ]
-    assert _effective_origin(program, account) != "extracted", (
-        f"{account} is derived by the SPL associated-token rule from caller-supplied "
-        "inputs; `extracted` would claim the let_me_buy artifact declared this address"
+    # Declared by the artifact (the chain-verified IDL carries this account's pda
+    # block — test_every_lifted_origin_has_a_pda_block_in_the_idl proves that side),
+    # therefore theirs, therefore `extracted`.
+    assert _effective_origin(program, account) == "extracted", (
+        f"{account}: the program's own IDL declares this pda block, and the "
+        "artifact-precedence rule says a declared recipe carries the artifact's tier"
     )
 
 
@@ -292,15 +310,12 @@ def test_the_two_atas_are_a_pair_and_credit_different_owners() -> None:
 # longer only a third-party mirror; it is chain-corroborated as the artifact's own word,
 # and it declares a pda block for all three make_purchase PDAs.
 #
-# The lift is deliberately asymmetric:
-#   * `receipts` -> `extracted`: the seed rule is let_me_buy's OWN, declared in its own
-#     artifact. Uncontested.
-#   * the two ATAs -> `recovered`, NOT `extracted`: test_neither_ata_claims_the_program_
-#     declared_it holds the standing position that an SPL-standard ATA derivation is the
-#     ATA program's rule, not a fact of this artifact — a semantic ground that survives
-#     the mirror's corroboration. `recovered` is the same tier pumpfun's ATA recipes
-#     carry. Whether an IDL-declared ATA block should ever earn `extracted` is ESCALATED
-#     (a provenance-ladder semantics call), not absorbed here.
+# FOUNDER-RULED 2026-08-13 (superseding the one-day asymmetric state): the
+# artifact-precedence rule. If the artifact declares the recipe, go with theirs
+# (`extracted`); if the artifact is silent, go with ours (`recovered` — pumpfun's ATAs
+# stay there); if both exist and disagree, neither wins (`flagged`, via the agreement
+# test going red). All three make_purchase PDAs are IDL-declared, so all three carry
+# `extracted`.
 #
 # The tier and the recipe are pinned TOGETHER: if either the packaged recipe or the
 # fixture drifts, the agreement test goes red, and the tier falls with it.
@@ -338,10 +353,12 @@ def test_lifted_origins_agree_with_the_idl_and_the_chain() -> None:
     )
     idl_nodes = from_anchor_idl(idl)
     program = _let_me_buy()
+    # FOUNDER-RULED 2026-08-13: all three are IDL-declared, so all three carry the
+    # artifact's tier. See test_each_ata_tier_follows_the_artifact_precedence_rule.
     expected_tiers = {
         "receipts": "extracted",
-        "sender_token_account": "recovered",
-        "recipient_token_account": "recovered",
+        "sender_token_account": "extracted",
+        "recipient_token_account": "extracted",
     }
     for name, tier in program.pda_origins.items():
         assert tier == expected_tiers[name], (
