@@ -477,7 +477,20 @@ def _compose(monkeypatch: pytest.MonkeyPatch, *, tx_b64: str) -> dict[str, Any]:
     monkeypatch.setattr(
         compose, "latest_blockhash", lambda *_a, **_k: ("So11111111111111", 1_000)
     )
-    monkeypatch.setattr(compose, "_rpc", _sim_rpc())
+    # The script resolves ``--store`` from the chain now, so the injected transport has to
+    # answer for that account too. Without it the run would reach a real node — which is
+    # precisely what an injected seam exists to make impossible.
+    from test_store_accounts import node_with
+
+    store_node = _sim_rpc()
+    jonasbar = node_with("jonasbar")
+
+    def rpc(url: str, method: str, params: Any) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return jonasbar(url, method, params)
+        return store_node(url, method, params)
+
+    monkeypatch.setattr(compose, "_rpc", rpc)
     monkeypatch.setattr(compose, "simulate", recording_simulate)
     return seen
 

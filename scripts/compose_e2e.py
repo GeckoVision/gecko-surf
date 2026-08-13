@@ -79,9 +79,11 @@ def main(argv: list[str] | None = None) -> int:
     network = coerce_network(args.network)
 
     print("1. GECKO — derive the accounts this call needs")
+    # Through THIS script's transport seam, so the whole run stays falsifiable offline
+    # from one injection point.
     try:
         store = resolve_store(
-            args.store, rpc_url=args.rpc_url, rpc_call=default_rpc_call
+            args.store, rpc_url=args.rpc_url, rpc_call=_rpc
         ).accounts_for(args.product)
     except StoreResolutionError as exc:
         print(f"   STOP: {exc}")
