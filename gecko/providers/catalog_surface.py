@@ -28,6 +28,7 @@ from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
 from ..prepare_purchase import PREPARE_PURCHASE_TOOL, prepare_purchase_result
+from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..rpc import RpcCall
 from ..simulate import BuildCall
 
@@ -41,7 +42,7 @@ MAX_FIND_START_PAGES = 2
 @dataclass
 class OrquestraCatalogSurface:
     """Duck-typed MCP surface: ``list_programs`` + ``find_start`` +
-    ``comprehend_program`` + ``prepare_purchase``.
+    ``comprehend_program`` + ``prepare_purchase`` + ``list_stores``.
 
     ``client`` is injectable for offline tests; ``None`` builds the default
     catalog client lazily (so serving stays possible with no network until a
@@ -70,6 +71,7 @@ class OrquestraCatalogSurface:
             _LIST_PROGRAMS_TOOL,
             _COMPREHEND_TOOL,
             PREPARE_PURCHASE_TOOL,
+            LIST_STORES_TOOL,
         ]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
@@ -82,6 +84,8 @@ class OrquestraCatalogSurface:
             return self._comprehend_program(args)
         if name == "prepare_purchase":
             return self._prepare_purchase(args)
+        if name == "list_stores":
+            return list_stores_result(args, rpc_call=self.purchase_rpc_call)
         return {"error": f"unknown tool {name!r}"}
 
     # -- tools --------------------------------------------------------------
