@@ -2,12 +2,15 @@
   <img src="docs/assets/banner.jpg" alt="Gecko — the web wasn't built for agents. Yet." width="100%">
 </p>
 
-<h1 align="center">The knowledge graph for APIs your agent can trust</h1>
+<h1 align="center">Stop letting your agent guess</h1>
 
 <p align="center">
-  Open-source. Runs on your machine. One command maps any API — even the messy, paywalled,<br>
-  or on-chain ones — into a verified graph your agent <b>traverses instead of guessing</b>.<br>
-  Every action can be simulated to a <b>receipt</b> before money moves.
+  <b>Check the call before it counts.</b> Gecko is open-source and runs on your machine:<br>
+  one command maps any API — messy, paywalled, or on-chain — into a call graph your agent<br>
+  <b>checks instead of guesses from</b>, and anything that spends is simulated to a
+  <b>receipt</b> first.<br>
+  No wallet, no payment rail, no key held — fifteen mainnet transactions, fifteen exact
+  cost predictions.
 </p>
 
 <p align="center">
