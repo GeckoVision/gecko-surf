@@ -285,7 +285,44 @@ narrowing justified by a claim about what real nodes do.
 absent extension set means *refuse*, so its default is the safe direction; an absent account
 set would mean *skip the check*. That asymmetry is what decides whether a default may exist.
 
-### 10.5 What F1 honestly cannot do
+### 10.5 How often F1 actually fires — measured, and the answer is "almost never"
+
+This is the finding that should most change how you value F1, and it arrived *after* the PR
+was green. The scoping call had recommended enumerating the token instructions that
+genuinely move nothing — `approve`, `revoke`, `mintTo`, `syncNative`, `initializeAccount3`,
+`freezeAccount` — as **recognised, contributes zero**. I did not implement that. Everything
+outside the priceable allowlist refuses instead.
+
+Because the report fails closed as a whole, **one such instruction anywhere in the CPI list
+refuses the entire report.** Measured on the delivered bytes:
+
+| CPI list | Result |
+|---|---|
+| A payer-authorised `transferChecked`, alone | `measured` |
+| ...beside `syncNative` (wrapping SOL) | `unmeasurable` |
+| ...beside `closeAccount` (unwrapping wSOL) | `unmeasurable` |
+| ...beside `initializeAccount3` (a fresh ATA) | `unmeasurable` |
+| ...beside `approve` (a router taking a delegate) | `unmeasurable` |
+| ...beside `mintTo` (an LP receipt) | `unmeasurable` |
+
+Every one of those five is routine in a real swap. So F1 fires only on a transaction whose
+CPI list contains *nothing but* payer-authorised `*Checked` movements, and its practical
+yield on real DeFi traffic is close to zero.
+
+**This is not a safety defect** — F1 only runs where the status quo is already a hard
+refusal, so refusing more is never wrong, and §10.3's counterexample still proves the
+measurement path is real rather than vacuous. But it materially narrows the claim: F1
+recovered a measurement that, as shipped, almost never materialises in production.
+
+Closing it is a real improvement and a real decision, because **each enumerated entry is a
+claim that an instruction moves nothing out of the payer, and such claims rot.** Most are
+safe on inspection (`mintTo` moves tokens *in*; `approve` moves nothing now; `initialize*`
+creates). One is not: `closeAccount` on a native wSOL account sends lamports to
+`destination`, the payer's `sol_delta` does not capture it when `destination != payer`, and
+whether the account is native is not in the response — so it must keep refusing. I did not
+make that call unilaterally on a PR already under review.
+
+### 10.6 What F1 honestly cannot do
 
 Written into the docstring and **pinned by a test** — G3's lesson applied pre-emptively,
 since a residual nobody pins is a residual somebody deletes:
@@ -343,6 +380,26 @@ Stated because a delivery you cannot audit is not a delivery.
   Gecko sees call outcomes without breaking invariant #1.
 - **Willingness-to-pay is still unvalidated.** No part of this delivery touches the thesis
   decider. Everything above is engine quality.
+
+### Three F1 follow-ups, in priority order
+
+Surfaced by the scoping call and left undone. None is a safety gap; all three widen what F1
+can measure, and the first decides whether F1 is worth anything in production.
+
+1. **Enumerate the zero-movement instructions** (§10.5). Without it F1 fires on almost no
+   real transaction. `closeAccount` must stay in the refusal bucket.
+2. **Pin the response shape in a fixture.** My entire design rests on the claim that
+   `jsonParsed` `transferChecked` carries `authority` and **no `owner`** field — which is why
+   attribution has to go through the authority at all. That claim came from the scoping
+   agent's knowledge of agave's SPL parser and **is not pinned anywhere in this repo**;
+   there is no `innerInstructions` fixture in the tree. It should be asserted against a real
+   captured response rather than believed. If it is wrong, F1's central design premise is
+   wrong.
+3. **The ATA-derivation clause.** The recommendation was to *also* charge a movement whose
+   `source` equals the payer's canonical ATA for that mint, derived offline via
+   `gecko/pda.py`. I implemented only `authority == fee_payer`. Adding it widens the charged
+   set — strictly more measurement, and over-charging is the safe direction — and would let
+   F1 price a delegated spend out of the payer's own ATA instead of refusing it.
 
 ---
 
