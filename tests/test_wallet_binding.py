@@ -314,11 +314,19 @@ def test_a_stored_document_yields_ids_and_a_pubkey_and_drops_anything_else() -> 
     assert "example.com" not in repr(binding)
 
 
-def test_a_document_missing_a_field_raises_rather_than_binding_a_partial_record() -> (
-    None
-):
+@pytest.mark.parametrize("missing", ["account_id", "wallet_id", "pubkey"])
+def test_a_document_missing_any_field_raises_rather_than_binding_a_partial(
+    missing: str,
+) -> None:
+    # Each field on its own: a default for ANY of the three would let a half-written row
+    # answer "this is the wallet", which is the same defect as trusting the caller.
+    row = {"account_id": ACCOUNT, "wallet_id": WALLET_ID, "pubkey": BUYER}
+    del row[missing]
     with pytest.raises(WalletBindingError):
-        binding_from_document({"account_id": ACCOUNT, "wallet_id": WALLET_ID})
+        binding_from_document(row)
+
+
+def test_a_document_that_is_not_a_mapping_raises() -> None:
     with pytest.raises(WalletBindingError):
         binding_from_document(["not", "a", "mapping"])
 
