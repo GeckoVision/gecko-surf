@@ -1,8 +1,57 @@
 # Gecko positioning — "Stop guessing"
 
-**Status:** canonical (2026-07-26). Supersedes the old grunt line
+**Status:** canonical (2026-07-26; extended 2026-08-13). Supersedes the old grunt line
 *"Any API, agent-ready — first call correct."* Every outward surface — README, deck,
 landing, video, tweet — draws its message from this file.
+
+---
+
+## The 2026-08-13 layer — the stack, founder-chosen
+
+The enemy line below is unchanged. Two pieces sit with it now, chosen after agents
+started spending real money through the engine (fifteen mainnet transactions, fifteen
+exact compute predictions, the last four signed in an enclave with no key on the
+planning machine):
+
+> **Tagline:** Check the call before it counts.
+
+> **The formula statement:** We help developers whose agents guess their way through
+> APIs turn every surface into a call graph the agent checks instead of guesses from —
+> so the first call is the right call, **even when it spends**.
+
+**Why the statement subordinates spending to calling — and must keep doing so.** The
+rejected variant led with the wallet moment ("the agent buys and pays on its own"),
+which invites the question *"so you run a wallet? are you a payment solution?"* — the
+one identity confusion we can never afford: APIs get PAID is Metera/MCPay's row; ours is
+APIs get USED. "Even when it spends" frames the spend as the *stress test* of
+comprehension, never the offering.
+
+**The prepared answer when someone asks anyway** ("are you a wallet / a rail?"):
+
+> Neither — deliberately. Gecko holds no key, moves no money, and takes no cut. The
+> wallet is yours — we compose with Privy, Phantom, whatever signs for you. The rail is
+> x402's. What we own is the step everyone skips: *is this call, this transaction, the
+> right one?* We turn the API's surface into a call graph, verify the exact bytes
+> against a simulation, and hand your wallet something checked. Fifteen mainnet
+> transactions, fifteen exact cost predictions — and in every one, the key was never
+> ours.
+
+**The 30-second pitch** (spoken, ~80 words — pause after the first line, stop after the
+last number):
+
+> Every call your agent makes is a guess — it reads a schema, picks an endpoint, and
+> hopes. Survivable, until agents started spending real money.
+>
+> Gecko turns the API's surface into a call graph the agent checks instead of guesses
+> from. And for anything that spends, it verifies the exact bytes against a simulation
+> before your wallet ever sees them.
+>
+> We hold no key and move no money — we're the check before it counts. Fifteen mainnet
+> transactions. Fifteen exact cost predictions.
+
+**Words that never enter the sentence:** "safe/safety", "easily". Every agent company
+says safe; nobody else says *what the receipt predicted is what the chain charged*. The
+hard-to-fake claim beats the adjective.
 
 ---
 
