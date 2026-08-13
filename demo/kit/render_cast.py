@@ -45,6 +45,7 @@ def _fit_grid(cols: int, rows: int) -> None:
     MONO = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono.ttf", size)
     MONO_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", size)
 
+
 BG = "#0A0F1A"  # Gecko blue — the house frame
 TERMINAL = "#0D1117"
 TERMINAL_BAR = "#161B22"

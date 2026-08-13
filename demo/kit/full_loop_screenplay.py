@@ -120,7 +120,10 @@ def rpc(method: str, params: list) -> dict:
         data=json.dumps(
             {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
         ).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "gecko-demo/full-loop"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "gecko-demo/full-loop",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -135,13 +138,25 @@ clear()
 out(f"{BOLD}THE FIRST TIME, YOUR AGENT GUESSES.{RESET}", pause=0.8)
 out()
 put(f"{DIM}what it was given — a 4,908-byte account and an IDL:{RESET}", 0.4)
-put(f'{DIM}  {{"name":"make_purchase","discriminator":[193,62,227,136,105,212,201,20],{RESET}', 0.2)
-put(f'{DIM}   "accounts":[{{"name":"receipts","writable":true,"pda":{{"seeds":[…]}}}},…x9],{RESET}', 0.2)
-put(f"{DIM}  AAAB9v8Kq2Zn0uQ4… (base64, 4,908 bytes — the store lives in here somewhere){RESET}", 1.4)
+put(
+    f'{DIM}  {{"name":"make_purchase","discriminator":[193,62,227,136,105,212,201,20],{RESET}',
+    0.2,
+)
+put(
+    f'{DIM}   "accounts":[{{"name":"receipts","writable":true,"pda":{{"seeds":[…]}}}},…x9],{RESET}',
+    0.2,
+)
+put(
+    f"{DIM}  AAAB9v8Kq2Zn0uQ4… (base64, 4,908 bytes — the store lives in here somewhere){RESET}",
+    1.4,
+)
 out()
-out(f"{CYAN}$ the naive call: token account? probably just my wallet address…{RESET}", 0.03)
+out(
+    f"{CYAN}$ the naive call: token account? probably just my wallet address…{RESET}",
+    0.03,
+)
 
-from gecko.simulate import BuiltTx, simulate  # noqa: E402
+from gecko.simulate import simulate  # noqa: E402
 from scripts.autonomous_purchase import (  # noqa: E402
     ATA_PROGRAM,
     STORE_RECEIPTS,
@@ -184,7 +199,10 @@ put(f"  simulate: {RED}✗ {naive.status.upper()}{RESET}", 0.4)
 put(f"    {RED}{error_line[:84]}{RESET}", 1.2)
 put(f"  {RED}revert class: {naive.revert_class}{RESET}", 1.4)
 out()
-put(f"{YELLOW}  the builder said 200. the chain said no. transport cannot tell you{RESET}", 0.3)
+put(
+    f"{YELLOW}  the builder said 200. the chain said no. transport cannot tell you{RESET}",
+    0.3,
+)
 put(f"{YELLOW}  the call is WRONG — and the first try was the real one.{RESET}", 2.4)
 
 # =========================================================================================
@@ -194,24 +212,51 @@ put(f"{YELLOW}  the call is WRONG — and the first try was the real one.{RESET}
 clear()
 out(f"{BOLD}GECKO TURNS THAT INTO A GRAPH.{RESET}", pause=0.8)
 out()
-put(f"{DIM}  bytes + IDL + source + live probes{RESET}   ─────▶   {BOLD}gecko_graph{RESET}", 1.2)
+put(
+    f"{DIM}  bytes + IDL + source + live probes{RESET}   ─────▶   {BOLD}gecko_graph{RESET}",
+    1.2,
+)
 out()
 put(f"  {BOLD}the lifecycle{RESET} — two chains, one shared account:", 0.6)
 put("", 0.1)
 put(f"    {CYAN}open_a_store{RESET}      initialize ──▶ add_product", 0.5)
-put(f"    {CYAN}sell_and_deliver{RESET}  {GREEN}make_purchase{RESET} ──▶ mark_as_delivered", 0.5)
-put(f"                      └── both write {BOLD}receipts{RESET} — a DATA edge, not advice:", 0.4)
-put(f"                          mark_as_delivered settles a receipt_id only a landed", 0.3)
-put(f"                          make_purchase writes", 1.2)
+put(
+    f"    {CYAN}sell_and_deliver{RESET}  {GREEN}make_purchase{RESET} ──▶ mark_as_delivered",
+    0.5,
+)
+put(
+    f"                      └── both write {BOLD}receipts{RESET} — a DATA edge, not advice:",
+    0.4,
+)
+put(
+    "                          mark_as_delivered settles a receipt_id only a landed",
+    0.3,
+)
+put("                          make_purchase writes", 1.2)
 put("", 0.1)
-put(f"  {BOLD}the accounts{RESET} — every one derived, each tagged with where it came from:", 0.6)
-put(f"    receipts        PDA('receipts', store)   {GREEN}[extracted]{RESET} ← the program's own IDL", 0.4)
-put(f"    sender_ata      ATA(buyer, mint)         {GREEN}[extracted]{RESET} ← declared, chain-verified", 0.4)
+put(
+    f"  {BOLD}the accounts{RESET} — every one derived, each tagged with where it came from:",
+    0.6,
+)
+put(
+    f"    receipts        PDA('receipts', store)   {GREEN}[extracted]{RESET} ← the program's own IDL",
+    0.4,
+)
+put(
+    f"    sender_ata      ATA(buyer, mint)         {GREEN}[extracted]{RESET} ← declared, chain-verified",
+    0.4,
+)
 put(f"    recipient_ata   ATA(merchant, mint)      {GREEN}[extracted]{RESET}", 0.4)
 put(f"    …and 6 more     pinned program ids       {GREEN}[extracted]{RESET}", 1.0)
 out()
-put(f"{YELLOW}  the workflow graph Arazzo writes down for HTTP APIs — ours walks Solana{RESET}", 0.3)
-put(f"{YELLOW}  programs too, and every edge carries its provenance and its refutation.{RESET}", 2.4)
+put(
+    f"{YELLOW}  the workflow graph Arazzo writes down for HTTP APIs — ours walks Solana{RESET}",
+    0.3,
+)
+put(
+    f"{YELLOW}  programs too, and every edge carries its provenance and its refutation.{RESET}",
+    2.4,
+)
 
 # =========================================================================================
 # SCENE 3 — THE MENU
@@ -223,7 +268,10 @@ out()
 out(f"{CYAN}User: where can I buy water?{RESET}", 0.05, pause=0.6)
 out()
 out(f"{CYAN}$ list_stores(network=mainnet, product=water){RESET}", 0.02)
-put(f"{YELLOW}  → https://mcp.geckovision.tech — the same door any chat client uses{RESET}", 0.6)
+put(
+    f"{YELLOW}  → https://mcp.geckovision.tech — the same door any chat client uses{RESET}",
+    0.6,
+)
 
 menu = mcp_call("list_stores", {"network": "mainnet", "product": "water"})
 put("")
@@ -255,7 +303,10 @@ out(f"{BOLD}BEFORE IT COUNTS, IT GETS CHECKED.{RESET}", pause=0.8)
 out()
 out(f"{CYAN}User: buy the water from jonasbar — table 3{RESET}", 0.05, pause=0.6)
 out()
-out(f"{CYAN}$ prepare_purchase(store=jonasbar, product=Water, network=mainnet){RESET}", 0.02)
+out(
+    f"{CYAN}$ prepare_purchase(store=jonasbar, product=Water, network=mainnet){RESET}",
+    0.02,
+)
 
 check = mcp_call(
     "prepare_purchase",
@@ -269,15 +320,27 @@ check = mcp_call(
 )
 put("")
 if check.get("refused") or check.get("status") != "pass":
-    put(f"  {RED}the check did not pass ({check.get('status') or check.get('code')}) — an empty", 0.3)
-    put(f"  wallet cannot rehearse a purchase. Fund the buyer, then re-take.{RESET}", 1.5)
+    put(
+        f"  {RED}the check did not pass ({check.get('status') or check.get('code')}) — an empty",
+        0.3,
+    )
+    put(
+        f"  wallet cannot rehearse a purchase. Fund the buyer, then re-take.{RESET}",
+        1.5,
+    )
     sys.exit(1)
 roles = {a["account"]: a for a in check.get("accounts", [])}
 debit = roles.get("sender_token_account", {})
 credit = roles.get("recipient_token_account", {})
 put("  9 accounts derived offline — the two that move money:", 0.5)
-put(f"    {RED}DEBITED{RESET}   {debit.get('address', '')}  {YELLOW}(the buyer){RESET}", 0.7)
-put(f"    {GREEN}CREDITED{RESET}  {credit.get('address', '')}  {YELLOW}(the store){RESET}", 1.0)
+put(
+    f"    {RED}DEBITED{RESET}   {debit.get('address', '')}  {YELLOW}(the buyer){RESET}",
+    0.7,
+)
+put(
+    f"    {GREEN}CREDITED{RESET}  {credit.get('address', '')}  {YELLOW}(the store){RESET}",
+    1.0,
+)
 put("")
 status_color = GREEN if check.get("status") == "pass" else RED
 put(
@@ -293,8 +356,14 @@ put(
     1.4,
 )
 put("")
-put(f"{YELLOW}  same instruction the naive call reverted on. This time: nine accounts,{RESET}", 0.3)
-put(f"{YELLOW}  zero guesses, and a receipt for the exact bytes. Check, then sign.{RESET}", 2.4)
+put(
+    f"{YELLOW}  same instruction the naive call reverted on. This time: nine accounts,{RESET}",
+    0.3,
+)
+put(
+    f"{YELLOW}  zero guesses, and a receipt for the exact bytes. Check, then sign.{RESET}",
+    2.4,
+)
 
 # =========================================================================================
 # SCENE 5 — LANDED
@@ -319,8 +388,11 @@ if LIVE_SETTLE and not REHEARSAL:
         sys.exit(1)
     signature = match.group(1)
 else:
-    put(f"  minutes before this take, this exact loop ran for real — plan, check,", 0.3)
-    put(f"  spend-gate, {BOLD}sign inside an enclave{RESET}, broadcast. One call, no human.", 1.0)
+    put("  minutes before this take, this exact loop ran for real — plan, check,", 0.3)
+    put(
+        f"  spend-gate, {BOLD}sign inside an enclave{RESET}, broadcast. One call, no human.",
+        1.0,
+    )
     put("")
     signature = SETTLED_SIG
     out(f"{CYAN}$ ask a mainnet node what actually happened{RESET}", 0.02)
@@ -339,8 +411,14 @@ put("")
 put(f"  {signature[:44]}…", 0.6)
 if found:
     meta = found["meta"]
-    pre = {b["owner"]: b["uiTokenAmount"]["uiAmount"] or 0 for b in meta["preTokenBalances"]}
-    post = {b["owner"]: b["uiTokenAmount"]["uiAmount"] or 0 for b in meta["postTokenBalances"]}
+    pre = {
+        b["owner"]: b["uiTokenAmount"]["uiAmount"] or 0
+        for b in meta["preTokenBalances"]
+    }
+    post = {
+        b["owner"]: b["uiTokenAmount"]["uiAmount"] or 0
+        for b in meta["postTokenBalances"]
+    }
     put(
         f"  slot {found['slot']} · err {meta['err']}"
         f" · {BOLD}{meta['computeUnitsConsumed']:,} CU consumed{RESET}",
@@ -357,11 +435,18 @@ if found:
         2.0,
     )
 else:
-    put(f"  {YELLOW}not indexed yet — the signature is public; check it yourself:{RESET}", 0.5)
+    put(
+        f"  {YELLOW}not indexed yet — the signature is public; check it yourself:{RESET}",
+        0.5,
+    )
     put(f"  https://solscan.io/tx/{signature}", 2.0)
 
 put("")
-out(f"{BOLD}Sixteen mainnet transactions. Sixteen exact predictions.{RESET}", 0.04, pause=0.8)
+out(
+    f"{BOLD}Sixteen mainnet transactions. Sixteen exact predictions.{RESET}",
+    0.04,
+    pause=0.8,
+)
 out(f"{BOLD}The key was never here — it lives in an enclave.{RESET}", 0.04, pause=1.0)
 out()
 out(f"{GREEN}CHECK THE CALL BEFORE IT COUNTS.{RESET}", 0.05, pause=0.6)
