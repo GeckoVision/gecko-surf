@@ -33,25 +33,52 @@ COLS, ROWS = 80, 20
 TERM_X, TERM_Y, TERM_W, TERM_H = 42, 38, 1116, 599
 CONTENT_X, CONTENT_Y = 72, 104
 CELL_W, CELL_H = 13, 26
+SCALE = 1
+
+
+def _apply_scale(factor: int) -> None:
+    """Multiply every metric by ``factor``. Layout is unchanged; only the raster grows.
+
+    Called BEFORE ``_fit_grid`` so the cell size it computes is already in scaled pixels.
+    """
+    global WIDTH, HEIGHT, TERM_X, TERM_Y, TERM_W, TERM_H, CONTENT_X, CONTENT_Y
+    global CELL_W, CELL_H, DOT_SPACING, SCALE, UI, UI_BOLD, MONO_SMALL
+    SCALE = factor
+    WIDTH, HEIGHT = WIDTH * factor, HEIGHT * factor
+    TERM_X, TERM_Y = TERM_X * factor, TERM_Y * factor
+    TERM_W, TERM_H = TERM_W * factor, TERM_H * factor
+    CONTENT_X, CONTENT_Y = CONTENT_X * factor, CONTENT_Y * factor
+    CELL_W, CELL_H = CELL_W * factor, CELL_H * factor
+    DOT_SPACING = DOT_SPACING * factor
+    UI = ImageFont.truetype(f"{_FONTS}/DejaVuSans.ttf", 16 * factor)
+    UI_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSans-Bold.ttf", 15 * factor)
+    MONO_SMALL = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", 14 * factor)
 
 
 def _fit_grid(cols: int, rows: int) -> None:
     """Adopt the cast's grid and rescale cells + fonts so it fits the fixed frame."""
     global COLS, ROWS, CELL_W, CELL_H, MONO, MONO_BOLD
     COLS, ROWS = cols, rows
-    CELL_W = min(13, (TERM_X + TERM_W - CONTENT_X - 4) // cols)
-    CELL_H = min(26, (TERM_Y + TERM_H - CONTENT_Y - 4) // rows)
+    CELL_W = min(13 * SCALE, (TERM_X + TERM_W - CONTENT_X - 4 * SCALE) // cols)
+    CELL_H = min(26 * SCALE, (TERM_Y + TERM_H - CONTENT_Y - 4 * SCALE) // rows)
     size = max(10, int(CELL_W * 21 / 13))
     MONO = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono.ttf", size)
     MONO_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", size)
 
 
-BG = "#0A0F1A"  # Gecko blue — the house frame
-TERMINAL = "#0D1117"
-TERMINAL_BAR = "#161B22"
-TEXT = "#E6EDF3"
-DIM_TEXT = "#8B949E"
-BORDER = "#30363D"
+# The house frame, restyled 2026-08-13 against the reference clips the founder shared:
+# a near-black ground with a faint dot grid, a card with MONOCHROME window chrome and a
+# centred title, generous breathing room, and an accent rule with a label tag under the
+# content. The old frame read as a screenshot of a terminal; this reads as a terminal.
+BG = "#0C0C0E"
+DOT = "#17171A"  # the ground's dot grid — present, never noticed
+DOT_SPACING = 30
+TERMINAL = "#141416"
+TERMINAL_BAR = "#141416"  # no seam: the reference bar is the same value as the body
+CHROME_DOT = "#3C3C40"  # dimmed, monochrome — colour here is noise, not information
+TEXT = "#E9E9EC"
+DIM_TEXT = "#8A8A92"
+BORDER = "#232327"
 GECKO_CYAN = "#35C2D4"
 
 COLORS = {
@@ -64,17 +91,18 @@ COLORS = {
     "magenta": "#BC8CFF",
     "cyan": GECKO_CYAN,
     "white": TEXT,
-    "42": "#00D75F",
-    "45": "#00D7FF",
-    "203": "#FF5F5F",
-    "220": "#FFD700",
+    "42": "#3FD07E",
+    "45": "#4FD0DE",
+    "203": "#F0736A",
+    "220": "#E9C46A",
 }
 
 _FONTS = "/usr/share/fonts/truetype/dejavu"
 MONO = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono.ttf", 21)
 MONO_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", 21)
 UI = ImageFont.truetype(f"{_FONTS}/DejaVuSans.ttf", 16)
-UI_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSans-Bold.ttf", 16)
+UI_BOLD = ImageFont.truetype(f"{_FONTS}/DejaVuSans-Bold.ttf", 15)
+MONO_SMALL = ImageFont.truetype(f"{_FONTS}/DejaVuSansMono-Bold.ttf", 14)
 
 
 def load_cast(path: Path) -> list[tuple[float, str]]:
@@ -110,36 +138,45 @@ def char_color(char: object) -> str:
     return color
 
 
+def draw_ground(draw: ImageDraw.ImageDraw) -> None:
+    """The faint dot grid. It should be felt rather than seen — one pixel, low contrast."""
+    for y in range(0, HEIGHT, DOT_SPACING):
+        for x in range(0, WIDTH, DOT_SPACING):
+            draw.point((x, y), fill=DOT)
+
+
 def render_frame(
     screen: pyte.Screen, title: str, tagline: str, brand: str
 ) -> Image.Image:
     image = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(image)
+    draw_ground(draw)
 
     draw.rounded_rectangle(
         (TERM_X, TERM_Y, TERM_X + TERM_W, TERM_Y + TERM_H),
-        radius=20,
+        radius=18 * SCALE,
         fill=TERMINAL,
         outline=BORDER,
-        width=2,
+        width=SCALE,
     )
-    draw.rounded_rectangle(
-        (TERM_X + 1, TERM_Y + 1, TERM_X + TERM_W - 1, TERM_Y + 58),
-        radius=19,
-        fill=TERMINAL_BAR,
-    )
-    draw.rectangle(
-        (TERM_X + 1, TERM_Y + 37, TERM_X + TERM_W - 1, TERM_Y + 59),
-        fill=TERMINAL_BAR,
-    )
-    for index, color in enumerate(("#FF5F56", "#FFBD2E", "#27C93F")):
-        cx = TERM_X + 26 + index * 24
-        draw.ellipse((cx, TERM_Y + 22, cx + 12, TERM_Y + 34), fill=color)
 
-    draw.text((TERM_X + 112, TERM_Y + 20), title, font=UI_BOLD, fill="#C9D1D9")
-    label = "RECORDED WITH ASCIINEMA"
-    lw = draw.textbbox((0, 0), label, font=UI)[2]
-    draw.text((TERM_X + TERM_W - lw - 24, TERM_Y + 20), label, font=UI, fill="#6E7681")
+    # Window chrome: three MONOCHROME dots. The reference dims them because a red dot is
+    # a colour the viewer has to decide to ignore, and the content owns every colour here.
+    for index in range(3):
+        cx = TERM_X + (26 + index * 21) * SCALE
+        draw.ellipse(
+            (cx, TERM_Y + 21 * SCALE, cx + 10 * SCALE, TERM_Y + 31 * SCALE),
+            fill=CHROME_DOT,
+        )
+
+    # The title sits CENTRED, the way a real terminal titles a tab.
+    tw = draw.textbbox((0, 0), title, font=UI_BOLD)[2]
+    draw.text(
+        (TERM_X + (TERM_W - tw) / 2, TERM_Y + 18 * SCALE),
+        title,
+        font=UI_BOLD,
+        fill="#B9B9C2",
+    )
 
     for row in range(ROWS):
         for col in range(COLS):
@@ -165,9 +202,37 @@ def render_frame(
                 fill=char_color(char),
             )
 
-    draw.text((52, 650), brand, font=UI_BOLD, fill="#35C2D4")
-    fw = draw.textbbox((0, 0), tagline, font=UI)[2]
-    draw.text((WIDTH - fw - 52, 650), tagline, font=UI, fill="#8B949E")
+    # The accent rule with its label tag, lifted from the reference: a thin cyan line
+    # across the card's foot, interrupted near the right by the scene's own tagline. It
+    # gives every frame a horizon and tells a viewer which beat they are watching.
+    if tagline:
+        rule_y = TERM_Y + TERM_H - 30 * SCALE
+        tag_font = MONO_SMALL
+        tw = draw.textbbox((0, 0), tagline, font=tag_font)[2]
+        tag_x = TERM_X + TERM_W - tw - 46 * SCALE
+        draw.line(
+            (TERM_X + 26 * SCALE, rule_y, tag_x - 12 * SCALE, rule_y),
+            fill="#1F5C66",
+            width=2 * SCALE,
+        )
+        draw.rounded_rectangle(
+            (
+                tag_x - 10 * SCALE,
+                rule_y - 13 * SCALE,
+                tag_x + tw + 10 * SCALE,
+                rule_y + 13 * SCALE,
+            ),
+            radius=4 * SCALE,
+            fill=GECKO_CYAN,
+        )
+        draw.text((tag_x, rule_y - 8 * SCALE), tagline, font=tag_font, fill="#06232A")
+        draw.line(
+            (tag_x + tw + 22 * SCALE, rule_y, TERM_X + TERM_W - 26 * SCALE, rule_y),
+            fill="#1F5C66",
+            width=2 * SCALE,
+        )
+
+    draw.text((TERM_X, HEIGHT - 34 * SCALE), brand, font=UI_BOLD, fill=GECKO_CYAN)
     return image
 
 
@@ -189,12 +254,21 @@ def main() -> int:
         help="Footer brand line (left side).",
     )
     ap.add_argument(
+        "--scale",
+        type=int,
+        default=1,
+        help="Raster multiplier. 1 = 1200x676 (the house frame); 2 = 2400x1352, which "
+        "matches the reference clips and stays crisp on a projector.",
+    )
+    ap.add_argument(
         "--thumb-at",
         type=float,
         default=0.97,
         help="Save a thumbnail PNG at this fraction of the duration (0 disables).",
     )
     args = ap.parse_args()
+    if args.scale > 1:
+        _apply_scale(args.scale)
 
     scenes = [tuple((s.split("|", 1) + [""])[:2]) for s in args.scene] or [
         ("Gecko — live demo", "")

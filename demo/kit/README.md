@@ -20,6 +20,7 @@ asciinema rec --cols 80 --rows 20 -c "python3 my_screenplay.py" my_demo.cast
 
 # 4. render to the branded MP4 (+ thumbnail)
 uv run --with pyte --with pillow python demo/kit/render_cast.py my_demo.cast out.mp4 \
+  --scale 2 \
     --scene "Gecko — scene one title|footer tagline one" \
     --scene "Gecko — scene two title|footer tagline two"
 ```
