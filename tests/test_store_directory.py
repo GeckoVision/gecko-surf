@@ -1,0 +1,243 @@
+"""The store directory — a MENU decoded from hostile bytes, falsified offline.
+
+Pattern B: the transport is injected, so every branch is provable with no network and no
+chain. The encoder below builds ``Receipts`` accounts in the program IDL's own layout, so
+the decoder is exercised against genuinely-shaped bytes rather than mocks of itself — and
+the hostile cases (truncated account, implausible lengths, wrong layout) are the same
+bytes, damaged deliberately.
+
+The property that justifies the file: an account that does not decode is COUNTED AND
+SKIPPED, never guessed at and never fatal to the directory — and buyer data (the receipts
+vec) never enters the return value.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+from typing import Any
+
+import pytest
+
+from gecko.store_directory import (
+    LET_ME_BUY_PROGRAM_ID,
+    LIST_STORES_TOOL,
+    StoreDecodeError,
+    decode_store,
+    list_stores,
+    list_stores_result,
+)
+
+USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+AUTHORITY = "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy"
+BUYER = "HNUE5KKTcaT4BuG5zmXxTViKjwNaQTtNt2svumE1WCoi"
+
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _b58decode(text: str) -> bytes:
+    value = 0
+    for char in text:
+        value = value * 58 + _B58.index(char)
+    raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+    return b"\x00" * (len(text) - len(text.lstrip("1"))) + raw
+
+
+def _string(text: str) -> bytes:
+    encoded = text.encode()
+    return len(encoded).to_bytes(4, "little") + encoded
+
+
+def _receipt(product: str = "Water") -> bytes:
+    """One Receipt row: id, buyer, delivered, price, timestamp, table, product."""
+    return (
+        (7).to_bytes(8, "little")
+        + _b58decode(BUYER).rjust(32, b"\x00")
+        + b"\x01"
+        + (100_000).to_bytes(8, "little")
+        + (1_754_900_000).to_bytes(8, "little")
+        + b"\x03"
+        + _string(product)
+    )
+
+
+def encode_store(
+    name: str = "geckocoffee",
+    *,
+    products: list[tuple[str, int, int]] | None = None,
+    receipts: int = 2,
+    total: int = 2,
+) -> bytes:
+    """A Receipts account in the IDL's own layout, discriminator included."""
+    listed = products if products is not None else [("Espresso", 100_000, 6)]
+    body = receipts.to_bytes(4, "little") + b"".join(
+        _receipt() for _ in range(receipts)
+    )
+    body += total.to_bytes(8, "little")
+    body += _string(name)
+    body += _b58decode(AUTHORITY).rjust(32, b"\x00")
+    body += len(listed).to_bytes(4, "little")
+    for product_name, price, decimals in listed:
+        body += price.to_bytes(8, "little")
+        body += bytes([decimals])
+        body += _b58decode(USDC).rjust(32, b"\x00")
+        body += _string(product_name)
+    return b"\x00" * 8 + body
+
+
+def _rows(*accounts: tuple[str, bytes]) -> list[dict[str, Any]]:
+    return [
+        {
+            "pubkey": pubkey,
+            "account": {"data": [base64.b64encode(raw).decode(), "base64"]},
+        }
+        for pubkey, raw in accounts
+    ]
+
+
+class FakeRpc:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, list[Any]]] = []
+
+    def __call__(self, url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        self.calls.append((method, params))
+        return {"result": self.rows}
+
+
+# -- decoding ------------------------------------------------------------------
+
+
+def test_a_store_decodes_to_its_menu() -> None:
+    listing = decode_store(
+        encode_store(
+            products=[("Espresso", 100_000, 6), ("Sparkling water", 50_000, 6)]
+        ),
+        address="Addr111",
+    )
+    assert listing.store_name == "geckocoffee"
+    assert listing.authority == AUTHORITY
+    assert listing.total_purchases == 2
+    assert [p.name for p in listing.products] == ["Espresso", "Sparkling water"]
+    assert listing.products[0].price_ui == "0.1"
+    assert listing.products[1].price_ui == "0.05"
+
+
+def test_buyer_data_never_enters_the_return_value() -> None:
+    """The receipts vec carries buyer pubkeys. The listing must not."""
+    listing = decode_store(encode_store(receipts=3), address="Addr111")
+    assert BUYER not in json.dumps(
+        {
+            "store": listing.store_name,
+            "authority": listing.authority,
+            "products": [p.name for p in listing.products],
+        }
+    )
+    assert not hasattr(listing, "receipts")
+
+
+def test_a_truncated_account_refuses_instead_of_wrapping() -> None:
+    raw = encode_store()
+    with pytest.raises(StoreDecodeError):
+        decode_store(raw[: len(raw) // 2], address="Addr111")
+
+
+def test_an_implausible_string_length_refuses() -> None:
+    raw = bytearray(encode_store(receipts=0))
+    # The store-name length prefix sits right after the discriminator, the empty receipts
+    # vec (4 bytes) and total_purchases (8 bytes). Corrupt it to 2**31.
+    offset = 8 + 4 + 8
+    raw[offset : offset + 4] = (2**31).to_bytes(4, "little")
+    with pytest.raises(StoreDecodeError, match="implausible"):
+        decode_store(bytes(raw), address="Addr111")
+
+
+def test_wrong_layout_bytes_refuse() -> None:
+    with pytest.raises(StoreDecodeError):
+        decode_store(b"\x00" * 40, address="Addr111")
+
+
+# -- the directory ---------------------------------------------------------------
+
+
+def test_undecodable_accounts_are_counted_and_skipped_never_fatal() -> None:
+    rpc = FakeRpc(
+        _rows(
+            ("Good1111", encode_store("jonasbar", products=[("Water", 100_000, 6)])),
+            ("Bad11111", b"\xff" * 64),
+        )
+    )
+    out = list_stores(rpc_url="http://node", rpc_call=rpc)
+    assert [s["store"] for s in out["stores"]] == ["jonasbar"]
+    assert out["skipped_undecodable"] == 1
+    assert out["truncated"] is False
+
+
+def test_the_product_filter_matches_substring_case_insensitively() -> None:
+    rpc = FakeRpc(
+        _rows(
+            ("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)])),
+            (
+                "B1",
+                encode_store(
+                    "geckocoffee",
+                    products=[("Espresso", 100_000, 6), ("Sparkling water", 50_000, 6)],
+                ),
+            ),
+            ("C1", encode_store("alexsbar", products=[("Wine", 200_000, 6)])),
+        )
+    )
+    out = list_stores(rpc_url="http://node", rpc_call=rpc, product="water")
+    by_store = {s["store"]: [p["name"] for p in s["products"]] for s in out["stores"]}
+    assert by_store == {"jonasbar": ["Water"], "geckocoffee": ["Sparkling water"]}
+
+
+def test_it_asks_for_the_right_program() -> None:
+    rpc = FakeRpc([])
+    list_stores(rpc_url="http://node", rpc_call=rpc)
+    method, params = rpc.calls[0]
+    assert method == "getProgramAccounts"
+    assert params[0] == LET_ME_BUY_PROGRAM_ID
+
+
+# -- the surface entry ------------------------------------------------------------
+
+
+def test_the_network_is_asserted_never_defaulted() -> None:
+    out = list_stores_result({}, rpc_call=FakeRpc([]))
+    assert "error" in out and "which network" in out["error"]
+    assert LIST_STORES_TOOL["inputSchema"]["required"] == ["network"]
+    # No `default` KEY in the schema — the description SAYING "there is no default" is
+    # exactly the point, so a substring check would fail on the sentence that proves it.
+    assert "default" not in LIST_STORES_TOOL["inputSchema"]["properties"]["network"]
+
+
+def test_a_private_rpc_url_is_refused_by_the_ssrf_guard() -> None:
+    rpc = FakeRpc([])
+    out = list_stores_result(
+        {"network": "mainnet", "rpc_url": "http://169.254.169.254/"}, rpc_call=rpc
+    )
+    assert "error" in out and "rpc_url refused" in out["error"]
+    assert rpc.calls == []  # nothing was fetched
+
+
+def test_the_result_names_the_wired_stores_and_the_menu_caveat() -> None:
+    out = list_stores_result(
+        {"network": "mainnet", "product": "water"},
+        rpc_call=FakeRpc(
+            _rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)])))
+        ),
+    )
+    assert out["network"] == "mainnet"
+    assert "jonasbar" in out["wired_stores"]
+    assert "MENU" in out["note"] and "not an authorization" in out["note"]
+
+
+def test_the_surface_serves_it() -> None:
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    surface = OrquestraCatalogSurface(purchase_rpc_call=FakeRpc(_rows()))
+    names = [tool["name"] for tool in surface.list_tools()]
+    assert "list_stores" in names
+    out = surface.call_tool("list_stores", {"network": "mainnet"})
+    assert out["stores"] == [] and out["skipped_undecodable"] == 0
