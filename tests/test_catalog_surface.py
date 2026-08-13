@@ -50,6 +50,9 @@ def test_surface_lists_the_catalog_tools() -> None:
         # The pre-flight: it plans and verifies, and hands back UNSIGNED bytes. Its own
         # boundary is pinned in tests/test_prepare_purchase_tool.py.
         "prepare_purchase",
+        # The MENU: store names and prices read from each store's own account — never an
+        # authorization. Its own boundary is pinned in tests/test_store_directory.py.
+        "list_stores",
     ]
 
 
