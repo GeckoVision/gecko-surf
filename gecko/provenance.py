@@ -59,6 +59,7 @@ __all__ = [
     "ProgramProvenanceTier",
     "AccountProvenance",
     "ChainStatus",
+    "TokenDeltaBasis",
 ]
 
 # --- API surface ladder ---------------------------------------------------------
@@ -100,3 +101,24 @@ AccountProvenance = Literal["extracted", "recovered", "cross_surface", "flagged"
 # assignment: a consumer decides on ``status == "ordered"`` (a positive test), never on
 # truthiness and never on a ``!=`` denylist — every member is a non-empty, truthy string.
 ChainStatus = Literal["ordered", "unresolved", "not_evaluated"]
+
+# --- token-leg basis ----------------------------------------------------------------
+# WHERE a Receipt's token delta came from. A provenance answer, so it lives here with the
+# other ladders rather than in ``simulate`` beside the thing it describes.
+#
+# ``token-balances`` — the ``pre``/``postTokenBalances`` arrays. Per token ACCOUNT, and
+# they state the OWNER, so an outflow can be attributed to the fee payer directly. This is
+# the strong basis and it WINS whenever the arrays are present.
+#
+# ``instruction-trace`` — summed from ``jsonParsed`` top-level and inner instructions,
+# used ONLY where the arrays are absent and today's answer is therefore already a refusal.
+# STRICTLY WEAKER, and the weakness is specific rather than general: an instruction states
+# the AUTHORITY that signed the transfer, not the owner of the source account. The two
+# differ under delegation, so this basis cannot attribute by owner and refuses
+# (``authority-not-payer``) rather than filtering a movement it cannot attribute — a
+# filtered movement would sum to zero, and zero is an amount that passes every cap.
+#
+# DELIBERATELY NOT NAMED ``structural``: ``BindingStrength`` already uses that word for a
+# different property on the same Receipt, and two fields on one object meaning different
+# things by one string is how a reader draws the wrong conclusion from a correct value.
+TokenDeltaBasis = Literal["token-balances", "instruction-trace"]
