@@ -42,9 +42,9 @@
       }
     },
     "pda_origins": {
-      "receipts": "manual",
-      "sender_token_account": "manual",
-      "recipient_token_account": "manual"
+      "receipts": "extracted",
+      "sender_token_account": "recovered",
+      "recipient_token_account": "recovered"
     }
   }
 }

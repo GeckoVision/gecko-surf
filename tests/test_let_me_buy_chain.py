@@ -284,8 +284,10 @@ def test_the_shared_receipts_pda_is_the_link_between_the_steps() -> None:
     assert (link.produces, link.consumes) == ("make_purchase", "mark_as_delivered")
     assert link.account == "receipts"
     assert link.kind == "produces"  # a REAL data dependency, not mere ordering
-    # the link is only as strong as its weakest end — `manual` origin caps it here
-    assert link.provenance == "recovered"
+    # the link is only as strong as its weakest end. D1 lifted `receipts` to
+    # `extracted` (its pda block is the program's own on-chain IDL's word, and the same
+    # IDL lists it as account 0 of BOTH instructions), so the link rises with it.
+    assert link.provenance == "extracted"
     # and it really is present on both steps, at the head of each derive plan
     for step in plan.steps:
         assert step.derive_plan[0].account == "receipts"
@@ -412,7 +414,7 @@ def test_the_chain_renders_with_its_status_and_its_link() -> None:
     text = format_result(find_start("buy a beer", chain_verdicts={CHAIN: "AGREE"}))
     assert "lifecycle chain: sell_and_deliver [ORDERED] (agreement: AGREE)" in text
     assert (
-        "link: receipts [recovered] make_purchase --produces--> mark_as_delivered"
+        "link: receipts [extracted] make_purchase --produces--> mark_as_delivered"
         in text
     )
     assert "refuted by:" in text

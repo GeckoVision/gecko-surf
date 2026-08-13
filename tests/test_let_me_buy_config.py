@@ -282,3 +282,100 @@ def test_the_two_atas_are_a_pair_and_credit_different_owners() -> None:
         program.pdas["recipient_token_account"], {**bindings, "authority": store}
     )
     assert sender.address != recipient.address
+
+
+# -- D1: the origins lift, exactly as far as the evidence carries them ------------------
+#
+# On 2026-08-13 the program's on-chain IDL account
+# (`2nvFnEJA1HKueLpPaje8vR4tsU8rgRktx2dZhyjAfQZG`, owner = the program) was fetched and
+# its zlib payload found BYTE-IDENTICAL to the fixture below — so the fixture is no
+# longer only a third-party mirror; it is chain-corroborated as the artifact's own word,
+# and it declares a pda block for all three make_purchase PDAs.
+#
+# The lift is deliberately asymmetric:
+#   * `receipts` -> `extracted`: the seed rule is let_me_buy's OWN, declared in its own
+#     artifact. Uncontested.
+#   * the two ATAs -> `recovered`, NOT `extracted`: test_neither_ata_claims_the_program_
+#     declared_it holds the standing position that an SPL-standard ATA derivation is the
+#     ATA program's rule, not a fact of this artifact — a semantic ground that survives
+#     the mirror's corroboration. `recovered` is the same tier pumpfun's ATA recipes
+#     carry. Whether an IDL-declared ATA block should ever earn `extracted` is ESCALATED
+#     (a provenance-ladder semantics call), not absorbed here.
+#
+# The tier and the recipe are pinned TOGETHER: if either the packaged recipe or the
+# fixture drifts, the agreement test goes red, and the tier falls with it.
+
+_D1_INPUTS = {
+    "store_name": "jonasbar",
+    "signer": "HNUE5KKTcaT4BuG5zmXxTViKjwNaQTtNt2svumE1WCoi",
+    "authority": "8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
+    "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+}
+
+#: The REAL mainnet accounts these inputs must derive — chain-grounded, not self-referential:
+#: the receipts address is the live jonasbar store and the ATAs are the funded accounts
+#: that fifteen published transactions actually moved money through.
+_D1_MAINNET_ADDRESSES = {
+    "receipts": "H7BjEBtan8h1HXeM38fHNPN7WxQswDhF8PFwnTuQDt5V",
+    "sender_token_account": "5aZMVzBM39Cm2JRPmJ2DWFFUiVqzpGy6wxiavvPRu9hR",
+    "recipient_token_account": "FaK5981JTnAbraeKQTjptKAHiF74Zy4upg2hoBdLnGyY",
+}
+
+
+def test_lifted_origins_agree_with_the_idl_and_the_chain() -> None:
+    """Each `extracted` PDA derives the SAME address from the packaged recipe, from the
+    IDL's own pda block, and matches the real mainnet account. Three-way, so the tier
+    cannot survive a drift in either recipe."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from gecko.pda import derive_pda
+    from gecko.pda_extract import from_anchor_idl
+
+    idl = _json.loads(
+        (_Path(__file__).parent / "fixtures" / "let_me_buy_idl.json").read_text()
+    )
+    idl_nodes = from_anchor_idl(idl)
+    program = _let_me_buy()
+    expected_tiers = {
+        "receipts": "extracted",
+        "sender_token_account": "recovered",
+        "recipient_token_account": "recovered",
+    }
+    for name, tier in program.pda_origins.items():
+        assert tier == expected_tiers[name], (
+            f"{name}: the D1 lift must not silently regress (or silently widen)"
+        )
+        packaged = derive_pda(program.pdas[name], _D1_INPUTS).address
+        from_idl = derive_pda(idl_nodes[name], _D1_INPUTS).address
+        assert packaged == from_idl, (
+            f"{name}: the packaged recipe no longer derives what the program's own IDL "
+            f"derives — the `extracted` tier may not outlive the agreement"
+        )
+        assert packaged == _D1_MAINNET_ADDRESSES[name], (
+            f"{name}: the recipe no longer derives the live mainnet account"
+        )
+
+
+def test_every_lifted_origin_has_a_pda_block_in_the_idl() -> None:
+    """`extracted` claims the artifact's own word — so the artifact must actually carry
+    a pda block for that account. An origin without one may be at most `recovered`."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    idl = _json.loads(
+        (_Path(__file__).parent / "fixtures" / "let_me_buy_idl.json").read_text()
+    )
+    idl_pda_accounts = {
+        account["name"]
+        for instruction in idl["instructions"]
+        for account in instruction.get("accounts", ())
+        if "pda" in account
+    }
+    for name, tier in _let_me_buy().pda_origins.items():
+        if tier in ("extracted", "recovered"):
+            assert name in idl_pda_accounts, (
+                f"{name}: origin {tier!r} claims artifact/source derivation but the IDL "
+                "declares no pda block for it"
+            )
