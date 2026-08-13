@@ -197,9 +197,12 @@ def main(argv: list[str] | None = None) -> int:
     # merchant and the credited token account are all facts of the store's own account, so
     # every number below is that store's. A name nobody deployed, or a product that store
     # does not list, stops here — never silently on some other store's accounts.
+    # Through THIS script's one transport seam (`_rpc`), not a second import of the
+    # default: a run whose store came from a different transport than its blockhash and
+    # its simulation is a run nobody can falsify offline in one place.
     try:
         store = resolve_store(
-            args.store, rpc_url=args.rpc_url, rpc_call=default_rpc_call
+            args.store, rpc_url=args.rpc_url, rpc_call=_rpc
         ).accounts_for(args.product)
     except StoreResolutionError as exc:
         print(f"STOP: {exc}")

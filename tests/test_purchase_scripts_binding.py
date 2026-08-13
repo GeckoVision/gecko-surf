@@ -41,6 +41,7 @@ import pytest
 
 from gecko.landing import assemble_unsigned_tx
 from gecko.txbind import _B58
+from test_store_accounts import node_with
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,6 +102,24 @@ def _keypair_file(tmp_path: Path) -> tuple[Path, str]:
     path = tmp_path / "id.json"
     path.write_text(json.dumps(list(bytes(keypair))))
     return path, str(keypair.pubkey())
+
+
+def _store_rpc(*, err: Any = None) -> Callable[[str, str, Any], dict[str, Any]]:
+    """``_sim_rpc`` plus the one store account ``prepare_purchase`` now reads.
+
+    The script resolves ``--store`` from the chain instead of pasting three constants, so
+    its offline transport has to serve that account. Still injected, still no network: the
+    bytes come from the same IDL-shaped encoder the store-directory tests use.
+    """
+    simulate_call = _sim_rpc(err=err)
+    store = node_with("jonasbar")
+
+    def call(url: str, method: str, params: Any) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return store(url, method, params)
+        return simulate_call(url, method, params)
+
+    return call
 
 
 def _sim_rpc(*, err: Any = None) -> Callable[[str, str, Any], dict[str, Any]]:
@@ -173,7 +192,7 @@ def _prepare(
         prepare, "latest_blockhash", lambda *_a, **_k: (BLOCKHASH, 1_000)
     )
     monkeypatch.setattr(prepare, "priority_fee_microlamports", lambda *_a, **_k: 5_000)
-    monkeypatch.setattr(prepare, "_rpc", _sim_rpc())
+    monkeypatch.setattr(prepare, "_rpc", _store_rpc())
 
     return _run(
         prepare.main,
