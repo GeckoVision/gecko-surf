@@ -294,8 +294,15 @@ PRs it shares no data with. Move it forward.
   row semantics and ALT-resolved key derivability measured first.
 - **X7 · a fifth stale claim at `simulate.py:1157`** that STATE.md does not name. The known
   four: `:645-649` (the false cost claim), `:130`, `:314`, `spend_policy.py:111-114`.
-- **N1 · non-value drain.** Rent, fees and ATA creation are not value moved, so every cap reads
-  zero. Adopt a per-chain overhead budget and an ATA-creation allowlist.
+- **N1 · non-value drain — SCOPE CORRECTED 2026-08-13.** The original wording here was
+  MINE and is **false**: `sol_delta` is the fee payer's whole lamport change, so
+  `per_transaction_cap_lamports` already charges fees AND rent. Measured on mainnet — the
+  ATA-funding transfer `3t5u36XT…` shows −2,044,280 on the payer, of which **2,039,280 is
+  rent-exemption**, visible to the cap. The REAL gap is (a) overhead is not budgeted
+  APART from value, so one bucket covers a deliberate transfer and an incidental rent
+  payment identically, and (b) nothing controls WHICH addresses may have an ATA created
+  at the payer's expense. Scope N1 as those two, and check the existing measurement
+  before designing any new control.
 - **N2 · the `os-keychain` default profile has no backend.** Every real run must name a
   non-default today.
 - **D1 · `let_me_buy`'s on-chain IDL** → lift three `manual` origins to `extracted`. $0, pure
