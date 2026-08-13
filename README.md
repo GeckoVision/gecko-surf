@@ -170,23 +170,47 @@ simulation. That is the graph your agent traverses.
 Pegana × Birdeye × Jupiter joined on a declared entity; the agent plans across
 surfaces first-try. Try it: `gecko graph svg <spec>` renders any surface's call graph.
 
-**Solana programs — try the call before you make it**
+**Solana programs — buy a coffee on mainnet**
+
+Everything above is a $0 fork. This one is not: **real mainnet, real USDC, a real
+espresso.**
+
+[`let_me_buy`](https://letmebuy.app) is a storefront program on Solana. A merchant
+stands up a store and lists products priced in USDC; a buyer scans a QR code and pays.
+One account per store — `PDA(["receipts", store_name])` — holds the menu, the receipts,
+the running count and the merchant's authority.
 
 <p align="center">
-  <img src="docs/assets/onchain-receipt.gif" alt="A coding assistant builds a Pump.fun buy on its own and it reverts; Gecko's complete plan simulates to a passing receipt at $0" width="820">
+  <img src="docs/assets/coffee.gif" alt="An agent resolves a store name to its own on-chain accounts, predicts the compute cost, signs in an enclave, and settles a real 0.1 USDC espresso on Solana mainnet" width="820">
 </p>
 
-[MP4 version](docs/assets/onchain-receipt.mp4) — a coding assistant builds the
-call by itself and can only find out by trying. Same intent through Gecko: the complete
-plan, every account tagged with where it came from, simulated to a **passing receipt for
-$0** before anything is spent.
+[MP4 version](docs/assets/coffee.mp4) — one unedited take. The receipt says **24,956 CU**
+before anything is signed; the chain charges **24,956 CU**
+([`4X8dCyZU…`](https://solscan.io/tx/4X8dCyZUNJHrFjFQqaNDjaLsya7ZLJ7gvjhAE6Zv7JV6AgeiGtGt9F5iJykJswvUb6MgdBcH5D6ERvxrjCFsbk5e),
+slot 439046190). The key never leaves its enclave.
 
 ```bash
-uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program pumpfun --stdio
+uvx --from "gecko-surf[serve,solana]" gecko-orquestra --program let_me_buy --stdio
 ```
 
-Gecko recovers the seeds the IDL drops, plans the full instruction, Orquestra builds
-it, and the receipt says whether it lands — before any signature.
+**Two facts the IDL does not carry, and both break the call:**
+
+- `mark_as_delivered` declares its `receipts` seed as `store_name`, but that
+  instruction's own arguments are `_store_name` and `receipt_id`. The seed names an
+  argument that does not exist, so a deriver resolving seeds by argument name gets
+  nothing for the one seed that selects the store. Gecko binds by seed **value**.
+- In `make_purchase` the store's `authority` is writable but **not a signer**. The buyer
+  pays from `ATA(signer, mint)`; the store is credited at `ATA(authority, mint)` — same
+  mint, different owner. Derive both from one owner and you have built a purchase that
+  pays the buyer back. Gecko refuses that plan before a builder is ever asked.
+
+**The prediction tracks state, not a memorised constant.** Three purchases at this one
+storefront were charged 23,789 → 24,183 → 24,956 CU; the last two are the *same
+product*. Each sale appends a receipt to the store's account, so the program does more
+work — and the receipt predicted the new number each time it was asked.
+
+Gecko recovers what the surface drops, [Orquestra](https://orquestra.dev) builds the
+instruction, and the receipt says whether it lands — before any signature.
 
 ## Architecture
 
