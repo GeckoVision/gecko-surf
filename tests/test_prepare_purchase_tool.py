@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -460,6 +461,46 @@ def test_the_next_step_names_a_shape_rather_than_a_vendor() -> None:
 
     assert "tool" not in sign, "naming one signer's tool would be an integration"
     assert sign["signers_known_to_work"], "examples help; they must not be the contract"
+
+
+def test_each_signer_hint_says_how_to_ADD_it_not_just_that_it_exists() -> None:
+    """A caller with no signer mounted cannot act on "PayBox reaches Claude web".
+
+    That names a product, not a next move — so the loop stalls at the one step we do not
+    perform. Carrying the connector lets the agent say exactly what to add AT THE MOMENT a
+    signature is needed, instead of the user having to know in advance that two connectors
+    are involved.
+
+    This is the alternative to brokering the sign-in ourselves, which would mean holding an
+    access token that authorises spending from someone's wallet — a path to a key, which
+    this module's first line and the public docs both say does not exist. The friction is a
+    DISCOVERY problem and gets a discovery fix.
+    """
+    signers = _prepare()["next_step"]["do"][0]["signers_known_to_work"]
+
+    assert len(signers) >= 3
+    for signer in signers:
+        assert signer["connector"], f"{signer['name']} says nothing about how to add it"
+        assert signer["how_to_add"]
+        assert signer["reaches"]
+
+    paybox = next(s for s in signers if s["name"] == "PayBox")
+    assert paybox["connector"] == "https://api.paybox.sh/mcp"
+    # The one that reaches the surface our acceptance test names must say so plainly.
+    assert "Claude web" in paybox["reaches"]
+
+
+def test_no_signer_hint_asks_the_caller_to_hand_US_a_credential() -> None:
+    """The boundary, pinned where it would be easiest to erode.
+
+    Brokering a signer's OAuth would remove one connector from the user's setup and put a
+    spend-authorising token in our hands — the exact trade this whole path refuses. Nothing
+    in the hints may ask for a key, a token, or a sign-in TO US.
+    """
+    blob = json.dumps(_prepare()["next_step"]).lower()
+
+    for forbidden in ("api_key", "secret", "private key", "sign in to gecko"):
+        assert forbidden not in blob, f"the handoff asks for {forbidden!r}"
 
 
 def test_the_submit_target_is_the_node_that_was_actually_simulated_against() -> None:
