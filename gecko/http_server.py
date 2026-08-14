@@ -184,6 +184,20 @@ _INSTALL_HINT = (
 # The MCP transport returns/reads the session id in this header (mcp SDK constant).
 _MCP_SESSION_ID_HEADER = "mcp-session-id"
 
+#: Where the gate leaves the account id it resolved, for the tool call to pick up.
+#:
+#: THE ASGI SCOPE, DELIBERATELY — not a ContextVar and not a header. The scope is the one
+#: object that belongs to exactly this request and travels with it through the transport,
+#: so the value a tool reads was put there by the gate that verified THAT caller. A
+#: ContextVar would be per-task, and the streaming transports do not run one task per
+#: request; a header would be caller-controlled, which is the whole thing we are avoiding.
+#: Dotted like an ASGI extension key so it cannot collide with a framework key.
+#:
+#: The value is written ONLY by :class:`_GeckoKeyGateASGI`, only on the allow path, and
+#: unconditionally — a scope arriving with this key already set is overwritten, because it
+#: is trustworthy only by virtue of who wrote it. Absent ⇒ no gate ran ⇒ no account.
+ACCOUNT_SCOPE_KEY = "gecko.account"
+
 # --- the opaque install id a connecting client may echo (distinct-install count) ------
 # The onboard ping persists an opaque ``uuid4().hex`` at ``~/.gecko/install_id`` (see
 # ``onboard.read_or_create_install_id``). A connecting MCP client may echo that SAME id on
@@ -551,6 +565,11 @@ class _GeckoKeyGateASGI:
             return
         decision = self._gate.decide(_bearer_from_scope(scope))
         if decision.allowed:
+            # Hand the verified identity down with the request (see ACCOUNT_SCOPE_KEY).
+            # Written unconditionally: a value already in the scope is not evidence of
+            # anything, and quietly preferring it would be the same defect as trusting a
+            # caller-supplied buyer.
+            scope[ACCOUNT_SCOPE_KEY] = decision.account
             await self._inner(scope, receive, send)
             return
         # Denied: a clean 403 with the REASON only. The account/token never appears in
@@ -582,6 +601,58 @@ def _session_id_from_context(server: Any) -> str | None:
     except Exception:  # noqa: BLE001 - a non-mapping request object is simply no session
         return None
     return value if isinstance(value, str) else None
+
+
+def _account_from_context(server: Any) -> str | None:
+    """The account the GATE resolved for this request, or ``None`` when none did.
+
+    Same seam as ``_session_id_from_context``, different trust class, and the difference
+    is the point: a session id is a correlation key the client echoes, while this is an
+    identity assertion. It is read only from the request SCOPE — never from a header and
+    never from the tool's arguments — so the only thing that can put a value here is
+    :class:`_GeckoKeyGateASGI` after :func:`gecko.keyauth.authorize` said yes.
+
+    ``None`` on an ungated mount is correct and load-bearing: the public surface is
+    unauthenticated, so it has no account, and every call there stays in mode A (the
+    caller supplies the buyer). Absence must read as "nobody proved who they are", never
+    as "carry on without checking".
+    """
+    try:
+        ctx = server.request_context
+    except LookupError:
+        return None
+    request = getattr(ctx, "request", None)
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return None
+    value = scope.get(ACCOUNT_SCOPE_KEY)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _accepts_account(surface: Any) -> bool:
+    """Does this surface's ``call_tool`` take an ``account``?
+
+    Asked rather than assumed, because the duck-typed surfaces are a family: most have the
+    two-argument shape and passing ``account=`` to them would ``TypeError`` every call.
+
+    The match is BY NAME, so a catch-all ``**kwargs`` never counts — it would swallow the
+    identity in silence, which from outside looks identical to threading it. The kind
+    check on top of that rules out the one shape that is named right and still unusable: a
+    POSITIONAL-ONLY ``account``, which ``account=`` cannot fill.
+    """
+    import inspect
+
+    call = getattr(surface, "call_tool", None)
+    if call is None:
+        return False
+    try:
+        parameter = inspect.signature(call).parameters.get("account")
+    except (TypeError, ValueError):  # C-implemented or otherwise unintrospectable
+        return False
+    return parameter is not None and parameter.kind in (
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
 
 
 def _user_agent_from_context(server: Any) -> str | None:
@@ -743,6 +814,9 @@ def build_http_app(
         )
 
     server: Any = Server(server_name)
+    # Asked once, at build time: the answer is a property of the surface class, and
+    # inspecting a signature on every tool call would be per-request work for a constant.
+    surface_takes_account = _accepts_account(surface)
 
     @server.list_tools()
     async def _list_tools() -> list[Any]:
@@ -782,6 +856,13 @@ def build_http_app(
         try:
             if isinstance(surface, McpSurface):
                 result = surface.call_tool(name, args, session_id=session_id)
+            elif surface_takes_account:
+                # WHO is asking, from the gate that verified them — never from `args`.
+                # Without this the wallet binding is unreachable code: `account` stays
+                # None on every served call, so a bound buyer is never looked up.
+                result = surface.call_tool(
+                    name, args, account=_account_from_context(server)
+                )
             else:
                 result = surface.call_tool(name, args)
         except CallError as exc:
