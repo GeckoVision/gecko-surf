@@ -68,9 +68,7 @@ def _gate() -> KeyGate:
 
 def _bound() -> InMemoryWalletDirectory:
     directory = InMemoryWalletDirectory()
-    directory.bind(
-        WalletBinding(account_id=ACCOUNT, wallet_id=WALLET_ID, pubkey=BUYER)
-    )
+    directory.bind(WalletBinding(account_id=ACCOUNT, wallet_id=WALLET_ID, pubkey=BUYER))
     return directory
 
 
