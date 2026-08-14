@@ -7,11 +7,13 @@ code for the verified identity (Privy ``sub`` / verified email). The Gecko key i
 that identity; Privy is an invisible server detail.
 
 The wire calls sit behind the injected :class:`PrivyServerClient` Protocol, so the login
-endpoints are fully offline-falsifiable (Pattern B) with a fake client. The REAL HTTP impl is
-a **documented live-integration TODO**: Privy's server-side passwordless OTP endpoint/response
-shape is not yet verified against a live tenant. Until the founder confirms it,
-:class:`HttpPrivyServerClient` fails CLOSED (raises) so a misconfigured deploy never
-half-authenticates.
+endpoints are fully offline-falsifiable (Pattern B) with a fake client. The REAL HTTP impl
+(:class:`HttpPrivyServerClient`) is IMPLEMENTED and makes live calls; the passwordless
+endpoint/response shape was verified empirically against a live tenant. What gates a
+misconfigured deploy is not that client refusing — it is
+:func:`gecko.authlogin.build_login_service_from_env` returning ``None`` unless BOTH the
+Privy app id and the key registry are configured, which leaves ``/auth/login/*`` at a clean
+503 rather than half-working.
 
 Security: ``PRIVY_APP_SECRET`` is read server-side only (never shipped in a client ``.env``);
 a code, secret, or identity token is never logged, echoed, or placed in an error.
@@ -126,20 +128,29 @@ class PrivyServerClient(Protocol):
 
 @dataclass(frozen=True)
 class HttpPrivyServerClient:
-    """REAL server-side Privy OTP client — **LIVE-INTEGRATION TODO** (unverified wire shape).
+    """REAL server-side Privy OTP client — IMPLEMENTED and making live calls.
 
-    Intended contract (to confirm against a live Privy tenant, then implement):
+    The contract, verified empirically against a live tenant (see ``_INIT_PATH`` /
+    ``_AUTH_PATH`` above):
 
-      * auth: ``Authorization: Basic base64(app_id:app_secret)`` + ``privy-app-id`` header —
-        ``app_secret`` is read server-side ONLY (never a shipped client).
-      * start:  ``POST {base}/api/v1/passwordless/init`` ``{email}`` → an id to correlate.
-      * verify: ``POST {base}/api/v1/passwordless/authenticate`` ``{email, code, ...}`` →
-        ``{user: {id: "did:privy:…"}, ...}`` — the ``id`` is :attr:`PrivyIdentity.subject`.
+      * auth: the ``privy-app-id`` header carrying the PUBLIC app id — the same header the
+        browser SDK sends. ``app_secret`` is held for other server APIs (wallets/users) and
+        is deliberately NOT sent on these two calls.
+      * start:  ``POST {base}/api/v1/passwordless/init`` ``{email}`` → ``200 {"success": true}``.
+      * verify: ``POST {base}/api/v1/passwordless/authenticate`` ``{email, code}`` →
+        ``200 {user: {id: "did:privy:…"}, …}``; ``422 invalid_credentials`` on a bad code.
 
-    Until that shape is verified (Pattern B: the offline path ships first), every method fails
-    CLOSED so a deploy with this client wired can never half-authenticate. Swap in the real
-    urllib calls (reuse the SSRF-guarded ``login._default_post`` + a Basic-auth header) once the
-    founder's live smoke confirms the endpoints.
+    THIS DOCSTRING USED TO SAY EVERY METHOD FAILED CLOSED, and that stopped being true when
+    the methods below were implemented. It is corrected rather than trimmed because the
+    difference is security-relevant: a reader was being told a misconfigured deploy could
+    never half-authenticate by a class that in fact calls a live identity provider. What
+    still holds is narrower and is enforced elsewhere — the endpoints are disabled (503)
+    unless BOTH ``PRIVY_APP_ID`` and the key registry are configured
+    (:func:`gecko.authlogin.build_login_service_from_env`), and every non-2xx here raises
+    rather than returning a partial identity.
+
+    Offline-falsifiable regardless: the transport is the injected :attr:`post` seam, so the
+    login path is exercised end to end with a fake and no network (Pattern B).
     """
 
     app_id: str
