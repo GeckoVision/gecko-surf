@@ -53,6 +53,10 @@ def test_surface_lists_the_catalog_tools() -> None:
         # The MENU: store names and prices read from each store's own account — never an
         # authorization. Its own boundary is pinned in tests/test_store_directory.py.
         "list_stores",
+        # The OTHER half of the handoff: prepare_purchase hands out bytes and a binding,
+        # somebody else signs, and this proves the signed bytes are the checked ones
+        # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.
+        "verify_signed_transaction",
     ]
 
 
