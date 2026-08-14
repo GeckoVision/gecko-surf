@@ -647,8 +647,11 @@ def _prepare(
             "blockhash": blockhash,
             "last_valid_block_height": last_valid_block_height,
             "note": (
-                "these bytes stop being landable after that block height (~1 minute), "
-                "and the receipt expires with them"
+                "these bytes stop being landable after that block height — about 40 "
+                "seconds, not the full minute the 150-slot budget suggests, because the "
+                "blockhash is read at `finalized` commitment and is already ~30 slots "
+                "behind when you receive it. The receipt expires with them; re-running "
+                "is free, so prepare immediately before signing"
             ),
         },
         "what_this_proves": _WHAT_IT_PROVES,
@@ -778,11 +781,22 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "the exact bytes it returns so the receipt binds them exactly. Returns the "
         "receipt (status, compute units, revert class), the binding, the resolved "
         "accounts with each one's role, and the transaction; a simulation that fails "
-        "returns the refusal and NO transaction. HONEST LIMITS: the receipt is "
-        "state-specific and EXPIRES with its blockhash (~1 minute — re-run, it is free), "
-        "and a passing receipt is not a promise the transaction is what you wanted. It "
-        "says only that these bytes are WELL-FORMED and would land against the state "
-        "observed at that slot. Read the account plan before you sign."
+        "returns the refusal and NO transaction. "
+        "WHEN TO CALL THIS: **after** the buyer has chosen, immediately before signing — "
+        "never while they are still deciding. The bytes it returns carry a live blockhash "
+        "and stop being landable roughly 40 seconds later, so preparing several products "
+        "to compare them, or preparing before a human approves, spends the whole window on "
+        "transactions nobody signs. Browse with `list_stores` instead: it costs nothing, "
+        "expires never, and carries every price. Re-running this is free, so prepare LATE "
+        "rather than early. ONE PRODUCT PER CALL: the program takes a single product name "
+        "and no quantity, so several items means several purchases, each with its own "
+        "receipt and its own signature. "
+        "HONEST LIMITS: the receipt is state-specific and EXPIRES with its blockhash "
+        "(~40 seconds, not the full minute the slot budget suggests — the blockhash is "
+        "read at `finalized`, which is already ~30 slots behind), and a passing receipt is "
+        "not a promise the transaction is what you wanted. It says only that these bytes "
+        "are WELL-FORMED and would land against the state observed at that slot. Read the "
+        "account plan before you sign."
     ),
     "inputSchema": {
         "type": "object",

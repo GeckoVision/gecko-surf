@@ -312,7 +312,13 @@ LIST_STORES_TOOL: dict[str, Any] = {
         "filter by product ('water' finds 'Water' and 'Sparkling water'). This is a MENU, "
         "not an authorization: the directory reports what the accounts say, accounts "
         "that do not decode are counted rather than guessed at, and a purchase still "
-        "verifies everything before anything signs. Read-only; nothing here holds a key."
+        "verifies everything before anything signs. "
+        "BROWSE HERE, NOT WITH `prepare_purchase`. This costs nothing and expires never, "
+        "so show these prices, let the buyer choose, and only then call "
+        "`prepare_purchase` — which starts a ~40-second clock on a live blockhash. Each "
+        "product carries `price_ui` for display and `price_raw` + `decimals` + `mint` for "
+        "anything else; a store may price in a mint that is not USDC, so read the mint "
+        "rather than assuming one. Read-only; nothing here holds a key."
     ),
     "inputSchema": {
         "type": "object",
