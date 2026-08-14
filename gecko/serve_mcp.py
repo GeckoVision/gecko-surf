@@ -54,7 +54,7 @@ from .mcp_server import McpSurface
 from .providers.catalog_surface import OrquestraCatalogSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
-from .registry.wiring import build_keystore_from_env
+from .registry.wiring import build_keystore_from_env, build_wallet_directory_from_env
 
 logger = logging.getLogger("gecko.serve_mcp")
 
@@ -201,6 +201,57 @@ def assert_paid_surfaces_are_gated(
     )
     logger.critical("%s", message)
     raise GateStanceError(message)
+
+
+#: The wallet-aware storefront — mode B's door, and deliberately NOT the public
+#: ``orquestra`` mount. That one is keyless and stays keyless: it is the funnel, and the
+#: bytes it hands back are for somebody else's wallet to sign, so the caller naming the
+#: buyer is correct there.
+STORE_SURFACE = "store"
+
+
+def wallet_aware_store_surface(
+    gated: Iterable[str] | None,
+    *,
+    wallets: Any = None,
+    require_key: bool | None = None,
+) -> tuple[str, Any] | None:
+    """The mode-B storefront mount, or ``None`` — built ONLY when it will be gated.
+
+    Three conditions, all required: a wallet directory exists to look bindings up in, the
+    gate STANCE is on (``GECKO_REQUIRE_KEY``), and this name is in the gate's SCOPE
+    (``GECKO_GATED_SURFACES``; ``None`` there means every mount, which counts).
+
+    Not a guard after the fact — an absence. Serving this surface ungated would move
+    nobody's money (no gate ⇒ no account ⇒ mode A, the same as the public mount), and would
+    do something quieter and worse: ``prepare_purchase``'s tool description would tell
+    every agent *"if your account has a wallet bound, omit the buyer"* on a mount where an
+    account cannot exist. A false sentence in a tool description is the exact failure this
+    engine exists to prevent, so there is no configuration in which this mount exists and
+    is open.
+
+    Name matching folds case, like the gate's own — a casing slip in the env var has
+    already left a paid mount open once, and folding can only ever close more doors.
+    """
+    if wallets is None or not resolve_require_gecko_key(require_key):
+        return None
+    if gated is not None and STORE_SURFACE not in {n.casefold() for n in gated}:
+        logger.warning(
+            "wallet directory configured but %r is not in the gate scope — the "
+            "mode-B storefront is NOT served (it would advertise a binding no caller "
+            "could ever have)",
+            STORE_SURFACE,
+        )
+        return None
+    return (
+        STORE_SURFACE,
+        OrquestraCatalogSurface(
+            wallets=wallets,
+            # 0 for the same reason the public mount uses 0: a call here is authenticated,
+            # which still does not make a partner's API ours to spend against.
+            find_start_pages=0,
+        ),
+    )
 
 
 ORQUESTRA_CATALOG_PAGES_ENV = "GECKO_ORQUESTRA_CATALOG_PAGES"
@@ -463,6 +514,16 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     # carries it), so this MCP never triggers a live payment.
     paysh_registry, paysh_surface = _build_paysh_surface()
     surfaces = surfaces + [("paysh", paysh_surface)]
+
+    # Mode B's door, appended only when it will be gated (see wallet_aware_store_surface).
+    # After `_registry_store` on purpose: the registry plane distributes OpenAPI specs and
+    # this surface has none — the same reason pay.sh is appended here rather than above.
+    store_mount = wallet_aware_store_surface(
+        gated, wallets=build_wallet_directory_from_env()
+    )
+    if store_mount is not None:
+        logger.info("serving the wallet-aware storefront at /%s (gated)", STORE_SURFACE)
+        surfaces = surfaces + [store_mount]
 
     # Hourly self-refresh drift-watch: Tier-1 sha-diff refresh + Tier-2 challenge-only
     # 402 re-probe, mutating the registry in place so /paysh/mcp reflects the fresh state.
