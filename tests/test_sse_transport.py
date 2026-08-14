@@ -180,6 +180,95 @@ def test_a_zero_cap_lets_everything_through() -> None:
     assert all(http_server._sse_try_acquire(live, "1.2.3.4", 0) for _ in range(50))
 
 
+TOKEN = "a-valid-gecko-key"
+ACCOUNT = "did:privy:sse-dev"
+
+
+class _OneAccount:
+    def is_enabled(self, account: str) -> bool:
+        return account == ACCOUNT
+
+
+def _gate() -> Any:
+    from gecko.keyauth import KeyGate
+
+    return KeyGate(
+        resolve_account=lambda token: ACCOUNT if token == TOKEN else None,
+        allowlist=_OneAccount(),
+    )
+
+
+def _gated_app() -> Any:
+    from gecko.client import AgentApiClient
+    from gecko.ingest import load_spec
+
+    spec = load_spec("gecko/examples/jupiter_swap_openapi.json")
+    return http_server.build_http_app(AgentApiClient(spec), gate=_gate())
+
+
+def test_a_valid_key_still_reaches_the_stream_door(monkeypatch: Any) -> None:
+    """Gating a door must not change WHAT is behind it.
+
+    `_handle_sse` is a Starlette endpoint — `f(request)`. A Route only wraps an endpoint
+    in `request_response` when it IS a function, so handing the Route a gate INSTANCE
+    makes the whole route a raw ASGI app, and the gate then calls
+    `_handle_sse(scope, receive, send)`: every AUTHORIZED stream dies with a TypeError
+    while every unauthorized one still gets its tidy 403. A test that only asserts the
+    wrapper is present passes in exactly that state — refusal never reaches the inner app,
+    so the broken half is the half no assertion touches.
+    """
+    # Refuse the slot so the handler answers 429 at once; a real stream never returns.
+    monkeypatch.setattr(http_server, "_sse_try_acquire", lambda *_a, **_kw: False)
+    from starlette.testclient import TestClient
+
+    client = TestClient(_gated_app())
+
+    assert client.get("/sse").status_code == 403
+    assert (
+        client.get("/sse", headers={"Authorization": f"Bearer {TOKEN}"}).status_code
+        == 429
+    )
+
+
+def test_a_valid_key_still_reaches_the_message_door() -> None:
+    """The other half of the pair, asserted the same way: a key that passes the gate must
+    land on the transport's own handler. `Invalid session ID` IS the pass — it is the
+    transport talking, which a refusal or a wrapper mismatch would never let happen."""
+    from starlette.testclient import TestClient
+
+    response = TestClient(_gated_app()).post(
+        "/messages/?session_id=deadbeef",
+        json={},
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert response.status_code == 400
+    assert "session" in response.text.lower()
+
+
+def test_gating_the_stream_door_does_not_widen_which_methods_it_answers(
+    monkeypatch: Any,
+) -> None:
+    """Ungated, the Route infers `methods=["GET"]` from the function; gated, it infers
+    nothing and answers every verb. Same door, two method sets, decided by whether a key
+    is required — so the gated deployment is the one with the extra surface.
+
+    The slot refusal is what keeps this test finite: without it, a POST that wrongly
+    reaches the handler OPENS A STREAM and the run hangs instead of failing — a guard that
+    can only hang is not a guard.
+    """
+    monkeypatch.setattr(http_server, "_sse_try_acquire", lambda *_a, **_kw: False)
+    from starlette.testclient import TestClient
+
+    plain = TestClient(_app()).post("/sse")
+    gated = TestClient(_gated_app()).post(
+        "/sse", headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+
+    assert plain.status_code == 405
+    assert gated.status_code == 405
+
+
 def test_both_sse_doors_are_gated_when_a_gate_is_wired() -> None:
     """SSE is TWO endpoints, so gating one of them gates nothing.
 
