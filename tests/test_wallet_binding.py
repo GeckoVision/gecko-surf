@@ -213,12 +213,10 @@ def test_a_directory_that_cannot_answer_refuses_rather_than_degrading() -> None:
 
 def test_the_unbound_schema_requires_a_buyer_and_the_bound_one_does_not() -> None:
     unbound = prepare_purchase_tool(buyer_bound=False)
-    assert unbound["inputSchema"]["required"] == [
-        "store",
-        "product",
-        "buyer",
-        "network",
-    ]
+    # `network` left the required list when it gained a default (omitted + no rpc_url
+    # means mainnet); naming a NODE without a chain still refuses. The pair under test
+    # here is `buyer`, which is what the binding removes.
+    assert unbound["inputSchema"]["required"] == ["store", "product", "buyer"]
 
     bound = prepare_purchase_tool(buyer_bound=True)
     assert "buyer" not in bound["inputSchema"]["required"]
@@ -232,7 +230,7 @@ def test_the_unbound_schema_requires_a_buyer_and_the_bound_one_does_not() -> Non
 def test_the_surface_serves_the_bound_schema_only_when_a_directory_is_wired() -> None:
     plain = OrquestraCatalogSurface()
     tool = next(t for t in plain.list_tools() if t["name"] == "prepare_purchase")
-    assert tool["inputSchema"]["required"] == ["store", "product", "buyer", "network"]
+    assert tool["inputSchema"]["required"] == ["store", "product", "buyer"]
 
     hosted = OrquestraCatalogSurface(wallets=_bound())
     tool = next(t for t in hosted.list_tools() if t["name"] == "prepare_purchase")

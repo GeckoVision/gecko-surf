@@ -412,7 +412,10 @@ def test_the_surface_dispatches_prepare_purchase() -> None:
     described = tool["description"].lower()
     for claim in ("unsigned", "you sign", "expires", "well-formed"):
         assert claim in described, claim
-    assert tool["inputSchema"]["required"] == ["store", "product", "buyer", "network"]
+    # `network` is no longer required: omitted with no rpc_url it means mainnet, and a
+    # person buying coffee should not have to name a chain. Naming a NODE still requires
+    # naming the chain — see test_supplying_an_rpc_url_without_a_network_still_refuses.
+    assert tool["inputSchema"]["required"] == ["store", "product", "buyer"]
 
     out = surface.call_tool(
         "prepare_purchase",
@@ -695,3 +698,52 @@ def test_the_expiry_note_and_the_description_agree_on_the_number() -> None:
 
     assert "40" in out["expires"]["note"]
     assert "40" in PREPARE_PURCHASE_TOOL["description"]
+
+
+# --- the network a coffee buyer should not have to name ----------------------
+# `network` had no default so nothing could infer mainnet from an RPC URL — a fork proxy
+# answers at any hostname. That guard is aimed at a DEVELOPER testing against a fork, and
+# it was being charged to a person saying "buy a coffee". The dangerous confusion is a fork
+# MISTAKEN FOR mainnet, and defaulting to mainnet cannot cause that.
+
+
+def test_a_plain_purchase_needs_no_network() -> None:
+    """The chat case: somebody says "buy a coffee at geckocoffee, table 11" and means the
+    real chain. Nothing else they said could mean anything else."""
+    out = _prepare(_drop_network=True, rpc_url=None)
+
+    assert out.get("refused") is not True, out
+    assert out["network"] == "mainnet"
+
+
+def test_supplying_an_rpc_url_without_a_network_still_refuses() -> None:
+    """The guard keeps its teeth exactly where it earned them. A caller who names a NODE
+    is the fork case — that hostname proves nothing about which chain answers, so the
+    network has to be said out loud."""
+    out = _prepare(_drop_network=True)  # the helper supplies RPC_URL
+
+    assert out["refused"] is True
+    assert out["code"] == "network-not-asserted"
+    assert "rpc_url" in out["reason"]
+
+
+def test_an_explicit_network_is_still_honoured() -> None:
+    assert _prepare(network="mainnet")["network"] == "mainnet"
+
+
+def test_the_tool_says_where_to_GET_a_signer_before_it_is_called() -> None:
+    """The discovery-timing hole a real model found.
+
+    `signers_known_to_work` lives in the RESULT, so an agent only learns a signer connector
+    exists AFTER preparing — which is after the ~40-second clock starts. It would then send
+    the buyer off to add a connector while the bytes died. The options have to be readable
+    BEFORE the call, which means the description.
+    """
+    from gecko.prepare_purchase import PREPARE_PURCHASE_TOOL
+
+    described = PREPARE_PURCHASE_TOOL["description"]
+
+    assert "api.paybox.sh/mcp" in described
+    # …and in the order a first-time buyer needs: connect, THEN fund, THEN buy.
+    assert "fund" in described.lower()
+    assert "before" in described.lower()

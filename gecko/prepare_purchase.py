@@ -409,17 +409,30 @@ def prepare_purchase_result(
     """
     args = arguments or {}
 
-    # 1. THE NETWORK, asserted. Before any transport, so a caller who never said cannot
-    #    make this machine fetch anything.
+    # 1. THE NETWORK. Required only when it is genuinely ambiguous.
+    #
+    #    This used to have no default at all, so that nothing could infer mainnet from an
+    #    RPC URL — a fork proxy answers at any hostname. The guard is right; it was aimed
+    #    at the wrong person. It was being charged to somebody saying "buy a coffee", who
+    #    cannot mean anything except the real chain.
+    #
+    #    THE DANGEROUS CONFUSION IS A FORK MISTAKEN FOR MAINNET, and defaulting to mainnet
+    #    cannot cause that. So: name a NODE and you must name the chain it speaks for
+    #    (that is the fork case, and the hostname proves nothing); name neither and you get
+    #    mainnet against its public endpoint, which is the only thing the words could mean.
     network = coerce_network(args.get("network"))
     if network == UNKNOWN_NETWORK:
-        return _refuse(
-            "network-not-asserted",
-            "say which network this is for: mainnet, devnet, testnet or fork. Nothing "
-            "here infers it — a fork proxy answers at any hostname, so an RPC URL is "
-            "evidence of nothing, and 'unknown' approves nothing.",
-            network=UNKNOWN_NETWORK,
-        )
+        supplied_url = args.get("rpc_url")
+        if isinstance(supplied_url, str) and supplied_url.strip():
+            return _refuse(
+                "network-not-asserted",
+                "you named an `rpc_url` but not a `network`. Which chain that node "
+                "answers for cannot be read from its hostname — a fork proxy answers at "
+                "any address — so say mainnet, devnet, testnet or fork. Omit BOTH and "
+                "mainnet is assumed.",
+                network=UNKNOWN_NETWORK,
+            )
+        network = coerce_network("mainnet")
 
     store_name = args.get("store")
     if not isinstance(store_name, str) or not store_name.strip():
@@ -806,6 +819,15 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "receipt (status, compute units, revert class), the binding, the resolved "
         "accounts with each one's role, and the transaction; a simulation that fails "
         "returns the refusal and NO transaction. "
+        "YOU NEED A SIGNER BEFORE YOU NEED THIS TOOL, and in this order: (1) add a signer "
+        "connector — PayBox at `https://api.paybox.sh/mcp` reaches Claude web, ChatGPT, "
+        "Gemini and Grok (Settings -> Connectors -> add a custom connector, then Connect; "
+        "no API key to copy); on a desktop client `npx @phantom/mcp-server` or Privy's "
+        "agent-wallet CLI work too; (2) ask it for the wallet address; (3) FUND that "
+        "address with the price plus a little SOL for the fee; (4) only then call this. "
+        "Said here rather than only in the result because the result arrives AFTER the "
+        "~40-second clock has started — a buyer sent off to install something at that "
+        "point is holding bytes that die while they read the instructions. "
         "WHEN TO CALL THIS: **after** the buyer has chosen, immediately before signing — "
         "never while they are still deciding. The bytes it returns carry a live blockhash "
         "and stop being landable roughly 40 seconds later, so preparing several products "
@@ -857,7 +879,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                 ),
             },
         },
-        "required": ["store", "product", "buyer", "network"],
+        "required": ["store", "product", "buyer"],
         "additionalProperties": False,
     },
 }
