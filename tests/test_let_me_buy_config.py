@@ -396,3 +396,44 @@ def test_every_lifted_origin_has_a_pda_block_in_the_idl() -> None:
                 f"{name}: origin {tier!r} claims artifact/source derivation but the IDL "
                 "declares no pda block for it"
             )
+
+
+def test_the_notes_do_not_claim_an_authority_check_make_purchase_does_not_have() -> (
+    None
+):
+    """A `manual`-tier note said the program validates the merchant. It does not.
+
+    `require!(*authority.key == receipts.authority, InvalidAuthority)` guards add_product,
+    update_details, update_telegram_channel, delete_product and delete_store — and is
+    ABSENT from make_purchase, whose payee ATA is derived from a caller-supplied key.
+    Mainnet `3YDcon1k…` is a make_purchase with source == destination and identical
+    pre/post token balances that still returned success and emitted PurchaseMade.
+
+    The claim mattered because it is the reason a reader might think the CHAIN protects
+    the merchant, when in fact `check_plan_accounts` protects them and the chain does not.
+    A wrong note at the manual tier is exactly what that tier exists to admit.
+    """
+    notes = _let_me_buy().notes
+
+    assert "IT DOES NOT" in notes
+    assert "ABSENT from make_purchase" in notes
+    # And it must not read as a bare assertion — the source it was checked against is named.
+    assert "Woody4618/bar" in notes
+
+
+def test_the_notes_state_the_20_receipt_cap_and_the_silent_eviction() -> None:
+    """The single most load-bearing behavioural fact about this program, and the config
+    did not mention it at all.
+
+    At 20 receipts `make_purchase` does `receipts.remove(0)` — no error, no event, no log.
+    jonasbar has 125 purchases and holds 20. It is also what makes compute BOUNDED rather
+    than growing, which is the opposite of what the CU series suggests at first glance.
+    """
+    notes = _let_me_buy().notes
+
+    assert "CAPPED AT 20" in notes
+    assert "SILENTLY EVICTED" in notes
+    # The consequence a fulfiller has to know, not just the mechanism.
+    assert "mark_as_delivered" in notes and "SUCCEEDS AND DOES NOTHING" in notes
+    # And that the compute story is bounded, so nobody re-derives the wrong conclusion.
+    assert "BOUNDED, not growing" in notes
