@@ -1,6 +1,6 @@
 """Every let_me_buy storefront on a network, read from the chain — never from a wired list.
 
-``prepare_purchase`` refuses a store outside its wired list, and its refusal states the
+``prepare_purchase`` re-reads the single store it is asked for, and its refusal states the
 reason exactly: the store's authority and mint live INSIDE the store's account, and a
 keyless path that reads no chain state can only guess them. This module is the read that
 refusal asks for: enumerate the program's accounts (``getProgramAccounts`` already filters
@@ -8,12 +8,12 @@ by owner, so every row IS owned by let_me_buy), decode each one against the layo
 program's own IDL declares, and hand back names, products and prices.
 
 WHAT IS TRUSTED, STATED ONCE. The account CONTENTS come from one unauthenticated node —
-the same trust position as ``prepare_purchase``'s simulation, and strictly weaker than the
-wired list. That is acceptable here for one reason: this module's output is a MENU, not an
-authorization. Nothing downstream may treat a listed authority as verified; a purchase
-still goes through the whole loop (plan refusal, simulate, binding, spend policy) before
-anything signs, and the wired path remains the strong one. The docstring of every consumer
-should say which of the two it reads.
+the same trust position as ``prepare_purchase``'s simulation. That is acceptable for one
+reason: this module's output is a MENU, not an authorization. Nothing downstream may treat
+a listed authority as verified. A purchase does not act on this list at all: it names one
+store, ``resolve_store`` re-reads THAT store's own account, and the whole loop (plan
+refusal, simulate, binding, spend policy) runs before anything signs. So a poisoned or
+stale menu can mislead a reader about what exists; it cannot decide who gets paid.
 
 WHAT IS NOT TRUSTED. Every byte is treated as hostile transport output: the Borsh cursor
 is bounds-checked, string lengths are capped, account and product counts are capped, and an
@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .networks import UNKNOWN_NETWORK, coerce_network
-from .prepare_purchase import USDC_MINT, WIRED_STORES, _resolve_rpc_url
+from .prepare_purchase import USDC_MINT, _resolve_rpc_url
 from .rpc import RpcCall, RpcError, default_rpc_call
 
 __all__ = [
@@ -264,9 +264,9 @@ def list_stores(
         "note": (
             "a MENU read from one node's view of the chain, not an authorization: the "
             "authorities listed here are what the store accounts SAY, and a purchase "
-            "still verifies everything before anything signs. Only wired stores are "
-            "buyable through prepare_purchase; the rest are reachable via their own "
-            "account plan."
+            "still verifies everything before anything signs. Every store here is "
+            "buyable through prepare_purchase, which re-reads the one you name from its "
+            "own account rather than trusting this list."
         ),
     }
 
@@ -301,7 +301,6 @@ def list_stores_result(
         # The failure class only — an RPC error body is untrusted transport output.
         return {"error": f"RpcError: {exc}"}
     out["network"] = network
-    out["wired_stores"] = sorted(WIRED_STORES)
     return out
 
 

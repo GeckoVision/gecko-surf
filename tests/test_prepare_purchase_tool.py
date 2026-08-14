@@ -116,14 +116,47 @@ class FakeBuilder:
 
 @dataclass
 class FakeRpc:
-    """A replaying transport that records every method it was asked for."""
+    """A replaying transport that records every method it was asked for.
+
+    It also serves ONE storefront, because the tool now reads the merchant and the mint
+    from the store's own account rather than a hardcoded table. `account=None` is a node
+    that has no such account — the "no store by that name" case, which must refuse.
+    """
 
     err: Any | None = None
     units: int = 42_494
     calls: list[str] = field(default_factory=list)
+    #: Set lazily in __post_init__ so the default is jonasbar/Water, the store every
+    #: pre-existing test in this file buys from.
+    account: bytes | None = None
+    owner: str = PROGRAM
+    serve_store: bool = True
+    reads: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.account is None and self.serve_store:
+            from tests.test_store_directory import encode_store
+
+            self.account = encode_store(
+                "jonasbar",
+                products=[("Water", 100_000, 6)],
+                authority=STORE_AUTHORITY,
+            )
 
     def __call__(self, url: str, method: str, params: list[Any]) -> dict[str, Any]:
         self.calls.append(method)
+        if method == "getAccountInfo":
+            self.reads.append(str(params[0]))
+            if self.account is None:
+                return {"result": {"value": None}}
+            return {
+                "result": {
+                    "value": {
+                        "owner": self.owner,
+                        "data": [base64.b64encode(self.account).decode(), "base64"],
+                    }
+                }
+            }
         if method == "getLatestBlockhash":
             return {
                 "result": {
@@ -220,7 +253,9 @@ def test_a_clean_prepare_returns_an_unsigned_transaction_bound_exactly() -> None
     assert all(entry["role"] for entry in out["accounts"])
 
     assert builder.calls and builder.calls[0]["accounts"]["signer"] == BUYER
-    assert rpc.calls == ["getLatestBlockhash", "simulateTransaction"]
+    # The storefront is READ FIRST — before a blockhash is fetched and before anything is
+    # simulated — so a store that cannot be resolved costs neither.
+    assert rpc.calls == ["getAccountInfo", "getLatestBlockhash", "simulateTransaction"]
 
 
 def test_the_result_carries_no_payloads_and_nothing_is_persisted() -> None:
@@ -246,7 +281,9 @@ def test_a_self_paying_purchase_is_refused_before_the_builder_is_asked() -> None
     assert "same-token-account" in out["reason"]
     assert "transaction" not in out
     assert builder.calls == [], "the plan reached the builder"
-    assert rpc.calls == [], "the plan reached the network"
+    # The store read is the ONE call a refused plan may have made: the merchant has to be
+    # known before the plan can be judged wrong. Nothing was built and nothing simulated.
+    assert rpc.calls == ["getAccountInfo"], "the plan reached the network"
 
 
 # --- 3. a receipt that did not pass ---------------------------------------------
@@ -280,11 +317,22 @@ def test_a_missing_or_unknown_network_refuses_before_any_transport() -> None:
 
 
 def test_an_unknown_store_refuses_rather_than_guessing_its_authority() -> None:
-    builder, rpc = FakeBuilder(), FakeRpc()
+    """The node answers, and what it answers with is not the store that was asked for.
+
+    The address was DERIVED from the name, so an account that calls itself something else
+    means the node returned something other than what was requested. Believed, it would
+    build a purchase paying a merchant the caller never named — so it refuses, having
+    spent one read and built nothing.
+    """
+    builder, rpc = (
+        FakeBuilder(),
+        FakeRpc(),
+    )  # the fake serves `jonasbar` for any address
     out = _prepare(builder, rpc, store="a-store-nobody-wired")
     assert out["refused"] is True
     assert out["code"] == "store-unknown"
-    assert builder.calls == [] and rpc.calls == []
+    assert builder.calls == []
+    assert rpc.calls == ["getAccountInfo"]
 
 
 def test_a_buyer_that_is_not_a_pubkey_refuses() -> None:
@@ -440,3 +488,130 @@ def test_a_refusal_carries_no_next_step() -> None:
     assert out["refused"] is True
     assert "next_step" not in out
     assert "submit" not in out
+
+
+# --- ANY store, read from its own account ------------------------------------
+# The tool used to look the merchant up in a hardcoded dict, so exactly ONE storefront on
+# letmebuy.app was reachable through chat. The authority and the mint are written INSIDE
+# the store's account, so the fix is one targeted read — never a guess, and never a
+# fallback to a store the caller did not name.
+#
+# The encoder is imported from tests/test_store_directory.py rather than rewritten: a
+# second copy of the layout is how a test starts passing against bytes the program would
+# never produce.
+
+from tests.test_store_directory import encode_store  # noqa: E402
+
+GECKOCOFFEE_RECEIPTS = "5YMkXAYccHSGnHn9nob9xEvv6Pvka9DZWH7nTbotTu9E"
+LET_ME_BUY = PROGRAM
+
+
+#: A merchant that appears NOWHERE in our source — deliberately not `STORE_AUTHORITY`, so
+#: a plan that fell back to the old hardcoded store would show it and fail.
+OTHER_MERCHANT = "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy"
+
+
+def test_a_store_we_never_hardcoded_can_be_bought_from() -> None:
+    """The ceiling this removes: one storefront was reachable, and letmebuy.app has many.
+
+    The merchant asserted here is one we ship nowhere, so this cannot pass by falling
+    back to the store that used to be the only one in the table.
+    """
+    rpc = FakeRpc(
+        serve_store=False,
+        account=encode_store("geckocoffee", authority=OTHER_MERCHANT),
+    )
+    out = _prepare(FakeBuilder(), rpc, store="geckocoffee", product="Espresso")
+
+    assert out["refused"] is False, out
+    assert rpc.reads, "the storefront was never read from chain"
+    # The merchant and the mint came from the ACCOUNT, not from anything we shipped.
+    plan = {e["account"]: e["address"] for e in out["accounts"]}
+    assert plan["authority"] == OTHER_MERCHANT
+    assert plan["authority"] != STORE_AUTHORITY, "fell back to the hardcoded store"
+    assert plan["mint"] == USDC
+
+
+def test_a_store_that_does_not_exist_refuses_and_names_nothing_else() -> None:
+    """Absence is a refusal, never a fallback to a store the caller did not name."""
+    builder = FakeBuilder()
+    out = _prepare(builder, FakeRpc(serve_store=False, account=None), store="ghostbar")
+
+    assert out["refused"] is True
+    assert out["code"] == "store-unknown"
+    assert "transaction" not in out
+    assert builder.calls == [], "an unknown store reached the builder"
+
+
+def test_an_account_owned_by_another_program_is_not_a_storefront() -> None:
+    """The address derives from the name, so anyone can create SOMETHING there. Only the
+    let_me_buy program's own account counts as a store."""
+    out = _prepare(
+        FakeBuilder(),
+        FakeRpc(
+            serve_store=False, account=encode_store("geckocoffee"), owner=SYSTEM_PROGRAM
+        ),
+        store="geckocoffee",
+        product="Espresso",
+    )
+
+    assert out["refused"] is True
+    assert out["code"] == "store-unknown"
+
+
+def test_a_product_the_store_does_not_sell_refuses_with_the_real_menu() -> None:
+    """The price and the mint are PER-PRODUCT facts in the store's account, so an unlisted
+    product has neither — and a refusal that cannot be acted on is a shrug."""
+    out = _prepare(
+        FakeBuilder(),
+        FakeRpc(serve_store=False, account=encode_store("geckocoffee")),
+        store="geckocoffee",
+        product="Lobster",
+    )
+
+    assert out["refused"] is True
+    assert "Espresso" in out["reason"], "the refusal must say what IS on the menu"
+
+
+def test_the_store_read_happens_before_anything_is_built() -> None:
+    """A store that cannot be resolved must cost no builder call and no simulation —
+    the same ordering the self-paying refusal already holds to."""
+    rpc = FakeRpc(serve_store=False, account=None)
+    builder = FakeBuilder()
+
+    _prepare(builder, rpc, store="ghostbar")
+
+    assert builder.calls == []
+    assert "simulateTransaction" not in rpc.calls
+
+
+#: A real SPL mint that is NOT USDC — Bonk, six decimals elsewhere but priced here as the
+#: store declares. Its only job is to be a mint we hardcode nowhere.
+OTHER_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+
+
+def test_a_store_priced_in_another_mint_is_paid_in_that_mint() -> None:
+    """The mint is a PER-PRODUCT fact in the store's account, not a constant.
+
+    Every other store in these tests happens to price in USDC, which makes a hardcoded
+    `USDC_MINT` indistinguishable from a read one. This is the store that tells them
+    apart — and it matters, because the mint decides which token account is credited.
+    """
+    rpc = FakeRpc(
+        serve_store=False,
+        account=encode_store(
+            "bonkbar",
+            products=[("Shot", 5_000_000, 5)],
+            authority=OTHER_MERCHANT,
+            mint=OTHER_MINT,
+        ),
+    )
+
+    out = _prepare(FakeBuilder(), rpc, store="bonkbar", product="Shot")
+
+    assert out["refused"] is False, out
+    plan = {e["account"]: e["address"] for e in out["accounts"]}
+    assert plan["mint"] == OTHER_MINT
+    assert plan["mint"] != USDC, "fell back to a hardcoded mint"
+    # …and the credited token account follows the mint, not the other way round.
+    assert plan["recipient_token_account"] != STORE_TOKEN

@@ -123,9 +123,13 @@ PrepareRefusalCode = (
 
 #: A store's on-chain facts that a store NAME cannot give you. ``receipts`` is derivable
 #: from the name alone; who the merchant is and which mint a product is priced in are
-#: written inside that account, and this path takes no chain read to decode them. So the
-#: wired stores are enumerated, and an unknown store is REFUSED rather than served with a
-#: guessed authority — a wrong authority builds a purchase that pays the wrong person.
+#: written INSIDE that account, so they are read from it (:func:`resolve_store`) and never
+#: guessed — a wrong authority builds a purchase that pays the wrong person.
+#:
+#: This was a hardcoded table of stores we had reviewed, which meant exactly one storefront
+#: on letmebuy.app was reachable through chat while the program serves any number. It is
+#: now filled from the chain per call. The consequence is worth stating: the merchant is
+#: whoever the store's own account says it is, not someone we vouched for.
 @dataclass(frozen=True)
 class WiredStore:
     store_name: str
@@ -133,15 +137,6 @@ class WiredStore:
     mint: str
     note: str
 
-
-WIRED_STORES: dict[str, WiredStore] = {
-    "jonasbar": WiredStore(
-        store_name="jonasbar",
-        authority="8D8qFHBnvS6oMsJy7EmGTrpoZcGd3aCC3pnPLi93Ag2V",
-        mint=USDC_MINT,
-        note="the published letmebuy.app demo store; priced in USDC (6 decimals)",
-    ),
-}
 
 #: The public RPC to simulate against when the caller names a network but no URL. Only a
 #: PINNED constant may be defaulted here: a caller-supplied URL goes through the SSRF
@@ -202,8 +197,8 @@ _ACCOUNT_ROLES: dict[str, tuple[str, bool, bool]] = {
 _DERIVATIONS: dict[str, str] = {
     "receipts": "PDA(['receipts', store], let_me_buy) — derived here, offline",
     "signer": "you supplied it",
-    "authority": "wired store constant (not derivable from the store name)",
-    "mint": "wired store constant (not derivable from the store name)",
+    "authority": "read from the store's own account (not derivable from its name)",
+    "mint": "read from the store's own account, per product",
     "sender_token_account": "ATA(buyer, token_program, mint) — derived here, offline",
     "recipient_token_account": (
         "ATA(authority, token_program, mint) — derived here, offline"
@@ -399,7 +394,7 @@ def prepare_purchase_result(
 ) -> dict[str, Any]:
     """Plan, verify, and hand back the UNSIGNED transaction. Never raises for an answer.
 
-    An expected refusal — an unasserted network, an unwired store, a plan that pays the
+    An expected refusal — an unasserted network, a store that does not resolve, a plan that pays the
     buyer back, a simulation that reverts — comes back as a structured refusal carrying no
     transaction, because those are answers a caller must handle. A transport failure comes
     back as ``{"error": ...}`` in the surface's own style, redacted to the failure class.
@@ -435,17 +430,6 @@ def prepare_purchase_result(
             "argument-invalid",
             f"`store` is longer than {_MAX_STORE_BYTES} bytes and cannot be a PDA seed",
         )
-    store = WIRED_STORES.get(store_name)
-    if store is None:
-        return _refuse(
-            "store-unknown",
-            f"the receipts account for {store_name!r} is derivable, but that store's "
-            "authority and mint are written INSIDE it and this keyless path reads no "
-            "chain state. Guessing them would build a purchase that pays the wrong "
-            f"person, so it refuses. Wired stores: {sorted(WIRED_STORES)}",
-            network=network,
-        )
-
     product = args.get("product")
     if not isinstance(product, str) or not product.strip():
         return _refuse("argument-invalid", "`product` is required (the product's name)")
@@ -466,6 +450,49 @@ def prepare_purchase_result(
         return _refuse(
             "argument-invalid", url_refusal or "no usable rpc_url", network=network
         )
+
+    # WHO the merchant is and WHICH mint a product is priced in are written INSIDE the
+    # store's own account, so they are READ, never guessed and never shipped as a
+    # constant. This used to be a hardcoded table, which meant exactly one storefront on
+    # letmebuy.app was reachable through chat while the program serves any number.
+    #
+    # One targeted `getAccountInfo` on the address the NAME derives — not a program scan,
+    # so it works on nodes with `getProgramAccounts` disabled and the address asked for is
+    # the address the name entails. Every failure is a refusal that names what it looked
+    # at: absence never falls back to a store the caller did not ask for.
+    #
+    # Deliberately AFTER the rpc_url guard (it needs a node) and BEFORE the builder, so an
+    # unresolvable store costs no build and no simulation.
+    # Lazy: `store_accounts` imports this module's program spec, so a top-level import
+    # is a cycle. Same pattern `find_start` uses for its provider_config reads.
+    from .store_accounts import ProductNotOnMenu, StoreResolutionError, resolve_store
+
+    try:
+        resolved = resolve_store(store_name, rpc_url=rpc_url, rpc_call=rpc_call)
+        purchase = resolved.accounts_for(product)
+    except ProductNotOnMenu as exc:
+        return _refuse("store-unknown", str(exc), network=network)
+    except StoreResolutionError as exc:
+        # Covers StoreNotFound and StoreAccountsMismatch — the account is missing, owned
+        # by another program, undecodable, or calls itself a different name than the one
+        # it was derived from. All four mean the same thing to a buyer: there is no
+        # storefront here, and nothing substitutes one.
+        return _refuse("store-unknown", str(exc), network=network)
+    except RpcError as exc:
+        # Same shape the other transport failures use below: the failure CLASS and its
+        # message, never the node's response body. A node we cannot reach is not a
+        # refusal ABOUT the store — it is us having no answer, and those read differently.
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    store = WiredStore(
+        store_name=resolved.store_name,
+        authority=resolved.authority,
+        mint=purchase.product.mint,
+        note=(
+            f"read from the store's own account at {resolved.receipts} — "
+            f"{purchase.product.name} at {purchase.product.price_ui} "
+            f"({purchase.product.price_raw} raw, {purchase.product.decimals} decimals)"
+        ),
+    )
 
     try:
         return _prepare(
@@ -762,7 +789,11 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "properties": {
             "store": {
                 "type": "string",
-                "description": f"the storefront's name; wired: {sorted(WIRED_STORES)}",
+                "description": (
+                    "the storefront's name, exactly as it appears on chain — call "
+                    "`list_stores` to see what exists. The merchant and the price are "
+                    "read from that store's own account"
+                ),
             },
             "product": {"type": "string", "description": "the product's name"},
             "buyer": {"type": "string", "description": _BUYER_SUPPLIED},
