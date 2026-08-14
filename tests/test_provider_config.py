@@ -248,13 +248,15 @@ def _api_with_origins(origins: object) -> dict:
 
 def test_pda_origins_parses_the_closed_tiers() -> None:
     for tier in ("extracted", "recovered", "manual"):
-        cfg = api_config_from_dict(_api_with_origins({"lb_pair": tier}))
+        cfg = api_config_from_dict(
+            _api_with_origins({"lb_pair": tier}), trust="packaged"
+        )
         assert cfg.program is not None
         assert cfg.program.pda_origins == {"lb_pair": tier}
 
 
 def test_pda_origins_absent_defaults_to_empty() -> None:
-    cfg = api_config_from_dict(METEORA_API)
+    cfg = api_config_from_dict(METEORA_API, trust="packaged")
     assert cfg.program is not None
     assert cfg.program.pda_origins == {}
 
@@ -284,7 +286,7 @@ def test_pda_origins_invalid_value_is_contained_per_account(value: object) -> No
     read-time cap-at-flagged marker for that ONE account — with no exception raised
     or swallowed and no coercion. The raw value is dropped on purpose: no text
     channel from an untrusted file."""
-    cfg = api_config_from_dict(_api_with_origins({"lb_pair": value}))
+    cfg = api_config_from_dict(_api_with_origins({"lb_pair": value}), trust="packaged")
     assert cfg.program is not None
     assert cfg.program.pda_origins == {"lb_pair": None}
 
@@ -297,7 +299,7 @@ def test_a_valid_and_an_invalid_entry_load_side_by_side() -> None:
         "seeds": [{"kind": "constant", "value": "oracle", "encoding": "utf8"}],
     }
     data["program"]["pda_origins"] = {"lb_pair": "banana", "oracle": "extracted"}
-    cfg = api_config_from_dict(data)
+    cfg = api_config_from_dict(data, trust="packaged")
     assert cfg.program is not None
     assert cfg.program.pda_origins == {"lb_pair": None, "oracle": "extracted"}
 
@@ -392,7 +394,7 @@ def test_a_config_whose_pdas_lack_an_origin_entry_is_rejected() -> None:
         "program_id": METEORA,
         "seeds": [{"kind": "constant", "value": "oracle", "encoding": "utf8"}],
     }
-    cfg = api_config_from_dict(data)
+    cfg = api_config_from_dict(data, trust="packaged")
     assert cfg.program is not None
     assert set(cfg.program.pda_origins) == {"lb_pair"}
     with pytest.raises(AssertionError, match="oracle"):

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from importlib import resources
-from typing import cast, get_args
+from typing import Literal, cast, get_args
 
 from .pda import (
     ConstantPdaSeedNode,
@@ -28,8 +28,33 @@ from .provenance import ProgramProvenanceTier
 # (gecko.provenance) — never redeclared here, so the two cannot drift.
 _PROGRAM_TIER_VALUES: frozenset[str] = frozenset(get_args(ProgramProvenanceTier))
 
+#: WHOSE WORD a config is — the loader stance, not a provenance tier.
+#:
+#: Deliberately not on the provenance ladder and deliberately not derived from one. A tier
+#: answers *how do we know this account's recipe*; this answers *did we write this file*.
+#: Conflating them is how a provider's assertion would arrive wearing our evidence.
+#:
+#: * ``packaged`` — read out of our own wheel, from an IDL/source we comprehended. A PDA
+#:   node here IS evidence, and the mechanics may earn ``extracted``.
+#: * ``external`` — anything else, above all a config fetched from the provider who
+#:   hosts it. The same bytes are then an ASSERTION, and every account caps at
+#:   ``flagged`` until something independent verifies it.
+#:
+#: THE THIRD CASE IS NOT DECIDED, and deliberately has no value here: a config our own
+#: auto-comprehend path GENERATED from a provider's artifact (``orquestra_comprehend``).
+#: Its tiers are our measurement, not the provider's claim, so ``external`` under-claims —
+#: but nothing loads such a config back today, so there is no call site to be wrong. Adding
+#: a value before there is a caller would be guessing at a rule instead of deriving one.
+ConfigTrust = Literal["packaged", "external"]
+
+#: The fail-closed default. A call site that has not thought about trust gets the answer
+#: that under-claims; the confident one has to be asked for by name.
+DEFAULT_CONFIG_TRUST: ConfigTrust = "external"
+
 __all__ = [
     "ConfigError",
+    "ConfigTrust",
+    "DEFAULT_CONFIG_TRUST",
     "seed_from_spec",
     "node_from_spec",
     "seed_to_spec",
@@ -255,6 +280,10 @@ class ProgramSpec:
     # part of a recipe's identity, and putting it on the node would change equality —
     # which the merge rule and the exact config round-trip both depend on.
     pda_origins: dict[str, ProgramProvenanceTier | None] = field(default_factory=dict)
+    #: Whose word this config is (see :data:`ConfigTrust`). Carried on the artifact so a
+    #: reader downstream cannot lose it: by the time a plan is built, "we comprehended
+    #: this" and "a provider sent us this" look identical in every other field.
+    trust: ConfigTrust = DEFAULT_CONFIG_TRUST
     #: What is known about instruction ARGUMENT values, keyed by argument name. Empty
     #: when the config states nothing — which is the honest default: an argument with no
     #: entry is one nobody has established anything about, not one with no constraint.
@@ -289,9 +318,19 @@ class ProviderConfig:
 
 
 def _pda_origins_from_dict(
-    data: dict, pdas: dict[str, PdaNode]
+    data: dict, pdas: dict[str, PdaNode], trust: ConfigTrust = DEFAULT_CONFIG_TRUST
 ) -> dict[str, ProgramProvenanceTier | None]:
-    """Load the R7 ``pda_origins`` sibling map, fail-closed (the defi-security gate):
+    """Load the R7 ``pda_origins`` sibling map, fail-closed (the defi-security gate).
+
+    UNDER ``external`` TRUST THE MAP IS NOT READ AS EVIDENCE — every account caps at
+    ``flagged`` regardless of what the file says, including what it does NOT say. That
+    second half is the actual hole: ``_apply_origin_cap`` is demotion-only, so a config
+    that supplies ``pdas`` and omits ``pda_origins`` entirely used to earn the top tier by
+    staying silent. A provider declaring ``extracted`` about their own file is the same
+    unverified assertion, only louder, so it is capped too. Validation below still runs in
+    full: capping is not a reason to stop reading a malformed map.
+
+    Under ``packaged`` trust (our own wheel, comprehended from an IDL we read):
 
     - absent key → empty map — read time behaves exactly as before R7;
     - an entry naming an account not in ``pdas`` → loud refusal (mirrors the overlay
@@ -303,16 +342,24 @@ def _pda_origins_from_dict(
       may ride into agent-facing output.
     """
     raw = data.get("pda_origins")
+    if raw is not None:
+        if not isinstance(raw, dict):
+            raise ConfigError(
+                "program.pda_origins must be an object of {account: tier}"
+            )
+        unknown = sorted(set(raw) - set(pdas))
+        if unknown:
+            raise ConfigError(
+                f"program.pda_origins names unknown account(s) {unknown}; "
+                f"known: {sorted(pdas)}"
+            )
+    if trust != "packaged":
+        # Nothing here was established by us, so nothing here may claim a tier. Every
+        # account gets the cap-at-flagged marker, including the ones the file never
+        # mentioned — silence is what this closes.
+        return dict.fromkeys(pdas)
     if raw is None:
         return {}
-    if not isinstance(raw, dict):
-        raise ConfigError("program.pda_origins must be an object of {account: tier}")
-    unknown = sorted(set(raw) - set(pdas))
-    if unknown:
-        raise ConfigError(
-            f"program.pda_origins names unknown account(s) {unknown}; "
-            f"known: {sorted(pdas)}"
-        )
     origins: dict[str, ProgramProvenanceTier | None] = {}
     for name, value in raw.items():
         if isinstance(value, str) and value in _PROGRAM_TIER_VALUES:
@@ -386,7 +433,9 @@ def _arg_constraints_from_dict(data: dict) -> dict[str, ArgConstraint]:
     return constraints
 
 
-def _program_from_dict(data: dict) -> ProgramSpec:
+def _program_from_dict(
+    data: dict, trust: ConfigTrust = DEFAULT_CONFIG_TRUST
+) -> ProgramSpec:
     pdas = {name: node_from_spec(name, spec) for name, spec in data["pdas"].items()}
     return ProgramSpec(
         program_id=data["program_id"],
@@ -394,12 +443,18 @@ def _program_from_dict(data: dict) -> ProgramSpec:
         pdas=pdas,
         intents=tuple(data.get("intents", ())),
         notes=str(data.get("notes", "")),
-        pda_origins=_pda_origins_from_dict(data, pdas),
+        pda_origins=_pda_origins_from_dict(data, pdas, trust),
         arg_constraints=_arg_constraints_from_dict(data),
+        trust=trust,
     )
 
 
-def api_config_from_dict(data: dict) -> ApiConfig:
+def api_config_from_dict(
+    data: dict, *, trust: ConfigTrust = DEFAULT_CONFIG_TRUST
+) -> ApiConfig:
+    """``trust`` says whose word this config is — see :data:`ConfigTrust`. It defaults to
+    ``external`` so that forgetting to think about it under-claims rather than over-claims;
+    only a loader that knows the bytes are ours may ask for ``packaged``."""
     auth = data.get("auth")
     if auth is not None:
         _assert_pointer(auth.get("account_ref"), "auth.account_ref")
@@ -413,7 +468,7 @@ def api_config_from_dict(data: dict) -> ApiConfig:
         api_id=data["api_id"],
         kind=data["kind"],
         spec_source=SpecSource(**src) if src else None,
-        program=_program_from_dict(program) if program else None,
+        program=_program_from_dict(program, trust) if program else None,
         auth=auth,
         drift_watch=drift,
         visibility=data.get("visibility", {}),
@@ -454,7 +509,11 @@ def load_packaged_provider(
     per API, from ``gecko/providers/configs/<provider>/`` (shipped in the wheel)."""
     provider_cfg = provider_config_from_dict(_read_json(provider, "provider.json"))
     apis = {
-        api_id: api_config_from_dict(_read_json(provider, f"{api_id}.json"))
+        # `packaged` by name: these bytes come out of our own wheel, comprehended
+        # from an IDL/source we read, so a PDA node here is evidence rather than a claim.
+        api_id: api_config_from_dict(
+            _read_json(provider, f"{api_id}.json"), trust="packaged"
+        )
         for api_id in provider_cfg.apis
     }
     return provider_cfg, apis
