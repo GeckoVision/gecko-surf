@@ -377,9 +377,14 @@ def _account_plan(
             "signer": signs,
             "derivation": _DERIVATIONS[name],
         }
-        origin = origins.get(name)
-        if origin:
-            entry["provenance"] = origin
+        if name in origins:
+            # A PRESENT entry always says something, and `None` says the loudest thing:
+            # this account carries no tier we established (an origin outside the closed
+            # ladder, or a config we did not author — see `ConfigTrust`). Omitting the
+            # field there would render "we have not verified this" as "nothing to
+            # report", which is the same fail-open the trust mode exists to close.
+            # ABSENT stays absent: an account the config never mentions is untouched.
+            entry["provenance"] = origins[name] or "flagged"
         plan.append(entry)
     return plan
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field, replace
 from importlib import resources
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Sequence
 
 from .catalog import Catalog, _tokens
 from .ingest import Operation
@@ -38,6 +38,11 @@ from .orquestra_client import ProjectCatalogPage
 from .pda import PdaNode
 from .program_graph import chain_order_with_cycle, derivation_order_with_cycle
 from .provenance import AccountProvenance, ChainStatus, ProgramProvenanceTier
+
+if (
+    TYPE_CHECKING
+):  # the provider_config import stays lazy at runtime (light + cycle-free)
+    from .provider_config import ConfigTrust
 
 __all__ = [
     "GapSpec",
@@ -603,6 +608,13 @@ class _Card:
     # tag (see :func:`_apply_origin_cap`). ``None`` = present-but-invalid entry,
     # capped at ``flagged``. Empty = the config asserts nothing (today's behaviour).
     origins: Mapping[str, ProgramProvenanceTier | None] = field(default_factory=dict)
+    # WHOSE WORD the config behind this card is (``gecko.provider_config.ConfigTrust``).
+    # Defaults to ``packaged`` deliberately, and it is not a fail-open: the fail-closed
+    # decision is made ONCE, at the loader, where a config of unknown origin already
+    # arrives capped. A card is built from an artifact that has been through that door,
+    # and defaulting to ``external`` here would demote the surface/catalog cards that have
+    # no ProgramSpec at all and whose steps come from data we hold ourselves.
+    trust: ConfigTrust = "packaged"
     # the DECLARED chain this card is a step of (``None`` = a standalone start).
     chain: str | None = None
 
@@ -712,6 +724,7 @@ def _wired_cards() -> list[_Card]:
                 ),
                 wired_intents=start_point_names,
                 origins=dict(program.pda_origins),
+                trust=program.trust,
             )
         )
         # one card per DECLARED chain step (a runnable start with no plan callable:
@@ -746,6 +759,7 @@ def _wired_cards() -> list[_Card]:
                             tags=[api_id, chain_step.instruction],
                         ),
                         origins=dict(program.pda_origins),
+                        trust=program.trust,
                         chain=chain.name,
                     )
                 )
@@ -784,6 +798,7 @@ def _wired_cards() -> list[_Card]:
                         tags=[api_id, intent.instruction],
                     ),
                     origins=dict(program.pda_origins),
+                    trust=program.trust,
                 )
             )
     return cards
@@ -911,9 +926,20 @@ _INVALID_ORIGIN_NOTE = (
     "account — failing closed: reported as a gap, never coerced into a confident tag"
 )
 
+#: The same cap, a different REASON — and the reason is agent-facing, so it may not be
+#: borrowed. An external config that simply said nothing has asserted no invalid tier;
+#: telling an agent it did would be a false sentence about a provider's file.
+_UNVERIFIED_CONFIG_NOTE = (
+    "this recipe comes from a config we did not author and have not verified — "
+    "reported as a gap on purpose: a provider's assertion about their own program is "
+    "not evidence, however confidently the file states it"
+)
+
 
 def _apply_origin_cap(
-    step: DeriveStep, origins: Mapping[str, ProgramProvenanceTier | None]
+    step: DeriveStep,
+    origins: Mapping[str, ProgramProvenanceTier | None],
+    trust: ConfigTrust = "packaged",
 ) -> DeriveStep:
     """Cap one mechanical step with the config-carried origin (R7).
 
@@ -931,7 +957,9 @@ def _apply_origin_cap(
     if tier is None:
         if step.provenance == "flagged":
             return step  # already the floor; keep the mechanical explanation
-        return replace(step, provenance="flagged", note=_INVALID_ORIGIN_NOTE)
+        # `trust` only chooses WHICH true sentence to tell — the cap itself is identical.
+        note = _INVALID_ORIGIN_NOTE if trust == "packaged" else _UNVERIFIED_CONFIG_NOTE
+        return replace(step, provenance="flagged", note=note)
     asserted = _ORIGIN_TIER_TO_TAG[tier]
     if _CLAIM_STRENGTH[asserted] >= _CLAIM_STRENGTH[step.provenance]:
         return step  # the mechanical claim is already at or below the assertion
@@ -961,6 +989,7 @@ def _derive_plan(card: _Card) -> tuple[DeriveStep, ...]:
                 surface_named=surface_named,
             ),
             card.origins,
+            card.trust,
         )
         for name in ordered
     ]
