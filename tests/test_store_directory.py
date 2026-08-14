@@ -69,6 +69,7 @@ def encode_store(
     total: int = 2,
     authority: str = AUTHORITY,
     mint: str = USDC,
+    telegram: str = "",
 ) -> bytes:
     """A Receipts account in the IDL's own layout, discriminator included.
 
@@ -89,6 +90,9 @@ def encode_store(
         body += bytes([decimals])
         body += _b58decode(mint).rjust(32, b"\x00")
         body += _string(product_name)
+    # The fulfilment channel follows the products vec — `PurchaseMade` carries it, so it is
+    # where an order is actually sent.
+    body += _string(telegram)
     return b"\x00" * 8 + body
 
 
@@ -257,3 +261,35 @@ def test_the_surface_serves_it() -> None:
     assert "list_stores" in names
     out = surface.call_tool("list_stores", {"network": "mainnet"})
     assert out["stores"] == [] and out["skipped_undecodable"] == 0
+
+
+def test_the_menu_says_where_an_order_would_actually_go() -> None:
+    """`PurchaseMade` carries the store's telegram channel, so it is the DELIVERY ADDRESS
+    and not a label. An empty one means a purchase is paid, recorded on chain, and nobody
+    is ever told to make it — which a buyer should be able to see BEFORE paying rather
+    than discover afterwards by the coffee not arriving."""
+    out = list_stores_result(
+        {"network": "mainnet"},
+        rpc_call=FakeRpc(
+            _rows(("A1", encode_store("geckocoffee", telegram="geckovision")))
+        ),
+    )
+    store = out["stores"][0]
+
+    assert store["fulfilment"]["telegram_channel_id"] == "geckovision"
+    assert store["fulfilment"]["set"] is True
+
+
+def test_a_store_with_no_fulfilment_channel_is_flagged_not_hidden() -> None:
+    """The honest half. We cannot verify a channel RESOLVES — a wrong-but-present value
+    looks exactly like a correct one — but an EMPTY one is checkable from the chain, so
+    that is the one fact we can offer and it must not be silently omitted."""
+    out = list_stores_result(
+        {"network": "mainnet"},
+        rpc_call=FakeRpc(_rows(("A1", encode_store("nobodyshome", telegram="")))),
+    )
+
+    assert out["stores"][0]["fulfilment"]["set"] is False
+    # And the tool must warn, so an agent does not have to infer it from a false flag.
+    assert "NOBODY" in LIST_STORES_TOOL["description"]
+    assert "not a promise it resolves" in LIST_STORES_TOOL["description"]

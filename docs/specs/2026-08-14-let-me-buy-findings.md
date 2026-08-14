@@ -109,6 +109,29 @@ most RPCs prune them within days, and `mark_as_delivered` would have nothing to 
 
 ---
 
+## Report 3 — the fulfilment channel points nowhere, on several stores
+
+`PurchaseMade` carries `telegram_channel_id`, cloned from the store account (source line
+250). So it is not a label — **it is the delivery address**. Read from chain on 2026-08-14:
+
+| store | purchases | `telegram_channel_id` |
+|---|---|---|
+| `jonasbar` | **125** | `@foolsgold_test` — a TEST channel, named after a different store |
+| `geckocoffee` | 8 | `geckovision` — **does not exist** (ours; founder confirmed) |
+| `superteamde` | 24 | `@superteamjaegermeister` |
+
+The consequence is the same in each doubtful case: **the payment lands, the receipt is
+written, and nobody is told to make the coffee.** A buyer has no way to see this before
+paying, which is why `list_stores` now reports each store's `fulfilment` and flags an empty
+one.
+
+The honest limit, stated in the tool: an EMPTY channel is checkable from the chain; a
+wrong-but-present one is not, and looks identical to a correct one. We report the value and
+never endorse it.
+
+Fixing a store is `update_telegram_channel`, which is authority-gated — so each merchant
+fixes their own, and `jonasbar` is not ours to change.
+
 ## What we already corrected on our side
 
 `gecko/providers/configs/orquestra/let_me_buy.json` claimed *"the program checks it against
