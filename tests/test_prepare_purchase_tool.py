@@ -615,3 +615,42 @@ def test_a_store_priced_in_another_mint_is_paid_in_that_mint() -> None:
     assert plan["mint"] != USDC, "fell back to a hardcoded mint"
     # …and the credited token account follows the mint, not the other way round.
     assert plan["recipient_token_account"] != STORE_TOKEN
+
+
+def test_the_tools_tell_an_agent_WHEN_to_prepare() -> None:
+    """The window is only a problem if the agent prepares early.
+
+    Browsing costs nothing and expires never; preparing starts a ~40-second clock on a live
+    blockhash. An agent that helpfully pre-prepares three products to compare them spends
+    the whole window on transactions nobody will sign — an eager, plausible mistake that no
+    refusal catches, because each of those preparations is individually correct.
+
+    So the sequencing is stated in the tool descriptions, where a model actually reads it,
+    and pinned here so it cannot be edited away while the loop still depends on it.
+    """
+    from gecko.prepare_purchase import PREPARE_PURCHASE_TOOL
+    from gecko.store_directory import LIST_STORES_TOOL
+
+    prepare = PREPARE_PURCHASE_TOOL["description"]
+    browse = LIST_STORES_TOOL["description"]
+
+    # prepare LATE, after the choice…
+    assert "after" in prepare and "before signing" in prepare
+    assert "prepare LATE" in prepare
+    # …and one product per call, because the program takes no quantity.
+    assert "ONE PRODUCT PER CALL" in prepare
+    # …with the honest number, not the one the slot budget implies.
+    assert "~40 seconds" in prepare and "finalized" in prepare
+    # The browsing tool points the other way, so the pair reads as a sequence.
+    assert "prepare_purchase" in browse and "expires never" in browse
+
+
+def test_the_expiry_note_and_the_description_agree_on_the_number() -> None:
+    """Two places tell a caller how long they have. Disagreeing is how one gets believed
+    and the other quietly becomes false."""
+    from gecko.prepare_purchase import PREPARE_PURCHASE_TOOL
+
+    out = _prepare()
+
+    assert "40" in out["expires"]["note"]
+    assert "40" in PREPARE_PURCHASE_TOOL["description"]
