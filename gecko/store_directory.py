@@ -261,7 +261,31 @@ def list_stores(
             for entry in listing.products
             if needle is None or needle in entry.name.lower()
         ]
-        if needle is not None and not products:
+        # A filter miss on the PRODUCT is not a miss on the store. "coffee" returned
+        # nothing while geckocoffee sold Espresso — the word was in the store's own name,
+        # which is how a person got there. An empty result must mean "nothing on this
+        # network", never "your word did not literally appear in a product name".
+        match_kind = None
+        if needle is None:
+            match_kind = None
+        elif products:
+            match_kind = "product"
+        elif needle in listing.store_name.lower():
+            match_kind = "store_name"
+            products = [
+                {
+                    "name": entry.name,
+                    "price_raw": entry.price_raw,
+                    "decimals": entry.decimals,
+                    "price_ui": entry.price_ui,
+                    "mint": entry.mint,
+                    "mint_note": "USDC" if entry.mint == USDC_MINT else None,
+                }
+                for entry in listing.products
+            ]
+        else:
+            # Still nothing. The widening must not become "everything matches", or the
+            # filter stops carrying information.
             continue
         stores.append(
             {
@@ -269,6 +293,7 @@ def list_stores(
                 "address": listing.address,
                 "authority": listing.authority,
                 "total_purchases": listing.total_purchases,
+                **({"match_kind": match_kind} if match_kind else {}),
                 # WHERE AN ORDER GOES. `PurchaseMade` carries this, so it is the delivery
                 # address rather than a label: empty means the purchase is recorded and
                 # nobody is told to make it. Shown so a buyer can see that BEFORE paying.

@@ -813,7 +813,19 @@ def build_http_app(
             source=corpus.source_for_mode(mode),
         )
 
-    server: Any = Server(server_name)
+    # THE SERVER-LEVEL REFERENCE. MCP's `instructions` is read once by the client and put
+    # in front of the model before any tool is chosen — which is the only place a rule
+    # about the ORDER of tools can live. Per-tool descriptions cannot say it: by the time
+    # an agent reads `prepare_purchase`, it has already decided to call it.
+    #
+    # A real session showed why this matters. The agent routed perfectly, then took the
+    # worse path — because nothing told it, before it started, how the tools fit together.
+    #
+    # Surfaces opt in by carrying an `instructions` attribute; anything without one sends
+    # None, exactly as today.
+    server: Any = Server(
+        server_name, instructions=getattr(surface, "instructions", None)
+    )
     # Asked once, at build time: the answer is a property of the surface class, and
     # inspecting a signature on every tool call would be per-request work for a constant.
     surface_takes_account = _accepts_account(surface)

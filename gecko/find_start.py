@@ -619,6 +619,23 @@ class _Card:
     chain: str | None = None
 
 
+#: (program, instruction) -> the Gecko MCP tool that plans AND CHECKS that call.
+#:
+#: `next_tool` otherwise carries a wired plan INTENT name (`plan_swap`), which is a
+#: different kind of thing — an intent is a label on a derive plan, a tool is something an
+#: agent can call. For `make_purchase` there is no intent, so this field was `null` and the
+#: note said "no Gecko plan tool is wired", which is false: `prepare_purchase` derives
+#: offline, refuses a self-paying plan before building, patches a fresh blockhash,
+#: simulates the exact bytes and binds a receipt. Routing past it to a raw builder is the
+#: strictly worse path, recommended by our own router.
+#:
+#: Empty for everything else ON PURPOSE — a name here is a promise that the tool exists and
+#: is served, and a fabricated one is worse than a null.
+_GECKO_TOOL_FOR: dict[tuple[str, str], str] = {
+    ("let_me_buy", "make_purchase"): "prepare_purchase",
+}
+
+
 def _first_sentence(text: str) -> str:
     head = (text or "").split(". ", 1)[0]
     return head[:200]
@@ -1019,7 +1036,9 @@ _NO_CHAIN_NOTE = (
 _NO_VERDICT_NOTE = (
     "no chain-agreement verdict was supplied for this chain, so the account sets were "
     "never checked against landed transactions — the plan is reported, never claimed "
-    "executable. Supply chain_verdicts={name: 'AGREE'} from evidence to lift it"
+    "executable. A chain verdict is lifted from EVIDENCE by the caller of the library "
+    "(find_start's chain_verdicts argument) — deliberately not by anything an agent can "
+    "pass through a tool, because a verdict an agent can assert is one it can fabricate"
 )
 _DISAGREE_NOTE = (
     "the chain-agreement verdict is DISAGREE: landed transactions contradict the "
@@ -1334,7 +1353,12 @@ def _start_point(
         program=card.api_id,
         program_id=card.program_id,
         instruction=card.instruction,
-        next_tool=card.intent_name,
+        next_tool=(
+            _GECKO_TOOL_FOR.get((card.api_id, card.instruction))
+            if card.instruction
+            else None
+        )
+        or card.intent_name,
         score=score,
         why=why,
         inputs=card.inputs,
