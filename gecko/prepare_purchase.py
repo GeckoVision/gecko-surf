@@ -659,24 +659,48 @@ def _prepare(
 
 
 #: Signers verified to take this exact primitive — base64 in, signed base64 out — with
-#: which client each one reaches. EXAMPLES, never the contract: naming one signer's tool
-#: in the result would turn a keyless handoff into an integration, and a fourth signer
-#: would then need a change from us. Research: docs/specs/2026-08-14-who-signs.md.
+#: which client each one reaches and HOW TO ADD IT. EXAMPLES, never the contract: naming
+#: one signer's tool in the result would turn a keyless handoff into an integration, and a
+#: fourth signer would then need a change from us. Research:
+#: docs/specs/2026-08-14-who-signs.md.
+#:
+#: WHY THE INSTALL LINE IS HERE. A caller with no signer mounted cannot act on "PayBox
+#: reaches Claude web" — it names a product, not a next move — so the loop stalls at the
+#: one step we do not perform. Carrying the connector means the agent can say exactly what
+#: to add AT THE MOMENT a signature is needed, rather than the user having to know in
+#: advance that two connectors are involved.
+#:
+#: AND WHY WE DO NOT BROKER IT INSTEAD. Signing in on the user's behalf would mean holding
+#: an access token that authorises spending from their wallet — a path to a key, which
+#: this module's first paragraph and the public docs both say does not exist. The friction
+#: is a discovery problem and gets a discovery fix; it is not a reason to take custody.
 _SIGNERS_KNOWN_TO_WORK: tuple[dict[str, str], ...] = (
     {
         "name": "PayBox",
         "call": 'request_wallet_sign, op="solanaTransaction", transactionBase64',
         "reaches": "Claude web, ChatGPT, Gemini, Grok — hosted MCP connector",
+        "connector": "https://api.paybox.sh/mcp",
+        "how_to_add": (
+            "Settings -> Connectors -> add a custom connector with that URL, then "
+            "Connect and sign in. No API key to copy; it is an OAuth flow."
+        ),
     },
     {
         "name": "Phantom MCP",
         "call": "signTransaction",
         "reaches": "Claude Desktop, Cursor, Claude Code — not Claude web",
+        "connector": "npx @phantom/mcp-server",
+        "how_to_add": (
+            "a LOCAL server: add it to your client's MCP config. Being local is why it "
+            "does not reach Claude web, and why your key never leaves your machine."
+        ),
     },
     {
         "name": "Privy agent-wallet CLI",
         "call": 'signTransaction, {"transaction": "<base64>"}',
         "reaches": "anywhere a shell runs",
+        "connector": "pnpm --package=@privy-io/agent-wallet-cli dlx privy-agent-wallet",
+        "how_to_add": "run its `login` on your own machine, then call `signTransaction`.",
     },
 )
 
