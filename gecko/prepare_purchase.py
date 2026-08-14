@@ -609,6 +609,13 @@ def _prepare(
             "unsigned_transaction": handoff.transaction_base64,
             "who_signs": "you do, in your own wallet — Gecko holds no key",
         },
+        # WHERE these bytes can be sent. Everything else in this result names what the
+        # transaction IS; without this the one node that can accept it is missing from
+        # the answer — and on a fork that node is the caller's own, appearing nowhere else.
+        "submit": {"rpc_url": rpc_url},
+        "next_step": _next_step(
+            handoff.transaction_base64, receipt.message_binding, rpc_url
+        ),
         "expires": {
             "blockhash": blockhash,
             "last_valid_block_height": last_valid_block_height,
@@ -618,6 +625,87 @@ def _prepare(
             ),
         },
         "what_this_proves": _WHAT_IT_PROVES,
+    }
+
+
+#: Signers verified to take this exact primitive — base64 in, signed base64 out — with
+#: which client each one reaches. EXAMPLES, never the contract: naming one signer's tool
+#: in the result would turn a keyless handoff into an integration, and a fourth signer
+#: would then need a change from us. Research: docs/specs/2026-08-14-who-signs.md.
+_SIGNERS_KNOWN_TO_WORK: tuple[dict[str, str], ...] = (
+    {
+        "name": "PayBox",
+        "call": 'request_wallet_sign, op="solanaTransaction", transactionBase64',
+        "reaches": "Claude web, ChatGPT, Gemini, Grok — hosted MCP connector",
+    },
+    {
+        "name": "Phantom MCP",
+        "call": "signTransaction",
+        "reaches": "Claude Desktop, Cursor, Claude Code — not Claude web",
+    },
+    {
+        "name": "Privy agent-wallet CLI",
+        "call": 'signTransaction, {"transaction": "<base64>"}',
+        "reaches": "anywhere a shell runs",
+    },
+)
+
+
+def _next_step(
+    transaction_base64: str | None, binding: str | None, rpc_url: str
+) -> dict[str, Any]:
+    """The machine-readable affordance: sign, verify, submit — in that order.
+
+    The result already carried everything needed to PRODUCE a signature and nothing an
+    agent could act on: ``who_signs`` was prose. This is the same fact in a shape a tool
+    call can consume.
+
+    VERIFY SITS BETWEEN SIGN AND SUBMIT, and that is the point of the ordering. Between
+    handing over bytes and getting a signature back, nothing of ours runs — the bytes
+    could have been swapped for others that sign just as cleanly, and no custody backend
+    will notice, because custody protects the key and never the action. Verifying after
+    broadcast is a post-mortem; verifying before it is a decision.
+    """
+    return {
+        "note": (
+            "these bytes are UNSIGNED. Sign them wherever your key lives, check the "
+            "signature is over the transaction that was actually verified, and only then "
+            "send it."
+        ),
+        "do": [
+            {
+                "step": "sign",
+                "what": (
+                    "hand this base64 to your signer and take back the signed base64. "
+                    "Any signer that signs raw bytes works — deliberately no tool is "
+                    "named here, because the primitive is the contract, not the vendor"
+                ),
+                "encoding": "base64",
+                "transaction": transaction_base64,
+                "signers_known_to_work": [dict(s) for s in _SIGNERS_KNOWN_TO_WORK],
+            },
+            {
+                "step": "verify",
+                "what": (
+                    "prove the signed bytes are the ones this receipt attested, BEFORE "
+                    "you send them — a signer will happily sign a substituted "
+                    "transaction, and this is where that becomes visible while it is "
+                    "still free"
+                ),
+                "tool": "verify_signed_transaction",
+                "binding": binding,
+            },
+            {
+                "step": "submit",
+                "what": (
+                    "send the signed transaction to this node — the same one the "
+                    "simulation ran against, so the state it was checked on is the state "
+                    "it lands on"
+                ),
+                "rpc_url": rpc_url,
+                "method": "sendTransaction",
+            },
+        ],
     }
 
 

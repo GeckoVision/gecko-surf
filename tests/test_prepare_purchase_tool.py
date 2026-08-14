@@ -377,3 +377,66 @@ def test_the_surface_dispatches_prepare_purchase() -> None:
     )
     assert out["refused"] is False
     assert out["transaction"]["signed"] is False
+
+
+# --- the affordance: what an agent does NEXT ----------------------------------
+# The result already carried everything needed to PRODUCE a signature; it carried
+# nothing an agent could act on. `who_signs` was prose. These pin the machine-readable
+# next step and the submit target — the two fields that turn a check into a loop.
+
+
+def test_the_result_says_what_to_do_next_in_a_shape_an_agent_can_act_on() -> None:
+    out = _prepare()
+    step = out["next_step"]
+
+    # The order is the whole point: sign, verify, THEN submit.
+    assert [s["step"] for s in step["do"]] == ["sign", "verify", "submit"]
+    sign, verify, submit = step["do"]
+
+    # SIGN carries the exact bytes to hand over — not a pointer, not a description.
+    assert sign["transaction"] == out["transaction"]["unsigned_transaction"]
+    assert sign["encoding"] == "base64"
+    # VERIFY names our own keyless tool and the binding to check against.
+    assert verify["tool"] == "verify_signed_transaction"
+    assert verify["binding"] == out["binding"]
+    # SUBMIT names the node these bytes can actually reach.
+    assert submit["rpc_url"] == RPC_URL
+
+
+def test_the_next_step_names_a_shape_rather_than_a_vendor() -> None:
+    """Signer-agnostic on purpose. Three signers take the identical primitive (base64 in,
+    signed base64 out), so naming one in the contract would make a fourth need a change
+    from us. Known signers may be listed as EXAMPLES; none may be required."""
+    step = _prepare()["next_step"]
+    sign = step["do"][0]
+
+    assert "tool" not in sign, "naming one signer's tool would be an integration"
+    assert sign["signers_known_to_work"], "examples help; they must not be the contract"
+
+
+def test_the_submit_target_is_the_node_that_was_actually_simulated_against() -> None:
+    """The CALLER's node, echoed back — not the pinned public default.
+
+    It matters most on a fork, where the RPC is somebody's own and appears nowhere else in
+    the answer, so the one node that can accept the transaction would be missing from it.
+    Asserted here on the supplied-URL case because the SSRF guard resolves DNS, and a
+    made-up fork hostname is refused before any of this runs — correctly.
+    """
+    from gecko.prepare_purchase import DEFAULT_RPC_URLS
+
+    out = _prepare()  # supplies RPC_URL explicitly
+
+    assert out["submit"]["rpc_url"] == RPC_URL
+    assert out["submit"]["rpc_url"] != DEFAULT_RPC_URLS["mainnet"], (
+        "echoing the default instead of the caller's node would lose a fork's own RPC"
+    )
+
+
+def test_a_refusal_carries_no_next_step() -> None:
+    """Nothing to sign, so nothing to do next. An affordance on a refusal is an
+    invitation to act on bytes that do not exist."""
+    out = _prepare(buyer=STORE_AUTHORITY)  # the self-paying refusal
+
+    assert out["refused"] is True
+    assert "next_step" not in out
+    assert "submit" not in out
