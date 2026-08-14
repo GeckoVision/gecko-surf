@@ -12,6 +12,21 @@ narrows** `2026-08-13-roadmap.md` goal 1 into shippable pieces
 That is the acceptance test. A task exists only if it makes that sentence true. Nothing
 here is done until a real client does it once.
 
+**"Approves" WHERE — the one unresolved word.** The store ruling (§3) says the caller signs
+and pays; a chat client has no wallet, so the signature cannot happen inside Claude web or
+Grok. Something outside the chat closes the loop, and which thing it is decides whether
+this spec is finished at #3 or runs to #6:
+
+| Who signs | What the chat client shows | What we must build |
+|---|---|---|
+| **The human, in their own wallet** | the check, then a link/QR; they sign in Phantom/Privy and the order lands | nothing more — the check already exists today |
+| **The agent, via its own signer** (Privy, 1claw, paybox-style) | the whole loop, unattended | nothing of ours; we compose their signer |
+| **Us, for a user who signed up with us** | the whole loop, unattended | #2 + #3b + #4 + #5 — a different product |
+
+Rows 1 and 2 keep *holds no key, never signs* intact on the public surface. Row 3 is the
+hosted-signer product and is explicitly NOT this loop. Until this is chosen, read
+"approves once" as row 1.
+
 ## Why this, and why now — the positioning half
 
 The founder's question was *"we help API providers do what?"* and it has no answer **in
@@ -74,19 +89,37 @@ spend ledger does not survive a task replacement; no real client has ever driven
 
 Ordered by uncertainty killed per unit of work, not by dependency depth.
 
-### 1. Prove hosted login mints a key
+### 1. Prove hosted login mints a key — ✅ DONE 2026-08-14
 
-**No new code.** Run the real OTP against the deployed host and see whether a
-`gecko_sk_…` comes back. `PRIVY_APP_ID` and `MONGODB_URI` are both filled, so
-`build_login_service_from_env` should return a live service and `/auth/login/*` should
-answer rather than 503.
+**Result: green.** `noreply@geckovision.tech` → Privy OTP → verified identity → a real
+`gecko_sk_…` from the hosted registry, HTTP 200. No new code was needed. The endpoint was
+live all along: `POST /auth/login/start` answers `400 "enter a valid email address"` on an
+empty body, not the `503 "login_disabled"` that a missing `PRIVY_APP_ID` or registry
+produces — which also corrects an earlier claim in this session that hosted key issuance
+was disabled in production. It was not. `GECKO_OTP_FROM` was never the blocker for this
+path; that variable belongs to a **different, unbuilt** SES path (`boto3` is not even a
+declared dependency).
 
-*Why first:* everything gated sits on it, and it is the cheapest possible falsification.
-`HttpPrivyServerClient` asserts a passwordless wire shape verified empirically once; if
-Privy's behaviour differs today we learn it for free, before anything is built on top.
+Two things the task surfaced that reading the code would not have:
 
-**Done when:** one email round-trip yields a key, or yields a precise failure naming which
-call broke. The founder runs it — the code lands in their inbox.
+* **The handle IS the email.** `HttpPrivyServerClient.start` returns the address, because
+  Privy's `authenticate` takes `{email, code}` and issues no server-side login id. A
+  verify against a *different* address than the code was issued for returns
+  `401 "invalid or expired code"` — the same answer as a wrong code, an expired code, or
+  any other non-2xx, because the client collapses them all deliberately so the response
+  cannot distinguish "wrong code" from "unknown email". Good security, poor diagnosis:
+  **budget one wasted round-trip per address confusion.**
+* **A login-minted key is `enabled=False`.** Self-service login yields an IDENTITY and
+  zero access; `GeckoKeyResolver` resolves a key only if its record exists AND is enabled,
+  so a fresh key does not even resolve (`403 invalid_token`, not `not_enabled`). See the
+  store section below — this is what the founder's ruling replaces for our own storefront.
+
+**Handling note, recorded because it will happen again:** the key was printed in full while
+being read back. The guard matched a field named `key`; the endpoint returns `api_key`.
+**Redact by PATTERN (`gecko_sk_`), never by field name** — a name can be different, a
+prefix cannot. The exposed key is inert (disabled, proven against `/birdeye/mcp`), but it
+must never be the record that gets enabled; mint a fresh one for that account first.
+
 
 ### 2. Bind the wallet at login
 
@@ -118,14 +151,63 @@ from the custodian at signing time, so a stale binding refuses rather than signs
 finds the binding written; and a payload with no embedded wallet writes nothing and leaves
 the account in mode A.
 
-### 3. Wire the store mount
+### 3. The store surface is OPEN — the check is the gate
+
+**Founder ruling, 2026-08-14.** The store works like an x402 channel: **open**, no key
+wall. The agent receives a *"payment check"* — the pre-signed transaction, i.e. the
+unsigned bytes plus the receipt that attests they will land — and **to conclude the
+transaction it must sign and pay. Otherwise the loop does not close.** How we eventually
+charge is unresolved and deliberately not decided here.
+
+This is the better design, and it is worth saying why rather than just recording it: **the
+economic gate replaces the access gate.** An access gate on our own storefront would mean
+approving each buyer by hand (`gecko keys enable` + `gecko keys grant`), which is right for
+a paid third-party surface whose quota WE pay for — `birdeye` — and wrong for a storefront
+where the buyer spends their own money. Nobody needs permission to be handed a check. They
+need a wallet to settle it. A caller who plans a purchase and never signs has consumed a
+simulation; a caller who wants the coffee pays for it themselves.
+
+**Why `birdeye` being walled is not a counter-example** (founder, same ruling). It is
+walled for two reasons that have nothing to do with access-control philosophy: the key we
+serve it with is a **trial** key, so serving it commercially is not ours to do; and
+**our intent is to be an engine, not a marketplace** — reselling somebody else's paid API
+to strangers is precisely the drift the thesis forbids. It also exists mainly for internal
+use (a co-founder, and tests). So the two surfaces differ because the money differs: on
+`birdeye` the quota is OURS, on the storefront the money is the BUYER'S. Gate what you pay
+for; hand a check for what they pay for.
+
+It also collapses a whole class of attack surface. On an open, caller-signs surface the
+buyer is supplied by the caller — mode A — and that is *correct*, not a weakness: naming
+somebody else's address only yields bytes you cannot sign. The impersonation the wallet
+binding exists to prevent is only reachable where WE hold the signing authority.
+
+**Consequences, stated plainly:**
+
+* Task **#2** (bind the wallet at login) is **not on this loop's critical path.** A binding
+  matters only when we are the signer. It stays built (#420, #422) and idle.
+* Task **#4** (a settle tool) is **not built for this loop.** The caller signs. Building a
+  hosted signer here would contradict the boundary the whole product rests on — *holds no
+  key, never signs* — on the one surface that is public.
+* The `store` mount from #423, which is *unbuildable unless gated*, is therefore **not the
+  shape this ruling asks for.** The open storefront is what `orquestra` already serves
+  today: `find_start`, `list_stores`, `prepare_purchase` in mode A, keyless, public.
+
+**Done when:** an open surface hands back a check — plan, accounts, receipt PASS, unsigned
+bytes — to an unauthenticated caller, and refuses to be anything more than that.
+
+### 3b. Wire the gated store mount (deferred, not deleted)
 
 Config and deploy only; the code merged in #423. The mount is built only when a wallet
-directory exists AND the gate stance is on AND the name is in the gate's scope — so this
-is `GECKO_GATED_SURFACES` gaining `store`, and a redeploy.
+directory exists AND the gate stance is on AND the name is in the gate's scope.
 
-**Done when:** `/store/mcp` answers 403 without a key and lists `prepare_purchase` with
-the buyer-bound description with one.
+**Deferred by the ruling above.** It remains the right shape for the *other* product — a
+user who signed up with us and wants their agent to complete a purchase without a human
+touching a wallet. That product needs the binding, the settle tool, and the durable
+ledger. It is not this loop, and mixing the two is how the public surface would quietly
+acquire a signing path.
+
+**Done when:** (deferred) `/store/mcp` answers 403 without a key and lists
+`prepare_purchase` with the buyer-bound description with one.
 
 ### 4. The settle tool
 
