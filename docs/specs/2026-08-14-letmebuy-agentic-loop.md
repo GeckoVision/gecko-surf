@@ -209,7 +209,26 @@ acquire a signing path.
 **Done when:** (deferred) `/store/mcp` answers 403 without a key and lists
 `prepare_purchase` with the buyer-bound description with one.
 
-### 4. The settle tool
+### 4. The signer is somebody else's — see `2026-08-14-who-signs.md`
+
+**Replaced by research, 2026-08-14.** Four specialists converged: the signer is **PayBox**
+(MoonPay), reached as an MCP connector the user adds in their own chat client. Its
+`request_wallet_sign` / `op: "solanaTransaction"` takes `transactionBase64` and returns
+`signedTransactionBase64` — no rebuild, no re-stamped blockhash, no injected instruction —
+so our attestation, taken over the message, survives the signature byte-for-byte.
+
+We build **nothing that signs.** The only proposed build is
+`verify_signed_transaction(transaction, binding, network)`: `verify_handoff` at
+`require="exact"`, already written and not exposed. Keyless, stateless. It proves what was
+signed is what was checked, before broadcast.
+
+Also settled there: Actions/Blinks is **ruled out by specification** (an unsigned
+transaction's fee payer and blockhash MUST be overwritten by the client, which is the
+mutation the binding is taken against), and no custody provider in the market — Turnkey
+included — can express "only sign if this hash matches a simulation someone else
+performed." That is the whole-category answer to the 1claw question.
+
+### 4b. The hosted settle tool (deferred with §3b)
 
 The tool that produces a signature. It **must not** live in `gecko/prepare_purchase.py` —
 that module's first paragraph says it holds no key and has no path to one, the public docs
