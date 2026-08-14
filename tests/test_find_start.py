@@ -117,7 +117,10 @@ def test_a_bar_intent_routes_to_a_let_me_buy_instruction_not_a_memecoin_buy() ->
     top = find_start("buy a beer").starts[0]
     assert (top.program, top.instruction) == ("let_me_buy", "make_purchase")
     assert top.kind == "start"
-    assert top.next_tool is None  # honest: no Gecko plan tool, the derive plan is it
+    # It WAS `None`, with a note saying "no Gecko plan tool is wired for this
+    # instruction". That was false — `prepare_purchase` plans and CHECKS this exact call,
+    # and a null here sent agents to a raw builder instead.
+    assert top.next_tool == "prepare_purchase"
     assert "beer" in top.why
 
 
@@ -422,3 +425,43 @@ def test_a_cyclic_account_is_flagged_in_the_derive_plan() -> None:
     )
     assert step.provenance == "flagged"
     assert "cycle" in step.note and "a, b" in step.note
+
+
+def test_a_purchase_routes_to_the_tool_that_checks_it_not_to_a_raw_builder() -> None:
+    """`find_start` resolved let_me_buy/make_purchase perfectly and then said
+    `next_tool: null` with "no Gecko plan tool is wired for this instruction".
+
+    That is FALSE — `prepare_purchase` is the plan tool for `make_purchase`, and it is the
+    one that derives offline, refuses a self-paying plan, patches a fresh blockhash,
+    simulates the exact bytes and binds a receipt. Sending an agent to Orquestra's raw
+    `/build` instead is the strictly worse path, recommended by our own router.
+    """
+    from gecko.find_start import find_start
+
+    result = find_start("buy a coffee at a store")
+    top = result.starts[0]
+
+    assert (top.program, top.instruction) == ("let_me_buy", "make_purchase")
+    assert top.next_tool == "prepare_purchase"
+
+
+def test_no_start_point_instructs_the_agent_to_pass_something_it_cannot() -> None:
+    """A dangling instruction is worse than none: it burns a reasoning step and yields
+    nothing. The note told agents to `Supply chain_verdicts={name:'AGREE'}` while the tool
+    schema is {intent, program} — there is no such parameter, and there must not be.
+
+    A verdict that an AGENT can assert is a verdict the agent can fabricate. It stays a
+    library-caller argument, supplied from evidence, and the prose must not invite anyone
+    to pass it through a tool.
+    """
+    import json
+
+    from gecko.find_start import find_start
+    from gecko.providers.catalog_surface import _FIND_START_TOOL
+
+    assert "chain_verdicts" not in _FIND_START_TOOL["inputSchema"]["properties"]
+
+    blob = json.dumps(find_start("buy this token on pump and hold it").to_json())
+    assert "Supply chain_verdicts" not in blob, (
+        "the result tells an agent to pass a parameter the tool does not accept"
+    )

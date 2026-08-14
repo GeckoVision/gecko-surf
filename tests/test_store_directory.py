@@ -311,3 +311,42 @@ def test_a_store_with_no_fulfilment_channel_is_flagged_not_hidden() -> None:
     # And the tool must warn, so an agent does not have to infer it from a false flag.
     assert "NOBODY" in LIST_STORES_TOOL["description"]
     assert "not a promise it resolves" in LIST_STORES_TOOL["description"]
+
+
+def test_a_filter_miss_returns_near_matches_rather_than_nothing() -> None:
+    """`product="coffee"` returned ZERO stores while geckocoffee sells Espresso.
+
+    An empty array should mean "nothing on this network", never "your word did not
+    literally appear in a product name". The store's own NAME contains the word, which is
+    how a person got there in the first place, so a filter that ignores it sends the agent
+    away from the thing it was looking for.
+    """
+    rpc = FakeRpc(
+        _rows(
+            ("A1", encode_store("geckocoffee", products=[("Espresso", 100_000, 6)])),
+            ("A2", encode_store("jonasbar", products=[("Water", 100_000, 6)])),
+        )
+    )
+    out = list_stores_result({"product": "coffee"}, rpc_call=rpc)
+
+    assert out["stores"], "a store whose NAME matches is still a match"
+    assert out["stores"][0]["store"] == "geckocoffee"
+    assert out["stores"][0]["match_kind"] == "store_name"
+    # …and the unrelated store is still excluded, or the filter would mean nothing.
+    assert [s["store"] for s in out["stores"]] == ["geckocoffee"]
+
+
+def test_a_product_name_match_is_reported_as_the_stronger_kind() -> None:
+    rpc = FakeRpc(_rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)]))))
+
+    out = list_stores_result({"product": "wat"}, rpc_call=rpc)
+
+    assert out["stores"][0]["match_kind"] == "product"
+
+
+def test_a_word_matching_nothing_still_returns_nothing() -> None:
+    """The widening must not become "everything matches". An empty result has to stay
+    possible, or the filter stops carrying information."""
+    rpc = FakeRpc(_rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)]))))
+
+    assert list_stores_result({"product": "lobster"}, rpc_call=rpc)["stores"] == []

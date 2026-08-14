@@ -67,6 +67,36 @@ class OrquestraCatalogSurface:
 
     surface_id = "orquestra:catalog"
 
+    #: Read by the client BEFORE any tool is chosen — the only place a rule about the
+    #: ORDER of tools can live, since a per-tool description is read after the choice.
+    instructions = (
+        "Gecko turns a Solana program into calls you can check before they count. "
+        "Nothing here holds a key, signs, or broadcasts: every path ends in UNSIGNED "
+        "bytes plus a receipt attesting they would land.\n"
+        "\n"
+        "THE ORDER, and it matters:\n"
+        "1. BROWSE with `list_stores` (or `find_start` for other programs). Free, no "
+        "expiry, every price and mint. Do all your deciding here.\n"
+        "2. GET A SIGNER before you need one. Gecko never signs. Add a signer connector — "
+        "PayBox (`https://api.paybox.sh/mcp`) reaches this client; Phantom's or Privy's "
+        "local servers reach desktop clients — ask it for the wallet address, and FUND "
+        "that address with the price plus a little SOL. Do this while browsing, not after "
+        "preparing.\n"
+        "3. PREPARE with `prepare_purchase` only once the buyer has chosen. It starts a "
+        "~40-second clock: the bytes carry a live blockhash and expire with it. Re-running "
+        "is free, so prepare late rather than early, and never prepare several options to "
+        "compare them.\n"
+        "4. SIGN those exact bytes with the signer, then VERIFY with "
+        "`verify_signed_transaction` before broadcasting — that is the cheapest moment to "
+        "catch a signer that returned something else.\n"
+        "5. SUBMIT to the node named in `submit.rpc_url`.\n"
+        "\n"
+        "A REFUSAL IS AN ANSWER, NOT AN ERROR. These tools refuse rather than guess: an "
+        "unknown store, a plan that would pay the buyer back, a simulation that fails, a "
+        "binding that does not match. Read the reason and tell the user; do not route "
+        "around it, and do not substitute a value the tool declined to infer."
+    )
+
     def _catalog_client(self) -> OrquestraClient:
         if self.client is None:
             self.client = OrquestraClient()

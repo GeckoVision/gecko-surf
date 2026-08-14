@@ -219,3 +219,85 @@ def test_program_and_catalog_are_mutually_exclusive() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["--program", "meteora", "--catalog"])
     assert exc.value.code == 2
+
+
+def test_the_surface_tells_a_client_how_its_tools_fit_together() -> None:
+    """MCP's `instructions` is read ONCE, before any tool is chosen — the only place a
+    rule about the ORDER of tools can live.
+
+    A per-tool description cannot carry it: by the time an agent reads `prepare_purchase`,
+    it has already decided to call it. A real session routed perfectly and still took the
+    worse path, because nothing told it beforehand how the pieces fit.
+    """
+    instructions = OrquestraCatalogSurface.instructions
+
+    # The order, and the two steps agents skipped in practice.
+    assert "BROWSE" in instructions and "list_stores" in instructions
+    assert "GET A SIGNER before you need one" in instructions
+    assert "api.paybox.sh/mcp" in instructions
+    assert "FUND" in instructions
+    assert "verify_signed_transaction" in instructions
+    # The boundary, stated once where it cannot be missed.
+    assert "never signs" in instructions or "Nothing here holds a key" in instructions
+    # And the rule that keeps a refusal from being treated as a bug to work around.
+    assert "A REFUSAL IS AN ANSWER" in instructions
+
+
+def test_the_served_app_hands_those_instructions_to_the_client() -> None:
+    """Carrying the text is not the same as SENDING it.
+
+    The first version of this test built its own `Server` and asserted the value it had
+    just passed in — it measured itself, and stayed green when the app stopped forwarding
+    anything. This drives the real app and reads what a client would actually receive.
+    """
+    import json
+
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+
+    app = build_multi_surface_app(
+        [("orquestra", OrquestraCatalogSurface())], allowed_hosts=["testserver"]
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/orquestra/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "probe", "version": "1"},
+                },
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+    body = next(
+        json.loads(line[5:].strip())
+        for line in response.text.splitlines()
+        if line.startswith("data:")
+    )
+    served = body["result"].get("instructions")
+
+    assert served, "the client is told nothing about how to use this surface"
+    assert "GET A SIGNER before you need one" in served
+    assert "A REFUSAL IS AN ANSWER" in served
+
+
+def test_a_surface_without_instructions_still_serves() -> None:
+    """Opt-in: anything that carries no `instructions` sends None, exactly as before."""
+    from gecko.http_server import build_http_app
+
+    class _Bare:
+        def list_tools(self, **_kw):
+            return []
+
+        def call_tool(self, name, arguments):
+            return {}
+
+    assert build_http_app(_Bare(), server_name="bare") is not None
