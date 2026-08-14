@@ -68,6 +68,7 @@ def encode_store(
     receipts: int = 2,
     total: int = 2,
     authority: str = AUTHORITY,
+    mint: str = USDC,
 ) -> bytes:
     """A Receipts account in the IDL's own layout, discriminator included.
 
@@ -86,7 +87,7 @@ def encode_store(
     for product_name, price, decimals in listed:
         body += price.to_bytes(8, "little")
         body += bytes([decimals])
-        body += _b58decode(USDC).rjust(32, b"\x00")
+        body += _b58decode(mint).rjust(32, b"\x00")
         body += _string(product_name)
     return b"\x00" * 8 + body
 
@@ -227,7 +228,14 @@ def test_a_private_rpc_url_is_refused_by_the_ssrf_guard() -> None:
     assert rpc.calls == []  # nothing was fetched
 
 
-def test_the_result_names_the_wired_stores_and_the_menu_caveat() -> None:
+def test_the_result_carries_the_menu_caveat_and_no_buyable_shortlist() -> None:
+    """`wired_stores` is GONE, and its absence is the point.
+
+    It named the one storefront `prepare_purchase` had hardcoded. Now that a purchase
+    re-reads whichever store it is asked for, a shortlist would be a false claim about
+    which of these can be bought — the answer is all of them, so the field that implied
+    otherwise is removed rather than left saying something untrue.
+    """
     out = list_stores_result(
         {"network": "mainnet", "product": "water"},
         rpc_call=FakeRpc(
@@ -235,8 +243,10 @@ def test_the_result_names_the_wired_stores_and_the_menu_caveat() -> None:
         ),
     )
     assert out["network"] == "mainnet"
-    assert "jonasbar" in out["wired_stores"]
+    assert "wired_stores" not in out
     assert "MENU" in out["note"] and "not an authorization" in out["note"]
+    # The caveat must still say the purchase re-reads rather than trusting this list.
+    assert "own account" in out["note"]
 
 
 def test_the_surface_serves_it() -> None:
