@@ -138,6 +138,14 @@ class StoreListing:
     authority: str
     total_purchases: int
     products: tuple[StoreProduct, ...]
+    #: Where the program tells a fulfiller to send the order. `PurchaseMade` carries this
+    #: value, so it is the delivery ADDRESS, not a label — and an empty one means a
+    #: purchase is recorded and nobody is told to make it. Surfaced so a buyer can see
+    #: that before paying rather than after.
+    #:
+    #: WE CANNOT VERIFY IT RESOLVES. Empty is checkable from chain; wrong-but-present is
+    #: not, and looks identical to correct. Say so wherever this is shown.
+    telegram_channel_id: str = ""
 
 
 def decode_store(raw: bytes, *, address: str) -> StoreListing:
@@ -175,12 +183,21 @@ def decode_store(raw: bytes, *, address: str) -> StoreListing:
                 name=cursor.string(), price_raw=price_raw, decimals=decimals, mint=mint
             )
         )
+    # The fulfilment channel sits after the products vec. Read defensively: an older
+    # account laid out before this field existed simply ends here, and a truncated read is
+    # reported as absent rather than raising — a missing channel is a fact about the store,
+    # not a reason to drop the whole storefront from the menu.
+    try:
+        telegram_channel_id = cursor.string()
+    except StoreDecodeError:
+        telegram_channel_id = ""
     return StoreListing(
         store_name=store_name,
         address=address,
         authority=authority,
         total_purchases=total_purchases,
         products=tuple(products),
+        telegram_channel_id=telegram_channel_id,
     )
 
 
@@ -252,6 +269,15 @@ def list_stores(
                 "address": listing.address,
                 "authority": listing.authority,
                 "total_purchases": listing.total_purchases,
+                # WHERE AN ORDER GOES. `PurchaseMade` carries this, so it is the delivery
+                # address rather than a label: empty means the purchase is recorded and
+                # nobody is told to make it. Shown so a buyer can see that BEFORE paying.
+                # We cannot verify it resolves — empty is checkable, wrong-but-present is
+                # not — so the value is reported and never endorsed.
+                "fulfilment": {
+                    "telegram_channel_id": listing.telegram_channel_id,
+                    "set": bool(listing.telegram_channel_id),
+                },
                 "products": products,
             }
         )
@@ -313,6 +339,10 @@ LIST_STORES_TOOL: dict[str, Any] = {
         "not an authorization: the directory reports what the accounts say, accounts "
         "that do not decode are counted rather than guessed at, and a purchase still "
         "verifies everything before anything signs. "
+        "Each store reports its `fulfilment` channel — where the program tells a fulfiller "
+        "to send the order. `set: false` means a purchase would be recorded and NOBODY "
+        "told to make it; say so before someone pays. A value being present is not a "
+        "promise it resolves — that cannot be checked from the chain. "
         "BROWSE HERE, NOT WITH `prepare_purchase`. This costs nothing and expires never, "
         "so show these prices, let the buyer choose, and only then call "
         "`prepare_purchase` — which starts a ~40-second clock on a live blockhash. Each "
