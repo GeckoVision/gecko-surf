@@ -52,6 +52,15 @@ CASES: dict[str, tuple[Path, Callable[[], Any]]] = {
     "txodds": (ROOT / "tests" / "fixtures" / "txodds_docs.yaml", _two_token),
     "pegana": (ROOT / "tests" / "fixtures" / "pegana_openapi.json", public_session),
     "privy": (GOLDEN / "privy_openapi.json", _two_token),
+    # Added 2026-08-14. The other three sets are 60-70% keyword_echo, so they measure the
+    # archetype BM25 is guaranteed to win and under-sample the one that decides whether a
+    # dense arm is worth buying. Birdeye is 89 ops with heavy near-duplicate naming (single
+    # vs multiple, v1/v2/v3, token vs pair) and its set is deliberately inverted: 19 of 40
+    # positives are paraphrases whose query shares NO content token with the target.
+    "birdeye": (
+        ROOT / "examples" / "birdeye_demo" / "spec" / "birdeye_openapi.json",
+        _two_token,
+    ),
 }
 
 _SHIPPED_TOKENS = catalog._tokens
@@ -108,10 +117,23 @@ def run() -> dict[str, Any]:
         finally:
             catalog._tokens = _SHIPPED_TOKENS
         bm25 = BM25Index(client.catalog.entries)
-        card_c = _card(_bm25_retriever(bm25, usable), tasks)
+        bm25_retriever = _bm25_retriever(bm25, usable)
+        card_c = _card(bm25_retriever, tasks)
+        # The AGGREGATE recall is a blend of archetypes, and the sets are not balanced, so a
+        # set that is mostly keyword_echo reports a number no paraphrase ever has to earn.
+        # The gate is decided on the aggregate; this is what the aggregate is hiding.
+        by_arch: dict[str, dict[str, Any]] = {}
+        for arch in sorted({t.archetype for t in tasks} - {"out_of_scope"}):
+            slice_ = [t for t in tasks if t.archetype == arch]
+            by_arch[arch] = {
+                "n_tasks": len(slice_),
+                "B": _card(_Retriever(client.search_scored), slice_),
+                "C": _card(bm25_retriever, slice_),
+            }
         out[name] = {
             "n": len(usable),
             "arms": {"A": card_a, "B": card_b, "C": card_c},
+            "by_archetype": by_arch,
         }
     return out
 
@@ -153,6 +175,15 @@ def format_report(results: dict[str, Any]) -> str:
             f"**{'FIRES' if fires else 'does not fire'}** "
             f"(ops={n}, BM25 recall@3={_recall(r['arms']['C'], 3):.2f})"
         )
+        lines.append("")
+        lines.append(f"### {name} — recall@3 by archetype (what the aggregate blends)")
+        lines.append("| archetype | tasks | B (overlap) | C (BM25) |")
+        lines.append("|---|---|---|---|")
+        for arch, cards in r["by_archetype"].items():
+            lines.append(
+                f"| {arch} | {cards['n_tasks']} | {_recall(cards['B'], 3):.2f} "
+                f"| {_recall(cards['C'], 3):.2f} |"
+            )
         lines.append("")
     return "\n".join(lines)
 

@@ -412,10 +412,15 @@ def test_the_surface_dispatches_prepare_purchase() -> None:
     described = tool["description"].lower()
     for claim in ("unsigned", "you sign", "expires", "well-formed"):
         assert claim in described, claim
-    # `network` is no longer required: omitted with no rpc_url it means mainnet, and a
-    # person buying coffee should not have to name a chain. Naming a NODE still requires
-    # naming the chain — see test_supplying_an_rpc_url_without_a_network_still_refuses.
-    assert tool["inputSchema"]["required"] == ["store", "product", "buyer"]
+    # Neither `network` nor `buyer` is required, and for the same reason: a person buying
+    # coffee should not have to name a chain, and an agent with no wallet should reach the
+    # `signer-required` refusal rather than bounce off the schema and ask a human for a
+    # pubkey. Naming a NODE still requires naming the chain — see
+    # test_supplying_an_rpc_url_without_a_network_still_refuses.
+    assert tool["inputSchema"]["required"] == ["store", "product"]
+    # The pointer to a signer must survive truncation, so it sits in the first ~600
+    # characters rather than mid-paragraph where a tool-search summarizer drops it.
+    assert "api.paybox.sh/mcp" in tool["description"][:500]
 
     out = surface.call_tool(
         "prepare_purchase",

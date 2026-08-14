@@ -20,6 +20,7 @@ from gecko.catalog import CatalogEntry, _tokens
 from gecko.client import AgentApiClient
 from gecko.evaluate import GOLDEN_ARCHETYPES, GoldenTask, load_golden
 
+ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN = FIXTURES / "golden"
 
@@ -32,14 +33,27 @@ def _txodds_session() -> Session:
     return Session(jwt="recorded-mode", api_token="recorded-mode")
 
 
-CASES: dict[str, tuple[str, Callable[[], object]]] = {
+CASES: dict[str, tuple[Path | str, Callable[[], object]]] = {
     "txodds": ("txodds_docs.yaml", _txodds_session),
     "pegana": ("pegana_openapi.json", public_session),
+    # Birdeye (89 ops) is the PARAPHRASE-heavy set: 19 of its 40 positives share no content
+    # token with their target, where the other sets are ~60-70% keyword_echo. It exists
+    # because the aggregate recall those sets report is dominated by the archetype lexical
+    # retrieval cannot lose, which makes the dense/RRF scale gate read healthier than it is.
+    "birdeye": (
+        ROOT / "examples/birdeye_demo/spec/birdeye_openapi.json",
+        _txodds_session,
+    ),
 }
 
 
-def _client(spec_name: str, session_factory: Callable[[], object]) -> AgentApiClient:
-    return AgentApiClient(str(FIXTURES / spec_name), session=session_factory())
+def _client(
+    spec_name: Path | str, session_factory: Callable[[], object]
+) -> AgentApiClient:
+    """`spec_name` is a name under `tests/fixtures/`, or an absolute path for a spec that
+    already lives elsewhere in the repo (birdeye) rather than being copied in."""
+    path = spec_name if isinstance(spec_name, Path) else FIXTURES / spec_name
+    return AgentApiClient(str(path), session=session_factory())
 
 
 def _tasks(name: str) -> list[GoldenTask]:

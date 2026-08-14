@@ -1,0 +1,43 @@
+{"goal": "token price", "expect_ops": ["get-defi-price"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "trending token list", "expect_ops": ["get-defi-token_trending"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "token security", "expect_ops": ["get-defi-token_security"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "supported networks", "expect_ops": ["get-defi-networks", "get-v1-wallet-list_supported_chain"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "search for a token", "expect_ops": ["get-defi-v3-search"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "top traders for a token", "expect_ops": ["get-defi-v2-tokens-top_traders"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "new token listing", "expect_ops": ["get-defi-v2-tokens-new_listing"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "token holder distribution", "expect_ops": ["get-holder-v1-distribution"], "args": {}, "archetype": "keyword_echo"}
+{"goal": "did this coin rug", "expect_ops": ["get-defi-token_security"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how much is BONK worth right now", "expect_ops": ["get-defi-price"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "give me hourly bars for this coin", "expect_ops": ["get-defi-ohlcv", "get-defi-v3-ohlcv"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "did this address make or lose money", "expect_ops": ["get-wallet-v2-pnl-summary", "get-wallet-v2-pnl"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "who launched this coin and when", "expect_ops": ["get-defi-token_creation_info"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how many people own this coin", "expect_ops": ["get-defi-v3-token-holder"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how concentrated is coin ownership", "expect_ops": ["get-holder-v1-distribution"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "what did this address buy and sell recently", "expect_ops": ["get-v1-wallet-tx_list"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how loaded is this account", "expect_ops": ["get-wallet-v2-current-net-worth"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "which coins are the whales accumulating", "expect_ops": ["get-smart-money-v1-token-list"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "who bought before everyone else", "expect_ops": ["get-token-v1-first-buyers"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "which coins does this address hold", "expect_ops": ["get-v1-wallet-token_list"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "which traders made the most money today", "expect_ops": ["get-trader-gainers-losers"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "is this account growing or shrinking", "expect_ops": ["get-wallet-v2-net-worth", "get-wallet-v2-balance-change"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how much would I lose selling my whole bag", "expect_ops": ["get-defi-v3-token-exit-liquidity"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "what does it cost to trade this coin", "expect_ops": ["get-defi-v3-token-fee-single"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how much quota is left", "expect_ops": ["get-utils-v1-credits"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "who seeded this account originally", "expect_ops": ["post-wallet-v2-tx-first-funded"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "how deep is this coin pool", "expect_ops": ["post-defi-v3-liquidity-latest-token", "get-defi-v3-liquidity-history-token"], "args": {}, "archetype": "paraphrase_no_overlap"}
+{"goal": "price for fifty tokens in one request", "expect_ops": ["get-defi-multi_price", "post-defi-multi_price"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "ohlcv candles for a specific trading pair", "expect_ops": ["get-defi-ohlcv-pair", "get-defi-v3-ohlcv-pair"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "recent trades on a pair", "expect_ops": ["get-defi-txs-pair", "get-defi-txs-pair-seek_by_time"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "metadata for several tokens in one call", "expect_ops": ["get-defi-v3-token-meta-data-multiple"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "pnl broken down per token for one wallet", "expect_ops": ["get-wallet-v2-pnl"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "pnl totals across many wallets", "expect_ops": ["get-wallet-v2-pnl-multiple"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "market data for a single token", "expect_ops": ["get-defi-v3-token-market-data"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "token trades filtered by volume", "expect_ops": ["get-defi-v3-token-txs-by-volume"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "detail for a single meme token", "expect_ops": ["get-defi-v3-token-meme-detail-single"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "every market a token trades on", "expect_ops": ["get-defi-v2-markets"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "balance of one specific mint in a wallet", "expect_ops": ["get-v1-wallet-token_balance"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "mint and burn events for a token", "expect_ops": ["get-defi-v3-token-mint-burn-txs"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "historical price at a unix timestamp", "expect_ops": ["get-defi-historical_price_unix"], "args": {}, "archetype": "near_dup_disambiguation"}
+{"goal": "recommend nearby vegan restaurants open tonight", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
+{"goal": "book me a flight to Lisbon next Tuesday", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}
+{"goal": "water my houseplants weekly", "expect_ops": [], "args": {}, "archetype": "out_of_scope"}

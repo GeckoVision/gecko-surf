@@ -116,9 +116,16 @@ PrepareRefusalCode = (
         "store-unknown",
         "argument-invalid",
         "buyer-not-bound",
+        "signer-required",
         "wallet-directory-unavailable",
     ]
 )
+
+
+#: The closed set of things that can block a call for a reason that is not the caller's
+#: mistake. A refusal that carries one is saying "you are missing a DEPENDENCY", which is
+#: a different instruction from "you passed something wrong" — an agent can branch on it.
+BlockerKind = Literal["signer"]
 
 
 #: A store's on-chain facts that a store NAME cannot give you. ``receipts`` is derivable
@@ -249,6 +256,36 @@ def _pubkey_or_none(value: Any) -> str | None:
         return None
 
 
+def _signer_required() -> dict[str, Any]:
+    """ "You have no wallet yet" — as DATA, not as a schema wall.
+
+    ``buyer`` used to be `required`, so an agent with no wallet could not call this tool
+    at all: it hit the schema, had nothing to go on but the description, and asked the
+    human for a pubkey the human did not have. That was the terminal stop in a real
+    session. The pointer to a signer existed — in the middle of the longest description
+    on the surface — and clients that load tools by search summarize exactly that away.
+
+    So the pointer moves into a place no summarizer sits between: a tool RESULT. The
+    agent must call to get here, and what it gets back names the signers that reach it,
+    the URL, and the order (add, then ASK for the address, then FUND it, then re-call).
+
+    Funding is step three because an unfunded address gets you a passing plan and a
+    reverting transaction — the receipt is honest about the bytes, not about the balance.
+    """
+    return _refuse(
+        "signer-required",
+        "no wallet address to buy from, and this is not something to ask the human for "
+        "as a raw string — get it from a signer. Gecko never holds a key: it plans and "
+        "checks the transaction, and something else signs it. Add one of the signers "
+        "below, ASK IT for the wallet address, FUND that address with the price plus a "
+        "little SOL for the fee, then call this again with that address as `buyer`. Do "
+        "all of that BEFORE re-calling: this tool starts a ~40-second clock, so a buyer "
+        "sent off to install something is holding bytes that die while they read.",
+        blocker_kind="signer",
+        signers=[dict(signer) for signer in _SIGNERS_KNOWN_TO_WORK],
+    )
+
+
 def _resolve_buyer(
     args: Mapping[str, Any], account: str | None, wallets: WalletDirectory | None
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -283,11 +320,7 @@ def _resolve_buyer(
         # Mode A: no account, or an account that has bound no wallet. These bytes are for
         # a wallet we know nothing about, so its owner names it.
         if supplied is None:
-            return None, _refuse(
-                "argument-invalid",
-                "`buyer` must be a base58 Solana pubkey — the PUBLIC key of the wallet "
-                "that will sign. Never a secret key, and nothing here can use one.",
-            )
+            return None, _signer_required()
         return supplied, None
 
     if supplied is not None and supplied != binding.pubkey:
@@ -788,9 +821,16 @@ def _http_build_call(plan: Mapping[str, Any]) -> BuiltTx:
 
 
 #: What ``buyer`` means when the caller is the only one who can name it (mode A).
+#:
+#: It is not `required`, and that is deliberate rather than lax: an agent with no wallet
+#: yet should reach the REFUSAL, which names the signers that reach its client, instead of
+#: bouncing off the schema and asking a human for a base58 string. The call still cannot
+#: succeed without it.
 _BUYER_SUPPLIED = (
     "the PUBLIC key of the wallet that will sign and pay. Never a secret key — nothing "
-    "here can use one."
+    "here can use one. Do not ask the human to type one: get it from a signer connector, "
+    "and omit this argument if you have not got one yet — the refusal names the signers "
+    "that reach this client and the order to do it in."
 )
 
 #: ...and what it means when this deployment can look the caller's wallet up. The schema
@@ -810,7 +850,14 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
     "description": (
         "Plan and verify a real purchase from a let_me_buy storefront, and hand back the "
         "UNSIGNED transaction. Gecko holds no key: YOU SIGN it in your own wallet and you "
-        "submit it — nothing here signs, broadcasts, or touches a key. It derives every "
+        "submit it — nothing here signs, broadcasts, or touches a key. "
+        "SO YOU NEED A SIGNER BEFORE YOU NEED THIS TOOL: add PayBox "
+        "(`https://api.paybox.sh/mcp`, a custom connector — it reaches Claude web, "
+        "ChatGPT, Gemini and Grok) or, on a desktop client, `npx @phantom/mcp-server`; "
+        "ask it for the wallet address; FUND that address; then call this with that "
+        "address as `buyer`. Never ask a human to type a pubkey — call this WITHOUT "
+        "`buyer` and the refusal names the signers that reach you. "
+        "It derives every "
         "account offline (the store's receipts PDA from its seed recipe, both token "
         "accounts from the SPL associated-token recipe), refuses a plan that would pay "
         "the buyer back BEFORE the builder is asked, replaces the builder's stale "
@@ -819,16 +866,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "receipt (status, compute units, revert class), the binding, the resolved "
         "accounts with each one's role, and the transaction; a simulation that fails "
         "returns the refusal and NO transaction. "
-        "YOU NEED A SIGNER BEFORE YOU NEED THIS TOOL, and in this order: (1) add a signer "
-        "connector — PayBox at `https://api.paybox.sh/mcp` reaches Claude web, ChatGPT, "
-        "Gemini and Grok (Settings -> Connectors -> add a custom connector, then Connect; "
-        "no API key to copy); on a desktop client `npx @phantom/mcp-server` or Privy's "
-        "agent-wallet CLI work too; (2) ask it for the wallet address; (3) FUND that "
-        "address with the price plus a little SOL for the fee; (4) only then call this. "
-        "Said here rather than only in the result because the result arrives AFTER the "
-        "~40-second clock has started — a buyer sent off to install something at that "
-        "point is holding bytes that die while they read the instructions. "
-        "WHEN TO CALL THIS: **after** the buyer has chosen, immediately before signing — "
+        "WHEN TO CALL THIS:**after** the buyer has chosen, immediately before signing — "
         "never while they are still deciding. The bytes it returns carry a live blockhash "
         "and stop being landable roughly 40 seconds later, so preparing several products "
         "to compare them, or preparing before a human approves, spends the whole window on "
@@ -879,7 +917,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                 ),
             },
         },
-        "required": ["store", "product", "buyer"],
+        "required": ["store", "product"],
         "additionalProperties": False,
     },
 }
@@ -889,16 +927,17 @@ def prepare_purchase_tool(*, buyer_bound: bool = False) -> dict[str, Any]:
     """The tool definition, honest about which buyer rule THIS deployment enforces.
 
     ``buyer_bound`` is set by the surface when a wallet directory is wired. It changes
-    nothing about what the tool DOES — it changes what the schema admits, so an agent
-    reads the rule rather than discovering it by being refused.
+    nothing about what the tool DOES — it changes what the schema SAYS ``buyer`` means, so
+    an agent reads the rule rather than discovering it by being refused.
+
+    ``buyer`` is omitted from ``required`` in BOTH modes, for two different reasons: bound
+    deployments look it up, and unbound ones want the caller to reach
+    :func:`_signer_required` rather than a schema wall.
 
     Returns a fresh dict every call: a caller that mutated a shared constant would edit
     the schema every other surface serves.
     """
     tool: dict[str, Any] = deepcopy(PREPARE_PURCHASE_TOOL)
-    if not buyer_bound:
-        return tool
-    schema: dict[str, Any] = tool["inputSchema"]
-    schema["properties"]["buyer"]["description"] = _BUYER_BOUND
-    schema["required"] = [name for name in schema["required"] if name != "buyer"]
+    if buyer_bound:
+        tool["inputSchema"]["properties"]["buyer"]["description"] = _BUYER_BOUND
     return tool

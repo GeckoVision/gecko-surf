@@ -184,10 +184,27 @@ def test_an_account_with_no_directory_stays_mode_a() -> None:
     assert _signer_of(out) == BUYER
 
 
-def test_mode_a_still_requires_a_buyer() -> None:
-    out = _prepare(drop_buyer=True)
+def test_mode_a_without_a_buyer_hands_back_a_signer_rather_than_a_schema_wall() -> None:
+    # `buyer` left the required list, so this call now REACHES the tool. It must still be
+    # impossible to buy without one — what changed is that the refusal carries the way
+    # out, as DATA. A client that loads tools by search summarizes long descriptions; it
+    # cannot summarize a tool result, which is the only reason this lives here.
+    builder, rpc = FakeBuilder(), FakeRpc()
+    out = _prepare(builder, rpc, drop_buyer=True)
+
     assert out["refused"] is True
-    assert out["code"] == "argument-invalid"
+    assert out["code"] == "signer-required"
+    assert out["blocker_kind"] == "signer"
+    assert "transaction" not in out
+    # Nothing was built and no node was asked: the refusal is decided before either.
+    assert builder.calls == [] and rpc.calls == []
+
+    connectors = [signer["connector"] for signer in out["signers"]]
+    assert "https://api.paybox.sh/mcp" in connectors, connectors
+    reason = out["reason"].lower()
+    # The ORDER is the load-bearing part — funding after the address, before re-calling.
+    assert reason.index("ask it for") < reason.index("fund that address")
+    assert "call this again" in reason
 
 
 # --- 4. a directory that cannot answer fails CLOSED -----------------------------
@@ -211,12 +228,19 @@ def test_a_directory_that_cannot_answer_refuses_rather_than_degrading() -> None:
 # --- 5. the tool schema tells the truth in both modes ---------------------------
 
 
-def test_the_unbound_schema_requires_a_buyer_and_the_bound_one_does_not() -> None:
+def test_neither_schema_requires_a_buyer_but_they_mean_different_things_by_it() -> None:
+    # `buyer` is optional in BOTH modes now, for two DIFFERENT reasons, so the schemas
+    # agree on the key and differ on its meaning. Unbound: optional so that a caller with
+    # no wallet reaches the `signer-required` refusal (which names the signers that reach
+    # its client) instead of bouncing off the schema and asking a human for a base58
+    # string. Bound: optional because the server looks it up.
     unbound = prepare_purchase_tool(buyer_bound=False)
-    # `network` left the required list when it gained a default (omitted + no rpc_url
-    # means mainnet); naming a NODE without a chain still refuses. The pair under test
-    # here is `buyer`, which is what the binding removes.
-    assert unbound["inputSchema"]["required"] == ["store", "product", "buyer"]
+    assert unbound["inputSchema"]["required"] == ["store", "product"]
+    unbound_described = unbound["inputSchema"]["properties"]["buyer"][
+        "description"
+    ].lower()
+    assert "signer" in unbound_described
+    assert "omit" in unbound_described
 
     bound = prepare_purchase_tool(buyer_bound=True)
     assert "buyer" not in bound["inputSchema"]["required"]
@@ -228,13 +252,16 @@ def test_the_unbound_schema_requires_a_buyer_and_the_bound_one_does_not() -> Non
 
 
 def test_the_surface_serves_the_bound_schema_only_when_a_directory_is_wired() -> None:
+    # The DESCRIPTION is what the binding changes now, not the required list.
     plain = OrquestraCatalogSurface()
     tool = next(t for t in plain.list_tools() if t["name"] == "prepare_purchase")
-    assert tool["inputSchema"]["required"] == ["store", "product", "buyer"]
+    assert (
+        "bound wallet" not in tool["inputSchema"]["properties"]["buyer"]["description"]
+    )
 
     hosted = OrquestraCatalogSurface(wallets=_bound())
     tool = next(t for t in hosted.list_tools() if t["name"] == "prepare_purchase")
-    assert "buyer" not in tool["inputSchema"]["required"]
+    assert "bound wallet" in tool["inputSchema"]["properties"]["buyer"]["description"]
 
 
 def test_the_surface_passes_the_account_through_to_the_binding() -> None:
