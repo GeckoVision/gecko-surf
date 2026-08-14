@@ -30,6 +30,9 @@ from gecko.store_directory import (
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 AUTHORITY = "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy"
+#: An IP literal — the public-URL guard checks it without a DNS lookup, so the SSRF guard
+#: runs for real and no network is touched.
+RPC_URL = "https://93.184.216.34/rpc"
 BUYER = "HNUE5KKTcaT4BuG5zmXxTViKjwNaQTtNt2svumE1WCoi"
 
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -214,13 +217,28 @@ def test_it_asks_for_the_right_program() -> None:
 # -- the surface entry ------------------------------------------------------------
 
 
-def test_the_network_is_asserted_never_defaulted() -> None:
-    out = list_stores_result({}, rpc_call=FakeRpc([]))
-    assert "error" in out and "which network" in out["error"]
-    assert LIST_STORES_TOOL["inputSchema"]["required"] == ["network"]
-    # No `default` KEY in the schema — the description SAYING "there is no default" is
-    # exactly the point, so a substring check would fail on the sentence that proves it.
-    assert "default" not in LIST_STORES_TOOL["inputSchema"]["properties"]["network"]
+def test_browsing_needs_no_network_but_naming_a_NODE_does() -> None:
+    """The guard, narrowed to where it earned its keep.
+
+    `network` used to be required so nothing could infer mainnet from an RPC URL — a fork
+    proxy answers at any hostname. True, and aimed at a developer testing a fork, while the
+    toll was paid by somebody trying to read a menu. The dangerous confusion is a fork
+    MISTAKEN FOR mainnet, and defaulting to mainnet cannot cause that.
+
+    So: name a node and you must name the chain it speaks for; name neither and it is
+    mainnet, which is the only thing "what's on the menu" could mean.
+    """
+    listed = list_stores_result(
+        {}, rpc_call=FakeRpc(_rows(("A1", encode_store("geckocoffee"))))
+    )
+    assert "error" not in listed
+    assert listed["network"] == "mainnet"
+
+    named_a_node = list_stores_result({"rpc_url": RPC_URL}, rpc_call=FakeRpc([]))
+    assert "error" in named_a_node
+    assert "rpc_url" in named_a_node["error"]
+
+    assert LIST_STORES_TOOL["inputSchema"]["required"] == []
 
 
 def test_a_private_rpc_url_is_refused_by_the_ssrf_guard() -> None:

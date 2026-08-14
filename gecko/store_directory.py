@@ -308,14 +308,21 @@ def list_stores_result(
     fetched. A transport failure comes back redacted to its class.
     """
     args = arguments or {}
+    # Same rule as `prepare_purchase`: a NODE without a chain is unguessable (a fork proxy
+    # answers at any hostname), but browsing with neither can only mean mainnet. Requiring
+    # it to READ a menu was the more absurd half of the old guard.
     network = coerce_network(args.get("network"))
     if network == UNKNOWN_NETWORK:
-        return {
-            "error": (
-                "say which network to list: mainnet, devnet, testnet or fork. Nothing "
-                "here infers it, and 'unknown' lists nothing."
-            )
-        }
+        supplied_url = args.get("rpc_url")
+        if isinstance(supplied_url, str) and supplied_url.strip():
+            return {
+                "error": (
+                    "you named an `rpc_url` but not a `network`. Which chain that node "
+                    "answers for cannot be read from its hostname, so say mainnet, "
+                    "devnet, testnet or fork. Omit BOTH and mainnet is assumed."
+                )
+            }
+        network = coerce_network("mainnet")
     rpc_url, refusal = _resolve_rpc_url(args.get("rpc_url"), network)
     if rpc_url is None:
         return {"error": refusal or "no usable rpc_url"}
@@ -373,7 +380,7 @@ LIST_STORES_TOOL: dict[str, Any] = {
                 ),
             },
         },
-        "required": ["network"],
+        "required": [],
         "additionalProperties": False,
     },
 }
