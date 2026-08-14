@@ -39,6 +39,12 @@ class _OneAccount:
     def is_enabled(self, account: str) -> bool:
         return account == ACCOUNT
 
+    def may_access(self, account: str, surface: str) -> bool:
+        # The hosted path scopes an allowlist per surface and DENIES any allowlist that
+        # cannot express the grant, so a test allowlist without this method is refused —
+        # correctly, and loudly. Enabled here is granted everywhere.
+        return self.is_enabled(account)
+
 
 def _gate() -> KeyGate:
     return KeyGate(
