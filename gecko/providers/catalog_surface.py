@@ -29,6 +29,7 @@ from typing import Any
 from ..orquestra_client import OrquestraClient, OrquestraClientError
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
+from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
 from ..rpc import RpcCall
 from ..simulate import BuildCall
 from ..wallet_binding import WalletDirectory
@@ -82,6 +83,10 @@ class OrquestraCatalogSurface:
             # have to be refused to learn it.
             prepare_purchase_tool(buyer_bound=self.wallets is not None),
             LIST_STORES_TOOL,
+            # The other half of the handoff. `prepare_purchase` hands out bytes and a
+            # binding; somebody else signs; this is how anyone proves the signed bytes are
+            # the checked ones BEFORE broadcast. Keyless like everything else here.
+            VERIFY_SIGNED_TOOL,
         ]
 
     def call_tool(
@@ -105,6 +110,8 @@ class OrquestraCatalogSurface:
             return self._prepare_purchase(args, account=account)
         if name == "list_stores":
             return list_stores_result(args, rpc_call=self.purchase_rpc_call)
+        if name == "verify_signed_transaction":
+            return verify_signed_result(args)
         return {"error": f"unknown tool {name!r}"}
 
     # -- tools --------------------------------------------------------------
