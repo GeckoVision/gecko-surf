@@ -337,7 +337,9 @@ def test_a_filter_miss_returns_near_matches_rather_than_nothing() -> None:
 
 
 def test_a_product_name_match_is_reported_as_the_stronger_kind() -> None:
-    rpc = FakeRpc(_rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)]))))
+    rpc = FakeRpc(
+        _rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)])))
+    )
 
     out = list_stores_result({"product": "wat"}, rpc_call=rpc)
 
@@ -347,6 +349,8 @@ def test_a_product_name_match_is_reported_as_the_stronger_kind() -> None:
 def test_a_word_matching_nothing_still_returns_nothing() -> None:
     """The widening must not become "everything matches". An empty result has to stay
     possible, or the filter stops carrying information."""
-    rpc = FakeRpc(_rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)]))))
+    rpc = FakeRpc(
+        _rows(("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)])))
+    )
 
     assert list_stores_result({"product": "lobster"}, rpc_call=rpc)["stores"] == []
