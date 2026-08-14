@@ -887,6 +887,7 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
         from starlette.responses import Response as _Response
         from starlette.routing import Mount as _Mount
         from starlette.routing import Route as _Route
+        from starlette.routing import request_response as _request_response
     except Exception:  # noqa: BLE001 - optional door; absence is not an error
         return []
 
@@ -934,12 +935,27 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
     # a key. The SDK's own owner check does not save us: it compares `scope["user"]`,
     # which this gate never sets (we are not the SDK's bearer middleware), so both sides
     # are None and it always passes.
-    endpoint = _handle_sse if gate is None else _GeckoKeyGateASGI(_handle_sse, gate)
-    messages = transport.handle_post_message
+    #
+    # `request_response` is not decoration. `_handle_sse` is a Starlette endpoint —
+    # `f(request)` — and a Route wraps it in that adapter only when the endpoint IS a
+    # function. Handing the Route a gate instance instead makes the route a raw ASGI app,
+    # so the gate would call `_handle_sse(scope, receive, send)` and every AUTHORIZED
+    # stream would die with a TypeError while every unauthorized one still got its tidy
+    # 403 — the wrapper present, the door behind it broken, and no refusal test able to
+    # see it. Adapting first keeps both shapes the same door.
+    endpoint = (
+        _handle_sse
+        if gate is None
+        else _GeckoKeyGateASGI(_request_response(_handle_sse), gate)
+    )
+    messages = transport.handle_post_message  # already an ASGI app; no adapter needed
     if gate is not None:
         messages = _GeckoKeyGateASGI(messages, gate)
     return [
-        _Route(SSE_PATH, endpoint=endpoint),
+        # `methods` is stated rather than inferred: Starlette derives ["GET"] from a
+        # function endpoint and NOTHING from an ASGI one, so leaving it implicit gave the
+        # gated deployment a stream door that also answered POST/PUT/DELETE.
+        _Route(SSE_PATH, endpoint=endpoint, methods=["GET"]),
         _Mount(SSE_MESSAGE_PATH, app=messages),
     ]
 
