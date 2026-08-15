@@ -39,6 +39,7 @@ a catalog page. Nothing is persisted, no balance is read, no buyer data is decod
 from __future__ import annotations
 
 import base64
+import difflib
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -204,13 +205,19 @@ class ResolvedStore:
         )
 
     def close_matches(self, product_name: str) -> tuple[StoreProduct, ...]:
-        """Listed products whose name overlaps ``product_name`` as a substring, either way.
+        """Listed products whose name is a substring match or a near-miss spelling.
 
         Deliberately LEXICAL and nothing more. "a black coffee" resolves to Espresso by
         knowing what black coffee IS — world knowledge the calling agent has and a store
         account does not — so inferring it here would be guessing with the merchant's
-        money. What this catches is the narrower, honest case: a typo or a partial name
-        (``Espress`` -> ``Espresso``), where the overlap is evidence rather than opinion.
+        money. What this catches is the narrower, honest case: a typo or a partial name,
+        where the resemblance is evidence rather than opinion.
+
+        Substring alone was not enough. ``Cappucino`` (one 'c' short) is neither a
+        substring of ``Cappuccino`` nor a superstring of it, and a dropped letter is the
+        single most common way a real name is mistyped — so a character-ratio pass runs
+        beside it. ``difflib`` is stdlib and deterministic: same inputs, same answer,
+        forever, which a model could not promise.
 
         It is a HINT, never a selection: even a single match still refuses, because a tool
         that quietly substitutes the one thing it found is a tool that eventually buys the
@@ -219,11 +226,48 @@ class ResolvedStore:
         needle = product_name.strip().lower()
         if not needle:
             return ()
-        return tuple(
-            entry
-            for entry in self.products
-            if needle in entry.name.lower() or entry.name.lower() in needle
-        )
+        by_lower = {entry.name.lower(): entry for entry in self.products}
+        hits = {name for name in by_lower if needle in name or name in needle}
+        # 0.75 is deliberately tight. It admits a mistyped name and rejects a CATEGORY:
+        # "coffee" scores ~0.3 against "Espresso", which is the answer we want, because
+        # bridging that gap needs a mind and this function is not one.
+        hits.update(difflib.get_close_matches(needle, list(by_lower), n=3, cutoff=0.75))
+        # Menu order, not match order — a ranking here would read as a recommendation.
+        return tuple(e for e in self.products if e.name.lower() in hits)
+
+
+def _registered_variant(
+    name: str, *, rpc_url: str, rpc_call: RpcCall | None = None
+) -> str | None:
+    """The same name in a different case, IF that one is a real storefront.
+
+    Case is the failure that actually happened: a store branded ``JonasBar`` is registered
+    as ``jonasbar``, and because the PDA seed is the exact string those are two different
+    accounts. This tries the obvious re-spellings and returns the one the chain has.
+
+    Bounded and scan-free on purpose — at most three targeted reads, so a node with
+    ``getProgramAccounts`` disabled still answers. Returns ``None`` on any transport
+    failure: this runs on a path that is ALREADY refusing, and a hint that cannot be
+    fetched must never turn a clear refusal into an error.
+    """
+    call = rpc_call or default_rpc_call
+    seen = {name}
+    for variant in (name.lower(), name.upper(), name.title()):
+        if variant in seen:
+            continue
+        seen.add(variant)
+        try:
+            response = call(
+                rpc_url,
+                "getAccountInfo",
+                [receipts_pda(variant), {"encoding": "base64"}],
+            )
+        except Exception:  # noqa: BLE001 - see docstring; a hint is never worth an error
+            return None
+        value = (response.get("result") or {}).get("value")
+        if isinstance(value, dict) and value.get("owner") == LET_ME_BUY_PROGRAM_ID:
+            return variant
+    return None
 
 
 def resolve_store(
@@ -250,9 +294,25 @@ def resolve_store(
     response = call(rpc_url, "getAccountInfo", [address, {"encoding": "base64"}])
     value = (response.get("result") or {}).get("value")
     if not isinstance(value, dict):
+        # THE SEED IS THE EXACT STRING, so `JonasBar` and `jonasbar` are different
+        # accounts — and a user typing a store the way it is BRANDED rather than the way
+        # it was REGISTERED gets refused on a storefront that plainly exists. Reported
+        # from a real session. Checking a handful of case variants costs one targeted
+        # read each and no program scan, so the guarantee in this function's docstring
+        # survives: it still works on a node with `getProgramAccounts` disabled.
+        registered = _registered_variant(name, rpc_url=rpc_url, rpc_call=rpc_call)
+        hint = (
+            f" A store named {registered!r} DOES exist — that is the same name in a "
+            "different case, and the seed is the exact string, so they are different "
+            "accounts. Call again with the registered spelling if that is the one you "
+            "meant; I will not substitute it for you."
+            if registered
+            else " Call `list_stores` for the names that do exist."
+        )
         raise StoreNotFound(
             f"no store named {name!r} on this network: its receipts account {address} "
             "does not exist. Absence is a refusal, never a fallback to another store."
+            + hint
         )
     owner = value.get("owner")
     if owner != LET_ME_BUY_PROGRAM_ID:
