@@ -74,7 +74,7 @@ from .autonomous_purchase import (
     _with_fresh_blockhash,
 )
 from .handoff import verify_handoff
-from .landing import latest_blockhash
+from .landing import block_height, latest_blockhash
 from .netguard import UnsafeUrlError, validate_public_url
 from .networks import UNKNOWN_NETWORK, Network, coerce_network
 from .pda import PdaDerivationError, derive_pda
@@ -114,6 +114,7 @@ PrepareRefusalCode = (
     | Literal[
         "network-not-asserted",
         "store-unknown",
+        "product-unknown",
         "argument-invalid",
         "buyer-not-bound",
         "signer-required",
@@ -279,7 +280,7 @@ def _signer_required() -> dict[str, Any]:
         "checks the transaction, and something else signs it. Add one of the signers "
         "below, ASK IT for the wallet address, FUND that address with the price plus a "
         "little SOL for the fee, then call this again with that address as `buyer`. Do "
-        "all of that BEFORE re-calling: this tool starts a ~40-second clock, so a buyer "
+        "all of that BEFORE re-calling: this tool starts a ~60-second clock, so a buyer "
         "sent off to install something is holding bytes that die while they read.",
         blocker_kind="signer",
         signers=[dict(signer) for signer in _SIGNERS_KNOWN_TO_WORK],
@@ -517,7 +518,23 @@ def prepare_purchase_result(
         resolved = resolve_store(store_name, rpc_url=rpc_url, rpc_call=rpc_call)
         purchase = resolved.accounts_for(product)
     except ProductNotOnMenu as exc:
-        return _refuse("store-unknown", str(exc), network=network)
+        # NOT `store-unknown`: the store resolved fine, and an agent branching on the code
+        # would abandon a storefront that exists over a product name it can simply fix.
+        # The menu ships as DATA as well as prose, because "a coffee" against a store with
+        # three coffees needs a list to choose from, not a sentence to re-parse.
+        return _refuse(
+            "product-unknown",
+            str(exc),
+            network=network,
+            products=[
+                {
+                    "name": entry.name,
+                    "price_ui": str(entry.price_ui),
+                    "mint": entry.mint,
+                }
+                for entry in resolved.products
+            ],
+        )
     except StoreResolutionError as exc:
         # Covers StoreNotFound and StoreAccountsMismatch — the account is missing, owned
         # by another program, undecodable, or calls itself a different name than the one
@@ -621,6 +638,10 @@ def _prepare(
     #    byte of instruction data exactly as the builder emitted them.
     blockhash, last_valid_block_height = latest_blockhash(rpc_url, rpc_call)
     subject = _with_fresh_blockhash(built, blockhash)
+    # The deadline is a BLOCK HEIGHT, and a caller cannot turn that into "have I got time
+    # to sign?" without knowing where the chain is now. One cheap read makes the budget
+    # arithmetic the agent's rather than ours to guess at.
+    current_block_height = block_height(rpc_url, rpc_call)
 
     # 5. SIMULATE THE SUBJECT — the exact bytes handed back, nothing re-assembled.
     receipt = simulate(
@@ -689,17 +710,7 @@ def _prepare(
         "next_step": _next_step(
             handoff.transaction_base64, receipt.message_binding, rpc_url
         ),
-        "expires": {
-            "blockhash": blockhash,
-            "last_valid_block_height": last_valid_block_height,
-            "note": (
-                "these bytes stop being landable after that block height — about 40 "
-                "seconds, not the full minute the 150-slot budget suggests, because the "
-                "blockhash is read at `finalized` commitment and is already ~30 slots "
-                "behind when you receive it. The receipt expires with them; re-running "
-                "is free, so prepare immediately before signing"
-            ),
-        },
+        "expires": _expiry(blockhash, last_valid_block_height, current_block_height),
         "what_this_proves": _WHAT_IT_PROVES,
     }
 
@@ -749,6 +760,47 @@ _SIGNERS_KNOWN_TO_WORK: tuple[dict[str, str], ...] = (
         "how_to_add": "run its `login` on your own machine, then call `signTransaction`.",
     },
 )
+
+
+#: Mainnet slot time. Only ever used to turn a block COUNT into a human-facing estimate —
+#: never to decide anything, because the true deadline is the height, not the clock.
+_SECONDS_PER_BLOCK = 0.4
+
+
+def _expiry(
+    blockhash: str, last_valid_block_height: int, current_block_height: int | None
+) -> dict[str, Any]:
+    """When these bytes stop being landable, as a BUDGET rather than a sentence.
+
+    The first real purchase through a hosted signer died on ``BlockhashNotFound`` because
+    the client spent the window loading tool definitions between prepare and sign — and
+    what the agent saw was a bare RPC error, with nothing to tell it the cause was time.
+    The prose here said "about 40 seconds"; prose is not something an agent can subtract
+    from. ``blocks_remaining`` is.
+    """
+    remaining = (
+        None
+        if current_block_height is None
+        else max(0, last_valid_block_height - current_block_height)
+    )
+    out: dict[str, Any] = {
+        "blockhash": blockhash,
+        "last_valid_block_height": last_valid_block_height,
+        "current_block_height": current_block_height,
+        "blocks_remaining": remaining,
+        "seconds_remaining_estimate": (
+            None if remaining is None else round(remaining * _SECONDS_PER_BLOCK)
+        ),
+        "note": (
+            "these bytes stop being landable once the chain passes "
+            "`last_valid_block_height`. The receipt expires with them. If you cannot sign "
+            "AND submit inside `seconds_remaining_estimate`, do not start — call this "
+            "again first, which is free and costs nothing on chain. Load your signer's "
+            "tools BEFORE calling this: a cold client can spend the whole budget "
+            "discovering how to sign."
+        ),
+    }
+    return out
 
 
 def _next_step(
@@ -868,7 +920,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "returns the refusal and NO transaction. "
         "WHEN TO CALL THIS:**after** the buyer has chosen, immediately before signing — "
         "never while they are still deciding. The bytes it returns carry a live blockhash "
-        "and stop being landable roughly 40 seconds later, so preparing several products "
+        "and stop being landable roughly a minute later, so preparing several products "
         "to compare them, or preparing before a human approves, spends the whole window on "
         "transactions nobody signs. Browse with `list_stores` instead: it costs nothing, "
         "expires never, and carries every price. Re-running this is free, so prepare LATE "
@@ -876,8 +928,9 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
         "and no quantity, so several items means several purchases, each with its own "
         "receipt and its own signature. "
         "HONEST LIMITS: the receipt is state-specific and EXPIRES with its blockhash "
-        "(~40 seconds, not the full minute the slot budget suggests — the blockhash is "
-        "read at `finalized`, which is already ~30 slots behind), and a passing receipt is "
+        "(~60 seconds; the exact budget comes back as `expires.blocks_remaining` and "
+        "`expires.seconds_remaining_estimate` — subtract from those rather than from this "
+        "sentence), and a passing receipt is "
         "not a promise the transaction is what you wanted. It says only that these bytes "
         "are WELL-FORMED and would land against the state observed at that slot. Read the "
         "account plan before you sign."

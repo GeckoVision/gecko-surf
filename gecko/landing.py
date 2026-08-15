@@ -373,15 +373,50 @@ def latest_blockhash(rpc_url: str, rpc_call: RpcCall | None = None) -> tuple[str
     Returned as a pair so a caller can reason about the deadline rather than discovering
     it at send time: a blockhash is valid for roughly 150 slots (about a minute), and that
     window is the clock on the whole verify-then-sign sequence.
+
+    COMMITMENT IS `confirmed`, AND THE CHOICE IS WORTH ~14 SECONDS. This read `finalized`,
+    which is ~31-35 blocks behind the tip. The transaction's deadline is
+    ``lastValidBlockHeight`` measured against the chain's ACTUAL height at submit time, so
+    a finalized blockhash spends a fifth of the 150-block budget before the caller ever
+    sees the bytes. Measured on mainnet: finalized left 114 blocks (~46s) where confirmed
+    left 149 (~60s) at the same instant.
+
+    That is the difference between a window that fits a cold loop and one that does not —
+    the first real PayBox purchase died on ``BlockhashNotFound`` because the client was
+    still loading tool definitions between prepare and sign.
+
+    `confirmed` is what wallets and dApps use for exactly this call. Its failure mode is
+    also the benign one: if a confirmed block were forked away the transaction simply
+    would not land, which is a retry, not a wrong outcome — and re-running prepare is free.
     """
     call = rpc_call or default_rpc_call
-    response = call(rpc_url, "getLatestBlockhash", [{"commitment": "finalized"}])
+    response = call(rpc_url, "getLatestBlockhash", [{"commitment": "confirmed"}])
     value = (response.get("result") or {}).get("value") or {}
     blockhash = value.get("blockhash")
     height = value.get("lastValidBlockHeight")
     if not isinstance(blockhash, str) or not isinstance(height, int):
         raise LandingError("RPC returned no usable blockhash")
     return blockhash, height
+
+
+def block_height(rpc_url: str, rpc_call: RpcCall | None = None) -> int | None:
+    """The chain's current block height at ``confirmed``, or ``None``.
+
+    Paired with ``lastValidBlockHeight`` this is what turns a deadline into a BUDGET: the
+    difference is how many blocks a signer has left, and ~0.4s each converts it to seconds.
+    Read at the same commitment as the blockhash so the two are comparable.
+
+    Returns ``None`` rather than raising: this is an ergonomic extra on a path whose real
+    job already succeeded, and losing the countdown must never cost the caller a
+    transaction that would otherwise have landed.
+    """
+    call = rpc_call or default_rpc_call
+    try:
+        response = call(rpc_url, "getBlockHeight", [{"commitment": "confirmed"}])
+    except Exception:  # noqa: BLE001 - see docstring; the plan stands without the clock
+        return None
+    height = response.get("result")
+    return height if isinstance(height, int) else None
 
 
 def priority_fee_microlamports(
