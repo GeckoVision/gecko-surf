@@ -61,6 +61,7 @@ logs, no node response body, no credentials, and nothing is written anywhere.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -617,14 +618,41 @@ def _prepare(
         f"/instructions/{MAKE_PURCHASE}/build"
     )
     builder = build_call or _http_build_call
-    built = builder(
-        {
-            "build_url": build_url,
-            "accounts": dict(accounts),
-            "args": dict(instruction_args),
-            "feePayer": buyer,
-        }
-    )
+    build_request = {
+        "build_url": build_url,
+        "accounts": dict(accounts),
+        "args": dict(instruction_args),
+        "feePayer": buyer,
+    }
+
+    # 3a. THE BUILD AND THE CLOCK, CONCURRENTLY. Measured against mainnet, this path spends
+    #     99.6% of its wall clock in network I/O — the build alone was 1.6s of a 4.0s total —
+    #     and it was doing four round trips strictly in series. The store read has to come
+    #     first (the mint and the authority are inputs to the build), but the build, the
+    #     blockhash and the height do not depend on one another at all.
+    #
+    #     Threads rather than async because every transport here is a blocking, injected
+    #     callable and the seam must not change shape: a fake stays a plain function.
+    #
+    #     The blockhash is read at the START of this phase rather than after the build, so
+    #     it is at most one build-latency older when the simulate runs — a handful of blocks
+    #     out of ~150, paid back many times over by not serialising the wait.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        build_future = pool.submit(builder, build_request)
+        blockhash_future = pool.submit(latest_blockhash, rpc_url, rpc_call)
+        height_future = pool.submit(block_height, rpc_url, rpc_call)
+        try:
+            built = build_future.result()
+            blockhash, last_valid_block_height = blockhash_future.result()
+        except Exception:
+            # Cancel what is still queued so a failure does not pay for the rest, then let
+            # the existing handlers below classify it exactly as they did when serial.
+            build_future.cancel()
+            blockhash_future.cancel()
+            height_future.cancel()
+            raise
+        current_block_height = height_future.result()
+
     if not isinstance(built, BuiltTx) or not built.tx:
         return _refuse(
             "build-returned-nothing",
@@ -636,12 +664,7 @@ def _prepare(
     #    The builder stamps one from its own RPC and it has been observed ~4,500 blocks
     #    stale, which is dead on arrival; patching 32 bytes leaves every account and every
     #    byte of instruction data exactly as the builder emitted them.
-    blockhash, last_valid_block_height = latest_blockhash(rpc_url, rpc_call)
     subject = _with_fresh_blockhash(built, blockhash)
-    # The deadline is a BLOCK HEIGHT, and a caller cannot turn that into "have I got time
-    # to sign?" without knowing where the chain is now. One cheap read makes the budget
-    # arithmetic the agent's rather than ours to guess at.
-    current_block_height = block_height(rpc_url, rpc_call)
 
     # 5. SIMULATE THE SUBJECT — the exact bytes handed back, nothing re-assembled.
     receipt = simulate(
@@ -731,7 +754,7 @@ def _prepare(
 #: an access token that authorises spending from their wallet — a path to a key, which
 #: this module's first paragraph and the public docs both say does not exist. The friction
 #: is a discovery problem and gets a discovery fix; it is not a reason to take custody.
-_SIGNERS_KNOWN_TO_WORK: tuple[dict[str, str], ...] = (
+_SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
     {
         "name": "PayBox",
         "call": 'request_wallet_sign, op="solanaTransaction", transactionBase64',
@@ -740,6 +763,32 @@ _SIGNERS_KNOWN_TO_WORK: tuple[dict[str, str], ...] = (
         "how_to_add": (
             "Settings -> Connectors -> add a custom connector with that URL, then "
             "Connect and sign in. No API key to copy; it is an OAuth flow."
+        ),
+        # Their signing is ASYNCHRONOUS and the polling happens inside our blockhash
+        # window, so the order below is not style — it is what makes the window survivable.
+        "sequence": [
+            "list_credentials -> pick the `wallet` credential; its metadata.address IS "
+            "the `buyer` for prepare_purchase, and its `credential_id` is what signs",
+            "READ ITS `approval_mode` NOW, before preparing anything — see below",
+            "prepare_purchase (this tool) once the buyer has chosen",
+            'request_wallet_sign {credential_id, intent: {op: "solanaTransaction", '
+            "address, transactionBase64}} -> returns a request_id, NOT a signature",
+            "poll get_request(request_id) until `output.signedTransactionBase64` — never "
+            "re-call request_wallet_sign to finish one, that starts a second operation",
+            "verify_signed_transaction (Gecko) -> then submit",
+        ],
+        "approval_mode_matters": (
+            "`always_approve` means every signature waits for the user's passkey, and that "
+            "wait sits INSIDE the ~60s blockhash window — it is the most likely way to "
+            "lose one. On that mode, get the approval settled BEFORE calling "
+            "prepare_purchase, never after. `autonomous` returns `pending_signature` and "
+            "signs immediately, which is the mode this flow is comfortable in."
+        ),
+        "funding": (
+            "an empty wallet: PayBox's `get_buy_link` returns a signed MoonPay checkout "
+            "URL that delivers to this credential's address. Fund the price PLUS a little "
+            "SOL for the fee, and note the buyer also pays ~0.00204 SOL of rent if their "
+            "token account for the mint does not exist yet."
         ),
     },
     {

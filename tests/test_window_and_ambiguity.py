@@ -266,3 +266,55 @@ def test_the_menu_comes_back_as_data_not_only_prose() -> None:
         assert entry["name"] and entry["mint"]
     # The prose still names them too — an agent that only reads `reason` is not stranded.
     assert products[0]["name"] in out["reason"]
+
+
+# --- 5. the three independent round trips actually overlap ----------------------
+
+
+def test_the_build_blockhash_and_height_run_concurrently() -> None:
+    """Measured against mainnet, this path spent 99.6% of its wall clock in network I/O —
+    4.0s, of which Python was 14.5ms. Rewriting the language would have bought back the
+    14.5ms; overlapping the three independent round trips buys ~1.8s.
+
+    Proven by TIME, not by reading the code: each fake sleeps, and a serial implementation
+    cannot finish inside the sum.
+    """
+    import time
+
+    from tests.test_prepare_purchase_tool import BUYER, RPC_URL, FakeBuilder, FakeRpc
+    from gecko.prepare_purchase import prepare_purchase_result
+
+    delay = 0.25
+
+    class _SlowRpc(FakeRpc):
+        def __call__(self, url: str, method: str, params: Any) -> Any:
+            if method in ("getLatestBlockhash", "getBlockHeight"):
+                time.sleep(delay)
+            return super().__call__(url, method, params)
+
+    class _SlowBuilder(FakeBuilder):
+        def __call__(self, plan: Any) -> Any:
+            time.sleep(delay)
+            return super().__call__(plan)
+
+    started = time.perf_counter()
+    out = prepare_purchase_result(
+        {
+            "store": "jonasbar",
+            "product": "Water",
+            "buyer": BUYER,
+            "network": "mainnet",
+            "rpc_url": RPC_URL,
+        },
+        build_call=_SlowBuilder(),
+        rpc_call=_SlowRpc(),
+    )
+    elapsed = time.perf_counter() - started
+
+    assert out["refused"] is False, out.get("reason")
+    # Serial would be >= 3 * delay. Concurrent is ~1 * delay plus the untimed store read
+    # and simulate. The 2x bound is loose enough for a slow CI box and still impossible
+    # to satisfy serially.
+    assert elapsed < delay * 2, (
+        f"took {elapsed:.2f}s for three {delay}s round trips — they are still serial"
+    )

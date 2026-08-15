@@ -262,12 +262,15 @@ def test_a_clean_prepare_returns_an_unsigned_transaction_bound_exactly() -> None
     # simulated — so a store that cannot be resolved costs neither. `getBlockHeight` is the
     # budget read: it turns the deadline into `blocks_remaining`, and it sits after the
     # blockhash so the two are read at the same commitment moments apart.
-    assert rpc.calls == [
-        "getAccountInfo",
-        "getLatestBlockhash",
-        "getBlockHeight",
-        "simulateTransaction",
-    ]
+    # The blockhash and the height are now fetched CONCURRENTLY with the build, so their
+    # relative order is thread scheduling and asserting it would be asserting luck. What
+    # must hold is the fence on either side: the store is read before anything else, and
+    # nothing is simulated until every input to the bytes exists.
+    assert rpc.calls[0] == "getAccountInfo", (
+        "the store must be read before anything else"
+    )
+    assert rpc.calls[-1] == "simulateTransaction", "the simulate must be last"
+    assert sorted(rpc.calls[1:-1]) == ["getBlockHeight", "getLatestBlockhash"]
     assert out["expires"]["blocks_remaining"] == 149
     assert out["expires"]["seconds_remaining_estimate"] == 60
 
