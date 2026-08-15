@@ -43,6 +43,7 @@ from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
 from .mcp_server import McpSurface
 from .telemetry import TelemetryError
+from .surfaces import tools_rev
 from .toolerror import tool_result_payload
 from .uaclass import classify_client
 
@@ -714,6 +715,17 @@ def _log_outcome(name: str, result: Any) -> None:
     logger.info("call tool=%s status=%s ok=%s", name, status, ok)
 
 
+def _package_version() -> str:
+    """The installed package version, or "unknown". Never raises: a version probe that
+    500s is worse than one that admits it does not know."""
+    try:
+        from importlib.metadata import version
+
+        return version("gecko-surf")
+    except Exception:  # noqa: BLE001 - not installed as a distribution (editable/source)
+        return "unknown"
+
+
 def build_http_app(
     spec_or_client: Any,
     *,
@@ -758,7 +770,7 @@ def build_http_app(
         from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
-        from starlette.responses import PlainTextResponse, Response
+        from starlette.responses import JSONResponse, PlainTextResponse, Response
         from starlette.routing import Route
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit(_INSTALL_HINT) from exc
@@ -950,11 +962,31 @@ def build_http_app(
 
             artifact_routes.append(Route("/" + rel, endpoint=_artifact_endpoint))
 
+    # WHICH CODE IS LIVE. `/healthz` answers "is it up", which is a different and much
+    # weaker question — twice in one day the only way to tell whether a merged change had
+    # been deployed was to call a tool and read the shape of the error, and the first
+    # reading was wrong. `tools_rev` is a content hash of the SERVED tool set, so it cannot
+    # drift from what the surface actually offers the way a version string can, and
+    # comparing it against a local build is an exact answer rather than an inference.
+    #
+    # Control-plane only: hashes and counts. No spec text, no credentials, no client data.
+    def _version(_request: Any) -> Any:
+        tools = list(surface.list_tools())
+        return JSONResponse(
+            {
+                "tools_rev": tools_rev(tools),
+                "tool_count": len(tools),
+                "tool_names": sorted(t["name"] for t in tools),
+                "package_version": _package_version(),
+            }
+        )
+
     sse_routes = _sse_routes(server, gate)
 
     return Starlette(
         routes=[
             Route("/healthz", endpoint=_healthz),
+            Route("/version", endpoint=_version),
             *artifact_routes,
             Route(MCP_PATH, endpoint=mcp_app),
             *sse_routes,
