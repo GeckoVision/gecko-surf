@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,66 @@ from .tools import _agent_params, _auth_schemes, _security_requires_auth, tool_n
 BLURB_MODEL = "claude-haiku-4-5"
 # Cap the untrusted description before it reaches the LLM (rules/python.md).
 _MAX_DESC_CHARS = 800
+
+
+#: The blurb is a FOUR-FIELD DOCUMENT, and it must be read as one. It was being consumed as
+#: an opaque string — markdown fence, tag names and all — which put `xml`, `intent`,
+#: `required`, `auth`, `gotchas` and the literal `none` into the index of EVERY enriched
+#: operation. Two measured consequences, both bad:
+#:
+#: * the scaffolding is perfectly uniform, so it is pure ranking noise (txodds MRR
+#:   0.666 -> 0.604, recall@20 1.00 -> 0.75 with raw blurbs folded in);
+#: * far worse, `CatalogEntry.intent_tokens` is the surface that CERTIFIES a query as
+#:   in-scope, so the scaffolding certified anything that said one of those words. The
+#:   query "none" returned 3 genuine in-scope hits on pegana. That re-opened the
+#:   out-of-scope hole closed in 8ccb306.
+#:
+#: Parsed, the fields have different jobs: `intent` is the user-vocabulary restatement and
+#: is the only one that may certify scope; the other three are ranking evidence.
+_BLURB_TAGS = ("intent", "required", "auth", "gotchas")
+
+#: The generator is instructed to write 'none' for an empty field, so 'none' is an ABSENCE
+#: marker, not content. Indexing it makes every op that lacks auth match the word "none".
+_BLURB_EMPTY = frozenset({"none", "n/a", "na", ""})
+
+_TAG_BODY = {
+    tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.IGNORECASE | re.DOTALL)
+    for tag in _BLURB_TAGS
+}
+
+
+@dataclass(frozen=True)
+class BlurbFields:
+    """A parsed blurb. Every field is the tag's BODY — never its name, never the fence."""
+
+    intent: str = ""
+    required: str = ""
+    auth: str = ""
+    gotchas: str = ""
+
+    @property
+    def ranking_text(self) -> str:
+        """Everything the blurb asserts, for the ranking haystack."""
+        return " ".join(
+            x for x in (self.intent, self.required, self.auth, self.gotchas) if x
+        )
+
+
+def parse_blurb(raw: str) -> BlurbFields:
+    """Split a blurb into its four fields. Never raises.
+
+    Tolerant by design: a blurb that lost its tags (an older pin, a truncated generation, a
+    sanitizer that failed closed to "") parses to all-empty rather than exploding, and an
+    all-empty parse simply contributes nothing — the same as having no blurb, which is the
+    honest degradation. A body of 'none' is treated as absent because the generator uses it
+    as the absence marker.
+    """
+    found: dict[str, str] = {}
+    for tag, pattern in _TAG_BODY.items():
+        match = pattern.search(raw or "")
+        body = (match.group(1) if match else "").strip()
+        found[tag] = "" if body.lower() in _BLURB_EMPTY else body
+    return BlurbFields(**found)
 
 
 class Enricher(Protocol):

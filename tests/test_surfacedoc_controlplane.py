@@ -99,10 +99,18 @@ def test_blurb_fails_closed_on_injection():
 
 
 def test_clean_blurb_is_situated_into_embed_text():
-    blurb = "<intent>get the live peg state for an asset by its mint</intent>"
+    body = "get the live peg state for an asset by its mint"
+    blurb = f"```xml\n<intent>{body}</intent>\n<required>none</required>\n"
     doc = surfacedoc_from_operation(_op(), blurb=blurb, surface_id="pegana")
-    assert doc.contextualized_content == blurb
-    assert doc.content in doc.embed_text and blurb in doc.embed_text
+
+    # What the blurb SAYS reaches the embed body...
+    assert doc.contextualized_content == body
+    assert doc.content in doc.embed_text and body in doc.embed_text
+    # ...and none of its scaffolding does. The fence and tag names are identical on every
+    # operation, so embedding them adds a constant component that separates nothing; the
+    # generator writes 'none' for an absent field, which is an absence marker, not content.
+    for markup in ("```", "xml", "<intent>", "</intent>", "<required>", "none"):
+        assert markup not in doc.contextualized_content, markup
 
 
 def test_surfacedoc_is_frozen():

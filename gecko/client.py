@@ -62,11 +62,23 @@ __all__ = [
     "ScoredHit",
     "ToolNotFound",
     "ambiguous_server_message",
+    "ToolNameCollision",
 ]
 
 
 class IntegrityError(Exception):
     """Raised when the shipped tool set no longer matches the pinned spec (tamper)."""
+
+
+class ToolNameCollision(Exception):
+    """Two operations sanitize to the same agent-facing tool name.
+
+    Fail closed at construction rather than serve the surface. The tool name is the join
+    key for the tool list, the operation map, the lexical catalog and the dense index, so a
+    collision does not degrade a ranking — it makes one operation unreachable and silently
+    resolves every request for it to the other. Refusing to build the surface is the honest
+    answer; ``safe_tool_name`` already removes the truncation case, and what reaches here is
+    an operationId pair that differs only in characters the sanitizer folds together."""
 
 
 class ToolNotFound(CallError):
@@ -173,6 +185,29 @@ class AgentApiClient:
         self._op_by_name = {
             to_tool(o, declared_vocab)["name"]: o for o in self.operations
         }
+        # The tool name is the join key for this dict, `_tool_by_name`, the catalog and the
+        # dense arm. A dict comprehension over a colliding key does not error — it silently
+        # keeps the last operation, and every future lookup for the lost one resolves to the
+        # survivor. That is a WRONG CALL, so it is asserted rather than hoped for.
+        # `safe_tool_name` already makes truncation injective; what remains is character
+        # substitution (`a.b` and `a b` both sanitize to `a_b`), which no per-op rule can
+        # resolve. Refusing is the honest answer: an unusable surface beats a surface that
+        # confidently calls the wrong endpoint.
+        if len(self._op_by_name) != len(self.operations):
+            seen: dict[str, str] = {}
+            clashes: list[str] = []
+            for op in self.operations:
+                name = to_tool(op, declared_vocab)["name"]
+                if name in seen:
+                    clashes.append(
+                        f"{name!r} <- {seen[name]!r} and {op.operation_id!r}"
+                    )
+                seen[name] = op.operation_id
+            raise ToolNameCollision(
+                "two operations sanitize to the same tool name, so one would be "
+                "unreachable and queries for it would resolve to the other: "
+                + "; ".join(clashes[:5])
+            )
         # Serve-time integrity anchor: re-derived and re-asserted before every request
         # so an in-memory tamper of the shipped tool list is caught, not served.
         self.tools_rev = tools_rev(self.tools)
