@@ -29,9 +29,11 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, get_args
 
+from .netguard import UnsafeUrlError, validate_public_url
 from .txbind import (
     BindingStrength,
     TxDecodeError,
@@ -70,12 +72,18 @@ class VerifiedSignature:
     signed: bool
     reason: str
     binding_strength: str
+    #: ``None`` when the caller did not ask (no height supplied, or the read failed). This
+    #: is the THIRD independent question, and it is separate from the other two on purpose:
+    #: expired bytes are still byte-identical to what was attested, so `binding_matches`
+    #: stays true while the transaction has become unlandable.
+    still_landable: bool | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "verified": self.verified,
             "binding_matches": self.binding_matches,
             "signed": self.signed,
+            "still_landable": self.still_landable,
             "reason": self.reason,
             "binding_strength": self.binding_strength,
         }
@@ -86,6 +94,7 @@ def verify_signed(
     binding: str,
     *,
     binding_strength: str = DEFAULT_STRENGTH,
+    still_landable: bool | None = None,
 ) -> VerifiedSignature:
     """Compare a signed transaction against the binding a receipt issued for it.
 
@@ -153,6 +162,7 @@ def verify_signed(
             verified=False,
             binding_matches=False,
             signed=signed,
+            still_landable=still_landable,
             reason=(
                 "this transaction does not match the binding — it is NOT the transaction "
                 "that was checked. Do not broadcast it."
@@ -164,6 +174,7 @@ def verify_signed(
             verified=False,
             binding_matches=True,
             signed=False,
+            still_landable=still_landable,
             reason=(
                 "these ARE the bytes that were checked, and they are not signed — the "
                 "signature slot is empty. A binding covers the message, and a signature "
@@ -172,10 +183,31 @@ def verify_signed(
             ),
             binding_strength=binding_strength,
         )
+    # The bytes are right and they are signed. The last question is whether they can still
+    # LAND — asked here because this is the final checkpoint before broadcast, and because
+    # the alternative is what actually happened on the first real hosted-signer purchase:
+    # a bare `BlockhashNotFound` from the RPC, which names no cause and offers no remedy.
+    # Expiry is a refusal rather than a warning: broadcasting expired bytes cannot succeed.
+    if still_landable is False:
+        return VerifiedSignature(
+            verified=False,
+            binding_matches=True,
+            signed=True,
+            still_landable=False,
+            reason=(
+                "these ARE the bytes that were checked and they ARE signed, but their "
+                "blockhash has expired — the chain is past `last_valid_block_height`, so "
+                "broadcasting them can only fail with BlockhashNotFound. Nothing is wrong "
+                "with the plan: call `prepare_purchase` again for a fresh one (it is free "
+                "and touches nothing on chain), and have your signer ready before you do."
+            ),
+            binding_strength=binding_strength,
+        )
     return VerifiedSignature(
         verified=True,
         binding_matches=True,
         signed=True,
+        still_landable=still_landable,
         reason=(
             "the signed transaction is byte-identical, over its message, to the one the "
             "receipt attested"
@@ -184,17 +216,48 @@ def verify_signed(
     )
 
 
-def verify_signed_result(arguments: Any) -> dict[str, Any]:
-    """Transport shim for the MCP surface — parse, call, format. No logic of its own."""
+def verify_signed_result(arguments: Any, *, rpc_call: Any = None) -> dict[str, Any]:
+    """Transport shim for the MCP surface — parse, call, format.
+
+    The ONE thing it does beyond parsing is the liveness read, and that is here rather than
+    in :func:`verify_signed` deliberately: the verifier stays pure, offline and
+    total — it is the function that decides whether somebody broadcasts, so it must not
+    acquire a way to fail because a node was slow.
+
+    The read happens only when the caller passes both `last_valid_block_height` (which
+    `prepare_purchase` handed them in `expires`) and an `rpc_url`. A read that fails leaves
+    ``still_landable`` at ``None``: "I did not check", never "it is fine".
+    """
     args = arguments if isinstance(arguments, dict) else {}
     return verify_signed(
         transaction=args.get("transaction") or "",
         binding=args.get("binding") or "",
         binding_strength=str(args.get("binding_strength") or DEFAULT_STRENGTH),
+        still_landable=_still_landable(args, rpc_call),
     ).to_json()
 
 
-def _no(reason: str, *, binding_strength: str) -> VerifiedSignature:
+def _still_landable(args: Mapping[str, Any], rpc_call: Any) -> bool | None:
+    """Is the chain still short of `last_valid_block_height`? ``None`` if not asked."""
+    deadline = args.get("last_valid_block_height")
+    rpc_url = args.get("rpc_url")
+    if not isinstance(deadline, int) or not isinstance(rpc_url, str) or not rpc_url:
+        return None
+    try:
+        validate_public_url(rpc_url)
+    except UnsafeUrlError:
+        # This surface is unauthenticated; an unguarded URL would make it a proxy. Not
+        # knowing the height is a fine outcome — pretending to know it is not.
+        return None
+    from .landing import block_height  # noqa: PLC0415 - keeps the pure path import-light
+
+    height = block_height(rpc_url, rpc_call)
+    return None if height is None else height <= deadline
+
+
+def _no(
+    reason: str, *, binding_strength: str, still_landable: bool | None = None
+) -> VerifiedSignature:
     return VerifiedSignature(
         verified=False,
         binding_matches=False,
@@ -267,6 +330,24 @@ VERIFY_SIGNED_TOOL: dict[str, Any] = {
                     "defaults to `exact`, which covers the blockhash too. `structural` "
                     "does not, so bytes re-stamped onto a different blockhash would pass "
                     "— ask for it only when you know why."
+                ),
+            },
+            "last_valid_block_height": {
+                "type": "integer",
+                "description": (
+                    "the `expires.last_valid_block_height` from the same result that gave "
+                    "you the `binding`. Pass it with `rpc_url` and this also checks the "
+                    "bytes can still LAND — the cheapest place to catch a window that "
+                    "closed while you were signing, because the alternative is a bare "
+                    "BlockhashNotFound from the node after you broadcast."
+                ),
+            },
+            "rpc_url": {
+                "type": "string",
+                "description": (
+                    "the node to ask for the current block height — use `submit.rpc_url`, "
+                    "the one the plan was simulated against. Only read with "
+                    "`last_valid_block_height`; omit both to skip the liveness check."
                 ),
             },
         },

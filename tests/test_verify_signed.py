@@ -247,9 +247,18 @@ def test_the_tool_declares_what_it_needs_and_holds_nothing() -> None:
 
     assert VERIFY_SIGNED_TOOL["name"] == "verify_signed_transaction"
     assert set(schema["required"]) == {"transaction", "binding"}
-    # No key, no account, no network credential — it reads bytes and compares a hash.
+    # No key, no account, no credential of any kind. `rpc_url` is a public node to ask for
+    # a block height and is SSRF-guarded; `last_valid_block_height` is an integer the
+    # caller already holds. Neither can carry a secret.
     assert set(schema["properties"]) == {
         "transaction",
         "binding",
         "binding_strength",
+        "last_valid_block_height",
+        "rpc_url",
     }
+    for name in schema["properties"]:
+        assert not any(
+            secret in name.lower()
+            for secret in ("key", "token", "secret", "seed", "password", "auth")
+        ), name

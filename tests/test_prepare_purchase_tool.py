@@ -167,6 +167,10 @@ class FakeRpc:
                     }
                 }
             }
+        if method == "getBlockHeight":
+            # 149 blocks short of the deadline above — the ~60s a `confirmed` blockhash
+            # actually buys, versus the ~46s `finalized` was leaving.
+            return {"result": 371_004_062}
         if method == "simulateTransaction":
             return {
                 "result": {
@@ -255,8 +259,20 @@ def test_a_clean_prepare_returns_an_unsigned_transaction_bound_exactly() -> None
 
     assert builder.calls and builder.calls[0]["accounts"]["signer"] == BUYER
     # The storefront is READ FIRST — before a blockhash is fetched and before anything is
-    # simulated — so a store that cannot be resolved costs neither.
-    assert rpc.calls == ["getAccountInfo", "getLatestBlockhash", "simulateTransaction"]
+    # simulated — so a store that cannot be resolved costs neither. `getBlockHeight` is the
+    # budget read: it turns the deadline into `blocks_remaining`, and it sits after the
+    # blockhash so the two are read at the same commitment moments apart.
+    # The blockhash and the height are now fetched CONCURRENTLY with the build, so their
+    # relative order is thread scheduling and asserting it would be asserting luck. What
+    # must hold is the fence on either side: the store is read before anything else, and
+    # nothing is simulated until every input to the bytes exists.
+    assert rpc.calls[0] == "getAccountInfo", (
+        "the store must be read before anything else"
+    )
+    assert rpc.calls[-1] == "simulateTransaction", "the simulate must be last"
+    assert sorted(rpc.calls[1:-1]) == ["getBlockHeight", "getLatestBlockhash"]
+    assert out["expires"]["blocks_remaining"] == 149
+    assert out["expires"]["seconds_remaining_estimate"] == 60
 
 
 def test_the_result_carries_no_payloads_and_nothing_is_persisted() -> None:
@@ -688,21 +704,32 @@ def test_the_tools_tell_an_agent_WHEN_to_prepare() -> None:
     assert "prepare LATE" in prepare
     # …and one product per call, because the program takes no quantity.
     assert "ONE PRODUCT PER CALL" in prepare
-    # …with the honest number, not the one the slot budget implies.
-    assert "~40 seconds" in prepare and "finalized" in prepare
+    # …and it points at the FIELD for the budget rather than restating a number that goes
+    # stale the moment the commitment changes — which is exactly what happened when the
+    # blockhash read moved from `finalized` to `confirmed`.
+    assert "expires" in prepare
+    assert "finalized" not in prepare, "the blockhash is read at `confirmed` now"
     # The browsing tool points the other way, so the pair reads as a sequence.
     assert "prepare_purchase" in browse and "expires never" in browse
 
 
-def test_the_expiry_note_and_the_description_agree_on_the_number() -> None:
-    """Two places tell a caller how long they have. Disagreeing is how one gets believed
-    and the other quietly becomes false."""
+def test_the_budget_is_data_and_the_prose_does_not_contradict_it() -> None:
+    """Two places used to state the number, which is one place too many — this test used to
+    check they agreed on "40". Reading the blockhash at `confirmed` made that number ~60,
+    and the real fix is that the authoritative budget is now a FIELD. The description keeps
+    an order-of-magnitude figure so an agent skimming it is not misled; it must not
+    contradict the field, and the field is what anyone subtracts from."""
     from gecko.prepare_purchase import PREPARE_PURCHASE_TOOL
 
     out = _prepare()
 
-    assert "40" in out["expires"]["note"]
-    assert "40" in PREPARE_PURCHASE_TOOL["description"]
+    assert isinstance(out["expires"]["last_valid_block_height"], int)
+    assert "blocks_remaining" in out["expires"]
+    assert "seconds_remaining_estimate" in out["expires"]
+    # The stale "~40 seconds" must be gone from BOTH, or one of them is now a lie.
+    assert "40 second" not in out["expires"]["note"]
+    assert "40 second" not in PREPARE_PURCHASE_TOOL["description"]
+    assert "expires" in PREPARE_PURCHASE_TOOL["description"]
 
 
 # --- the network a coffee buyer should not have to name ----------------------
