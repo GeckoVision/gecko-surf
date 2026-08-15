@@ -318,3 +318,57 @@ def test_the_build_blockhash_and_height_run_concurrently() -> None:
     assert elapsed < delay * 2, (
         f"took {elapsed:.2f}s for three {delay}s round trips — they are still serial"
     )
+
+
+# --- 6. who resolves "a coffee" — and who must not ------------------------------
+
+
+def _refusal_for(product: str) -> dict[str, Any]:
+    from tests.test_prepare_purchase_tool import BUYER, RPC_URL, FakeBuilder, FakeRpc
+    from gecko.prepare_purchase import prepare_purchase_result
+
+    return prepare_purchase_result(
+        {
+            "store": "jonasbar",
+            "product": product,
+            "buyer": BUYER,
+            "network": "mainnet",
+            "rpc_url": RPC_URL,
+        },
+        build_call=FakeBuilder(),
+        rpc_call=FakeRpc(),
+    )
+
+
+def test_a_category_word_gets_no_lexical_guess() -> None:
+    """ "a coffee" against Espresso/Cappuccino/Mochaccino shares no token with any of them.
+    Resolving it needs to know what coffee IS — world knowledge the calling agent has and
+    a chain account does not. So we return the menu and no opinion."""
+    out = _refusal_for("a black coffee")
+    assert out["code"] == "product-unknown"
+    assert out["close_matches"] == [], "a category word is not lexical evidence"
+    assert out["products"], "the menu is still ground truth"
+
+
+def test_a_typo_is_named_but_still_not_chosen() -> None:
+    """A partial name IS evidence — and a tool that quietly substitutes the one thing it
+    found is a tool that eventually buys the wrong thing confidently."""
+    out = _refusal_for("Wate")
+    assert [m["name"] for m in out["close_matches"]] == ["Water"]
+    assert out["refused"] is True, (
+        "one close match must STILL refuse, never auto-select"
+    )
+    assert "transaction" not in out
+
+
+def test_the_refusal_delegates_the_choice_explicitly() -> None:
+    reason = _refusal_for("a black coffee")["reason"]
+    assert "EXACT" in reason, "the agent must re-call with the exact listed name"
+    assert "ASK THE BUYER" in reason
+    assert "do not pick for them" in reason
+
+
+def test_an_exact_name_still_goes_straight_through() -> None:
+    """The refusal path must not have made the normal case harder."""
+    out = _refusal_for("Water")
+    assert out["refused"] is False and out["status"] == "pass"

@@ -521,12 +521,25 @@ def prepare_purchase_result(
     except ProductNotOnMenu as exc:
         # NOT `store-unknown`: the store resolved fine, and an agent branching on the code
         # would abandon a storefront that exists over a product name it can simply fix.
-        # The menu ships as DATA as well as prose, because "a coffee" against a store with
-        # three coffees needs a list to choose from, not a sentence to re-parse.
+        #
+        # THE DIVISION OF LABOUR IS THE POINT. A store with three coffees cannot answer
+        # "a coffee" — and neither can we, because "a black coffee is an Espresso, not a
+        # Mochaccino" is world knowledge a chain account does not hold. So: WE supply what
+        # exists, exactly, and refuse to guess; the AGENT applies world knowledge and
+        # resolves it when it honestly can; the BUYER chooses when it cannot. `products`
+        # is the whole menu (ground truth); `close_matches` is lexical evidence for a typo
+        # or a partial name, and is never a selection — see `close_matches`' docstring.
+        def _menu(entries: Any) -> list[dict[str, str]]:
+            return [
+                {"name": e.name, "price_ui": str(e.price_ui), "mint": e.mint}
+                for e in entries
+            ]
+
         return _refuse(
             "product-unknown",
             str(exc),
             network=network,
+            close_matches=_menu(resolved.close_matches(product)),
             products=[
                 {
                     "name": entry.name,

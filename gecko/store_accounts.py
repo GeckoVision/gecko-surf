@@ -196,7 +196,33 @@ class ResolvedStore:
         raise ProductNotOnMenu(
             f"{self.store_name!r} does not sell {product_name!r} — it lists {listed}. "
             "The price and the mint are per-product facts written in the store's own "
-            "account, so an unlisted product has neither."
+            "account, so an unlisted product has neither. "
+            "THE MENU IS THE GROUND TRUTH AND THE CHOICE IS NOT MINE TO MAKE: if exactly "
+            "one of those is plainly what the buyer meant, call again with its EXACT "
+            "name; if more than one could be, ASK THE BUYER WHICH — do not pick for them, "
+            "and do not pick the first that looks close."
+        )
+
+    def close_matches(self, product_name: str) -> tuple[StoreProduct, ...]:
+        """Listed products whose name overlaps ``product_name`` as a substring, either way.
+
+        Deliberately LEXICAL and nothing more. "a black coffee" resolves to Espresso by
+        knowing what black coffee IS — world knowledge the calling agent has and a store
+        account does not — so inferring it here would be guessing with the merchant's
+        money. What this catches is the narrower, honest case: a typo or a partial name
+        (``Espress`` -> ``Espresso``), where the overlap is evidence rather than opinion.
+
+        It is a HINT, never a selection: even a single match still refuses, because a tool
+        that quietly substitutes the one thing it found is a tool that eventually buys the
+        wrong thing confidently.
+        """
+        needle = product_name.strip().lower()
+        if not needle:
+            return ()
+        return tuple(
+            entry
+            for entry in self.products
+            if needle in entry.name.lower() or entry.name.lower() in needle
         )
 
 
