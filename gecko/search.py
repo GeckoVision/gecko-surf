@@ -172,12 +172,23 @@ def hybrid_scored(
     """
     depth = limit + 20
     lex = catalog.search_scored(query, depth)
-    lex_names = [s.entry.tool_name for s in lex]
-    lex_genuine = {s.entry.tool_name for s in lex if not s.is_fallback}
+    # ONLY genuine lexical hits enter the fusion. When the lexical arm certifies nothing,
+    # `search_scored` returns the never-empty 0/97 prior — GET-first, then path — which is
+    # query-INDEPENDENT: the identical ranking for every query on this surface. Feeding
+    # that to RRF averaged the dense arm's answer against a constant, and it was doing real
+    # damage on exactly the queries dense exists for: four birdeye paraphrases went from
+    # dense rank 1 to fused rank 18/27/15/27. An empty list contributes nothing to
+    # `rrf_fuse`, so a zero-overlap query now yields the dense ranking intact.
+    lex_names = [s.entry.tool_name for s in lex if not s.is_fallback]
+    lex_genuine = set(lex_names)
 
     dense_names = [n for n, _ in dense_index.search(query, depth)]
 
     fused = rrf_fuse([lex_names, dense_names], k)
+    if not fused:
+        # Neither arm produced anything — keep the never-empty contract by falling back to
+        # the prior, flagged below the floor exactly as the lexical arm flags it.
+        fused = rrf_fuse([[s.entry.tool_name for s in lex]], k)
     # Deterministic order: RRF score desc, then tool_name for stable ties.
     ranked = sorted(fused.items(), key=lambda ns: (-ns[1], ns[0]))
 

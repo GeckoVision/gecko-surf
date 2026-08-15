@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from .enrich import BlurbFields, parse_blurb
 from .ingest import Operation
 from .lexnorm import fold_tokens, normalize_query
 from .tools import tool_name
@@ -61,6 +62,16 @@ class CatalogEntry:
         return tool_name(self.operation)
 
     @property
+    def _blurb_fields(self) -> BlurbFields:
+        """The blurb READ AS THE FOUR-FIELD DOCUMENT IT IS, never as an opaque string.
+
+        Parsed per call rather than at construction because ``blurb`` is a plain dataclass
+        field a caller may set directly; parsing here means no construction path can bypass
+        it. :func:`~gecko.enrich.parse_blurb` is pure and cheap.
+        """
+        return parse_blurb(self.blurb)
+
+    @property
     def _haystack(self) -> str:
         o = self.operation
         return " ".join(
@@ -70,7 +81,10 @@ class CatalogEntry:
                 o.path,
                 " ".join(o.tags),
                 o.operation_id,
-                self.blurb,
+                # The blurb's four tag BODIES — not its markup. Folding the raw string in
+                # put `xml`/`intent`/`required`/`auth`/`gotchas`/`none` into every enriched
+                # op, which is uniform across the surface and therefore pure ranking noise.
+                self._blurb_fields.ranking_text,
             ]
         )
 
@@ -100,7 +114,23 @@ class CatalogEntry:
         :meth:`_folded_fields` — the tokenizer is a swappable module global."""
         o = self.operation
         return fold_tokens(
-            _tokens(" ".join([o.summary, " ".join(o.tags), o.operation_id, self.blurb]))
+            _tokens(
+                " ".join(
+                    [
+                        o.summary,
+                        " ".join(o.tags),
+                        o.operation_id,
+                        # ONLY `<intent>` — the blurb's user-vocabulary restatement, which
+                        # is what the whole enrichment exists to add. `<required>`,
+                        # `<auth>` and `<gotchas>` are ranking evidence but must not
+                        # certify SCOPE: they describe plumbing in words like "required",
+                        # "none" and "token" that any query might brush. Measured: the
+                        # query "none" certified 3 genuine in-scope hits on pegana with
+                        # the raw blurb folded in here.
+                        self._blurb_fields.intent,
+                    ]
+                )
+            )
         )
 
     def intent_score(self, query_tokens: set[str]) -> int:

@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from .enrich import safe_blurb
+from .enrich import parse_blurb, safe_blurb
 from .ingest import Operation
 from .tools import _agent_params, tool_name
 
@@ -94,7 +94,11 @@ def surfacedoc_from_operation(
     blurb is dropped; the deterministic surface text is still indexed).
     """
     content = _content_from_operation(op)
-    contextualized = safe_blurb(blurb)
+    # Sanitize FIRST (fail-closed on a poisoned blurb), then take the four tag BODIES. The
+    # embed body has the same interest as the lexical haystack in not carrying markup: the
+    # fence and tag names are identical on every operation, so they are a constant vector
+    # component that separates nothing while costing tokens in the embedding window.
+    contextualized = parse_blurb(safe_blurb(blurb)).ranking_text
     return SurfaceDoc(
         surface_id=surface_id,
         operation_id=tool_name(op),

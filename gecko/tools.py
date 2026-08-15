@@ -13,6 +13,7 @@ Two comprehension decisions that separate this from a raw OpenAPI dump:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -210,14 +211,35 @@ def question_description(op: Operation) -> str:
     return " ".join(parts)
 
 
+#: Agent-facing tool names are capped at 64 characters. Truncation alone is NOT injective:
+#: two operationIds sharing their first 64 sanitized characters collapse to one name, and
+#: because that name is the join key for `_op_by_name`, `_tool_by_name` and the catalog, the
+#: loser becomes unreachable while a query for it silently RESOLVES TO THE WINNER. That is a
+#: wrong call, not a bad rank — reproduced with a `/v1` query resolving to a `/v2` endpoint.
+#: So a truncated name reserves its last 8 characters for a digest of the FULL operationId.
+_TOOL_NAME_MAX = 64
+_TOOL_NAME_DIGEST = 7
+
+
 def safe_tool_name(operation_id: str) -> str:
     """Sanitize a raw spec ``operationId`` into an agent-facing tool name.
 
     Public because callers that hold an operationId but not the ``Operation`` — a plan
     step names its op by id (``gecko.scope``) — must resolve it through the SAME rule, or
     they silently miss the tool on any spec with odd operationIds.
+
+    Deterministic and per-operation: the disambiguating digest is taken from this
+    operationId alone, so the name never depends on which siblings happen to be present
+    and stays stable as a surface gains or loses operations.
     """
-    return re.sub(r"[^A-Za-z0-9_-]", "_", operation_id)[:64]
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", operation_id)
+    if len(cleaned) <= _TOOL_NAME_MAX:
+        return cleaned
+    digest = hashlib.sha256(operation_id.encode("utf-8")).hexdigest()[
+        :_TOOL_NAME_DIGEST
+    ]
+    keep = _TOOL_NAME_MAX - _TOOL_NAME_DIGEST - 1
+    return f"{cleaned[:keep]}_{digest}"
 
 
 #: Back-compat alias for this module's internal callers.
