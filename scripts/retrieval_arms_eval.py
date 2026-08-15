@@ -159,6 +159,25 @@ def format_report(results: dict[str, Any]) -> str:
     for name, r in results.items():
         n = r["n"]
         lines.append(f"## {name} ({n} usable ops)")
+
+        # PER-ARCHETYPE FIRST, because the aggregate below it is the misleading number.
+        # `paraphrase_no_overlap` is a worst-case FLOOR by construction — the golden-set
+        # invariant forbids those goals from sharing ANY token with their target, stopword
+        # list included — while `keyword_echo` is a ceiling. Averaging a floor, a ceiling
+        # and a middle, over buckets of unequal and arbitrary size, produces a number that
+        # moves when the MIX changes and is not comparable across surfaces.
+        lines.append(f"### {name} — recall@3 by archetype (read this one)")
+        lines.append("| archetype | tasks | B (overlap) | C (BM25) |")
+        lines.append("|---|---|---|---|")
+        for arch, cards in r["by_archetype"].items():
+            lines.append(
+                f"| {arch} | {cards['n_tasks']} | {_recall(cards['B'], 3):.2f} "
+                f"| {_recall(cards['C'], 3):.2f} |"
+            )
+        lines.append("")
+        lines.append(
+            f"### {name} — aggregate (a blend of the above; do not compare across sets)"
+        )
         header = "| arm | " + " | ".join(f"r@{k}" for k in RECALL_KS) + " | MRR | OOS |"
         lines.append(header)
         lines.append("|" + "---|" * (len(RECALL_KS) + 3))
@@ -175,15 +194,6 @@ def format_report(results: dict[str, Any]) -> str:
             f"**{'FIRES' if fires else 'does not fire'}** "
             f"(ops={n}, BM25 recall@3={_recall(r['arms']['C'], 3):.2f})"
         )
-        lines.append("")
-        lines.append(f"### {name} — recall@3 by archetype (what the aggregate blends)")
-        lines.append("| archetype | tasks | B (overlap) | C (BM25) |")
-        lines.append("|---|---|---|---|")
-        for arch, cards in r["by_archetype"].items():
-            lines.append(
-                f"| {arch} | {cards['n_tasks']} | {_recall(cards['B'], 3):.2f} "
-                f"| {_recall(cards['C'], 3):.2f} |"
-            )
         lines.append("")
     return "\n".join(lines)
 
