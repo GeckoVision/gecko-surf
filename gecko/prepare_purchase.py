@@ -75,7 +75,7 @@ from .autonomous_purchase import (
     _with_fresh_blockhash,
 )
 from .handoff import verify_handoff
-from .landing import block_height, latest_blockhash
+from .landing import RPC_COMMITMENT, block_height, latest_blockhash
 from .netguard import UnsafeUrlError, validate_public_url
 from .networks import UNKNOWN_NETWORK, Network, coerce_network
 from .pda import PdaDerivationError, derive_pda
@@ -742,7 +742,20 @@ def _prepare(
         # WHERE these bytes can be sent. Everything else in this result names what the
         # transaction IS; without this the one node that can accept it is missing from
         # the answer — and on a fork that node is the caller's own, appearing nowhere else.
-        "submit": {"rpc_url": rpc_url},
+        "submit": {
+            "rpc_url": rpc_url,
+            # AN AGENT THAT SENDS THESE BYTES WITH DEFAULT OPTIONS WILL BE REJECTED, and
+            # the error it gets — `BlockhashNotFound` — names neither the cause nor the
+            # remedy. `sendTransaction`'s preflight defaults to `finalized`, which is
+            # STRICTER than the commitment this blockhash was issued at, so the node
+            # refuses a transaction that is perfectly valid. Measured: 100% failure.
+            "preflight_commitment": RPC_COMMITMENT,
+            "note": (
+                "send with `preflightCommitment` set to the value above. The default is "
+                "`finalized`, which is stricter than the commitment this blockhash came "
+                "from, and it rejects these bytes with BlockhashNotFound every time."
+            ),
+        },
         "next_step": _next_step(
             handoff.transaction_base64, receipt.message_binding, rpc_url
         ),
@@ -918,6 +931,10 @@ def _next_step(
                 ),
                 "rpc_url": rpc_url,
                 "method": "sendTransaction",
+                # Repeated here rather than only in `submit` because this is the block an
+                # agent reads to act, and the default it would otherwise use is the one
+                # that rejects these bytes every time.
+                "options": {"preflightCommitment": RPC_COMMITMENT},
             },
         ],
     }

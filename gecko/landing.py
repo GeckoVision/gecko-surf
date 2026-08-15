@@ -390,13 +390,28 @@ def latest_blockhash(rpc_url: str, rpc_call: RpcCall | None = None) -> tuple[str
     would not land, which is a retry, not a wrong outcome — and re-running prepare is free.
     """
     call = rpc_call or default_rpc_call
-    response = call(rpc_url, "getLatestBlockhash", [{"commitment": "confirmed"}])
+    response = call(rpc_url, "getLatestBlockhash", [{"commitment": RPC_COMMITMENT}])
     value = (response.get("result") or {}).get("value") or {}
     blockhash = value.get("blockhash")
     height = value.get("lastValidBlockHeight")
     if not isinstance(blockhash, str) or not isinstance(height, int):
         raise LandingError("RPC returned no usable blockhash")
     return blockhash, height
+
+
+#: THE commitment this whole path works at — one definition, every caller imports it.
+#:
+#: It exists because the two sides drifted and cost a live purchase. `latest_blockhash`
+#: moved to `confirmed` to reclaim ~14s of window, which makes the blockhash ~35 blocks
+#: NEWER than finalized; `sendTransaction`'s preflight defaults to `finalized` and
+#: therefore did not know it yet, so every broadcast failed with `BlockhashNotFound` while
+#: the simulation passed. Two commitments, one of them implicit, is how that happens.
+#:
+#: THE RULE, and it is an ordering rather than an equality: whatever validates a
+#: transaction must be at least as LOOSE as whatever issued its blockhash —
+#: `processed` ⊇ `confirmed` ⊇ `finalized`. Simulation deliberately uses `processed`
+#: (looser, sees the newest state); the preflight must never be stricter than this.
+RPC_COMMITMENT = "confirmed"
 
 
 def block_height(rpc_url: str, rpc_call: RpcCall | None = None) -> int | None:
@@ -412,7 +427,7 @@ def block_height(rpc_url: str, rpc_call: RpcCall | None = None) -> int | None:
     """
     call = rpc_call or default_rpc_call
     try:
-        response = call(rpc_url, "getBlockHeight", [{"commitment": "confirmed"}])
+        response = call(rpc_url, "getBlockHeight", [{"commitment": RPC_COMMITMENT}])
     except Exception:  # noqa: BLE001 - see docstring; the plan stands without the clock
         return None
     height = response.get("result")
