@@ -220,9 +220,14 @@ def test_recovered_tags_are_program_level_truths() -> None:
     """lb_pair is source-recovered no matter which card shows it — the surface
     card must not downgrade it to 'extracted' while the intent card says
     'recovered'."""
-    # limit raised past the default: a fifth wired program pushes meteora's SURFACE
-    # card (its intent card ranks higher) out of the top 5.
-    result = find_start("swap sol for usdc", limit=12)
+    # The query names the surface. It used to be "swap sol for usdc", which reached this
+    # card only through the word "swap" in its DESCRIPTION prose (about bin_array PDAs) —
+    # its summary is "Meteora DLMM", its tags are ["meteora"], and neither says "swap".
+    # The confidence floor now gates on intent vocabulary rather than prose, so that route
+    # is gone and the intent card `plan_swap` answers a swap query alone, which is right.
+    # The assertion below is unchanged: this test is about provenance agreeing across the
+    # two cards, and the query was only ever the vehicle for surfacing them.
+    result = find_start("meteora dlmm", limit=12)
     surface = next(
         p for p in result.starts if p.kind == "surface" and p.program == "meteora"
     )

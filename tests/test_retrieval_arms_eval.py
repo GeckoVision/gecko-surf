@@ -25,9 +25,11 @@ def _recall(card: dict, k: int) -> float:
     return float(card["after_fix"]["recall_at"][k])
 
 
-def test_covers_three_golden_sets_with_three_offline_arms() -> None:
+def test_covers_four_golden_sets_with_three_offline_arms() -> None:
+    # Named explicitly rather than read from `arms.CASES`, which is the thing under test —
+    # deriving the expectation from the code would make dropping a set invisible.
     results = arms.run()
-    assert set(results) == {"txodds", "pegana", "privy"}
+    assert set(results) == {"txodds", "pegana", "privy", "birdeye"}
     for r in results.values():
         assert set(r["arms"]) == {"A", "B", "C"}
 
