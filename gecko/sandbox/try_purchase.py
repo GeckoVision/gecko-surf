@@ -22,9 +22,17 @@ the refusal names how to start a real fork instead of quietly doing the purchase
 else. **There is no fallback path to mainnet, because there is no code here that could
 take one.**
 
-WHY THE ENDPOINT MUST ALSO BE LOCAL. The surface this tool mounts on is served publicly
-and unauthenticated, and its standing rule is that nothing on it may hold a key. This tool
-is the exception, so it is narrowed until the exception is safe:
+WHO MAY ASK. This is the only tool on its surface that creates a key, and it is not
+offered anonymously — an unauthenticated call is refused before any argument is read. The
+gate is not about custody: a rehearsal spends nothing of anyone's and its buyer is born and
+discarded inside the call. It is about what a stranger can make this process DO — issue
+outbound JSON-RPC from our machine and burn the compute of a fork somebody pays to run.
+"The exception is safe enough" is a worse position than "the exception is not offered to
+strangers".
+
+WHY THE ENDPOINT MUST ALSO BE LOCAL. The surface this tool mounts on is served publicly,
+and its standing rule is that nothing on it may hold a key. This tool is the exception, so
+it is narrowed twice — by the gate above, and by the address:
 :func:`_local_fork_refusal` admits only an address on this machine (loopback, IPv4-mapped
 included). A stranger therefore cannot aim it at a fork of their own, and the only key it
 can ever create is bound to a validator running beside the process that created it —
@@ -86,6 +94,7 @@ HOW_TO_START_A_FORK = (
 #: the same purchase — one word means one thing on both tools — and the rest name the only
 #: things that are specific to rehearsing on a fork.
 TryPurchaseRefusalCode = Literal[
+    "account-required",
     "argument-invalid",
     "store-unknown",
     "product-unknown",
@@ -214,9 +223,36 @@ def _int_argument(
     return value, None
 
 
+def _account_refusal(account: str | None) -> str | None:
+    """``None`` if an authenticated caller asked, else why an anonymous one may not.
+
+    A rehearsal spends nothing of anyone's and its buyer is born and discarded inside
+    the call, so this gate is NOT about custody. It is about what an anonymous caller
+    can make this process do: issue outbound JSON-RPC from our machine, and burn the
+    compute of a fork somebody else is paying to run. With names refused and the error
+    text reduced to a class, the worst that leaks is whether something answers on a
+    given loopback port — a weak oracle, and still one no stranger needs.
+
+    So the public mount loses the tool rather than keeping a narrowed version of it. It
+    is the only tool on this surface that can hold a key, and "the exception is safe
+    enough" is a worse position than "the exception is not offered to strangers".
+    """
+    if account:
+        return None
+    return (
+        "`try_purchase` is the one tool on this surface that creates a key, and it is "
+        "not offered anonymously. A rehearsal risks none of your funds — its buyer is a "
+        "throwaway keypair on a local fork — but it makes this process talk to an "
+        "endpoint you chose, and that is not something a stranger gets to ask for. Sign "
+        "in, or run the rehearsal yourself against your own fork: "
+        f"{HOW_TO_START_A_FORK}"
+    )
+
+
 def try_purchase_result(
     arguments: Any,
     *,
+    account: str | None = None,
     rpc_call: RpcCall | None = None,
     build_call: BuildCall | None = None,
 ) -> dict[str, Any]:
@@ -230,6 +266,10 @@ def try_purchase_result(
     Returns a dict — never raises for a caller's mistake, an unreachable fork, or a
     storefront that does not exist. Those are answers.
     """
+    account_refusal = _account_refusal(account)
+    if account_refusal:
+        return _refuse("account-required", account_refusal)
+
     args = arguments if isinstance(arguments, dict) else {}
 
     store = args.get("store")

@@ -96,6 +96,16 @@ def key_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+#: Every test below authenticates, because `try_purchase` is account-gated and these are
+#: testing the TOOL rather than the gate. The one test that must stay anonymous is
+#: `test_an_anonymous_caller_gets_no_rehearsal_and_no_key`, which calls the real function
+#: directly — if this helper ever grows a default that fills the account in, that test
+#: stops testing anything.
+def as_account(arguments: dict, **kw: object) -> dict:
+    """Call the tool as an authenticated caller."""
+    return try_purchase_result(arguments, account="acct_test", **kw)  # type: ignore[arg-type]
+
+
 def test_no_key_is_created_until_the_endpoint_proves_itself(key_spy: list[str]) -> None:
     """The whole point of the tool, expressed as an order of operations.
 
@@ -104,7 +114,7 @@ def test_no_key_is_created_until_the_endpoint_proves_itself(key_spy: list[str]) 
     afterwards means a key was created for an endpoint that proved nothing.
     """
     fork = NoSurfnet()
-    out = try_purchase_result(
+    out = as_account(
         {"store": "teststore", "product": "Water", "rpc_url": LOCAL}, rpc_call=fork
     )
 
@@ -117,7 +127,7 @@ def test_no_key_is_created_until_the_endpoint_proves_itself(key_spy: list[str]) 
 
 def test_the_refusal_names_the_command_that_makes_a_fork() -> None:
     """A refusal an agent cannot act on is a shrug. This one is a command to run."""
-    out = try_purchase_result(
+    out = as_account(
         {"store": "teststore", "product": "Water", "rpc_url": LOCAL},
         rpc_call=NoSurfnet(),
     )
@@ -145,7 +155,7 @@ def test_a_remote_endpoint_is_refused_before_the_first_round_trip(
         "ftp://127.0.0.1:8899",  # not even http
     ):
         fork = NoSurfnet()
-        out = try_purchase_result(
+        out = as_account(
             {"store": "teststore", "product": "Water", "rpc_url": elsewhere},
             rpc_call=fork,
         )
@@ -177,7 +187,7 @@ def test_the_local_check_admits_loopback_in_every_spelling() -> None:
 def test_it_never_defaults_an_rpc_url(key_spy: list[str]) -> None:
     """No `rpc_url` means no fork, and a default here would be a guess about which chain
     to spend on — which is the one guess this whole package exists to refuse."""
-    out = try_purchase_result({"store": "teststore", "product": "Water"})
+    out = as_account({"store": "teststore", "product": "Water"})
     assert out["code"] == "argument-invalid"
     assert "no default" in out["reason"]
     assert HOW_TO_START_A_FORK in out["reason"]
@@ -190,7 +200,7 @@ def test_a_supplied_buyer_is_refused_rather_than_ignored(key_spy: list[str]) -> 
     Accepting it and then paying from somewhere else would make the response a lie about
     whose money moved — worse than the refusal, because it looks like it worked.
     """
-    out = try_purchase_result(
+    out = as_account(
         {
             "store": "teststore",
             "product": "Water",
@@ -219,7 +229,7 @@ def test_bad_arguments_refuse_before_anything_is_proved(
     arguments: dict[str, Any], key_spy: list[str]
 ) -> None:
     fork = NoSurfnet()
-    out = try_purchase_result(arguments, rpc_call=fork)
+    out = as_account(arguments, rpc_call=fork)
     assert out["code"] == "argument-invalid"
     assert fork.seen == []
     assert key_spy == []
@@ -234,12 +244,10 @@ def test_every_response_carries_the_sandbox_marker() -> None:
     """Success, refusal and blocked alike. An agent that only ever sees a refusal must
     still be able to tell this tool had nothing to do with mainnet."""
     responses = [
-        try_purchase_result({}),
-        try_purchase_result({"store": "s", "product": "p"}),
-        try_purchase_result(
-            {"store": "s", "product": "p", "rpc_url": "http://8.8.8.8"}
-        ),
-        try_purchase_result(
+        as_account({}),
+        as_account({"store": "s", "product": "p"}),
+        as_account({"store": "s", "product": "p", "rpc_url": "http://8.8.8.8"}),
+        as_account(
             {"store": "s", "product": "p", "rpc_url": LOCAL}, rpc_call=NoSurfnet()
         ),
         _to_json(_landed_rehearsal(), proof=offline_proof(LOCAL)),
@@ -404,20 +412,36 @@ def test_only_the_tool_that_can_spend_got_a_twin() -> None:
 
 
 def test_the_surface_routes_the_tool_to_the_rehearsal() -> None:
-    """Wired is not reached. This drives `call_tool`, the way a client does."""
+    """Wired is not reached. This drives `call_tool`, the way a client does.
+
+    Also pins that the surface passes `account` THROUGH: without it the call stops at the
+    gate and this test would go green on a refusal that never touched the rehearsal —
+    the routing assertion satisfied by the tool never running.
+    """
+    surface = OrquestraCatalogSurface(purchase_rpc_call=NoSurfnet())
+    out = surface.call_tool(
+        "try_purchase",
+        {"store": "teststore", "product": "Water", "rpc_url": LOCAL},
+        account="acct_test",
+    )
+    assert out["sandbox"] is True
+    assert out["code"] == "no-fork-proved"
+
+
+def test_the_public_unauthenticated_mount_does_not_offer_the_rehearsal() -> None:
+    """`call_tool` with no account is exactly what the public mount does today."""
     surface = OrquestraCatalogSurface(purchase_rpc_call=NoSurfnet())
     out = surface.call_tool(
         "try_purchase", {"store": "teststore", "product": "Water", "rpc_url": LOCAL}
     )
-    assert out["sandbox"] is True
-    assert out["code"] == "no-fork-proved"
+    assert out["code"] == "account-required"
 
 
 def test_an_unknown_store_refuses_with_the_menu_pointer() -> None:
     """The store is read off the fork, so a name that is not there refuses exactly as it
     does on the real tool — after the proof, and with no transaction."""
     fork = proving_fake("teststore", fresh_pubkey(), "Water", 100_000)
-    out = try_purchase_result(
+    out = as_account(
         {"store": "nosuchstore", "product": "Water", "rpc_url": fork.rpc_url},
         rpc_call=fork,
     )
@@ -431,7 +455,7 @@ def test_a_product_the_store_does_not_sell_refuses_with_the_menu() -> None:
     """The price is a per-product fact in the store's own account, so an unlisted product
     has none — and the rehearsal will not pick a near-match on the buyer's behalf."""
     fork = proving_fake("teststore", fresh_pubkey(), "Water", 100_000)
-    out = try_purchase_result(
+    out = as_account(
         {"store": "teststore", "product": "Coffee", "rpc_url": fork.rpc_url},
         rpc_call=fork,
     )
@@ -514,7 +538,7 @@ def test_a_hostname_is_refused_without_ever_resolving_it(
 
     monkeypatch.setattr(socket, "getaddrinfo", counting)
 
-    out = try_purchase_result(
+    out = as_account(
         {"rpc_url": "http://fork.attacker.example:8899", "store": "s", "product": "p"}
     )
     assert out["code"] == "not-a-local-fork"
@@ -533,7 +557,7 @@ def test_a_refusal_reports_the_error_CLASS_and_never_the_target_text() -> None:
     def banner(url: str, method: str, params: object) -> dict[str, object]:
         raise RpcError("INTERNAL-SERVICE-BANNER-s3cr3t-token-abc123")
 
-    out = try_purchase_result(
+    out = as_account(
         {"rpc_url": "http://127.0.0.1:1", "store": "s", "product": "p"},
         rpc_call=banner,
     )
@@ -563,3 +587,36 @@ def test_localhost_is_rewritten_and_not_looked_up(
     assert _pin_localhost("http://LocalHost:8899") == "http://127.0.0.1:8899"
     assert _pin_localhost("http://127.0.0.1:8899") == "http://127.0.0.1:8899"
     assert calls == []
+
+
+def test_an_anonymous_caller_gets_no_rehearsal_and_no_key() -> None:
+    """The residual the adversarial pass left standing: this tool was mounted openly.
+
+    The gate is NOT about custody — a rehearsal spends nothing of anyone's and its buyer
+    is born and discarded inside the call. It is about what an anonymous caller can make
+    this process DO: issue outbound JSON-RPC from our machine and burn a fork's compute.
+    With names refused and error text reduced to a class the residue is only a weak
+    "does something answer on this loopback port" oracle — and a stranger needs neither.
+
+    The refusal has to land before ANY argument handling, or a caller learns which
+    arguments are wrong by asking.
+    """
+    out = try_purchase_result({"rpc_url": "http://127.0.0.1:8899", "store": "s"})
+    assert out["refused"] is True
+    assert out["code"] == "account-required"
+    assert out["sandbox"] is True
+    # nothing about the arguments is disclosed: no missing-`product` complaint
+    assert "product" not in out["reason"]
+
+
+def test_an_authenticated_caller_reaches_the_normal_refusals() -> None:
+    """A gate that also swallows the real answers is a gate nobody can debug through."""
+    out = try_purchase_result(
+        {
+            "rpc_url": "https://api.mainnet-beta.solana.com",
+            "store": "s",
+            "product": "p",
+        },
+        account="acct_1",
+    )
+    assert out["code"] == "not-a-local-fork"

@@ -185,11 +185,15 @@ class OrquestraCatalogSurface:
         if name == "prepare_purchase":
             return self._prepare_purchase(args, account=account)
         if name == "try_purchase":
-            # No `account`: a rehearsal spends nothing of anyone's, and its buyer is a
-            # keypair born and discarded inside the call, so there is no wallet binding
-            # for an authenticated caller to be judged against.
+            # `account` is passed for a REACHABILITY gate, not a wallet binding: a
+            # rehearsal spends nothing of anyone's and its buyer is a keypair born and
+            # discarded inside the call, so there is no wallet to judge it against. What
+            # an authenticated caller buys is the right to make this process issue
+            # outbound JSON-RPC and burn a fork's compute — which is not something a
+            # stranger gets to ask for, however safe the signature itself is.
             return try_purchase_result(
                 args,
+                account=account,
                 rpc_call=self.purchase_rpc_call,
                 build_call=self.purchase_build_call,
             )
