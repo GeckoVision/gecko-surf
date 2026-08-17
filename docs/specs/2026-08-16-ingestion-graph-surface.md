@@ -254,11 +254,11 @@ seeds only we recover.
 | provenance ladders, single source of truth | **have** (`provenance.py`) |
 | seed recovery from source (the IDL cannot carry it) | **have** (`pda_extract.py`) |
 | simulate → Receipt, deltas, caps | **have** |
-| scorecard, six cases, one program | **have, hand-written** (`scripts/catalog_ci.py`) |
+| scorecard, six cases, one program | **have, generated from the graph** (`scripts/catalog_ci.py` over `gecko/project/probes.py`) |
 | `gecko.ingest` front door | **missing** |
 | `gecko.score` as a stage | **missing** — measurement exists, not as a stage over a graph |
-| `to_fdl` projector | **missing** |
-| declarative shapes instead of hardcoded probes | **missing** — the scorecard is six literal cases |
+| `to_fdl` projector | **have** (`gecko/project/fdl.py`, round-tripped through his compiler) |
+| declarative shapes instead of hardcoded probes | **have** (`probe_cases`) — accounts, arg names and PDA addresses come from the graph; only the values a caller must choose are supplied |
 | hosted surface | **missing** — empty scaffold |
 | catalog-scale ingestion | **missing** — one surface at a time |
 

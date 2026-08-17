@@ -201,6 +201,15 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Two lanes that need something the engine itself does not: `bun` + a local Orquestra
+# checkout (tests/test_orquestra_bridge.py runs HIS compiler/interpreter, never a
+# reimplementation of it), and a real Solana RPC. Both skip themselves when the
+# dependency is absent — the `rpc` lane additionally requires GECKO_BRIDGE_RPC_URL, so
+# the default suite stays offline — and both are deselectable: `-m "not bun and not rpc"`.
+markers = [
+    "bun: needs `bun` on PATH and an Orquestra checkout (GECKO_ORQUESTRA_ROOT)",
+    "rpc: needs a live Solana RPC (opt in with GECKO_BRIDGE_RPC_URL); reads and unsigned simulation only",
+]
 
 [tool.mypy]
 python_version = "3.11"

@@ -11,6 +11,21 @@ answers the questions an integrator actually has, and every answer is measured:
 
 Nothing here signs or broadcasts. Every call is a read or an unsigned simulation.
 
+WHERE THE CASES COME FROM, and this file is the reason the rule exists. The account
+list and the argument names used to be typed out here by hand. On the first real run
+that list omitted `system_program` from `delete_product` and sent `name` where the
+instruction takes `product_name` — and the scorecard printed a RED row for the
+SURFACE, for two defects in its own probe, both of which the program graph already
+stated correctly. So the shape of every case is now derived from the graph by
+`gecko.project.probes.probe_cases`: accounts and argument NAMES come from the IDL,
+PDA addresses are derived from the program's own seed recipes, and the addresses the
+IDL pins (system / token / associated-token) are read off the spec rather than
+retyped. What is left below is only what a caller genuinely has to CHOOSE — which
+wallet, which store, which product — and a value the graph asks for and this file
+does not supply is a refusal, never a default.
+
+    uv run python -m scripts.catalog_ci
+
 The storefront it scores is YOURS, so the wallets and store it names stay out of the
 repo. Point it at your own by writing `~/.gecko/catalog-ci.json`:
 
@@ -33,19 +48,60 @@ import os
 import re
 import urllib.request
 from pathlib import Path
+from typing import Any, Mapping, Sequence
 
-from gecko.store_accounts import derive_ata, receipts_pda
+from gecko.program_graph import build_program_graph
+from gecko.project.probes import ProbeCase, probe_cases
+from scripts.orquestra_bridge import ProjectIdl, let_me_buy_project
 
 CONFIG_PATH = Path(
     os.environ.get("GECKO_CI_CONFIG", "~/.gecko/catalog-ci.json")
 ).expanduser()
+
+# A universal SPL address — the same for every caller, so it stays inline. The
+# system / token / associated-token programs are NOT here any more: the IDL pins
+# them, so the graph carries them and a probe that retypes them can get them wrong.
+USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+#: The two instructions the graph exposes and this scorecard does not probe, with the
+#: reason — stated here and printed under the table, because a scorecard that quietly
+#: drops rows is exactly the kind of dishonesty it exists to catch. Neither exclusion
+#: is about the surface: both are about the STORE this run points at.
+#:
+#:   initialize    creates the store. Against a store that already exists it can only
+#:                 fail (`Allocate: account … already in use`), so scoring it here
+#:                 would print the probe's precondition as a defect in the surface.
+#:   delete_store  deletes it. The call is only ever simulated, so nothing is at risk
+#:                 — but a scorecard that routinely rehearses deleting a live
+#:                 storefront with 125 purchases of history is a bad habit to ship,
+#:                 and the run on 2026-08-17 showed it SUCCEEDS (16,893 CU) on a store
+#:                 that still lists products, i.e. the 6005 StoreNotEmpty guard our own
+#:                 config notes promise did not fire.
+NOT_PROBED: Mapping[str, str] = {
+    "initialize": "the store already exists, so this can only fail",
+    "delete_store": "deletes the store; simulated-only, but not a habit to ship",
+}
+
+#: The user's words for each instruction — the REACHABLE probe's input, and the ONE
+#: field `probe_cases` cannot derive. "buy a bottle of water at the bar" is not in an
+#: IDL, and generating a phrase from the identifier would score keyword echo rather
+#: than reachability. A missing entry degrades to the identifier; it can never move an
+#: account or an argument.
+INTENTS: Mapping[str, str] = {
+    "make_purchase": "buy a bottle of water at the bar",
+    "mark_as_delivered": "tell the customer their order is on its way",
+    "update_details": "change what my shop says about itself",
+    "update_telegram_channel": "send my orders somewhere else",
+    "add_product": "put a new drink on the menu",
+    "delete_product": "take something off the menu",
+}
 
 
 class ConfigError(RuntimeError):
     """The local storefront config is missing or incomplete."""
 
 
-def _load_config() -> dict[str, str]:
+def load_config() -> dict[str, str]:
     """Read the local storefront identities. Fails closed — never guesses a wallet."""
     stored: dict[str, str] = {}
     if CONFIG_PATH.exists():
@@ -64,20 +120,46 @@ def _load_config() -> dict[str, str]:
     return resolved
 
 
-_config = _load_config()
+def bindings(config: Mapping[str, str]) -> dict[str, str]:
+    """The values a caller has to choose, keyed by the GRAPH's own names.
 
-PID = "p7o7nf4pucllzadrmiqhf"
-RPC = "https://api.mainnet-beta.solana.com"
-BUYER = _config["buyer"]
-AUTHORITY = _config["authority"]
-STORE = _config["store"]
-TELEGRAM = _config["telegram"]
-# Universal SPL / runtime addresses — the same for every caller, so they stay inline.
-USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-SYSTEM = "11111111111111111111111111111111"
-ATA_PROG = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-RECEIPTS = receipts_pda(STORE)
+    Everything else — which accounts exist, what the arguments are called, what a PDA
+    resolves to — is the graph's answer, not this file's. A binding the graph never
+    asks for is dead weight; a binding it asks for and does not find is a refusal.
+    """
+    return {
+        # accounts
+        "signer": config["buyer"],
+        "authority": config["authority"],
+        "mint": USDC,
+        # args
+        "store_name": config["store"],
+        # `mark_as_delivered` spells the same value with a leading underscore: Anchor
+        # copies Rust's unused-parameter name into the IDL while the PDA seed keeps
+        # the original. Both names are stated by the graph, so both are bound here.
+        "_store_name": config["store"],
+        # A product the store actually holds — deleting one it does not have is a
+        # REFUSES probe (ProductNotFound / 6002), not a BUILD or SIMULATE one.
+        "product_name": os.environ.get("GECKO_CI_PRODUCT", "Water"),
+        "name": os.environ.get("GECKO_CI_NEW_PRODUCT", "Sparkling"),
+        "price": "120000",
+        "table_number": "9",
+        "details": "open until late",
+        "telegram_channel_id": config["telegram"],
+        "receipt_id": os.environ.get("GECKO_CI_RECEIPT_ID", "106"),
+    }
+
+
+def cases(project: ProjectIdl, config: Mapping[str, str]) -> tuple[ProbeCase, ...]:
+    """Every instruction of the catalog entry, minus the ones named in NOT_PROBED."""
+    graph = build_program_graph(idl=dict(project.idl), program_id=project.program_id)
+    generated = probe_cases(graph, bindings=bindings(config), intents=INTENTS)
+    return tuple(c for c in generated if c.instruction not in NOT_PROBED)
+
+
+# ---------------------------------------------------------------------------
+# his MCP surface
+# ---------------------------------------------------------------------------
 
 _sid: str | None = None
 
@@ -122,137 +204,37 @@ def call(tool: str, args: dict) -> str:
     )
 
 
-_rpc(
-    {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "gecko-ci", "version": "1"},
-        },
-    }
-)
-_rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
-
-#: Every instruction the program exposes, with the accounts+args a caller must supply.
-#: Derived once from `list_instructions` + `list_pda_accounts`; a real run regenerates it.
-CASES: list[dict] = [
-    {
-        "name": "make_purchase",
-        "accounts": {
-            "receipts": RECEIPTS,
-            "signer": BUYER,
-            "authority": AUTHORITY,
-            "mint": USDC,
-            "sender_token_account": derive_ata(BUYER, USDC),
-            "recipient_token_account": derive_ata(AUTHORITY, USDC),
-            "token_program": TOKEN,
-            "system_program": SYSTEM,
-            "associated_token_program": ATA_PROG,
-        },
-        "args": {"store_name": STORE, "product_name": "Water", "table_number": 9},
-        "fee_payer": BUYER,
-        "intent": "buy a bottle of water at the bar",
-    },
-    {
-        "name": "mark_as_delivered",
-        "accounts": {"receipts": RECEIPTS, "authority": AUTHORITY},
-        "args": {"_store_name": STORE, "receipt_id": 106},
-        "fee_payer": AUTHORITY,
-        "intent": "tell the customer their order is on its way",
-    },
-    {
-        "name": "update_details",
-        "accounts": {"receipts": RECEIPTS, "authority": AUTHORITY},
-        "args": {"store_name": STORE, "details": "open until late"},
-        "fee_payer": AUTHORITY,
-        "intent": "change what my shop says about itself",
-    },
-    {
-        "name": "update_telegram_channel",
-        "accounts": {"receipts": RECEIPTS, "authority": AUTHORITY},
-        "args": {"store_name": STORE, "telegram_channel_id": TELEGRAM},
-        "fee_payer": AUTHORITY,
-        "intent": "send my orders somewhere else",
-    },
-    {
-        "name": "add_product",
-        "accounts": {
-            "receipts": RECEIPTS,
-            "authority": AUTHORITY,
-            "mint": USDC,
-            "system_program": SYSTEM,
-        },
-        "args": {"store_name": STORE, "name": "Sparkling", "price": 120_000},
-        "fee_payer": AUTHORITY,
-        "intent": "put a new drink on the menu",
-    },
-    {
-        # Both of this case's account list and arg names were wrong on the first pass —
-        # `system_program` omitted, and `name` sent where the instruction takes
-        # `product_name`. It scored the SURFACE red for a defect in the probe, which is
-        # the whole argument for generating cases from the program graph instead of
-        # hand-writing them. The surface's two errors named both mistakes exactly.
-        "name": "delete_product",
-        "accounts": {
-            "receipts": RECEIPTS,
-            "authority": AUTHORITY,
-            "system_program": SYSTEM,
-        },
-        # A product the store actually holds — deleting one it does not have is a
-        # REFUSES probe (ProductNotFound / 6002), not a BUILD or SIMULATE one.
-        "args": {"store_name": STORE, "product_name": "Water"},
-        "fee_payer": AUTHORITY,
-        "intent": "take something off the menu",
-    },
-]
-
-
-def chain_units(unsigned_b64: str) -> int | None:
-    """What the CHAIN says these bytes cost — the number the surface must agree with."""
-    request = urllib.request.Request(
-        RPC,
-        data=json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "simulateTransaction",
-                "params": [
-                    unsigned_b64,
-                    {
-                        "encoding": "base64",
-                        "sigVerify": False,
-                        "replaceRecentBlockhash": True,
-                        "commitment": "processed",
-                    },
-                ],
-            }
-        ).encode(),
-        headers={"Content-Type": "application/json"},
+def handshake() -> None:
+    _rpc(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "gecko-ci", "version": "1"},
+            },
+        }
     )
-    value = json.loads(urllib.request.urlopen(request, timeout=60).read())["result"][
-        "value"
-    ]
-    if value.get("err"):
-        return None
-    # The OUTER program's line, not the first one: an inner CPI returns first.
-    consumed = re.findall(r"consumed (\d+) of", " ".join(value.get("logs") or []))
-    return int(consumed[-1]) if consumed else value.get("unitsConsumed")
+    _rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
 
-rows = []
-for case in CASES:
-    row = {"instruction": case["name"]}
+# ---------------------------------------------------------------------------
+# the scorecard
+# ---------------------------------------------------------------------------
+
+
+def score(case: ProbeCase, *, project_id: str) -> dict[str, Any]:
+    row: dict[str, Any] = {"instruction": case.instruction}
     out = call(
         "simulate_instruction",
         {
-            "projectId": PID,
-            "instruction": case["name"],
-            "accounts": case["accounts"],
-            "args": case["args"],
-            "feePayer": case["fee_payer"],
+            "projectId": project_id,
+            "instruction": case.instruction,
+            "accounts": dict(case.accounts),
+            "args": dict(case.args),
+            "feePayer": case.fee_payer,
             "network": "mainnet-beta",
         },
     )
@@ -269,25 +251,49 @@ for case in CASES:
     if not row["simulate"]:
         e = re.search(r"(Error|error)[^\n]{0,90}", out)
         row["err"] = e.group(0)[:70] if e else out[:70].replace("\n", " ")
-    rows.append(row)
+    return row
 
-print(
-    f"{'instruction':26} {'build':6} {'sim':5} {'reported':>9} {'actual':>8} {'honest':7} {'risk':6}"
-)
-print("-" * 78)
-for r in rows:
-    print(
-        f"{r['instruction']:26} {str(r['build']):6} {str(r['simulate']):5} "
-        f"{str(r['reported']):>9} {str(r['truth']):>8} {str(r['honest']):7} {str(r['risk']):6}"
-    )
-    if r["err"]:
-        print(f"{'':26} └─ {r['err']}")
 
-ok = sum(1 for r in rows if r["simulate"])
-honest = sum(1 for r in rows if r["honest"])
-print(f"\n  builds+simulates : {ok}/{len(rows)}")
-print(f"  reports honestly : {honest}/{len(rows)}")
-print(
-    f"  distinct risk levels across {len(rows)} instructions: "
-    f"{sorted({r['risk'] for r in rows if r['risk']})}"
-)
+def render(rows: Sequence[dict[str, Any]]) -> str:
+    lines = [
+        f"{'instruction':26} {'build':6} {'sim':5} {'reported':>9} {'actual':>8} {'honest':7} {'risk':6}",
+        "-" * 78,
+    ]
+    for r in rows:
+        lines.append(
+            f"{r['instruction']:26} {str(r['build']):6} {str(r['simulate']):5} "
+            f"{str(r['reported']):>9} {str(r['truth']):>8} {str(r['honest']):7} {str(r['risk']):6}"
+        )
+        if r["err"]:
+            lines.append(f"{'':26} └─ {r['err']}")
+
+    ok = sum(1 for r in rows if r["simulate"])
+    honest = sum(1 for r in rows if r["honest"])
+    lines += [
+        "",
+        f"  builds+simulates : {ok}/{len(rows)}",
+        f"  reports honestly : {honest}/{len(rows)}",
+        f"  distinct risk levels across {len(rows)} instructions: "
+        f"{sorted({r['risk'] for r in rows if r['risk']})}",
+        "  cases generated from the program graph; "
+        f"not probed: {', '.join(f'{k} ({v})' for k, v in NOT_PROBED.items())}",
+    ]
+    return "\n".join(lines)
+
+
+def main() -> int:
+    config = load_config()
+    project = let_me_buy_project()
+    handshake()
+    rows = [
+        score(case, project_id=project.project_id) for case in cases(project, config)
+    ]
+    print(render(rows))
+    return 0 if all(r["build"] and r["simulate"] and r["honest"] for r in rows) else 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except ConfigError as exc:
+        raise SystemExit(f"catalog-ci refused: {exc}") from exc
