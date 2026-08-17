@@ -171,6 +171,61 @@ do not install us, and they get a free sandbox by typing one parameter.
 loop behind it: author → validate → run on the fork → judge against the graph → score.
 Same inputs, same result shape, `sandbox: true`, no possibility of spend.
 
+### We use surfpool. We do not build it, and we should not host it for long
+
+surfpool is Apache-2.0 (verified against the repo: unmodified text, no `NOTICE`, no Commons
+Clause or BSL rider; its `deny.toml` allowlists only permissive dependency licences). There
+is no network-copyleft clause, so running it as a service — modified or not — triggers no
+disclosure obligation, and its Dockerfile already ships `SURFPOOL_NETWORK_HOST=0.0.0.0`, so
+public hosting is a designed mode rather than a workaround. The only real limits: §6 grants
+no trademark rights, so the endpoint is ours and "powered by surfpool" is the most we say;
+and distributing a *modified* binary would require stating the changes.
+
+**But hosting it is not a differentiator and should not be treated as one.** It is now a
+Solana Foundation project shipping Studio, a built-in MCP (`surfpool mcp`), Cheatcodes, and
+**Surfpool Cloud** — "run large-scale simulations… serverless, backend-as-a-service." Anyone
+can run surfpool. If the Foundation hosts it well, we stop hosting it and lose nothing we
+would miss. We host only until they do, and only because the loop needs an endpoint today.
+
+The engine **uses** these tools. It does not build them.
+
+### Scenarios changes the fixture problem, in our favour
+
+`surfnet_registerScenario` takes a JSON scenario — a *time sequence* of account-state
+overrides, applied slot by slot, each override keyed by IDL-indexed account fields.
+`surfnet_registerIdl` registers any program's IDL at runtime. Nine protocols ship natively
+(drift, jupiter, kamino, meteora, pyth, raydium, spl-token, switchboard, whirlpool — the
+README's "5" is stale), each as a folder of `idl.json` + `overrides.yaml`.
+
+This is a better answer than the one we were going to build. `find_real_account` *finds* a
+pool that happens to exist today; a scenario **authors the state the test needs**, which is
+deterministic, reproducible, and immune to the ageing problem a shared fork has. It closes
+the harness asymmetry from the other side: a buyer stops needing privileged fixture supply
+because they can construct the state themselves.
+
+It also corrects §5's native-program gap. `spl-token` is a shipped scenario protocol, and
+`surfnet_registerIdl` means a program with no Anchor IDL is a registration problem rather
+than a wall.
+
+**And it is where we give back.** An `overrides.yaml` is `protocol` / `version` /
+`account_type` / `idl_file_path` / `tags` / `constants` / `templates`, where each template
+names an IDL account type, the field paths it overrides, and an `llm_context` block written
+for an agent to read. Our graph already produces the mechanical half — the IDL, the account
+type, the field paths, the tags. The `constants` (real, labelled on-chain values) and the
+`llm_context` are the half that needs measurement and authorship, which is the half we are
+good at. They ship nine protocols; we built graphs for 55 of 60 sampled. **Scenario coverage
+is a supply problem, and supply is what our ingestion is.**
+
+That is a fifth projector — `to_scenario` — and a contribution to Solana Foundation rather
+than to Orquestra. It is not on the critical path, and it is the most natural way to be
+useful to the substrate we depend on.
+
+**What Scenarios does not do, and this is still the whole line:** it gives you a place to
+run and a state to run against. It does not tell you the address was right, that the
+reported cost matches what the chain charges, that an error code in the IDL is ever raised,
+or that an agent asking in user words can find the call. The fork is the floor. The judge
+and the score are the product.
+
 ### What hosting actually costs, honestly
 
 Two tiers, and only one of them is cheap:
@@ -209,7 +264,10 @@ The round trip already proves steps 3 and 4 on one program. What turns it into s
 builder points at:
 
 1. **The fork as a tool, not a script.** `try_<instruction>` beside the real one, same
-   inputs, same result shape, `sandbox: true`, no possibility of spend.
+   inputs, same result shape, `sandbox: true`, no possibility of spend — over surfpool's
+   Scenarios and Cheatcodes rather than over anything we build. **Standing up a generic
+   hosted fork endpoint is explicitly NOT on this list**: it is a thin wrapper on something
+   its own maintainers are shipping, and losing that race costs us nothing.
 2. **The score as declarative shapes**, so a provider can read and dispute it rather than
    take our word.
 3. **Ingestion for an arbitrary program** — the 60-program run is a measurement harness,
