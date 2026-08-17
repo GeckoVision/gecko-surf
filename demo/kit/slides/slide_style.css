@@ -224,3 +224,31 @@ ol.steps li small { display: block; font-size: 15px; color: var(--dim); margin-t
 .pill.ex { color: var(--green); border-color: rgba(0, 215, 95, 0.45); background: rgba(0, 215, 95, 0.09); }
 .pill.re { color: var(--amber); border-color: rgba(255, 215, 0, 0.42); background: rgba(255, 215, 0, 0.08); }
 .pill.fl { color: var(--red); border-color: rgba(255, 95, 95, 0.42); background: rgba(255, 95, 95, 0.08); }
+
+/* --- slide 04: the loop, and who owns each step ------------------------------------- */
+.loop { display: flex; flex-direction: column; gap: 8px; }
+.step {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--panel-2);
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  padding: 9px 12px;
+}
+.step .num {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--dim);
+  min-width: 14px;
+}
+.step .what { font-size: 17px; font-weight: 700; min-width: 88px; }
+.step .how { font-size: 13.5px; color: var(--dim); flex: 1; }
+.step .how code { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--mint); }
+.step .pill { margin-left: auto; flex: none; }
+
+/* ownership, the one thing this slide exists to say */
+.pill.theirs { color: var(--violet); border-color: rgba(188, 140, 255, 0.45); background: rgba(188, 140, 255, 0.10); }
+.pill.ours   { color: var(--cyan);   border-color: rgba(53, 194, 212, 0.5);  background: rgba(53, 194, 212, 0.12); }
+.pill.both   { color: var(--mint);   border-color: rgba(126, 231, 199, 0.5); background: rgba(126, 231, 199, 0.12); }
