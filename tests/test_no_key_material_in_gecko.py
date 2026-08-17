@@ -249,9 +249,18 @@ def test_no_module_in_gecko_imports_a_keypair_type() -> None:
 
     ``scripts/sign_and_send.py`` imports it, inside a function, on purpose — that file is
     the founder's hand on the pen and is not scanned here.
+
+    ONE MODULE IN ``gecko/`` IS EXEMPT, by name: :mod:`gecko.sandbox.surfnet`, the fork
+    sandbox's key factory. It is not a loosening of the invariant so much as the place the
+    invariant is enforced for the fork path — the key it makes cannot come into existence
+    until an endpoint has answered a method mainnet does not implement, and the test below
+    asserts that binding rather than taking the exemption on trust. The list is exactly one
+    name long and every other module in the package is still held to "must not NAME it".
     """
     offenders: list[str] = []
     for path in _gecko_modules():
+        if path.name in _KEYPAIR_EXEMPT:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
@@ -268,3 +277,55 @@ def test_no_module_in_gecko_imports_a_keypair_type() -> None:
             if isinstance(node, ast.Attribute) and node.attr == "Keypair":
                 offenders.append(f"{path.name}:{node.lineno}")
     assert not offenders, f"gecko/ must never hold a keypair: {offenders}"
+
+
+#: The ONE module allowed to name a keypair type, and the reason it is a file name rather
+#: than a rule: an exemption you can enumerate is one a reviewer can read. Adding a second
+#: entry here is the change that deserves an argument, which is exactly why it has to be
+#: made HERE and not by writing a key factory somewhere quieter.
+_KEYPAIR_EXEMPT = frozenset({"surfnet.py"})
+
+
+def test_the_exempt_module_can_only_make_a_key_from_a_PROOF() -> None:
+    """The exemption above is only safe because of what this asserts, so assert it.
+
+    Three facts, all read off the AST of the one exempt module:
+
+    * it really does name the type — otherwise the exemption is stale and the guard above
+      has quietly stopped covering anything;
+    * a keypair is CONSTRUCTED in exactly one function, so there is a single place to
+      review rather than a habit;
+    * the only public way to reach that function, ``ephemeral_signer``, takes a
+      ``SurfnetProof`` — not a URL, not a flag, not a bool. That is what makes "sign
+      against mainnet" unspellable instead of merely forbidden: the argument does not
+      exist until a validator has answered ``surfnet_getSurfnetInfo``.
+
+    Change the parameter to a URL and this goes red, which is the mutation worth catching.
+    """
+    exempt = [path for path in _gecko_modules() if path.name in _KEYPAIR_EXEMPT]
+    assert len(exempt) == len(_KEYPAIR_EXEMPT), (
+        f"exempt module missing: {_KEYPAIR_EXEMPT}"
+    )
+    tree = ast.parse(exempt[0].read_text(encoding="utf-8"), str(exempt[0]))
+
+    names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "Keypair"]
+    assert names, "the exemption is stale — this module no longer names a keypair type"
+
+    constructors = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Keypair"
+    ]
+    assert len(constructors) == 1, f"more than one key factory: {constructors}"
+
+    factory = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "ephemeral_signer"
+    )
+    arguments = factory.args.args
+    assert [a.arg for a in arguments] == ["proof"]
+    assert isinstance(arguments[0].annotation, ast.Name)
+    assert arguments[0].annotation.id == "SurfnetProof"

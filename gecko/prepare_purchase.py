@@ -60,7 +60,7 @@ logs, no node response body, no credentials, and nothing is written anywhere.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,9 +88,28 @@ from .wallet_binding import WalletBindingError, WalletDirectory
 __all__ = [
     "PREPARE_PURCHASE_TOOL",
     "PrepareRefusalCode",
+    "UrlGuard",
     "prepare_purchase_result",
     "prepare_purchase_tool",
 ]
+
+#: How a caller-supplied ``rpc_url`` is judged before anything is POSTed to it: a
+#: callable that returns for an acceptable URL and raises
+#: :class:`~gecko.netguard.UnsafeUrlError` for one it refuses.
+#:
+#: The default is and stays :func:`~gecko.netguard.validate_public_url` — this surface is
+#: unauthenticated, so an unguarded URL would make it an SSRF proxy into loopback, RFC1918
+#: and cloud metadata. The seam exists because a surfpool fork lives on ``127.0.0.1``,
+#: which that guard correctly refuses, and the alternative was a *copy* of this function
+#: for the fork — i.e. a rehearsal that exercises code no buyer ever runs, which is the
+#: one thing a rehearsal must not be.
+#:
+#: It is a keyword-only PYTHON argument, exactly like ``build_call``/``rpc_call``/
+#: ``wallets``: it is chosen by whoever mounts this function, never read from
+#: ``arguments``, so no remote caller can reach it. And the only guard shipped for it
+#: (:mod:`gecko.sandbox.rehearse`) is STRICTER than the default, not looser — it admits
+#: exactly one URL, the surfnet that proved itself.
+UrlGuard = Callable[[str], None]
 
 #: The pair the distinctness rule is registered under. Named rather than inlined so the
 #: refusal and the request can never drift onto different instructions.
@@ -340,14 +359,16 @@ def _resolve_buyer(
     return binding.pubkey, None
 
 
-def _resolve_rpc_url(raw: Any, network: Network) -> tuple[str | None, str | None]:
+def _resolve_rpc_url(
+    raw: Any, network: Network, guard: UrlGuard | None = None
+) -> tuple[str | None, str | None]:
     """(url, refusal reason). A caller-supplied URL is guarded; a default is pinned."""
     if isinstance(raw, str) and raw.strip():
         url = raw.strip()
         try:
             # This surface is unauthenticated, so an unguarded URL here would make it a
             # proxy into whatever a stranger names — loopback, RFC1918, cloud metadata.
-            validate_public_url(url)
+            (guard or validate_public_url)(url)
         except UnsafeUrlError as exc:
             return None, f"rpc_url refused: {exc}"
         return url, None
@@ -426,6 +447,7 @@ def prepare_purchase_result(
     rpc_call: RpcCall | None = None,
     account: str | None = None,
     wallets: WalletDirectory | None = None,
+    url_guard: UrlGuard | None = None,
 ) -> dict[str, Any]:
     """Plan, verify, and hand back the UNSIGNED transaction. Never raises for an answer.
 
@@ -439,8 +461,9 @@ def prepare_purchase_result(
     argument is just the caller's word. With ``wallets``, it decides the buyer; without
     either, the caller-supplied ``buyer`` is used exactly as before.
 
-    ``build_call``/``rpc_call``/``wallets`` are injected seams: the whole path is
-    falsifiable offline.
+    ``build_call``/``rpc_call``/``wallets``/``url_guard`` are injected seams: the whole
+    path is falsifiable offline. See :data:`UrlGuard` for what the last one is for and why
+    it cannot be reached from ``arguments``.
     """
     args = arguments or {}
 
@@ -493,7 +516,7 @@ def prepare_purchase_result(
             "argument-invalid", "`table` must be a whole number from 0 to 255 (u8)"
         )
 
-    rpc_url, url_refusal = _resolve_rpc_url(args.get("rpc_url"), network)
+    rpc_url, url_refusal = _resolve_rpc_url(args.get("rpc_url"), network, url_guard)
     if rpc_url is None:
         return _refuse(
             "argument-invalid", url_refusal or "no usable rpc_url", network=network
