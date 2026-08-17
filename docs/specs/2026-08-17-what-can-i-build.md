@@ -23,23 +23,41 @@ to developers they want building on them. Same shape as the surface page and the
 **So: build it.** With three sharpenings, because the appealing version of this idea is the
 one that quietly abandons every rule we have.
 
-## Sharpening 1 — a buildable, not an idea
+## Sharpening 1 — completeness, not curation. We do not generate the answer.
 
-`solana.new` offers *"500+ ideas sourced from YC, Alliance, Superteam, and SendAI."* Those are
-human-sourced and inspirational. **We must not do that**, because an idea is not refutable and
-every artifact we ship has been.
+**Corrected 2026-08-17, and the correction matters.** The first draft of this section had us
+generating a list of buildables, verified. That is still a generative act, and it is not what
+this is for.
 
-The honest version is stronger and only we can make it:
+The real pain the founder named is narrower and much better:
 
-> **A buildable is shown only if the calls it needs score green.**
+> **How many things could a developer be shipping on this surface that they do not know are
+> there?**
 
-Not "here is something you could build" but "here is something that builds, simulates, and
-reports honestly, as of this morning — and here is the run that proves it." An idea list is
-inspiration. **A verified-buildable list is a claim with a receipt**, and it is the difference
-between our showcase and a landing page.
+That is a *legibility* problem, not an inspiration problem. And it is enormous: the ten
+largest programs in the sampled catalogue carry **506 instructions between them**, one of them
+**130 on its own**. A README shows three to five. Nobody reads 130 instructions, so a
+developer builds with the handful the documentation happened to feature and never learns the
+rest exists.
 
-It also fails usefully: a buildable that stops scoring green disappears from the page and the
-provider is told which call broke it. That is the drift watch earning its keep.
+So we do not answer "what can I build." **We make the surface legible enough that an LLM can
+answer it**, from a map that is complete and carries the status of every entry. The model does
+the interpreting; we supply the structure. That keeps us in the lane we have defended all
+year — comprehension, not generation — and it removes the last place a hallucination could
+enter the artifact.
+
+Two consequences, and the first inverts the usual instinct:
+
+* **Completeness is the feature.** A curated "here are five things you can build" hides the
+  other 125, which is the exact failure being complained about. Every instruction appears.
+* **Status travels with each entry**, so completeness does not become noise: this one builds
+  and simulates, this one needs an input no agent can supply, this one is admin-only, this one
+  has never been verified. An entry that cannot be reached is still worth showing — a developer
+  who knows a capability exists and is currently unreachable is better informed than one who
+  never knew.
+
+A verified list is a claim with a receipt. **A complete map with honest status is a claim about
+the whole surface**, and that is the stronger thing.
 
 ## Sharpening 2 — the 4,800-node map is the seductive part and the weakest
 
@@ -100,6 +118,17 @@ and beside each, the thing no scaffolder can give you:
 
 `solana.new` gets you to a scaffold. **This gets you to a call that works against a program
 that actually exists**, which is the step where the scaffold stops helping.
+
+## Not a competitor to `solana.new` — the layer underneath it
+
+Stated plainly because the first draft of this document read as positioning against them, and
+that was wrong. `solana.new` gets a founder from nothing to a scaffold, with ideas, guidance
+and a project structure. **Nothing here competes with that.** It sits *underneath*: once you
+have a scaffold and have chosen a program to build on, the question becomes what that program
+can actually do, and that is the question a scaffolder is not built to answer and we are.
+
+The two compose in the obvious direction — their Build phase hands off to a map of the surface
+you picked.
 
 ## Distribution: contribute a skill, do not build a rival installer
 
