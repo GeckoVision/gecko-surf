@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .handoff import verify_handoff
-from .landing import latest_blockhash, priority_fee_microlamports
+from .landing import RPC_COMMITMENT, latest_blockhash, priority_fee_microlamports
 from .networks import Network
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .rpc import RpcCall, default_rpc_call
@@ -598,7 +598,17 @@ def _send(call: RpcCall, rpc_url: str, signed_transaction_base64: str) -> str:
         "sendTransaction",
         [
             signed_transaction_base64,
-            {"encoding": "base64", "skipPreflight": False, "maxRetries": 3},
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 3,
+                # WITHOUT THIS THE PREFLIGHT RUNS AT `finalized`, which is the RPC default
+                # and is STRICTER than the commitment the blockhash was issued at. That
+                # combination fails 100% of the time with `BlockhashNotFound` — the
+                # simulation passes (it runs at `processed`) and then the broadcast is
+                # rejected by a node that has not seen the block yet.
+                "preflightCommitment": RPC_COMMITMENT,
+            },
         ],
     )
     if "error" in reply:

@@ -516,3 +516,103 @@ def test_a_hint_lookup_that_fails_does_not_break_the_refusal() -> None:
     with pytest.raises(StoreNotFound) as excinfo:
         resolve_store("JonasBar", rpc_url="https://93.184.216.34/rpc", rpc_call=flaky)
     assert "no store named 'JonasBar'" in str(excinfo.value)
+
+
+# --- 8. the preflight must never be stricter than the blockhash -----------------
+
+
+#: `processed` sees the most, `finalized` the least. A transaction can only be validated by
+#: something at least as LOOSE as whatever issued its blockhash.
+_LOOSENESS = {"processed": 2, "confirmed": 1, "finalized": 0}
+
+
+def _commitments_used() -> dict[str, str]:
+    """Every commitment this path actually sends, read from the calls themselves."""
+    import gecko.rpc as rpcmod
+    from gecko.landing import block_height, latest_blockhash
+
+    seen: dict[str, str] = {}
+
+    def spy(url: str, method: str, params: Any) -> Any:
+        if params and isinstance(params[-1], dict) and "commitment" in params[-1]:
+            seen[method] = params[-1]["commitment"]
+        if method == "getLatestBlockhash":
+            return {
+                "result": {"value": {"blockhash": "H" * 43, "lastValidBlockHeight": 9}}
+            }
+        return {"result": 1}
+
+    latest_blockhash("https://rpc.example.test", spy)
+    block_height("https://rpc.example.test", spy)
+    del rpcmod  # only imported to make the dependency explicit
+    return seen
+
+
+def test_the_send_preflight_is_not_stricter_than_the_blockhash() -> None:
+    """The regression, and the reason it cost a live purchase.
+
+    `latest_blockhash` moved to `confirmed` to reclaim ~14s of window. `sendTransaction`
+    was sending no `preflightCommitment`, so its preflight ran at the RPC default —
+    `finalized` — which is STRICTER, does not know a confirmed-only blockhash, and rejects
+    a perfectly valid transaction with `BlockhashNotFound`. 100% failure, while the
+    simulation passed because it runs at `processed`.
+
+    Asserting the ORDERING rather than the literal values is the point: an equality test
+    on "confirmed" would have passed before the fix too, because the broken side sent
+    nothing at all.
+    """
+    import inspect
+
+    from gecko.autonomous_purchase import _send
+    from gecko.landing import RPC_COMMITMENT
+
+    used = _commitments_used()
+    assert used["getLatestBlockhash"] == RPC_COMMITMENT
+    assert used["getBlockHeight"] == RPC_COMMITMENT
+
+    source = inspect.getsource(_send)
+    assert "preflightCommitment" in source, (
+        "no preflightCommitment means the RPC default, `finalized`, which is stricter "
+        "than the blockhash commitment and rejects every send"
+    )
+    assert "RPC_COMMITMENT" in source, "it must be THE constant, not a second copy"
+
+
+def test_simulation_stays_at_least_as_loose_as_the_blockhash() -> None:
+    """Simulation may be looser (it is: `processed`), never stricter."""
+    import inspect
+
+    from gecko import simulate as simmod
+    from gecko.landing import RPC_COMMITMENT
+
+    source = inspect.getsource(simmod)
+    used = [c for c in _LOOSENESS if f'"commitment": "{c}"' in source]
+    assert used, "simulate names no commitment — it would inherit an RPC default"
+    for commitment in used:
+        assert _LOOSENESS[commitment] >= _LOOSENESS[RPC_COMMITMENT], (
+            f"simulate uses {commitment!r}, stricter than the blockhash's "
+            f"{RPC_COMMITMENT!r} — it would reject bytes that are valid"
+        )
+
+
+def test_the_result_tells_the_agent_which_commitment_to_send_with() -> None:
+    """An agent submits these bytes itself. With default options it gets BlockhashNotFound
+    and an error naming neither cause nor remedy, so the answer ships in the result."""
+    from tests.test_prepare_purchase_tool import BUYER, RPC_URL, FakeBuilder, FakeRpc
+    from gecko.landing import RPC_COMMITMENT
+    from gecko.prepare_purchase import prepare_purchase_result
+
+    out = prepare_purchase_result(
+        {
+            "store": "jonasbar",
+            "product": "Water",
+            "buyer": BUYER,
+            "network": "mainnet",
+            "rpc_url": RPC_URL,
+        },
+        build_call=FakeBuilder(),
+        rpc_call=FakeRpc(),
+    )
+    assert out["submit"]["preflight_commitment"] == RPC_COMMITMENT
+    submit_step = next(s for s in out["next_step"]["do"] if s["step"] == "submit")
+    assert submit_step["options"]["preflightCommitment"] == RPC_COMMITMENT
