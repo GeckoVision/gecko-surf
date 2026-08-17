@@ -63,7 +63,14 @@ class AccountRef:
     """An account slot of an instruction. If it is a PDA, its derivation inputs are
     bound to this instruction's accounts/args; if a seed couldn't be resolved — or
     the account sits in (or behind) a seed-dependency cycle — the account is flagged
-    ``resolvable=False`` (honest, not fabricated)."""
+    ``resolvable=False`` (honest, not fabricated).
+
+    ``address`` is the IDL's own ``address`` pin for a constant account (the system,
+    token and associated-token programs, a sysvar). It is a *fact from the spec*, not
+    a derivation: a consumer that has it does not have to ask a caller for a value
+    the program already fixed — and asking is how a flow ends up parameterising the
+    token program. ``None`` means the IDL pinned nothing, never "unknown constant".
+    """
 
     name: str
     is_pda: bool
@@ -71,6 +78,7 @@ class AccountRef:
     writable: bool = False
     resolvable: bool = True
     derive_from: tuple[SeedBinding, ...] = ()
+    address: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +215,8 @@ def _account_to_json(acct: AccountRef) -> dict[str, Any]:
         "signer": acct.signer,
         "writable": acct.writable,
     }
+    if acct.address:
+        d["address"] = acct.address
     if acct.is_pda:
         d["resolvable"] = acct.resolvable
         d["derive_from"] = [
@@ -445,6 +455,8 @@ def build_program_graph(
             name = a.get("name")
             if not name:
                 continue
+            pinned = a.get("address")
+            pinned = str(pinned) if pinned else None
             node = pdas.get(name)
             if node is None:
                 accounts.append(
@@ -453,6 +465,7 @@ def build_program_graph(
                         is_pda=False,
                         signer=bool(a.get("signer")),
                         writable=bool(a.get("writable")),
+                        address=pinned,
                     )
                 )
                 continue
@@ -464,6 +477,7 @@ def build_program_graph(
                 writable=bool(a.get("writable")),
                 resolvable=node.resolvable,
                 derive_from=bindings,
+                address=pinned,
             )
             accounts.append(ref)
             pda_accounts[name] = ref
