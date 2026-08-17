@@ -421,6 +421,24 @@ def test_the_notes_do_not_claim_an_authority_check_make_purchase_does_not_have()
     assert "Woody4618/bar" in notes
 
 
+def test_the_notes_state_that_mark_as_delivered_checks_no_authority() -> None:
+    """The hole an IDL cannot show, and the config did not mention at all.
+
+    `authority` is declared writable+signer, so Anchor checks that somebody signed and
+    never who, and mark_as_delivered carries no `require!` against `receipts.authority`.
+    Measured on a fork: a keypair generated seconds earlier flipped another merchant's
+    receipt for a 5,000-lamport fee. A reader of the IDL sees `signer: true` and infers a
+    named signer — which is exactly the inference this note has to break.
+    """
+    notes = _let_me_buy().notes
+
+    assert "NO AUTHORITY CHECK" in notes
+    # the measurement, not a claim: what was signed, and what the chain then did
+    assert "34,870 CU" in notes
+    # and where it can be re-run, so the note is falsifiable rather than remembered
+    assert "rehearse_delivery" in notes
+
+
 def test_the_notes_state_the_20_receipt_cap_and_the_silent_eviction() -> None:
     """The single most load-bearing behavioural fact about this program, and the config
     did not mention it at all.

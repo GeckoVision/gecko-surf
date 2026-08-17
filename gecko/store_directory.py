@@ -42,6 +42,7 @@ __all__ = [
     "StoreDecodeError",
     "StoreListing",
     "StoreProduct",
+    "authority_span",
     "decode_store",
     "list_stores",
     "list_stores_result",
@@ -72,6 +73,16 @@ class _Cursor:
     def __init__(self, raw: bytes, position: int = 0) -> None:
         self._raw = raw
         self._position = position
+
+    @property
+    def position(self) -> int:
+        """How many bytes have been consumed — i.e. the offset of the NEXT field.
+
+        Exposed because one caller needs a field's byte RANGE rather than its value
+        (:func:`authority_span`), and the alternative is a second copy of this layout's
+        arithmetic in another module. Read-only: nothing can seek this cursor.
+        """
+        return self._position
 
     def take(self, count: int) -> bytes:
         end = self._position + count
@@ -199,6 +210,40 @@ def decode_store(raw: bytes, *, address: str) -> StoreListing:
         products=tuple(products),
         telegram_channel_id=telegram_channel_id,
     )
+
+
+def authority_span(raw: bytes) -> tuple[int, int]:
+    """``(start, end)`` — the bytes the store's ``authority`` pubkey occupies.
+
+    A second walk of the same layout, deliberately kept BESIDE :func:`decode_store` rather
+    than in the module that wants it. The authority sits after a variable-length receipts
+    vec and a variable-length store name, so its offset cannot be a constant; a walk that
+    lived somewhere else would be a copy of this layout free to drift from it.
+
+    The only caller is the fork sandbox, which rewrites those 32 bytes with a cheatcode so
+    that a delivery can be rehearsed as the merchant (see
+    :func:`gecko.sandbox.deliver.rehearse_delivery`). Nothing on a real chain can do that,
+    and nothing here writes anything — this returns two integers.
+
+    :raises StoreDecodeError: if the bytes are not this layout. Never guesses an offset.
+    """
+    cursor = _Cursor(raw, _DISCRIMINATOR_BYTES)
+    receipt_rows = cursor.u32()
+    if receipt_rows > _MAX_RECEIPT_ROWS:
+        raise StoreDecodeError("the receipts vec declares an implausible length")
+    for _ in range(receipt_rows):
+        cursor.u64()  # receipt_id
+        cursor.take(32)  # buyer — skipped, never returned
+        cursor.u8()  # was_delivered
+        cursor.u64()  # price
+        cursor.u64()  # timestamp
+        cursor.u8()  # table_number
+        cursor.string()  # product_name
+    cursor.u64()  # total_purchases
+    cursor.string()  # store_name
+    start = cursor.position
+    cursor.take(32)  # the authority itself — taken so the bounds check runs
+    return start, cursor.position
 
 
 def list_stores(
