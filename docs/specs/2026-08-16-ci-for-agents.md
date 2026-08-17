@@ -68,7 +68,7 @@ mainnet transactions, all exact. That is the entire mechanism, and it is not cle
 an outside measurement.
 
 > Fixed upstream in `berkayoztunc/orquestra#9`, merged and deployed within the hour. The
-> scorecard in §4 was re-run against the fix and shows 5/6 honest.
+> scorecard in §4 was re-run against the fix and shows 6/6 honest.
 
 ## 3. The four components
 
@@ -146,21 +146,39 @@ between "something changed" and "your swap flow now reports a cost it will not c
 instruction                build  sim    reported   actual  honest  risk
 ──────────────────────────────────────────────────────────────────────────
 make_purchase              True   True      36399    36399  True    high
-mark_as_delivered          True   True      34858    34858  True    medium
+mark_as_delivered          True   True      34137    34137  True    medium
 update_details             True   True      25476    25476  True    medium
 update_telegram_channel    True   True      25473    25473  True    medium
 add_product                True   True      27039    27039  True    medium
-delete_product             False  False       None     None  False   None
-                           └─ Error: Missing required accounts: system_program
+delete_product             True   True      26015    26015  True    medium
 
-  builds+simulates : 5/6
-  reports honestly : 5/6      (0/6 before #9)
+  builds+simulates : 6/6
+  reports honestly : 6/6      (0/6 before #9)
 ```
 
-Two findings from one run of one program: a reporting defect across the whole catalog, and
-`delete_product` uncallable from the surface as published. Neither is visible by reading the
-IDL, the docs, or the code. Both are obvious the moment something outside the surface asks
-it to prove itself.
+> **Corrected 2026-08-17.** This table first read `5/6`, with `delete_product` failing on
+> `Missing required accounts: system_program`, and this section reported it as an
+> instruction uncallable from the surface as published. **That was wrong, and the defect
+> was ours.** The hand-written case omitted `system_program` *and* sent `name` where the
+> instruction takes `product_name` — both facts stated correctly in our own program config,
+> which the case did not consult. The surface named each mistake in turn, precisely, and
+> the corrected call builds and simulates.
+>
+> Two things follow, and the second matters more than the finding it replaces. First,
+> credit: those error messages are the first-call-correct feedback loop this document
+> argues for, working. Second, **a hand-written probe scored a surface red for a defect in
+> the probe author's comprehension** — which is the strongest possible argument for
+> generating cases from the program graph instead of writing them by hand, and it is now
+> the first thing the machine in `2026-08-16-ingestion-graph-surface.md` has to fix.
+>
+> `mark_as_delivered` moved 34,858 → 34,137 between runs. That is not an error: this
+> program's compute tracks the bytes resident in its receipts vec (≈ 19,780 + 12.7 × resident
+> bytes, cross-validated across two stores to 0.9%), so the number moves as the store trades.
+> A score is a photograph, and this is what §3.4 exists to watch.
+
+One finding survives from this run, and it is the one that mattered: a reporting defect
+across the whole catalog, invisible by reading the IDL, the docs, or the code, and obvious
+the moment something outside the surface asked it to prove itself.
 
 **Multiply by 4,400.** Orquestra says, honestly, "can construct valid transactions for the
 vast majority of them (full coverage testing is still ongoing)." That sentence is where this

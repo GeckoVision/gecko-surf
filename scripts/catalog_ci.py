@@ -190,9 +190,20 @@ CASES: list[dict] = [
         "intent": "put a new drink on the menu",
     },
     {
+        # Both of this case's account list and arg names were wrong on the first pass —
+        # `system_program` omitted, and `name` sent where the instruction takes
+        # `product_name`. It scored the SURFACE red for a defect in the probe, which is
+        # the whole argument for generating cases from the program graph instead of
+        # hand-writing them. The surface's two errors named both mistakes exactly.
         "name": "delete_product",
-        "accounts": {"receipts": RECEIPTS, "authority": AUTHORITY},
-        "args": {"store_name": STORE, "name": "Sparkling"},
+        "accounts": {
+            "receipts": RECEIPTS,
+            "authority": AUTHORITY,
+            "system_program": SYSTEM,
+        },
+        # A product the store actually holds — deleting one it does not have is a
+        # REFUSES probe (ProductNotFound / 6002), not a BUILD or SIMULATE one.
+        "args": {"store_name": STORE, "product_name": "Water"},
         "fee_payer": AUTHORITY,
         "intent": "take something off the menu",
     },
