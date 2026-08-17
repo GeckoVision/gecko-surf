@@ -173,13 +173,32 @@ class SurfaceScore:
         return max(self.before.run_stdev, self.after.run_stdev)
 
     @property
+    def verdict(self) -> str:
+        """``improved`` · ``regressed`` · ``no_difference`` · ``undetermined``.
+
+        The distinction between the last two is not pedantry, and a real run is what
+        surfaced it. Pegana scored 100% on BOTH arms across seven runs with zero variance:
+        a lift of exactly zero, measured exactly. Calling that "undetermined, run more"
+        told a provider to spend money re-measuring a settled answer. A lift of zero with a
+        noise floor of zero is a RESULT — this surface needed nothing from us on this set —
+        and saying so plainly is worth more than a hedge.
+        """
+        floor = self.noise_floor
+        if floor == 0.0 and abs(self.lift) <= _INTENT_EPSILON:
+            return "no_difference"
+        if abs(self.lift) <= floor:
+            return "undetermined"
+        return "improved" if self.lift > 0 else "regressed"
+
+    @property
     def lift_is_noise(self) -> bool:
-        """True when the lift is no larger than the movement either arm shows unaided.
+        """True when a nonzero lift is no larger than the movement either arm shows unaided.
 
         A True here does not mean the surface did not improve. It means THIS RUN cannot tell,
-        and the honest response is more runs, not a rounder number.
+        and the honest response is more runs, not a rounder number. A determined zero is NOT
+        noise — see :attr:`verdict`.
         """
-        return abs(self.lift) <= self.noise_floor
+        return self.verdict == "undetermined"
 
     @property
     def fixed(self) -> tuple[IntentDelta, ...]:
@@ -262,9 +281,7 @@ def _intents(
     return tuple(sorted(out, key=lambda i: (i.delta, i.goal)))
 
 
-def _caveats(
-    score_runs: int, lift_is_noise: bool, ceiling_bound: bool
-) -> tuple[str, ...]:
+def _caveats(score_runs: int, verdict: str, ceiling_bound: bool) -> tuple[str, ...]:
     out = [
         "This is the COMPREHENSION lift — question-shaped, auth-hidden, retrieval-surfaced "
         "tools against the raw spec dump an agent gets today. It is not a corpus lift; no "
@@ -279,10 +296,18 @@ def _caveats(
             f"Only {score_runs} run(s) per task. The model is non-deterministic, so a "
             "single run cannot separate a result from its own variance."
         )
-    if lift_is_noise:
+    if verdict == "undetermined":
         out.append(
             "THE LIFT IS INSIDE THIS MEASUREMENT'S OWN RUN-TO-RUN MOVEMENT. Treat it as "
             "undetermined and run more, rather than reporting the midpoint."
+        )
+    if verdict == "no_difference":
+        out.append(
+            "BOTH ARMS SCORED THE SAME, EXACTLY, WITH NO RUN-TO-RUN MOVEMENT. This is a "
+            "result and not a hedge: on these intents the raw specification already got "
+            "every call right, so comprehension had nothing to add. Either the surface is "
+            "genuinely that clear, or the intents are too close to its own wording to be a "
+            "test — and the second is worth checking before the first is celebrated."
         )
     if ceiling_bound:
         out.append(
@@ -356,7 +381,7 @@ def score_surface(
         intents=partial.intents,
         declined_before=partial.declined_before,
         declined_after=partial.declined_after,
-        caveats=_caveats(runs, partial.lift_is_noise, ceiling_bound),
+        caveats=_caveats(runs, partial.verdict, ceiling_bound),
     )
 
 
@@ -367,11 +392,21 @@ def render_report(
     names = dict(gate_names or {})
     pct = lambda v: f"{v * 100:.0f}%"  # noqa: E731 — a formatter, not logic
 
-    headline = (
-        "undetermined — inside this run's own variance"
-        if score.lift_is_noise
-        else f"{pct(score.before.fcc)} → {pct(score.after.fcc)}  ({score.lift * 100:+.0f} pts)"
-    )
+    if score.verdict == "no_difference":
+        headline = (
+            f"no measurable difference — both arms {pct(score.after.fcc)}, "
+            f"over {score.runs} runs with no variance"
+        )
+    elif score.verdict == "undetermined":
+        headline = (
+            f"undetermined — the change is smaller than this run's own variance "
+            f"(±{score.noise_floor * 100:.0f} pts)"
+        )
+    else:
+        headline = (
+            f"{pct(score.before.fcc)} → {pct(score.after.fcc)} "
+            f"({score.lift * 100:+.0f} pts)"
+        )
     lines = [
         f"# {score.surface} — how an agent does on your surface",
         "",

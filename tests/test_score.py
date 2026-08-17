@@ -252,3 +252,49 @@ def test_one_run_says_it_cannot_separate_a_result_from_variance() -> None:
 def test_no_records_refuses() -> None:
     with pytest.raises(ScoreError):
         score_surface([])
+
+
+# ---------------------------------------------------------------------------
+# a determined zero is not an undetermined one — found by a real run, not by design
+# ---------------------------------------------------------------------------
+
+
+def test_both_arms_perfect_reports_no_difference_rather_than_undetermined() -> None:
+    """Pegana scored 100% on BOTH arms across seven runs with zero variance.
+
+    The first version of this module called that "undetermined — run more", because
+    `abs(0.0) <= 0.0`. That told a provider to spend money re-measuring a settled answer.
+    A lift of zero with a noise floor of zero is a RESULT: on these intents the raw
+    specification already got every call right, so comprehension had nothing to add.
+    """
+    records = steady("a", before=True, after=True) + steady(
+        "b", before=True, after=True
+    )
+    score = score_surface(records)
+    assert score.noise_floor == 0.0 and score.lift == 0.0
+    assert score.verdict == "no_difference"
+    assert score.lift_is_noise is False, "a determined zero is not noise"
+
+    report = render_report(score)
+    assert "no measurable difference" in report
+    assert "undetermined" not in report
+    # and it says the thing worth checking before anyone celebrates
+    assert any("too close to its own wording" in c for c in score.caveats)
+
+
+def test_a_small_lift_against_noisy_arms_is_still_undetermined() -> None:
+    """The other branch has to keep working, or the fix above just deleted the guard."""
+    records: list[RunRecord] = []
+    raw_by_run = {0: (True, True), 1: (True, False), 2: (False, False)}
+    gecko_by_run = {0: (False, False), 1: (True, False), 2: (True, True)}
+    for run in range(3):
+        a_raw, b_raw = raw_by_run[run]
+        a_gecko, b_gecko = gecko_by_run[run]
+        records.append(record(goal="a", arm="raw", run=run, fcc=a_raw))
+        records.append(record(goal="b", arm="raw", run=run, fcc=b_raw))
+        records.append(record(goal="a", arm="gecko", run=run, fcc=a_gecko))
+        records.append(record(goal="b", arm="gecko", run=run, fcc=b_gecko))
+    score = score_surface(records)
+    assert score.noise_floor > 0.0
+    assert score.verdict == "undetermined"
+    assert score.lift_is_noise is True
