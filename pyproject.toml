@@ -209,6 +209,7 @@ pythonpath = ["."]
 markers = [
     "bun: needs `bun` on PATH and an Orquestra checkout (GECKO_ORQUESTRA_ROOT)",
     "rpc: needs a live Solana RPC (opt in with GECKO_BRIDGE_RPC_URL); reads and unsigned simulation only",
+    "fork: needs `surfpool` on PATH; starts a LOCAL mainnet-fork validator (deselect with -m 'not fork')",
 ]
 
 [tool.mypy]

@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Roadmap \u2014 finish the engine, then build the app",
+    "subtitle": "Phase 1 is the only one whose absence is wrong in public. Everything after it is merely slower.",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "land",
+      "type": "backend",
+      "label": "Land what is built",
+      "sublabel": "8 commits, unmerged",
+      "pos": [
+        40,
+        90
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "witness",
+      "type": "security",
+      "label": "1a \u00b7 The witness",
+      "sublabel": "IDL vs source, disagreement scored",
+      "tag": "the blocker",
+      "pos": [
+        310,
+        90
+      ],
+      "size": [
+        240,
+        68
+      ]
+    },
+    {
+      "id": "chain",
+      "type": "database",
+      "label": "1b \u00b7 Corroborate",
+      "sublabel": "exists \u00b7 owner \u00b7 account type",
+      "pos": [
+        620,
+        90
+      ],
+      "size": [
+        220,
+        68
+      ]
+    },
+    {
+      "id": "claim",
+      "type": "external",
+      "label": "1c \u00b7 What it claims",
+      "sublabel": "a one-way door",
+      "tag": "founder call",
+      "pos": [
+        910,
+        90
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "stage",
+      "type": "backend",
+      "label": "2 \u00b7 Score as a stage",
+      "sublabel": "gecko.score \u00b7 gecko.ingest",
+      "pos": [
+        310,
+        260
+      ],
+      "size": [
+        240,
+        68
+      ]
+    },
+    {
+      "id": "shapes",
+      "type": "backend",
+      "label": "2c \u00b7 Probes as shapes",
+      "sublabel": "SHACL, or our own",
+      "tag": "undecided",
+      "pos": [
+        620,
+        260
+      ],
+      "size": [
+        220,
+        68
+      ]
+    },
+    {
+      "id": "pr",
+      "type": "external",
+      "label": "One PR upstream",
+      "sublabel": "blocks nothing here",
+      "pos": [
+        40,
+        430
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "unattended",
+      "type": "cloud",
+      "label": "3 \u00b7 Unattended",
+      "sublabel": "one program, scheduled, with drift",
+      "pos": [
+        910,
+        430
+      ],
+      "size": [
+        240,
+        68
+      ]
+    },
+    {
+      "id": "scale",
+      "type": "backend",
+      "label": "4 \u00b7 Catalogue scale",
+      "sublabel": "123 PDAs \u00b7 declared-vs-raised",
+      "pos": [
+        1220,
+        430
+      ],
+      "size": [
+        230,
+        68
+      ]
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "5 \u00b7 The app",
+      "sublabel": "the provider points at it",
+      "pos": [
+        1520,
+        430
+      ],
+      "size": [
+        200,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Phase 1 \u2014 make the score defensible",
+      "wraps": [
+        "witness",
+        "chain",
+        "claim"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Phase 2 \u2014 a stage, not a script",
+      "wraps": [
+        "stage",
+        "shapes"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Only once the score holds",
+      "wraps": [
+        "unattended",
+        "scale",
+        "app"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "k1",
+      "from": "land",
+      "to": "witness",
+      "variant": "emphasis"
+    },
+    {
+      "id": "k2",
+      "from": "land",
+      "to": "stage"
+    },
+    {
+      "id": "k3",
+      "from": "witness",
+      "to": "chain"
+    },
+    {
+      "id": "k4",
+      "from": "chain",
+      "to": "claim",
+      "label": "measured"
+    },
+    {
+      "id": "k5",
+      "from": "stage",
+      "to": "shapes"
+    },
+    {
+      "id": "k6",
+      "from": "claim",
+      "to": "unattended",
+      "label": "gates",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "k7",
+      "from": "shapes",
+      "to": "unattended"
+    },
+    {
+      "id": "k8",
+      "from": "unattended",
+      "to": "scale"
+    },
+    {
+      "id": "k9",
+      "from": "scale",
+      "to": "app"
+    },
+    {
+      "id": "k10",
+      "from": "land",
+      "to": "pr",
+      "variant": "dashed"
+    }
+  ]
+}

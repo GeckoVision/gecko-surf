@@ -103,11 +103,44 @@ def pda_only_doc(seeds: list[Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_bun_names_what_to_install(monkeypatch: pytest.MonkeyPatch) -> None:
+def fake_checkout(root: Path) -> Path:
+    """The smallest tree `orquestra_root()` accepts — it probes for `compiler.ts`.
+
+    A test about the BUN refusal must not also depend on a real sibling checkout
+    existing. That dependency is why this file first went red in CI and green on a
+    laptop: `_bridge()` calls `orquestra_root()` BEFORE `_bun()`, so on a machine
+    without `../orquestra` the checkout error fires first and the bun assertion is
+    never reached. Passing for an ambient reason is not passing.
+    """
+    engine = root / "packages/worker/src/flow-engine"
+    engine.mkdir(parents=True, exist_ok=True)
+    (engine / "compiler.ts").write_text("// stand-in; this test never executes it\n")
+    return root
+
+
+def test_missing_bun_names_what_to_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GECKO_ORQUESTRA_ROOT", str(fake_checkout(tmp_path)))
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     with pytest.raises(BunMissingError) as excinfo:
         compile_fdl(pda_only_doc(["receipts"]))
     assert "bun.sh" in str(excinfo.value)
+
+
+def test_the_checkout_is_probed_before_bun(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both refusals are reachable, and this pins WHICH one wins when both apply.
+
+    Without this, the test above could keep passing while silently exercising the
+    checkout guard on one machine and the bun guard on another — the two failures
+    read alike to a reader and not at all alike to a maintainer.
+    """
+    monkeypatch.setenv("GECKO_ORQUESTRA_ROOT", str(tmp_path / "absent"))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(OrquestraCheckoutMissingError):
+        compile_fdl(pda_only_doc(["receipts"]))
 
 
 def test_missing_checkout_names_the_path(
