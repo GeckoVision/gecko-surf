@@ -1,0 +1,36 @@
+{
+  "api_id": "address_lookup_table",
+  "kind": "program",
+  "spec_source": {
+    "type": "program",
+    "value": "AddressLookupTab1e1111111111111111111111111"
+  },
+  "program": {
+    "program_id": "AddressLookupTab1e1111111111111111111111111",
+    "intents": [],
+    "notes": "Address Lookup Table program — NATIVE, no Anchor IDL. Carried as reviewed data for the same reason as the ATA program. THE RECIPE: table = find_program_address([authority, recent_slot as u64 little-endian], ALT_PROGRAM). TWO THINGS MAKE THIS DIFFERENT FROM EVERY OTHER PDA IN THE CATALOG, and both are the kind of thing a seed recipe alone will not tell you. FIRST, the second seed is a SLOT, so the address is a function of WHEN it was created: the same authority creating a table one slot later gets a different address, and there is no way to re-derive an existing table's address without knowing the slot it was made at. A recipe that presents this as `derive it from what you have` is lying by omission — the honest answer for an existing table is to read it, not derive it, and the recipe is only usable for CREATING one. SECOND, the slot must be a RECENT one the runtime will accept, so this is the rare derivation whose inputs go stale; a slot cached even briefly derives an address the create instruction then refuses. WHY IT IS IN THE GRAPH AT ALL: v0 transactions with lookup tables are how a multi-instruction intent flow stays inside the 1,232-byte packet limit, so an agent composing anything non-trivial ends up here. PROVENANCE: hand-authored from the program's documented behaviour, carried at the reviewed-overlay tier `manual`. Unlike the ATA recipe, this one is NOT pinned by a derived-address-matches-mainnet check, because doing so requires knowing the creation slot of a specific table — so it is carried as manual and UNVERIFIED, which is stated here rather than implied by silence.",
+    "pdas": {
+      "lookup_table": {
+        "program_id": "AddressLookupTab1e1111111111111111111111111",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "authority",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "recent_slot",
+            "source": "argument",
+            "encoding": "le",
+            "width": 8
+          }
+        ]
+      }
+    },
+    "pda_origins": {
+      "lookup_table": "manual"
+    }
+  }
+}

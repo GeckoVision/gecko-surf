@@ -1,0 +1,41 @@
+{
+  "api_id": "associated_token",
+  "kind": "program",
+  "spec_source": {
+    "type": "program",
+    "value": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+  },
+  "program": {
+    "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "intents": [],
+    "notes": "Associated Token Account program — NATIVE, so it has no Anchor IDL and never will. A catalog that only ingests IDLs reports it as a gap; it is not a gap, it is a surface that has to be carried as reviewed data instead of extracted from an artifact. WHY IT MATTERS OUT OF ALL PROPORTION TO ITS SIZE: this one derivation is on nearly every SPL transaction ever made, and every token-moving instruction in every other program takes its result as an account. Get it wrong and the transaction pays the wrong party while deriving a perfectly valid address. THE RECIPE: ATA = find_program_address([owner, token_program, mint], ATA_PROGRAM). Three pubkey seeds, in that order, and the ORDER IS LOAD-BEARING — a reversed pair still derives a valid off-curve address that belongs to nobody. The second seed is the TOKEN PROGRAM, not the ATA program: classic SPL Token (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA) or Token-2022 (TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb), and it is a property OF THE MINT — read the mint account's own owner rather than assuming. Assuming classic is the single most common way a Token-2022 mint produces a wrong ATA, and it is exactly the assumption four published flows in a live catalog bake into an input description ('legacy SPL Token by default'). The owner may be off-curve (a PDA vault, a treasury, a fee recipient); the derivation is unchanged and needs no special case. PROVENANCE: this recipe is hand-authored from the program's documented behaviour and carried at the reviewed-overlay tier `manual`, never `extracted` — nothing was parsed out of an artifact, because there is no artifact. Correctness is established SEPARATELY, and the way it always is here: a derived address matching a real mainnet account the program owns. That is evidence, never a tier.",
+    "pdas": {
+      "associated_token_account": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "owner",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_program",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      }
+    },
+    "pda_origins": {
+      "associated_token_account": "manual"
+    }
+  }
+}
