@@ -1,0 +1,516 @@
+{
+  "program_id": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+  "pdas": {
+    "receipts": {
+      "name": "receipts",
+      "program_id": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+      "resolvable": true,
+      "origin": "extracted",
+      "seeds": [
+        {
+          "kind": "const",
+          "encoding": "utf8",
+          "bytes_b64": "cmVjZWlwdHM=",
+          "utf8": "receipts"
+        },
+        {
+          "kind": "variable",
+          "name": "store_name",
+          "source": "argument",
+          "encoding": "utf8"
+        }
+      ]
+    },
+    "sender_token_account": {
+      "name": "sender_token_account",
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "resolvable": true,
+      "origin": "extracted",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "signer",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    },
+    "recipient_token_account": {
+      "name": "recipient_token_account",
+      "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "resolvable": true,
+      "origin": "extracted",
+      "seeds": [
+        {
+          "kind": "variable",
+          "name": "authority",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "token_program",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    }
+  },
+  "instructions": [
+    {
+      "name": "add_product",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "price",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "is_pda": false,
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "system_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "delete_product",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        },
+        {
+          "name": "product_name",
+          "type": "string"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "delete_store",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "initialize",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "make_purchase",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        },
+        {
+          "name": "product_name",
+          "type": "string"
+        },
+        {
+          "name": "table_number",
+          "type": "u8"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "signer",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": false,
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "is_pda": false,
+          "signer": false,
+          "writable": false
+        },
+        {
+          "name": "sender_token_account",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "signer",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "signer"
+            },
+            {
+              "seed": "token_program",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "token_program"
+            },
+            {
+              "seed": "mint",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "mint"
+            }
+          ]
+        },
+        {
+          "name": "recipient_token_account",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "authority",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "authority"
+            },
+            {
+              "seed": "token_program",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "token_program"
+            },
+            {
+              "seed": "mint",
+              "encoding": "pubkey",
+              "kind": "account",
+              "bound_to": "mint"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associated_token_program",
+          "is_pda": false,
+          "signer": false,
+          "writable": false,
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        }
+      ],
+      "derivation_order": [
+        "receipts",
+        "sender_token_account",
+        "recipient_token_account"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "mark_as_delivered",
+      "args": [
+        {
+          "name": "_store_name",
+          "type": "string"
+        },
+        {
+          "name": "receipt_id",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "unresolved",
+              "bound_to": null
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "update_details",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        },
+        {
+          "name": "details",
+          "type": "string"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    },
+    {
+      "name": "update_telegram_channel",
+      "args": [
+        {
+          "name": "store_name",
+          "type": "string"
+        },
+        {
+          "name": "telegram_channel_id",
+          "type": "string"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "receipts",
+          "is_pda": true,
+          "signer": false,
+          "writable": true,
+          "resolvable": true,
+          "derive_from": [
+            {
+              "seed": "store_name",
+              "encoding": "utf8",
+              "kind": "argument",
+              "bound_to": "store_name"
+            }
+          ]
+        },
+        {
+          "name": "authority",
+          "is_pda": false,
+          "signer": true,
+          "writable": true
+        }
+      ],
+      "derivation_order": [
+        "receipts"
+      ],
+      "cycle": []
+    }
+  ],
+  "_note": "Derived by gecko.program_graph from the program's IDL. Every PDA carries the tier its recipe was recovered at. `extracted` was parsed from an artifact; `manual` means a human wrote it down and it is pinned separately by a derived address matching a live mainnet account \u2014 a tier is provenance, never evidence of correctness."
+}
