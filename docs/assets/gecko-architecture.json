@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Gecko \u2014 the verification path",
+    "subtitle": "Arazzo says what an endpoint can do. We show how it acts \u2014 dynamically, never mocked.",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "specs",
+      "type": "external",
+      "label": "Provider specs",
+      "sublabel": "OpenAPI 3.1 \u00b7 Arazzo 1.1 \u00b7 Gecko",
+      "pos": [
+        30,
+        90
+      ],
+      "size": [
+        230,
+        64
+      ]
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "Ingest",
+      "sublabel": "re-runs on every change",
+      "pos": [
+        360,
+        90
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "Context graph",
+      "sublabel": "provenance on every claim",
+      "pos": [
+        630,
+        90
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "rehearse",
+      "type": "security",
+      "label": "Rehearse",
+      "sublabel": "on a fork, for real",
+      "pos": [
+        920,
+        90
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "page",
+      "type": "cloud",
+      "label": "Surface page",
+      "sublabel": "provider owns it",
+      "pos": [
+        630,
+        250
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "score",
+      "type": "backend",
+      "label": "Observe & verify",
+      "sublabel": "what actually moved",
+      "pos": [
+        920,
+        250
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "tag": "the verdict"
+    },
+    {
+      "id": "persist",
+      "type": "external",
+      "label": "Persist?",
+      "sublabel": "undecided \u2014 see note",
+      "pos": [
+        1160,
+        250
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "open question"
+    },
+    {
+      "id": "surface",
+      "type": "frontend",
+      "label": "Context injection",
+      "sublabel": "tools \u00b7 auth hidden",
+      "pos": [
+        350,
+        410
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "Gate & refuse",
+      "sublabel": "order \u00b7 window \u00b7 signing",
+      "pos": [
+        630,
+        410
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "act",
+      "type": "backend",
+      "label": "Action",
+      "sublabel": "unsigned bytes + receipt",
+      "pos": [
+        920,
+        410
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "The agent",
+      "sublabel": "calls \u00b7 signs \u00b7 never ours",
+      "pos": [
+        1160,
+        410
+      ],
+      "size": [
+        150,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Build loop \u2014 ours, unattended",
+      "wraps": [
+        "ingest",
+        "graph",
+        "rehearse",
+        "score"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Run loop \u2014 the agent's harness",
+      "wraps": [
+        "surface",
+        "gate",
+        "act"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "specs",
+      "to": "ingest",
+      "label": "on every update"
+    },
+    {
+      "id": "c2",
+      "from": "ingest",
+      "to": "graph"
+    },
+    {
+      "id": "c3",
+      "from": "graph",
+      "to": "rehearse"
+    },
+    {
+      "id": "c4",
+      "from": "rehearse",
+      "to": "score"
+    },
+    {
+      "id": "c5",
+      "from": "score",
+      "to": "page",
+      "label": "score"
+    },
+    {
+      "id": "c6",
+      "from": "page",
+      "to": "surface"
+    },
+    {
+      "id": "c7",
+      "from": "surface",
+      "to": "gate"
+    },
+    {
+      "id": "c8",
+      "from": "gate",
+      "to": "act"
+    },
+    {
+      "id": "c9",
+      "from": "act",
+      "to": "agent"
+    },
+    {
+      "id": "c10",
+      "from": "score",
+      "to": "gate",
+      "label": "verify before act",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c11",
+      "from": "agent",
+      "to": "persist",
+      "label": "worth storing?",
+      "variant": "dashed"
+    }
+  ]
+}
