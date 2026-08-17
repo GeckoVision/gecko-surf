@@ -9,7 +9,12 @@ one.
 
 from __future__ import annotations
 
-from gecko.pda import ResolverPdaSeedNode, VariablePdaSeedNode, derive_pda
+from gecko.pda import (
+    ConstantPdaSeedNode,
+    ResolverPdaSeedNode,
+    VariablePdaSeedNode,
+    derive_pda,
+)
 from gecko.pda_extract import from_anchor_idl, from_source, merge_pda_nodes
 from tests.test_pda_extract import ORE_PROGRAM, ORE_SOURCE
 
@@ -168,3 +173,77 @@ def test_merge_prefers_source_when_idl_seed_is_opaque() -> None:
     assert merged["vault"].resolvable is True  # source won
     # IDL-authoritative accounts untouched
     assert merged["config"].program_id == ORE_PROGRAM
+
+
+# ---------------------------------------------------------------------------
+# legacy (pre-0.30) IDLs — the const seed that crashed a whole program's graph
+# ---------------------------------------------------------------------------
+
+
+def _legacy_idl(seed: dict[str, object]) -> dict[str, object]:
+    """A one-instruction pre-0.30 IDL whose only PDA carries `seed`."""
+    return {
+        "address": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+        "instructions": [
+            {
+                "name": "swap",
+                "args": [],
+                "accounts": [{"name": "state", "pda": {"seeds": [seed]}}],
+            }
+        ],
+    }
+
+
+def test_legacy_string_const_seed_does_not_crash_the_program() -> None:
+    """Pre-0.30 Anchor writes a const seed as a TYPED LITERAL, not a byte array:
+
+        {"kind": "const", "type": "string", "value": "bonkswapstatev1"}
+
+    `bytes("bonkswapstatev1")` raises `TypeError: string argument without an
+    encoding`, and because from_anchor_idl builds every instruction in one pass a
+    single such seed took down the WHOLE program's graph. Measured on a live
+    corpus: 52 of one program's 109 seeds, and the one hard failure in a 60-program
+    sample — a share that only grows down the long tail, where the older IDLs live.
+    """
+    nodes = from_anchor_idl(
+        _legacy_idl({"kind": "const", "type": "string", "value": "bonkswapstatev1"})
+    )
+
+    assert "state" in nodes, "a legacy const seed must not lose the account"
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ConstantPdaSeedNode)
+    assert seed.value == b"bonkswapstatev1"
+    assert seed.encoding == "utf8"
+
+
+def test_the_modern_array_form_still_wins() -> None:
+    """The 0.30 shape is 1,047 of 2,382 seeds in the same corpus — it must not regress."""
+    nodes = from_anchor_idl(
+        _legacy_idl({"kind": "const", "value": [114, 101, 99, 101, 105, 112, 116, 115]})
+    )
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ConstantPdaSeedNode)
+    assert seed.value == b"receipts"
+
+
+def test_an_unmeasured_const_shape_is_flagged_rather_than_guessed() -> None:
+    """A typed literal we have never observed becomes an honest resolver, not a guess.
+
+    `{"type": "publicKey", "value": "<base58>"}` is plausible and appears ZERO times
+    in the measured corpus. Decoding it would mean adding a base58 dependency to a
+    comprehension module on the strength of a guess, and guessing a seed's bytes is
+    how you derive a valid address that belongs to somebody else. Refuse, name it,
+    and add it when a real IDL shows one.
+    """
+    nodes = from_anchor_idl(
+        _legacy_idl(
+            {
+                "kind": "const",
+                "type": "publicKey",
+                "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            }
+        )
+    )
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ResolverPdaSeedNode)
+    assert "publicKey" in seed.reason

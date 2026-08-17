@@ -333,11 +333,36 @@ def _idl_arg_seed(path: str, arg_types: dict[str, Any]) -> PdaSeed:
     )
 
 
-def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
-    """One Anchor-IDL seed entry -> a PdaSeed."""
-    kind = seed.get("kind")
-    if kind == "const":
-        value = bytes(seed.get("value", []))
+def _idl_const_seed(seed: dict[str, Any]) -> PdaSeed:
+    """A `{kind: "const"}` seed, across BOTH generations of the Anchor IDL.
+
+    Anchor 0.30+ writes the seed's raw bytes as an int array::
+
+        {"kind": "const", "value": [114, 101, 99, 101, 105, 112, 116, 115]}
+
+    Pre-0.30 writes a TYPED LITERAL instead, and the type is load-bearing — the same
+    text means different bytes read as a string than as an address::
+
+        {"kind": "const", "type": "string", "value": "bonkswapstatev1"}
+
+    Handing the second shape to ``bytes()`` raises ``TypeError: string argument
+    without an encoding``, and because :func:`from_anchor_idl` builds every
+    instruction in one pass, ONE such seed took down the whole program's graph
+    rather than one account. Measured against a live catalog: 52 of one program's
+    109 seeds, and the single hard failure in a 60-program sample — a share that
+    only grows down the long tail, where the older IDLs live.
+
+    Shapes we have not measured are FLAGGED, never guessed. A ``publicKey`` literal
+    is entirely plausible and appears zero times in that corpus; decoding it would
+    mean adding a base58 dependency to a comprehension module on the strength of a
+    guess, and a guessed seed derives a perfectly valid address that belongs to
+    somebody else — the one failure mode nothing downstream can catch.
+    """
+    raw = seed.get("value", [])
+    declared = seed.get("type")
+
+    if isinstance(raw, (list, tuple)):
+        value = bytes(raw)
         encoding = _encoding_for(value)
         # A 32-byte non-printable const is a hardcoded pubkey (a program/account
         # address baked into the seed, e.g. the fee program's target program id) —
@@ -345,6 +370,26 @@ def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
         if encoding == "bytes" and len(value) == 32:
             encoding = "pubkey"
         return ConstantPdaSeedNode(value, encoding=encoding)
+
+    if isinstance(raw, str) and declared in ("string", "str"):
+        return ConstantPdaSeedNode(raw.encode("utf-8"), encoding="utf8")
+
+    return ResolverPdaSeedNode(
+        name=str(declared or "const"),
+        depends_on=(),
+        reason=(
+            f"legacy IDL const seed of type {declared!r} carrying "
+            f"{type(raw).__name__} — this shape is not in the measured corpus, and "
+            "guessing its bytes would derive a valid address for the wrong account"
+        ),
+    )
+
+
+def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
+    """One Anchor-IDL seed entry -> a PdaSeed."""
+    kind = seed.get("kind")
+    if kind == "const":
+        return _idl_const_seed(seed)
     if kind == "account":
         path = str(seed.get("path", ""))
         if "." in path:  # a field read from another account's DATA — runtime value
