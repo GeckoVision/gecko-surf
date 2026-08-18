@@ -247,3 +247,119 @@ def test_an_unmeasured_const_shape_is_flagged_rather_than_guessed() -> None:
     (seed,) = nodes["state"].seeds
     assert isinstance(seed, ResolverPdaSeedNode)
     assert "publicKey" in seed.reason
+
+
+# ---------------------------------------------------------------------------
+# the self-referential root PDA — measured live on jurassic_fi_token_sale
+# ---------------------------------------------------------------------------
+
+
+def _self_referential_idl() -> dict[str, object]:
+    """The shape jurassic_fi ships, reduced to its two load-bearing instructions.
+
+    `claim` declares the root PDA from fields stored INSIDE it, which is a correct runtime
+    check for the program and a dead end for a caller. `initialize_launch` declares the SAME
+    PDA derivably, because at creation there is no account to read from. The IDL lists
+    `claim` first.
+    """
+    return {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "claim",
+                "args": [],
+                "accounts": [
+                    {
+                        "name": "launch",
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": [108, 97, 117, 110, 99, 104],
+                                },
+                                {
+                                    "kind": "account",
+                                    "path": "launch.admin",
+                                    "account": "Launch",
+                                },
+                                {
+                                    "kind": "account",
+                                    "path": "launch.launch_id",
+                                    "account": "Launch",
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "name": "initialize_launch",
+                "args": [{"name": "params", "type": {"defined": "LaunchParams"}}],
+                "accounts": [
+                    {"name": "admin"},
+                    {
+                        "name": "launch",
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": [108, 97, 117, 110, 99, 104],
+                                },
+                                {"kind": "account", "path": "admin"},
+                                {"kind": "arg", "path": "params.launch_id"},
+                            ]
+                        },
+                    },
+                ],
+            },
+        ],
+        # The width is the whole difficulty, and the IDL answers it. Verified against the
+        # live account: launch_id at u8, u16 and u32 each derive a DIFFERENT valid address,
+        # and only u64 matches — so reading this rather than defaulting is the fix.
+        "types": [
+            {
+                "name": "LaunchParams",
+                "type": {
+                    "kind": "struct",
+                    "fields": [
+                        {"name": "launch_id", "type": "u64"},
+                        {"name": "raise_cap", "type": "u64"},
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def test_a_resolvable_sibling_recipe_beats_a_self_referential_one() -> None:
+    """First-declaration-wins threw away the only usable recipe in the program.
+
+    Measured on jurassic_fi_token_sale, a live token sale holding 323,816 USDC: seven of its
+    eight instructions declare `launch` from `launch.admin` and `launch.launch_id` — fields
+    of the account being derived. Only `initialize_launch` states it derivably. Because the
+    IDL lists `claim` first and this function skipped any name it had already seen, the
+    resolvable recipe was silently discarded and SIX instructions became uncallable: three
+    more accounts (`user_position`, `payment_vault`, `token_vault`) seed on `launch`.
+
+    Order is not evidence. A resolvable declaration is.
+    """
+    nodes = from_anchor_idl(_self_referential_idl())
+
+    assert "launch" in nodes
+    launch = nodes["launch"]
+    assert launch.resolvable, (
+        "the derivable sibling recipe must win over the self-referential one, "
+        f"got seeds {launch.seeds}"
+    )
+    # and it is the RIGHT recipe: const 'launch', then the admin account, then the arg
+    const, admin, launch_id = launch.seeds
+    assert isinstance(const, ConstantPdaSeedNode) and const.value == b"launch"
+    assert isinstance(admin, VariablePdaSeedNode) and admin.name == "admin"
+    assert isinstance(launch_id, (VariablePdaSeedNode, ResolverPdaSeedNode))
+
+
+def test_declaration_order_does_not_decide_which_recipe_wins() -> None:
+    """The same IDL with the instructions the other way round must give the same answer."""
+    idl = _self_referential_idl()
+    idl["instructions"] = list(reversed(idl["instructions"]))  # type: ignore[index]
+    assert from_anchor_idl(idl)["launch"].resolvable

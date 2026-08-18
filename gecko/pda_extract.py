@@ -305,32 +305,97 @@ def from_source(source: str, program_id: str | None = None) -> dict[str, PdaNode
 _IDL_INT_WIDTHS = dict(_INT_WIDTHS)
 
 
-def _idl_arg_seed(path: str, arg_types: dict[str, Any]) -> PdaSeed:
+def _defined_name(type_ref: Any) -> str | None:
+    """The struct name a type reference points at, across both IDL generations.
+
+    Pre-0.30 writes ``{"defined": "LaunchParams"}``; 0.30+ writes
+    ``{"defined": {"name": "LaunchParams"}}``.
+    """
+    if not isinstance(type_ref, dict):
+        return None
+    defined = type_ref.get("defined")
+    if isinstance(defined, str):
+        return defined
+    if isinstance(defined, dict) and isinstance(defined.get("name"), str):
+        return str(defined["name"])
+    return None
+
+
+def _field_type(type_defs: dict[str, Any], struct: str, field: str) -> Any | None:
+    """The declared type of ``struct.field``, from the IDL's own ``types`` section."""
+    definition = type_defs.get(struct)
+    fields = ((definition or {}).get("type") or {}).get("fields") or []
+    for entry in fields:
+        if isinstance(entry, dict) and entry.get("name") == field:
+            return entry.get("type")
+    return None
+
+
+def _idl_arg_seed(
+    path: str, arg_types: dict[str, Any], type_defs: dict[str, Any] | None = None
+) -> PdaSeed:
     """An `{kind: arg, path}` seed, encoded from the instruction's arg type."""
-    if "." in path:  # a field of an arg struct — not statically reproducible
-        head = path.split(".", 1)[0]
+    if "." in path:
+        # A FIELD OF AN ARG STRUCT IS A CALLER VALUE, NOT A RUNTIME ONE.
+        #
+        # This used to refuse every dotted arg path as "runtime value". That conflated it
+        # with a dotted ACCOUNT path, which really is runtime data read off an account the
+        # caller may not hold. An ARG is different: the caller constructs the struct, so it
+        # knows every field in it.
+        #
+        # Measured on jurassic_fi_token_sale, where `initialize_launch` seeds the root PDA
+        # on `params.launch_id`. Refusing it made the program's only derivable recipe
+        # unresolvable and left six instructions uncallable.
+        #
+        # The width is the whole difficulty and the IDL answers it: `launch_id` is declared
+        # `u64` in `InitializeLaunchParams`. Reading it matters rather than defaulting,
+        # because the same value at u8, u16 and u32 derives three different valid addresses
+        # — verified against the live account.
+        head, _, field = path.partition(".")
+        struct = _defined_name(arg_types.get(head))
+        declared = _field_type(type_defs or {}, struct, field) if struct else None
+        if isinstance(declared, str):
+            encoded = _idl_scalar_seed(path, declared)
+            if encoded is not None:
+                return encoded
         return ResolverPdaSeedNode(
             name=head,
             depends_on=(head,),
-            reason=f"arg field seed {path!r} — runtime value",
+            reason=(
+                f"arg field seed {path!r}: the caller supplies {head!r}, but its type "
+                f"{struct or 'is undeclared'} does not resolve {field!r} to a width — "
+                "and a numeric seed at the wrong width derives a different valid address"
+            ),
         )
     ty = arg_types.get(path)
-    if isinstance(ty, str):
-        if ty in _IDL_INT_WIDTHS:
-            return VariablePdaSeedNode(
-                path, source="argument", encoding="le", width=_IDL_INT_WIDTHS[ty]
-            )
-        if ty == "pubkey":
-            return VariablePdaSeedNode(path, source="argument", encoding="pubkey")
-        if ty == "string":
-            return VariablePdaSeedNode(path, source="argument", encoding="utf8")
-        if ty == "bytes":
-            return VariablePdaSeedNode(path, source="argument", encoding="bytes")
+    encoded = _idl_scalar_seed(path, ty) if isinstance(ty, str) else None
+    if encoded is not None:
+        return encoded
     return ResolverPdaSeedNode(
         name=path,
         depends_on=(path,),
         reason=f"arg {path!r} has unsupported seed type {ty!r}",
     )
+
+
+def _idl_scalar_seed(name: str, declared: str) -> PdaSeed | None:
+    """One IDL scalar type -> a bindable seed, or ``None`` when we cannot encode it.
+
+    Shared by the plain and the dotted argument paths so the two cannot drift: an
+    argument and a field of an argument struct are encoded the same way, and the width
+    of an integer is read rather than assumed.
+    """
+    if declared in _IDL_INT_WIDTHS:
+        return VariablePdaSeedNode(
+            name, source="argument", encoding="le", width=_IDL_INT_WIDTHS[declared]
+        )
+    if declared in ("pubkey", "publicKey"):
+        return VariablePdaSeedNode(name, source="argument", encoding="pubkey")
+    if declared == "string":
+        return VariablePdaSeedNode(name, source="argument", encoding="utf8")
+    if declared == "bytes":
+        return VariablePdaSeedNode(name, source="argument", encoding="bytes")
+    return None
 
 
 def _idl_const_seed(seed: dict[str, Any]) -> PdaSeed:
@@ -385,7 +450,11 @@ def _idl_const_seed(seed: dict[str, Any]) -> PdaSeed:
     )
 
 
-def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
+def _idl_seed(
+    seed: dict[str, Any],
+    arg_types: dict[str, Any],
+    type_defs: dict[str, Any] | None = None,
+) -> PdaSeed:
     """One Anchor-IDL seed entry -> a PdaSeed."""
     kind = seed.get("kind")
     if kind == "const":
@@ -403,7 +472,7 @@ def _idl_seed(seed: dict[str, Any], arg_types: dict[str, Any]) -> PdaSeed:
             )
         return VariablePdaSeedNode(path, source="account", encoding="pubkey")
     if kind == "arg":
-        return _idl_arg_seed(str(seed.get("path", "")), arg_types)
+        return _idl_arg_seed(str(seed.get("path", "")), arg_types, type_defs)
     # `program` seed (the program id itself) or anything unexpected: flag, don't guess
     return ResolverPdaSeedNode(
         name=kind or "seed",
@@ -455,6 +524,12 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     here — that gap is filled by :func:`merge_pda_nodes` from source recovery.
     """
     program_id = idl.get("address") or (idl.get("metadata") or {}).get("address")
+    # The IDL's own struct definitions, so a seed on an ARG FIELD can resolve its width
+    # rather than being refused. `{"defined": "X"}` and `{"defined": {"name": "X"}}` both
+    # point in here; see `_idl_arg_seed`.
+    type_defs: dict[str, Any] = {
+        str(t.get("name")): t for t in idl.get("types", []) if isinstance(t, dict)
+    }
     nodes: dict[str, PdaNode] = {}
     for ix in idl.get("instructions", []):
         arg_types = {a.get("name"): a.get("type") for a in ix.get("args", [])}
@@ -468,15 +543,36 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
         for acct in ix.get("accounts", []):
             pda = acct.get("pda")
             name = acct.get("name")
-            if not pda or not name or name in nodes:
+            if not pda or not name:
                 continue
-            seeds = tuple(_idl_seed(s, arg_types) for s in pda.get("seeds", []))
-            if seeds:
-                nodes[name] = PdaNode(
-                    name=name,
-                    seeds=seeds,
-                    program_id=_idl_pda_program(pda, pinned, program_id),
-                )
+            seeds = tuple(
+                _idl_seed(s, arg_types, type_defs) for s in pda.get("seeds", [])
+            )
+            if not seeds:
+                continue
+            candidate = PdaNode(
+                name=name,
+                seeds=seeds,
+                program_id=_idl_pda_program(pda, pinned, program_id),
+            )
+            existing = nodes.get(name)
+            # A RESOLVABLE DECLARATION BEATS AN UNRESOLVABLE ONE, WHATEVER THE ORDER.
+            #
+            # One account is often declared by several instructions, and they do not have
+            # to agree. The common shape, measured live on jurassic_fi_token_sale: seven
+            # instructions declare the root `launch` PDA from `launch.admin` and
+            # `launch.launch_id` — fields of the account being derived, which is a correct
+            # runtime check for the program and a dead end for a caller — while
+            # `initialize_launch` states it derivably, because at creation there is no
+            # account to read from.
+            #
+            # This used to keep whichever declaration came first, and the IDL happens to
+            # list `claim` first. That discarded the only usable recipe in the program and
+            # took six instructions down with it, since `user_position`, `payment_vault`
+            # and `token_vault` all seed on `launch`. Order is not evidence. A recipe whose
+            # seeds can actually be bound is.
+            if existing is None or (not existing.resolvable and candidate.resolvable):
+                nodes[name] = candidate
     return nodes
 
 

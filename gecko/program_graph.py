@@ -247,6 +247,18 @@ def _bind_seeds(
                 bindings.append(
                     SeedBinding(seed.name, seed.encoding, "argument", seed.name)
                 )
+            elif seed.source == "argument" and seed.name.partition(".")[0] in arg_names:
+                # A FIELD OF AN ARGUMENT STRUCT, e.g. `params.launch_id`. The caller builds
+                # `params`, so it holds the field — the binding is to the argument it came
+                # from, and the seed keeps the full path so nobody has to guess which field.
+                bindings.append(
+                    SeedBinding(
+                        seed.name,
+                        seed.encoding,
+                        "argument",
+                        seed.name.partition(".")[0],
+                    )
+                )
             else:
                 # falls back to whichever namespace it does appear in, else external
                 bound = (
