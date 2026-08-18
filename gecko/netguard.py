@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import json
 import socket
 import urllib.error
 import urllib.request
@@ -211,6 +212,58 @@ def safe_get(
                 continue
             raise
     raise UnsafeUrlError(f"too many redirects (>{max_redirects})")
+
+
+def safe_post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    timeout: int = DEFAULT_TIMEOUT,
+    resolver: Resolver | None = None,
+    opener_factory: OpenerFactory | None = None,
+    headers: dict[str, str] | None = None,
+) -> str:
+    """SSRF-safe JSON POST, for a JSON-RPC endpoint (MCP over Streamable HTTP).
+
+    Validates the scheme/host and resolves it EXACTLY ONCE, pinning the socket to that
+    address, identically to :func:`safe_get` — the DNS-rebind window is the same one and
+    is closed the same way.
+
+    It differs from ``safe_get`` in one deliberate respect: **it follows no redirects.**
+    A redirect on a request that carries a body would replay that body at a host the
+    caller never chose, and a JSON-RPC call is not idempotent. A 3xx here is an error,
+    not a hop.
+
+    Returns the decoded body. Never persists it.
+    """
+    _, ips = _resolve_public(url, resolver)
+    opener = (opener_factory or _pinned_opener)(ips[0] if ips else None)
+    body = json.dumps(payload).encode("utf-8")
+    request_headers = {
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json",
+        # Streamable HTTP servers answer either way; accepting both lets one client
+        # read a plain JSON reply and an SSE-framed one.
+        "Accept": "application/json, text/event-stream",
+    }
+    request_headers.update(headers or {})
+    request = urllib.request.Request(
+        url, data=body, method="POST", headers=request_headers
+    )
+    with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
+        status = getattr(resp, "status", 200)
+        if status in _REDIRECT_CODES:
+            raise UnsafeUrlError(
+                f"{url} answered {status}; a redirect is not followed on a request that "
+                "carries a body — the body would be replayed at a host nobody chose"
+            )
+        chunk = resp.read(max_bytes + 1)
+    if len(chunk) > max_bytes:
+        raise UnsafeUrlError(
+            f"response exceeds size cap of {max_bytes} bytes; refusing to load"
+        )
+    return chunk.decode("utf-8")
 
 
 def _pinned_opener(pinned_ip: str | None) -> urllib.request.OpenerDirector:
