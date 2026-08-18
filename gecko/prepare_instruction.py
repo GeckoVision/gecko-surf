@@ -76,14 +76,20 @@ def plan_accounts(
     graph: ProgramGraph,
     instruction: str,
     values: Mapping[str, Any],
+    payer: str | None = None,
 ) -> tuple[dict[str, str], list[dict[str, str]], list[dict[str, Any]]]:
     """Resolve every account slot of ``instruction``.
 
     Returns ``(resolved, origins, missing)``. An account is resolved from, in order: the
     address the IDL PINS (the program's own word, and never something to ask a caller for
     — asking is how a flow ends up parameterising the token program), a value the caller
-    SUPPLIED, or DERIVATION from the graph. Anything left is reported with the seeds it
-    still needs, never filled in.
+    SUPPLIED, the PAYER for a signer slot nobody filled, or DERIVATION from the graph.
+    Anything left is reported with the seeds it still needs, never filled in.
+
+    The payer rule earns its place: an instruction's signer slot is the actor, the payer
+    signs, and making a caller repeat their own address under whatever local name the
+    program chose (`contributor`, `user`, `authority`) is a question with one possible
+    answer. It is recorded as `supplied`, not `derived` — nobody verified it.
     """
     target = next((ix for ix in graph.instructions if ix.name == instruction), None)
     if target is None:
@@ -101,6 +107,10 @@ def plan_accounts(
         supplied = values.get(account.name)
         if isinstance(supplied, str) and supplied:
             resolved[account.name] = supplied
+            origins.append({"account": account.name, "origin": "supplied"})
+            continue
+        if account.signer and payer:
+            resolved[account.name] = payer
             origins.append({"account": account.name, "origin": "supplied"})
             continue
         if not account.is_pda:
@@ -208,7 +218,7 @@ def prepare_instruction_result(
             ],
         )
 
-    resolved, origins, missing = plan_accounts(graph, instruction, values)
+    resolved, origins, missing = plan_accounts(graph, instruction, values, payer)
     if missing:
         return _refuse(
             "accounts-unresolved",
