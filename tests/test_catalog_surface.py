@@ -70,6 +70,9 @@ def test_surface_lists_the_catalog_tools() -> None:
         # check it, which is how a valid-looking wrong address gets built.
         "derive_ata",
         "derive_pda",
+        # The edges. A catalogue lists instructions independently and a list has no
+        # edges, so "claim must follow contribute" is a fact only a graph can state.
+        "program_lifecycle",
     ]
 
 

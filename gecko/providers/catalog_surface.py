@@ -41,6 +41,7 @@ from typing import Any
 from ..orquestra_client import OrquestraClient, OrquestraClientError
 from ..artifact import instruction_encoding
 from ..orquestra_build import ORQUESTRA_MCP_URL, orquestra_seams
+from ..lifecycle import LIFECYCLE_TOOL, build_lifecycle
 from ..prepare_instruction import (
     DERIVE_ATA_TOOL,
     DERIVE_PDA_TOOL,
@@ -222,6 +223,10 @@ class OrquestraCatalogSurface:
             # and produced a valid-looking address for an account that cannot exist.
             DERIVE_ATA_TOOL,
             DERIVE_PDA_TOOL,
+            # The edges. An instruction LIST has none, so a catalogue cannot say that
+            # `claim` must follow `contribute` — that fact only exists by comparing two
+            # instructions' recipes to each other, which is what a graph is for.
+            LIFECYCLE_TOOL,
         ]
 
     def call_tool(
@@ -249,6 +254,8 @@ class OrquestraCatalogSurface:
             return derive_ata_result(args)
         if name == "derive_pda":
             return derive_pda_result(args)
+        if name == "program_lifecycle":
+            return self._program_lifecycle(args)
         if name == "try_purchase":
             # `account` is passed for a REACHABILITY gate, not a wallet binding: a
             # rehearsal spends nothing of anyone's and its buyer is a keypair born and
@@ -442,6 +449,27 @@ class OrquestraCatalogSurface:
                 "available_here": sorted(offered),
             }
         return answer
+
+    def _program_lifecycle(self, args: dict[str, Any]) -> dict[str, Any]:
+        """The instruction ordering for one catalog program."""
+        from ..program_graph import build_program_graph
+
+        program_id = str(args.get("program_id") or "").strip()
+        if not program_id:
+            return {"error": "program_lifecycle needs a `program_id` (base58)"}
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, _ = self.instruction_seams
+        try:
+            idl = idl_fetch(program_id)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "not_found": True,
+                "program_id": program_id,
+                "reason": f"the catalog could not resolve it: {type(exc).__name__}",
+            }
+        graph = build_program_graph(idl=idl, program_id=program_id)
+        return build_lifecycle(graph, idl).to_json()
 
     def _prepare_instruction(self, args: dict[str, Any]) -> Any:
         """Derive the accounts here, let the catalogue's own builder encode the bytes.
