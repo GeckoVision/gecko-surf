@@ -35,6 +35,7 @@ from .pda import (
 from .program_graph import ProgramGraph, build_program_graph
 
 __all__ = [
+    "PREPARE_INSTRUCTION_TOOL",
     "PrepareInstructionRefusal",
     "AccountOrigin",
     "plan_accounts",
@@ -270,3 +271,59 @@ def prepare_instruction_result(
         }
 
     return result
+
+
+#: The agent-facing tool. The description states the ORDER and the two things an agent
+#: gets wrong unaided: that values it does not hold must come from a chain read, and that
+#: an instruction's SECOND argument is as load-bearing as its first.
+PREPARE_INSTRUCTION_TOOL = {
+    "name": "prepare_instruction",
+    "description": (
+        "Build ANY instruction of ANY program in the catalog, with every PDA derived "
+        "for you, and get back UNSIGNED bytes plus a mainnet simulation. Nothing here "
+        "signs or broadcasts.\n"
+        "\n"
+        "Pass `values` with everything you already hold: the accounts you own or chose, "
+        "and EVERY declared argument. What you do not pass, this derives — and what it "
+        "cannot derive it names, with the seeds still missing, instead of guessing. A "
+        "guessed seed produces a well-formed address for an account that does not exist, "
+        "which nothing downstream catches.\n"
+        "\n"
+        "TWO THINGS AGENTS GET WRONG HERE. (1) Some seeds are fields of the account being "
+        "derived — you must read them off-chain first and pass them as values; the "
+        "refusal will name exactly which. (2) An instruction's later arguments are not "
+        "optional detail: a minimum-amount or slippage argument is how you say what you "
+        "will NOT accept, and omitting it is refused rather than defaulted.\n"
+        "\n"
+        "Each account comes back saying how it got its address — `pinned` (the program's "
+        "own word), `derived` (computed here), `supplied` (your claim, and the only one "
+        "nobody verified)."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "program_id": {
+                "type": "string",
+                "description": "the Solana program address (base58)",
+            },
+            "instruction": {
+                "type": "string",
+                "description": "the instruction name, exactly as the IDL spells it",
+            },
+            "payer": {
+                "type": "string",
+                "description": "base58 address that pays the fee and signs",
+            },
+            "values": {
+                "type": "object",
+                "description": (
+                    "account name -> base58 address, and argument name -> value. Seed "
+                    "values read off-chain go here too, under the seed's own name."
+                ),
+                "additionalProperties": True,
+            },
+        },
+        "required": ["program_id", "instruction", "payer"],
+        "additionalProperties": False,
+    },
+}
