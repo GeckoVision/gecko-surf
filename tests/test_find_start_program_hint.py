@@ -12,6 +12,7 @@ Every test here exists so that session ends differently.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -36,7 +37,11 @@ class FakeCatalog:
         self.asked.append({"tool": name, "args": arguments})
         if not self.found:
             return "No programs matched."
-        return f"Found 1 program(s):\n- **jurassic_fi_token_sale** (projectId: `{PROJECT}`)"
+        return (
+            "Found 1 program(s):\n"
+            f"- **jurassic_fi_token_sale** (projectId: `{PROJECT}`)\n"
+            f"  Program: `{ADDRESS}`"
+        )
 
 
 @pytest.mark.parametrize(
@@ -53,17 +58,39 @@ def test_a_hint_is_classified_before_it_is_searched(hint: str, expected: str) ->
     assert classify_program_hint(hint) == expected
 
 
-def test_an_impossible_string_is_refused_rather_than_reported_missing() -> None:
-    """`no_start` means "nothing matched your intent". Using it here tells an agent the
-    program does not exist, which is a different and wrong claim."""
-    result = OrquestraCatalogSurface(find_start_pages=0).call_tool(
-        "find_start", {"intent": "contribute to the launch", "program": "jurassic_fi"}
+def test_a_name_the_wired_index_misses_is_searched_in_the_catalog() -> None:
+    """`jurassic_fi` is a bad SLUG and a perfectly good QUERY.
+
+    This briefly refused the string outright, on the grounds that it could not name a
+    project. That was better than the original `no_start` and still wrong: the catalog's
+    own text search accepts free text and finds it, underscore and all. Refusing told an
+    agent the name was unusable when the catalog would have answered it.
+
+    The wired index gets first look; the catalog is the fallback; and the answer carries
+    the program_id, which is the handle everything downstream actually takes.
+    """
+    catalog = FakeCatalog()
+    result = OrquestraCatalogSurface(find_start_pages=0, catalog_mcp=catalog).call_tool(
+        "find_start", {"intent": "buy into the token sale", "program": "jurassic_fi"}
     )
 
-    assert "no_start" not in result
-    assert "invalid project slug 'jurassic_fi'" in result["error"]
-    # a refusal an agent cannot act on is a shrug — this one names the way out
-    assert "ADDRESS" in result["hint"]
+    assert result["catalog_matches"][0]["program_id"] == ADDRESS
+    assert "program_ids" in result["hint"]
+    assert catalog.asked[-1]["args"]["query"] == "jurassic_fi"
+
+
+def test_an_address_costs_one_upstream_call_not_two() -> None:
+    """An address resolves directly; it must not also trigger the name-search fallback.
+
+    Worth pinning because both paths call the same upstream tool, and a stray second call
+    would be invisible in the answer while doubling what we ask of a partner's service.
+    """
+    catalog = FakeCatalog()
+    OrquestraCatalogSurface(find_start_pages=0, catalog_mcp=catalog).call_tool(
+        "find_start", {"intent": "buy", "program": ADDRESS}
+    )
+
+    assert [c["args"] for c in catalog.asked] == [{"programId": ADDRESS}]
 
 
 def test_an_address_resolves_and_points_at_the_tool_that_takes_one() -> None:
@@ -100,3 +127,66 @@ def test_a_slug_shaped_hint_still_takes_the_ordinary_path() -> None:
 
     assert result.get("no_start") is True
     assert "error" not in result
+
+
+# --------------------------------------- pointers and misses, from the same session
+
+
+class WithoutPrepare(OrquestraCatalogSurface):
+    """A mount that does not offer `prepare_instruction` — a real possibility, and the
+    shape the live agent's client presented (it was holding a stale tool list)."""
+
+    def list_tools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [t for t in super().list_tools() if t["name"] != "prepare_instruction"]
+
+
+def test_find_start_never_points_at_a_tool_this_surface_does_not_offer() -> None:
+    """A live agent followed this pointer and could not find the tool.
+
+    Its client was holding a stale list, but the pointer had no business being
+    unconditional either. `find_start` exists to tell an agent where to start; naming a
+    tool that is not there is worse than naming none, because the agent either fails or
+    starts hand-rolling the instruction — the exact thing this whole path prevents.
+    """
+    catalog = FakeCatalog()
+    result = WithoutPrepare(find_start_pages=0, catalog_mcp=catalog).call_tool(
+        "find_start", {"intent": "contribute", "program": ADDRESS}
+    )
+
+    assert result["next"]["tool"] != "prepare_instruction"
+    assert result["next"]["tool"] in result["next"]["available_here"]
+    # and it says plainly what the fallback cannot do, so nobody improvises the bytes
+    assert "must not be hand-rolled" in result["next"]["why"]
+
+
+def test_a_catalog_miss_is_an_answer_not_a_leaked_http_error() -> None:
+    """`comprehend_program('deaton')` answered `GET https://…/api/deaton/pda failed:
+    HTTP Error 404`. That leaks a URL and, worse, leaves an agent unable to tell "no such
+    program" from "the catalog is down" — one is a fact about the world, the other is an
+    outage.
+    """
+
+    class Missing(OrquestraCatalogSurface):
+        def _catalog_client(self) -> Any:
+            raise AssertionError("should not be reached")  # pragma: no cover
+
+    surface = OrquestraCatalogSurface(find_start_pages=0)
+
+    class Boom:
+        def fetch_surface(self, project: str) -> Any:
+            from gecko.orquestra_client import OrquestraClientError
+
+            raise OrquestraClientError(
+                f"GET https://api.orquestra.dev/api/{project}/pda failed: "
+                "HTTP Error 404: Not Found"
+            )
+
+    surface.client = Boom()  # type: ignore[assignment]
+    result = surface.call_tool("comprehend_program", {"project": "deaton"})
+
+    assert result["not_found"] is True
+    assert "error" not in result
+    assert "api.orquestra.dev" not in json.dumps(result), (
+        "no upstream URL in the answer"
+    )
+    assert "ADDRESS" in result["hint"]
