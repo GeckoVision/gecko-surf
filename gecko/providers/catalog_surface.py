@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
+from ..artifact import instruction_encoding
 from ..orquestra_build import ORQUESTRA_MCP_URL, orquestra_seams
 from ..prepare_instruction import PREPARE_INSTRUCTION_TOOL, prepare_instruction_result
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
@@ -511,11 +512,24 @@ class OrquestraCatalogSurface:
                 for name, prov in result.provenance.items()
             },
             "flagged": list(result.flagged),
+            # THE OTHER HALF OF A CALL. Recipes say WHICH accounts; this says how the
+            # call becomes bytes. A live agent with recipes and no encoding correctly
+            # refused to hand-roll the byte layout for an instruction moving USDC —
+            # refusing was right, and not having to refuse is better. The IDL is already
+            # fetched for the recipes, so this costs nothing extra.
+            "encoding": {
+                str(raw.get("name")): instruction_encoding(raw)
+                for raw in surface.idl.get("instructions", [])
+                if isinstance(raw, dict) and raw.get("name")
+            },
             "note": (
                 "generated from the catalog surface alone — no program source, no "
                 "manual overlay. FLAGGED recipes are honest gaps (an unresolved "
                 "seed or unknown program id), never fabricated; re-run the CLI "
-                "with --source/--overlay to recover them."
+                "with --source/--overlay to recover them. `encoding` carries each "
+                "instruction's discriminator and argument layout, with the source of "
+                "the discriminator stated — `verified` means the IDL and Anchor's "
+                "sha256 convention agree."
             ),
         }
 
