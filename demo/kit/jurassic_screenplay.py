@@ -27,7 +27,8 @@ Record it:
         --brand "GECKO  •  CHECK THE CALL BEFORE IT COUNTS" \
         --scene "Gecko — a live token sale|real money, and one account in the way" \
         --scene "Gecko — the catalogue alone|four calls, then a dead end" \
-        --scene "Gecko — the same goal, composed|three calls, and a transaction"
+        --scene "Gecko — the same goal, composed|three calls, and a transaction" \
+        --scene "Gecko — compose, don't replace|the one step a catalogue can't take"
 """
 
 from __future__ import annotations
@@ -205,17 +206,30 @@ out(f"{CYAN}3. simulate on mainnet{RESET}", pause=0.3)
 put(f"  err  {result['simulation']['err']}")
 put(f"  CU   {result['simulation']['compute_units']:,}")
 
+out(pause=1.4)
+
+# ------------------------------------------------- scene 4: the close
+# Its own frame ON PURPOSE. Scene 3 fills all twenty rows, so the positioning line
+# scrolled off the first take — and the kit's own rule is that the demo ENDS on it.
+clear()
+out(f"{BOLD}FOUR CALLS, AND A DEAD END.{RESET}", pause=0.7)
+out(f"{BOLD}THREE CALLS, AND A TRANSACTION.{RESET}", pause=1.1)
 out()
 out(
-    f"{GREEN}Three calls. Unsigned bytes, and a mainnet simulation that passes.{RESET}",
-    pause=0.8,
-)
-out(f"{YELLOW}The bytes were built by the catalogue's OWN builder.{RESET}", pause=0.6)
-out(
-    f"{YELLOW}The only step it could not take was deriving one account.{RESET}",
-    pause=1.2,
+    # The CU comes from THIS run's simulation, not a literal. It is stable for this
+    # instruction today, and a figure typed into a demo is a figure that goes stale
+    # without anyone noticing.
+    f"{GREEN}Unsigned bytes. A mainnet simulation that passes. "
+    f"{result['simulation']['compute_units']:,} CU.{RESET}",
+    pause=1.0,
 )
 out()
-out(f"{BOLD}CHECK THE CALL BEFORE IT COUNTS{RESET}", pause=0.4)
-out(f"{BOLD}mcp.geckovision.tech{RESET}", pause=1.0)
-time.sleep(1.0)
+out(f"{YELLOW}The bytes were built by the catalogue's OWN builder.{RESET}", pause=0.7)
+out(
+    f"{YELLOW}The one step it could not take was deriving a single account.{RESET}",
+    pause=1.5,
+)
+out()
+out(f"{BOLD}CHECK THE CALL BEFORE IT COUNTS{RESET}", pause=0.5)
+out(f"{BOLD}mcp.geckovision.tech{RESET}", pause=1.2)
+time.sleep(1.4)
