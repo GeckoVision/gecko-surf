@@ -34,11 +34,12 @@ already safe, so they get none.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
-from ..orquestra_build import orquestra_seams
+from ..orquestra_build import ORQUESTRA_MCP_URL, orquestra_seams
 from ..prepare_instruction import PREPARE_INSTRUCTION_TOOL, prepare_instruction_result
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
@@ -53,6 +54,34 @@ __all__ = ["OrquestraCatalogSurface"]
 # How many catalog pages a single find_start call may pull for unwired
 # candidates (each page = one upstream GET; the catalog is ~225 pages).
 MAX_FIND_START_PAGES = 2
+
+
+#: The shape a catalogue slug can take. Mirrors `OrquestraClient._check_slug`, which is
+#: the authority — this is here so `find_start` can refuse the same strings for the same
+#: reason instead of answering "not found" to something that could never have been found.
+_SLUG_SHAPE = re.compile(r"^[A-Za-z0-9-]+$")
+_B58_SHAPE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def classify_program_hint(hint: str) -> str:
+    """``"address"`` | ``"slug"`` | ``"impossible"`` for a caller's ``program`` hint.
+
+    A LIVE AGENT SESSION IS WHY THIS EXISTS. Asked for `jurassic_fi`, `comprehend_program`
+    refused it plainly ("invalid project slug, alnum/dash only") while `find_start` accepted
+    the same string and answered `no_start` — the ordinary shape for a genuine miss. Two
+    different failures rendered as one output, and the agent concluded the program did not
+    exist when the truth was that the string could never name one. `find_start` is the tool
+    an agent reaches for first, so it is the one that must not blur them.
+
+    The address case matters more. Catalogue slugs are opaque ids, so guessing name variants
+    is not a search strategy that can succeed — the only handle an agent reliably holds is
+    the program ADDRESS, which is what a chain gives you.
+    """
+    if _B58_SHAPE.match(hint):
+        return "address"
+    if _SLUG_SHAPE.match(hint):
+        return "slug"
+    return "impossible"
 
 
 @dataclass
@@ -86,6 +115,9 @@ class OrquestraCatalogSurface:
     #: purchase path solves the same problem with an injected `url_guard`; here there is
     #: nothing to guard because the caller never gets to choose.
     instruction_rpc_url: str = "https://api.mainnet-beta.solana.com"
+    #: The catalog MCP used to resolve a program ADDRESS to a project id. Injectable for
+    #: the same reason every other transport here is: the path stays falsifiable offline.
+    catalog_mcp: Any = None
 
     surface_id = "orquestra:catalog"
 
@@ -230,6 +262,24 @@ class OrquestraCatalogSurface:
         program = args.get("program")
         program = program if isinstance(program, str) and program else None
 
+        if program:
+            kind = classify_program_hint(program)
+            if kind == "impossible":
+                # NOT `no_start`. That shape means "nothing matched your intent", and
+                # answering it here would tell an agent the program does not exist when
+                # the string it passed could never have named one.
+                return {
+                    "error": f"invalid project slug {program!r} (alnum/dash only)",
+                    "hint": (
+                        "catalog slugs are opaque ids, so a human name is not a slug and "
+                        "guessing variants cannot succeed. Pass the program's base58 "
+                        "ADDRESS as `program` instead — that is the handle the chain "
+                        "gives you, and it resolves regardless of how the catalog names it."
+                    ),
+                }
+            if kind == "address":
+                return self._start_from_address(program, args.get("intent", ""))
+
         pages = []
         catalog_note = None
         page_cap = max(0, min(int(self.find_start_pages), MAX_FIND_START_PAGES))
@@ -292,6 +342,39 @@ class OrquestraCatalogSurface:
         except (OrquestraClientError, ValueError) as exc:
             out["catalog"] = {"error": str(exc)}
         return out
+
+    def _start_from_address(self, program_id: str, intent: str) -> dict[str, Any]:
+        """Resolve a base58 program address to something an agent can act on.
+
+        The address is the only handle an agent reliably holds — a chain hands out
+        addresses, not catalog slugs — so this is the entry point that has to work when
+        name-guessing cannot.
+        """
+        from ..mcp_client import McpClient
+        from ..orquestra_build import OrquestraBuildError, resolve_project_id
+
+        client = self.catalog_mcp or McpClient(ORQUESTRA_MCP_URL)
+        try:
+            project_id = resolve_project_id(client, program_id)
+        except (OrquestraBuildError, OSError) as exc:
+            return {
+                "no_start": True,
+                "program_id": program_id,
+                "reason": f"the catalog does not index {program_id}: {exc}",
+            }
+        return {
+            "program_id": program_id,
+            "project_id": project_id,
+            "intent": intent,
+            "next": {
+                "tool": "prepare_instruction",
+                "why": (
+                    "this program is in the catalog. `prepare_instruction` takes the "
+                    "program_id directly — it derives every PDA, builds the bytes, and "
+                    "simulates, or names what it cannot resolve."
+                ),
+            },
+        }
 
     def _prepare_instruction(self, args: dict[str, Any]) -> Any:
         """Derive the accounts here, let the catalogue's own builder encode the bytes.
