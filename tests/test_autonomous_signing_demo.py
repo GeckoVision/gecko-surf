@@ -478,6 +478,34 @@ def test_the_same_five_scenarios_hold_against_a_real_surfpool_mainnet_fork() -> 
             assert result.bytes_out is None, f"({result.key}) leaked bytes on the fork"
             assert result.signer_calls == 0
 
+    # A VALIDATOR THAT DECLINES TO REPORT TOKEN BALANCES CANNOT EXERCISE THESE FIVE
+    # CONTROLS, AND MUST SAY SO RATHER THAN PASS.
+    #
+    # surfpool 1.1.1 answers `simulateTransaction` with `preTokenBalances` and
+    # `postTokenBalances` PRESENT AND NULL (verified at the wire, 2026-08-17). A declined
+    # read is not an observed zero, so the token leg is unmeasurable and the spend policy
+    # refuses every scenario at its first gate — including (e), the one that is supposed to
+    # succeed. Refusing there is exactly the fail-closed behaviour this module exists to
+    # keep; what it is NOT is a run of these five scenarios. Each one would then "refuse"
+    # for the same reason and none would reach the control it names, so the five distinct
+    # answers this test exists to tell apart collapse into one.
+    #
+    # Weakening the assertions to accept that would make the test vacuous. It skips
+    # loudly instead, the same way it does when surfpool is not installed at all, and it
+    # starts running again by itself the day the validator reports balances.
+    # `amount-unresolvable` is not an expected answer for ANY of the five — each is built
+    # to land on a different control — so one occurrence is enough to say the leg is
+    # degraded. (b) and (c) still refuse correctly, at the network control and the
+    # quarantine gate, because neither needs an amount; they cannot vouch for the rest.
+    undecidable = [r.key for r in results if r.code == "amount-unresolvable"]
+    if undecidable:
+        pytest.skip(
+            "THE FORK LEG DID NOT RUN — this validator declines to report token balances, "
+            f"so scenario(s) {', '.join(undecidable)} refuse at the spend policy before "
+            "reaching the control each one is meant to exercise, and NOTHING below was "
+            f"proved. Reason given: {results[0].reason}"
+        )
+
     by_key = {r.key: r for r in results}
     assert by_key["a"].code == "over-per-transaction-cap"
     assert by_key["c"].builder_calls == 0

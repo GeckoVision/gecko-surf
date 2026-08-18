@@ -50,6 +50,10 @@ def test_surface_lists_the_catalog_tools() -> None:
         # The pre-flight: it plans and verifies, and hands back UNSIGNED bytes. Its own
         # boundary is pinned in tests/test_prepare_purchase_tool.py.
         "prepare_purchase",
+        # Its rehearsal twin, deliberately adjacent: the same purchase driven all the way
+        # through on a LOCAL fork. The only tool here that signs, and the only one that
+        # can say what actually moved — pinned in tests/test_try_purchase_tool.py.
+        "try_purchase",
         # The MENU: store names and prices read from each store's own account — never an
         # authorization. Its own boundary is pinned in tests/test_store_directory.py.
         "list_stores",
@@ -57,6 +61,10 @@ def test_surface_lists_the_catalog_tools() -> None:
         # somebody else signs, and this proves the signed bytes are the checked ones
         # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.
         "verify_signed_transaction",
+        # The GENERAL form of prepare_purchase: any instruction of any catalog program,
+        # PDAs derived here and bytes built by the catalog's own builder. Unsigned like
+        # the rest — pinned in tests/test_prepare_instruction.py.
+        "prepare_instruction",
     ]
 
 
@@ -237,8 +245,15 @@ def test_the_surface_tells_a_client_how_its_tools_fit_together() -> None:
     assert "api.paybox.sh/mcp" in instructions
     assert "FUND" in instructions
     assert "verify_signed_transaction" in instructions
-    # The boundary, stated once where it cannot be missed.
-    assert "never signs" in instructions or "Nothing here holds a key" in instructions
+    # The boundary, stated once where it cannot be missed — and it has to stay TRUE now
+    # that one tool here does sign: the claim is about the caller's money, and the
+    # exception is named in the same breath rather than left for a tool description.
+    assert "Nothing here holds a key to anybody's money" in instructions
+    assert "The one tool that signs, `try_purchase`" in instructions
+    # When to reach for the rehearsal instead of the real thing, and what it costs.
+    assert "REHEARSE INSTEAD WHEN NOBODY WANTS THE PRODUCT YET" in instructions
+    assert "a rehearsal buys nobody a coffee" in instructions
+    assert "surfpool start" in instructions
     # And the rule that keeps a refusal from being treated as a bug to work around.
     assert "A REFUSAL IS AN ANSWER" in instructions
 

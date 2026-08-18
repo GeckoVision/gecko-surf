@@ -19,6 +19,11 @@ compiled to plans and executed deterministically — and published 24 flows. The
 targets 4,000. The gap between what that engine can express and what an autonomous agent
 needs to act is now measurable, and it is where this belongs.
 
+And the honest charge against us, which this exists to answer: **we have not shipped
+anything end to end.** A comprehension engine, a verification loop, a scorecard, a signing
+gate — all real, all proven on real surfaces, none of them a thing a builder can point at
+and finish a job with. Ingestion is what turns a pile of instruments into one path.
+
 **The thesis in one line: the graph is the product, and every format is a rendering of it.**
 Arazzo, FDL, an MCP tool list, a scorecard — four projections of one view model. Build the
 view model once, honestly, with provenance on every claim, and the formats are cheap.
@@ -36,7 +41,9 @@ them is how a contribution turns into a competitor.
 | dependency | none — each item stands alone | Track A's §5 fields make the FDL projector lossless |
 
 Track A is not a favour and it is not a wedge. Every item is a defect we hit while
-measuring, with a reproduction. That is the only honest basis for sending someone a patch.
+measuring, with a reproduction — and one of them (A4) is a defect we withdrew once the
+reproduction turned out to indict our own probe. Sending someone a patch requires that
+standard both ways, or the next one does not get read.
 
 ## 3. Track A — what is broken
 
@@ -60,9 +67,23 @@ published by hand or by another tool skips both. Two imports.
 consequence: the output key is `transactions` on 22 published flows and `tx` on 2. A
 consumer that reads the field name breaks on the two.
 
-**A4 — one instruction is uncallable as published.** `delete_product` on `let_me_buy` fails
-to build: `Missing required accounts: system_program`. Found on the scorecard's first run;
-invisible from the IDL, the docs, or the code.
+**A4 — withdrawn, and it belongs in §6 instead.** This slot claimed `delete_product` was
+uncallable as published, on the strength of `Missing required accounts: system_program`.
+Re-checked before shipping: **the defect was ours.** The hand-written probe omitted
+`system_program` *and* sent `name` where the instruction takes `product_name` — both stated
+correctly in our own program config, which the probe never consulted. Supplied properly it
+builds, simulates, and reports 26,015 CU against 26,015 charged. The corrected scorecard is
+**6/6 and 6/6**.
+
+Two things follow. **Credit:** the surface named each mistake in turn — accounts first, then
+arguments — and two error messages were enough to reach a correct call. That is the
+first-call-correct loop working, from the outside, unprompted.
+
+**And the reason this spec exists:** a hand-written probe scored a surface red for a defect
+in the probe author's comprehension. The knowledge that would have prevented it was sitting
+in `providers/configs/orquestra/let_me_buy.json` the whole time, unread by the thing doing
+the measuring. **Probes generated from the graph cannot make this mistake; probes written by
+hand will keep making it.** That is now requirement one of §6, not a footnote.
 
 ## 4. Track A — what is weak but not broken
 
@@ -195,9 +216,16 @@ an IDL, an OpenAPI URL, or a docs page and gets a page they hand their developer
 - `try_*` against a $0 fork, so a first call costs nothing and lands nothing;
 - drift watch — re-run on change, and say *which* of the five answers moved.
 
-**We never list.** We render a surface its owner already owns — overlay keyed to Orquestra's
-`projectId` where the provider is on his catalog, standalone where they are not. The moment
-we publish our own catalog we become the marketplace this repo exists not to be.
+**The model is Mintlify's, not a marketplace's.** Mintlify hosts the page, runs the
+platform, and the docs are still *yours* — that is the whole distinction. Same here: we
+generate and host the surface, the provider owns it, and their name is on it. Free tier
+carries our brand; paid carries theirs. Overlay keyed to Orquestra's `projectId` where the
+provider is already on his catalog, standalone where they are not.
+
+What separates that from a marketplace is who the page belongs to, not whether we host it.
+A marketplace aggregates other people's supply into *our* catalog and monetizes discovery
+across it. We publish one provider's surface, for that provider, and never rank them against
+each other. Hosting is the product; listing is the line.
 
 ## 9. Round-trip, the gate on everything
 
@@ -226,11 +254,11 @@ seeds only we recover.
 | provenance ladders, single source of truth | **have** (`provenance.py`) |
 | seed recovery from source (the IDL cannot carry it) | **have** (`pda_extract.py`) |
 | simulate → Receipt, deltas, caps | **have** |
-| scorecard, six cases, one program | **have, hand-written** (`scripts/catalog_ci.py`) |
+| scorecard, six cases, one program | **have, generated from the graph** (`scripts/catalog_ci.py` over `gecko/project/probes.py`) |
 | `gecko.ingest` front door | **missing** |
 | `gecko.score` as a stage | **missing** — measurement exists, not as a stage over a graph |
-| `to_fdl` projector | **missing** |
-| declarative shapes instead of hardcoded probes | **missing** — the scorecard is six literal cases |
+| `to_fdl` projector | **have** (`gecko/project/fdl.py`, round-tripped through his compiler) |
+| declarative shapes instead of hardcoded probes | **have** (`probe_cases`) — accounts, arg names and PDA addresses come from the graph; only the values a caller must choose are supplied |
 | hosted surface | **missing** — empty scaffold |
 | catalog-scale ingestion | **missing** — one surface at a time |
 

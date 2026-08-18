@@ -30,7 +30,14 @@ from .pda import (
     ResolverPdaSeedNode,
     VariablePdaSeedNode,
 )
-from .pda_extract import from_anchor_idl, from_source, merge_pda_nodes_with_origin
+from .pda_extract import (
+    blocked_only_on_itself,
+    instruction_pdas,
+    only_untyped_seeds,
+    from_anchor_idl,
+    from_source,
+    merge_pda_nodes_with_origin,
+)
 from .provenance import ProgramProvenanceTier
 
 __all__ = [
@@ -63,7 +70,14 @@ class AccountRef:
     """An account slot of an instruction. If it is a PDA, its derivation inputs are
     bound to this instruction's accounts/args; if a seed couldn't be resolved — or
     the account sits in (or behind) a seed-dependency cycle — the account is flagged
-    ``resolvable=False`` (honest, not fabricated)."""
+    ``resolvable=False`` (honest, not fabricated).
+
+    ``address`` is the IDL's own ``address`` pin for a constant account (the system,
+    token and associated-token programs, a sysvar). It is a *fact from the spec*, not
+    a derivation: a consumer that has it does not have to ask a caller for a value
+    the program already fixed — and asking is how a flow ends up parameterising the
+    token program. ``None`` means the IDL pinned nothing, never "unknown constant".
+    """
 
     name: str
     is_pda: bool
@@ -71,6 +85,7 @@ class AccountRef:
     writable: bool = False
     resolvable: bool = True
     derive_from: tuple[SeedBinding, ...] = ()
+    address: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +222,8 @@ def _account_to_json(acct: AccountRef) -> dict[str, Any]:
         "signer": acct.signer,
         "writable": acct.writable,
     }
+    if acct.address:
+        d["address"] = acct.address
     if acct.is_pda:
         d["resolvable"] = acct.resolvable
         d["derive_from"] = [
@@ -236,6 +253,18 @@ def _bind_seeds(
             elif seed.source == "argument" and seed.name in arg_names:
                 bindings.append(
                     SeedBinding(seed.name, seed.encoding, "argument", seed.name)
+                )
+            elif seed.source == "argument" and seed.name.partition(".")[0] in arg_names:
+                # A FIELD OF AN ARGUMENT STRUCT, e.g. `params.launch_id`. The caller builds
+                # `params`, so it holds the field — the binding is to the argument it came
+                # from, and the seed keeps the full path so nobody has to guess which field.
+                bindings.append(
+                    SeedBinding(
+                        seed.name,
+                        seed.encoding,
+                        "argument",
+                        seed.name.partition(".")[0],
+                    )
                 )
             else:
                 # falls back to whichever namespace it does appear in, else external
@@ -430,8 +459,22 @@ def build_program_graph(
         for name, node in pdas.items()
     }
 
+    # The recipe an account has is a property of the (instruction, account) pair, not of
+    # the account name — measured across the catalogue: Orca declares `whirlpool` from a
+    # `tick_spacing` ARG in `initialize_pool` and from an adaptive-fee-tier ACCOUNT READ in
+    # `initialize_pool_with_adaptive_fee`; stableswap declares `token_vault` from the
+    # `mint` account in `deposit` and from `token_state.mint` in `withdraw`. Both members
+    # of each pair are correct, and `pdas` above can only hold one of them (it keeps the
+    # conservative one). Here we have the instruction, so each one gets what it declares.
+    idl_type_defs = {
+        str(t.get("name")): t
+        for t in (idl or {}).get("types", [])
+        if isinstance(t, dict)
+    }
+
     instructions: list[InstructionGraph] = []
     for ix in (idl or {}).get("instructions", []):
+        declared_here = instruction_pdas(ix, program_id=prog, type_defs=idl_type_defs)
         arg_pairs = tuple(
             (a.get("name", ""), _type_str(a.get("type"))) for a in ix.get("args", [])
         )
@@ -445,7 +488,35 @@ def build_program_graph(
             name = a.get("name")
             if not name:
                 continue
-            node = pdas.get(name)
+            pinned = a.get("address")
+            pinned = str(pinned) if pinned else None
+            # This instruction's own declaration first; the merged/source-recovered map
+            # is the fallback for accounts it does not declare (the #4057 gap included).
+            #
+            # The one case where the instruction's own word is NOT the best answer is a
+            # self-referential dead end — `launch` seeded on `launch.admin`. No caller can
+            # ever open that, and a sibling's derivable recipe is provably the same
+            # address, because the program re-derives it from the stored fields and
+            # rejects the transaction if it differs. So a dead end defers to the merged
+            # recipe; a seed reading ANOTHER account does not, and stays flagged here.
+            declared = declared_here.get(name)
+            merged = pdas.get(name)
+            node = declared or merged
+            #
+            # An EXTRACTION GAP defers the same way, for a different reason: when this
+            # instruction spells a seed differently from its own arg (`mark_as_delivered`
+            # seeds on `store_name`, its arg is `_store_name`), the seed could not be
+            # typed here and a sibling typed the identical seed. That is one recipe badly
+            # extracted, not two recipes.
+            if (
+                declared is not None
+                and merged is not None
+                and merged.resolvable
+                and (blocked_only_on_itself(declared) or only_untyped_seeds(declared))
+            ):
+                node = merged
+            if node is not None and node.program_id is None:
+                node = PdaNode(node.name, node.seeds, prog)
             if node is None:
                 accounts.append(
                     AccountRef(
@@ -453,6 +524,7 @@ def build_program_graph(
                         is_pda=False,
                         signer=bool(a.get("signer")),
                         writable=bool(a.get("writable")),
+                        address=pinned,
                     )
                 )
                 continue
@@ -464,6 +536,7 @@ def build_program_graph(
                 writable=bool(a.get("writable")),
                 resolvable=node.resolvable,
                 derive_from=bindings,
+                address=pinned,
             )
             accounts.append(ref)
             pda_accounts[name] = ref

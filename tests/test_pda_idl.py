@@ -9,7 +9,12 @@ one.
 
 from __future__ import annotations
 
-from gecko.pda import ResolverPdaSeedNode, VariablePdaSeedNode, derive_pda
+from gecko.pda import (
+    ConstantPdaSeedNode,
+    ResolverPdaSeedNode,
+    VariablePdaSeedNode,
+    derive_pda,
+)
 from gecko.pda_extract import from_anchor_idl, from_source, merge_pda_nodes
 from tests.test_pda_extract import ORE_PROGRAM, ORE_SOURCE
 
@@ -168,3 +173,325 @@ def test_merge_prefers_source_when_idl_seed_is_opaque() -> None:
     assert merged["vault"].resolvable is True  # source won
     # IDL-authoritative accounts untouched
     assert merged["config"].program_id == ORE_PROGRAM
+
+
+# ---------------------------------------------------------------------------
+# legacy (pre-0.30) IDLs — the const seed that crashed a whole program's graph
+# ---------------------------------------------------------------------------
+
+
+def _legacy_idl(seed: dict[str, object]) -> dict[str, object]:
+    """A one-instruction pre-0.30 IDL whose only PDA carries `seed`."""
+    return {
+        "address": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+        "instructions": [
+            {
+                "name": "swap",
+                "args": [],
+                "accounts": [{"name": "state", "pda": {"seeds": [seed]}}],
+            }
+        ],
+    }
+
+
+def test_legacy_string_const_seed_does_not_crash_the_program() -> None:
+    """Pre-0.30 Anchor writes a const seed as a TYPED LITERAL, not a byte array:
+
+        {"kind": "const", "type": "string", "value": "bonkswapstatev1"}
+
+    `bytes("bonkswapstatev1")` raises `TypeError: string argument without an
+    encoding`, and because from_anchor_idl builds every instruction in one pass a
+    single such seed took down the WHOLE program's graph. Measured on a live
+    corpus: 52 of one program's 109 seeds, and the one hard failure in a 60-program
+    sample — a share that only grows down the long tail, where the older IDLs live.
+    """
+    nodes = from_anchor_idl(
+        _legacy_idl({"kind": "const", "type": "string", "value": "bonkswapstatev1"})
+    )
+
+    assert "state" in nodes, "a legacy const seed must not lose the account"
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ConstantPdaSeedNode)
+    assert seed.value == b"bonkswapstatev1"
+    assert seed.encoding == "utf8"
+
+
+def test_the_modern_array_form_still_wins() -> None:
+    """The 0.30 shape is 1,047 of 2,382 seeds in the same corpus — it must not regress."""
+    nodes = from_anchor_idl(
+        _legacy_idl({"kind": "const", "value": [114, 101, 99, 101, 105, 112, 116, 115]})
+    )
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ConstantPdaSeedNode)
+    assert seed.value == b"receipts"
+
+
+def test_an_unmeasured_const_shape_is_flagged_rather_than_guessed() -> None:
+    """A typed literal we have never observed becomes an honest resolver, not a guess.
+
+    `{"type": "publicKey", "value": "<base58>"}` is plausible and appears ZERO times
+    in the measured corpus. Decoding it would mean adding a base58 dependency to a
+    comprehension module on the strength of a guess, and guessing a seed's bytes is
+    how you derive a valid address that belongs to somebody else. Refuse, name it,
+    and add it when a real IDL shows one.
+    """
+    nodes = from_anchor_idl(
+        _legacy_idl(
+            {
+                "kind": "const",
+                "type": "publicKey",
+                "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            }
+        )
+    )
+    (seed,) = nodes["state"].seeds
+    assert isinstance(seed, ResolverPdaSeedNode)
+    assert "publicKey" in seed.reason
+
+
+# ---------------------------------------------------------------------------
+# the self-referential root PDA — measured live on jurassic_fi_token_sale
+# ---------------------------------------------------------------------------
+
+
+def _self_referential_idl() -> dict[str, object]:
+    """The shape jurassic_fi ships, reduced to its two load-bearing instructions.
+
+    `claim` declares the root PDA from fields stored INSIDE it, which is a correct runtime
+    check for the program and a dead end for a caller. `initialize_launch` declares the SAME
+    PDA derivably, because at creation there is no account to read from. The IDL lists
+    `claim` first.
+    """
+    return {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "claim",
+                "args": [],
+                "accounts": [
+                    {
+                        "name": "launch",
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": [108, 97, 117, 110, 99, 104],
+                                },
+                                {
+                                    "kind": "account",
+                                    "path": "launch.admin",
+                                    "account": "Launch",
+                                },
+                                {
+                                    "kind": "account",
+                                    "path": "launch.launch_id",
+                                    "account": "Launch",
+                                },
+                            ]
+                        },
+                    }
+                ],
+            },
+            {
+                "name": "initialize_launch",
+                "args": [{"name": "params", "type": {"defined": "LaunchParams"}}],
+                "accounts": [
+                    {"name": "admin"},
+                    {
+                        "name": "launch",
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": [108, 97, 117, 110, 99, 104],
+                                },
+                                {"kind": "account", "path": "admin"},
+                                {"kind": "arg", "path": "params.launch_id"},
+                            ]
+                        },
+                    },
+                ],
+            },
+        ],
+        # The width is the whole difficulty, and the IDL answers it. Verified against the
+        # live account: launch_id at u8, u16 and u32 each derive a DIFFERENT valid address,
+        # and only u64 matches — so reading this rather than defaulting is the fix.
+        "types": [
+            {
+                "name": "LaunchParams",
+                "type": {
+                    "kind": "struct",
+                    "fields": [
+                        {"name": "launch_id", "type": "u64"},
+                        {"name": "raise_cap", "type": "u64"},
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def test_a_resolvable_sibling_recipe_beats_a_self_referential_one() -> None:
+    """First-declaration-wins threw away the only usable recipe in the program.
+
+    Measured on jurassic_fi_token_sale, a live token sale holding 323,816 USDC: seven of its
+    eight instructions declare `launch` from `launch.admin` and `launch.launch_id` — fields
+    of the account being derived. Only `initialize_launch` states it derivably. Because the
+    IDL lists `claim` first and this function skipped any name it had already seen, the
+    resolvable recipe was silently discarded and SIX instructions became uncallable: three
+    more accounts (`user_position`, `payment_vault`, `token_vault`) seed on `launch`.
+
+    Order is not evidence. A resolvable declaration is.
+    """
+    nodes = from_anchor_idl(_self_referential_idl())
+
+    assert "launch" in nodes
+    launch = nodes["launch"]
+    assert launch.resolvable, (
+        "the derivable sibling recipe must win over the self-referential one, "
+        f"got seeds {launch.seeds}"
+    )
+    # and it is the RIGHT recipe: const 'launch', then the admin account, then the arg
+    const, admin, launch_id = launch.seeds
+    assert isinstance(const, ConstantPdaSeedNode) and const.value == b"launch"
+    assert isinstance(admin, VariablePdaSeedNode) and admin.name == "admin"
+    assert isinstance(launch_id, (VariablePdaSeedNode, ResolverPdaSeedNode))
+
+
+def _foreign_account_read_idl() -> dict[str, object]:
+    """pump.fun's shape: the same PDA, blocked on a read of a DIFFERENT account.
+
+    Nine instructions seed `creator_vault` on `bonding_curve.creator` — data inside a
+    bonding curve, not inside the vault being derived. `collect_creator_fee` seeds it on a
+    plain `creator` account, which that instruction happens to take and `buy` does not.
+    """
+    return {
+        "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "instructions": [
+            {
+                "name": "buy",
+                "args": [],
+                "accounts": [
+                    {"name": "bonding_curve"},
+                    {
+                        "name": "creator_vault",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": list(b"creator-vault")},
+                                {
+                                    "kind": "account",
+                                    "path": "bonding_curve.creator",
+                                    "account": "BondingCurve",
+                                },
+                            ]
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "collect_creator_fee",
+                "args": [],
+                "accounts": [
+                    {"name": "creator"},
+                    {
+                        "name": "creator_vault",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": list(b"creator-vault")},
+                                {"kind": "account", "path": "creator"},
+                            ]
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_a_sibling_recipe_does_not_win_over_a_read_of_another_account() -> None:
+    """The limit on the rule above, and pump.fun is the case that sets it.
+
+    Promoting `collect_creator_fee`'s recipe program-wide would report `creator_vault` as
+    cleanly derivable to a `buy` caller — who has no `creator` account in that instruction
+    at all, and no way to compute one. Unlike the self-referential case, nothing proves the
+    two inputs carry the same value: `creator` is a caller-supplied account the program
+    checks, not a field the seeds constraint pins.
+
+    So `buy` keeps an honest flagged resolver naming `bonding_curve`, which is a real gap a
+    caller can close with a chain read, rather than a derivable-looking wrong answer.
+    """
+    for idl in (_foreign_account_read_idl(), None):
+        if idl is None:  # and the same answer with the instructions the other way round
+            idl = _foreign_account_read_idl()
+            idl["instructions"] = list(reversed(idl["instructions"]))  # type: ignore[index]
+        vault = from_anchor_idl(idl)["creator_vault"]
+        assert not vault.resolvable, (
+            "a recipe blocked on ANOTHER account's data must stay flagged, "
+            f"got seeds {vault.seeds}"
+        )
+        blocker = next(s for s in vault.seeds if isinstance(s, ResolverPdaSeedNode))
+        assert blocker.depends_on == ("bonding_curve",)
+
+
+def test_declaration_order_does_not_decide_which_recipe_wins() -> None:
+    """The same IDL with the instructions the other way round must give the same answer."""
+    idl = _self_referential_idl()
+    idl["instructions"] = list(reversed(idl["instructions"]))  # type: ignore[index]
+    assert from_anchor_idl(idl)["launch"].resolvable
+
+
+def test_a_fixed_size_byte_array_argument_is_a_bindable_seed() -> None:
+    """`{"array": ["u8", 32]}` is 32 bytes, and 32 bytes are a seed.
+
+    Measured across a live catalogue: after the sibling-recipe and arg-field fixes, only
+    two patterns of unresolvable recipe were left. One is genuinely runtime data read off
+    another account (`pool.base_mint`) and is correctly refused. The other was this — nine
+    recipes refused with "unsupported seed type {'array': ['u8', 32]}", mostly on one
+    program. A fixed-width byte array is passed through verbatim; there is nothing to
+    infer and nothing to guess.
+    """
+    idl = {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "create_order",
+                "args": [{"name": "nonce", "type": {"array": ["u8", 32]}}],
+                "accounts": [
+                    {
+                        "name": "order",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": [111, 114, 100]},
+                                {"kind": "arg", "path": "nonce"},
+                            ]
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    node = from_anchor_idl(idl)["order"]
+    assert node.resolvable, f"a [u8; 32] argument is bindable, got {node.seeds}"
+    _, nonce = node.seeds
+    assert isinstance(nonce, VariablePdaSeedNode)
+    assert nonce.name == "nonce" and nonce.encoding == "bytes"
+
+
+def test_an_array_of_something_other_than_bytes_is_still_refused() -> None:
+    """`[u64; 4]` has an element width and an order we would have to assume. Refuse it."""
+    idl = {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "x",
+                "args": [{"name": "ids", "type": {"array": ["u64", 4]}}],
+                "accounts": [
+                    {
+                        "name": "thing",
+                        "pda": {"seeds": [{"kind": "arg", "path": "ids"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    assert not from_anchor_idl(idl)["thing"].resolvable

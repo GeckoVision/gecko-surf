@@ -16,9 +16,20 @@ fetched from the catalog is UNTRUSTED input (validated + capped in
 :mod:`gecko.orquestra_client`).
 
 THIS SURFACE IS SERVED PUBLICLY AND UNAUTHENTICATED. Anything mounted here is
-reachable by anyone on the internet, which is why no tool on it may hold a key,
-produce a signature, or send a transaction — and why the one tool that touches
+reachable by anyone on the internet, so no tool on it may hold a key for a
+network anybody's money is on — which is why the tool that touches real
 transaction bytes hands them back unsigned.
+
+``try_purchase`` (:mod:`gecko.sandbox.try_purchase`) is the ONE tool here that
+signs, and it is narrowed until that is safe rather than trusted to behave: it
+refuses any endpoint that is not on the machine running this process, and then
+refuses again unless that endpoint answers ``surfnet_getSurfnetInfo`` — a method
+mainnet does not implement. Only after both does a keypair come into existence,
+in memory, unfunded on every real network, spendable only on a chain that is
+discarded. A stranger cannot aim it at a fork of their own, and a hosted mount
+with no local surfnet simply refuses. Only tools that can SPEND get such a twin:
+``list_stores``, ``find_start`` and ``comprehend_program`` are already free and
+already safe, so they get none.
 """
 
 from __future__ import annotations
@@ -27,10 +38,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
+from ..orquestra_build import orquestra_seams
+from ..prepare_instruction import PREPARE_INSTRUCTION_TOOL, prepare_instruction_result
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
+from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
-from ..rpc import RpcCall
+from ..rpc import RpcCall, default_rpc_call
 from ..simulate import BuildCall
 from ..wallet_binding import WalletDirectory
 
@@ -64,6 +78,14 @@ class OrquestraCatalogSurface:
     purchase_build_call: BuildCall | None = None
     purchase_rpc_call: RpcCall | None = None
     wallets: WalletDirectory | None = None
+    #: The two seams `prepare_instruction` needs, built lazily against the catalogue so
+    #: serving stays possible with no network until a tool actually asks for one.
+    instruction_seams: tuple[Any, Any] | None = None
+    #: The RPC the simulation runs against. A FIELD, never an argument: this surface is
+    #: unauthenticated, and a caller-supplied URL would turn it into an SSRF proxy. The
+    #: purchase path solves the same problem with an injected `url_guard`; here there is
+    #: nothing to guard because the caller never gets to choose.
+    instruction_rpc_url: str = "https://api.mainnet-beta.solana.com"
 
     surface_id = "orquestra:catalog"
 
@@ -71,8 +93,10 @@ class OrquestraCatalogSurface:
     #: ORDER of tools can live, since a per-tool description is read after the choice.
     instructions = (
         "Gecko turns a Solana program into calls you can check before they count. "
-        "Nothing here holds a key, signs, or broadcasts: every path ends in UNSIGNED "
-        "bytes plus a receipt attesting they would land.\n"
+        "Nothing here holds a key to anybody's money: every path that can move YOUR "
+        "funds ends in UNSIGNED bytes plus a receipt attesting they would land. The one "
+        "tool that signs, `try_purchase`, does it with a throwaway key on a local fork "
+        "you are running, and cannot reach mainnet at all.\n"
         "\n"
         "THE ORDER, and it matters:\n"
         "1. BROWSE with `list_stores` (or `find_start` for other programs). Free, no "
@@ -104,6 +128,20 @@ class OrquestraCatalogSurface:
         "you waited, which is cheaper than finding out from the node after you broadcast.\n"
         "5. SUBMIT to the node named in `submit.rpc_url`.\n"
         "\n"
+        "REHEARSE INSTEAD WHEN NOBODY WANTS THE PRODUCT YET. `try_purchase` runs that "
+        "whole loop on a LOCAL fork of mainnet: it funds a throwaway buyer, plans with "
+        "the same code `prepare_purchase` runs, signs, lands it for real THERE, and "
+        "reports what the ledger actually moved. It needs no wallet, no signer, no funds "
+        "and no approval, and it cannot touch mainnet — the key it signs with cannot "
+        "exist until the endpoint has proved it is a surfnet on this machine. Reach for "
+        "it to see the mechanics, to check a store debits what it lists, or to show "
+        "someone the flow. Reach for `prepare_purchase` the moment a human actually "
+        "wants the thing: a rehearsal buys nobody a coffee. It needs a fork you are "
+        "running (`surfpool start --no-tui --no-deploy --rpc-url <mainnet> --port 8899`) "
+        "and REFUSES, naming that command, when there is none — it never quietly does it "
+        "for real instead. Its numbers describe the fork: compute there ran ~17% above "
+        "mainnet's, so never size a budget from them.\n"
+        "\n"
         "A REFUSAL IS AN ANSWER, NOT AN ERROR. These tools refuse rather than guess: an "
         "unknown store, a plan that would pay the buyer back, a simulation that fails, a "
         "binding that does not match. Read the reason and tell the user; do not route "
@@ -125,11 +163,20 @@ class OrquestraCatalogSurface:
             # The schema states the buyer rule THIS mount enforces, so an agent does not
             # have to be refused to learn it.
             prepare_purchase_tool(buyer_bound=self.wallets is not None),
+            # The same purchase, taken all the way through on a LOCAL fork — the only
+            # tool here that signs, and the only one that can say what actually moved.
+            # It sits next to `prepare_purchase` because that is the choice an agent is
+            # making at that moment: rehearse it, or have a wallet sign it for real.
+            TRY_PURCHASE_TOOL,
             LIST_STORES_TOOL,
             # The other half of the handoff. `prepare_purchase` hands out bytes and a
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
             VERIFY_SIGNED_TOOL,
+            # The general form of `prepare_purchase`: any instruction of any catalog
+            # program, with the PDAs derived here and the bytes built by the catalog's
+            # own builder. Unsigned, like everything else on this surface.
+            PREPARE_INSTRUCTION_TOOL,
         ]
 
     def call_tool(
@@ -151,6 +198,21 @@ class OrquestraCatalogSurface:
             return self._comprehend_program(args)
         if name == "prepare_purchase":
             return self._prepare_purchase(args, account=account)
+        if name == "prepare_instruction":
+            return self._prepare_instruction(args)
+        if name == "try_purchase":
+            # `account` is passed for a REACHABILITY gate, not a wallet binding: a
+            # rehearsal spends nothing of anyone's and its buyer is a keypair born and
+            # discarded inside the call, so there is no wallet to judge it against. What
+            # an authenticated caller buys is the right to make this process issue
+            # outbound JSON-RPC and burn a fork's compute — which is not something a
+            # stranger gets to ask for, however safe the signature itself is.
+            return try_purchase_result(
+                args,
+                account=account,
+                rpc_call=self.purchase_rpc_call,
+                build_call=self.purchase_build_call,
+            )
         if name == "list_stores":
             return list_stores_result(args, rpc_call=self.purchase_rpc_call)
         if name == "verify_signed_transaction":
@@ -230,6 +292,28 @@ class OrquestraCatalogSurface:
         except (OrquestraClientError, ValueError) as exc:
             out["catalog"] = {"error": str(exc)}
         return out
+
+    def _prepare_instruction(self, args: dict[str, Any]) -> Any:
+        """Derive the accounts here, let the catalogue's own builder encode the bytes.
+
+        That split is the whole point and it is measured: a catalogue holding an IDL can
+        already construct an instruction, but it cannot derive an account whose seed is a
+        field of that same account. Our accounts handed to the catalogue's builder
+        produced a jurassic_fi `contribute` that simulates on mainnet at 21,368 CU.
+
+        The RPC comes from the surface, never from ``args`` — see
+        :attr:`instruction_rpc_url`.
+        """
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, build_call = self.instruction_seams
+        return prepare_instruction_result(
+            args,
+            idl_fetch=idl_fetch,
+            build_call=build_call,
+            rpc_call=self.purchase_rpc_call or default_rpc_call,
+            rpc_url=self.instruction_rpc_url,
+        )
 
     def _prepare_purchase(
         self, args: dict[str, Any], *, account: str | None = None

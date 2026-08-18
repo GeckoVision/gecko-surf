@@ -1,0 +1,29 @@
+{
+  "surface": "let_me_buy",
+  "programId": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+  "measured": "2026-08-17",
+  "instructions": 8,
+  "pdaAccounts": 10,
+  "unresolvableAccounts": [],
+  "buildsAndSimulates": "6/6",
+  "reportsHonestly": "6/6",
+  "computeVerified": {
+    "make_purchase": 36399,
+    "update_details": 25476,
+    "update_telegram_channel": 25473,
+    "add_product": 27039,
+    "delete_product": 26015
+  },
+  "computeNotConstant": {
+    "mark_as_delivered": "scans the receipts vec, so it moves as the store trades \u2014 34,858 and 34,137 CU measured a day apart, both correct"
+  },
+  "knownDefects": [
+    "make_purchase does not validate `authority` against the store's own account \u2014 the require! guard present in five other instructions is absent here, verified against source. A mainnet transaction exists with source == destination that succeeded.",
+    "The receipts vec caps at 20 and evicts the oldest silently. mark_as_delivered on an evicted id succeeds and does nothing.",
+    "StoreNotEmpty (6005) is declared in the IDL error table and raised nowhere in the program. delete_store closes a store that still lists products."
+  ],
+  "whatThisDoesNotProve": [
+    "A fork is not a compute oracle: the same purchase measured 42,494 CU on a fork and 36,399 on mainnet.",
+    "A score is a photograph. Re-run it after any redeploy."
+  ]
+}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Somewhere to be wrong</title>
+<link rel="stylesheet" href="slide_style.css">
+</head>
+<body>
+<div class="slide">
+  <h1>Somewhere to be wrong</h1>
+  <p class="sub" style="font-size:19px;margin-top:12px;">
+    A coding agent writes, runs the tests, reads the failure, fixes it. An on-chain agent gets a
+    tool list — and the call <em>is</em> the commit. This is the box nothing fills.
+  </p>
+
+  <div class="body" style="margin-top:22px;">
+    <div class="col" style="flex:0 0 620px;">
+
+      <div class="group" style="margin-bottom:16px;">
+        <span class="label">the loop, and who owns each step</span>
+        <div class="loop">
+          <div class="step"><span class="num">1</span><span class="what">author</span>
+            <span class="how">agent writes FDL from <code>get_flow_schema</code></span>
+            <span class="pill theirs">theirs</span></div>
+          <div class="step"><span class="num">2</span><span class="what">validate</span>
+            <span class="how">structure · refs · cycles, no RPC</span>
+            <span class="pill theirs">theirs</span></div>
+          <div class="step"><span class="num">3</span><span class="what">run</span>
+            <span class="how">their engine, our fork, via <code>rpcUrl</code></span>
+            <span class="pill both">composed</span></div>
+          <div class="step"><span class="num">4</span><span class="what">judge</span>
+            <span class="how">address · deltas · provenance · gaps</span>
+            <span class="pill ours">ours</span></div>
+          <div class="step"><span class="num">5</span><span class="what">score</span>
+            <span class="how">build · simulate · honest · reachable · refuses</span>
+            <span class="pill ours">ours</span></div>
+          <div class="step"><span class="num">6</span><span class="what">publish</span>
+            <span class="how">only what scored</span>
+            <span class="pill theirs">theirs</span></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <span class="label">why step 3 needs nobody's permission</span>
+        <div class="code" style="border:0;padding:0;background:transparent;font-size:12.5px;">
+          <span class="c">// simulate_flow, rpcUrl pointed at a host we chose</span><br>
+          <span class="k">default</span>      <span class="s">run succeeded</span> <span class="c">· real blockhash</span><br>
+          <span class="k">devnet</span>       <span class="n">403 Forbidden</span> <span class="c">— devnet refused THEIR egress ip</span><br>
+          <span class="k">unroutable</span>   <span class="n">530 / 1016</span>    <span class="c">— the connection was attempted</span>
+        </div>
+        <p class="sub" style="margin-top:11px;font-size:14.5px;">
+          Their worker calls the RPC it is handed. A builder keeps their agent, their flow, their
+          engine — and gets a free sandbox by typing one parameter.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="col">
+      <div class="codehead">their engine, our fork — measured, nothing landed</div>
+      <div class="code" style="font-size:13.5px;">
+        <span class="c">starting surfpool fork of mainnet …</span><br>
+        <span class="c">fork up at</span> <span class="s">http://127.0.0.1:8899</span><br><br>
+        <span class="k">ran ok</span>             : <span class="s">True</span>   <span class="c">| rpc_calls: 2</span><br>
+        <span class="k">simulation success</span> : <span class="s">True</span><br>
+        <span class="hl"><span class="k">compute units</span>      : <span class="n">42494</span></span><br>
+        <span class="k">receipts PDA</span>       : <span class="s">H7BjEBtan8h1HXeM…QDt5V</span><br>
+        <span class="k">logs[0]</span>            : <span class="c">Program BUYuxRf… invoke [1]</span><br>
+        <span class="k">logs[1]</span>            : <span class="c">Program log: Instruction: MakePurchase</span>
+      </div>
+
+      <div class="callout" style="margin-top:18px;">
+        MAINNET CHARGES 36,399 FOR THE SAME CALL.
+      </div>
+
+      <p class="sub" style="margin-top:14px;font-size:16px;line-height:1.5;">
+        A fork is a <strong style="color:var(--text)">behavioural</strong> sandbox. It will tell you an
+        account was wrong, a seed was wrong, a signer was missing — and it is
+        <strong style="color:var(--text)">not</strong> a compute oracle. A score that reports a fork's
+        compute as mainnet's is doing the exact thing we caught someone else doing.
+      </p>
+
+      <div class="group" style="margin-top:18px;">
+        <span class="label">what the fork cannot excuse</span>
+        <p class="sub" style="font-size:14.5px;margin-top:2px;">
+          A shared fork <strong style="color:var(--text)">ages</strong> — it holds the mainnet state of
+          whenever it started. That timestamp is a field in the score, not a footnote.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="brand">GECKO • CHECK THE CALL BEFORE IT COUNTS</span>
+    <span class="tag">their compiler · their interpreter · our fork · $0 · nothing lands</span>
+  </div>
+</div>
+</body>
+</html>

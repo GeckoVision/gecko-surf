@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gecko-let-me-buy",
+  "version": "0.1.0",
+  "description": "Buy from a Let Me Buy storefront on Solana and confirm delivery, with the traps that the program's IDL does not state.",
+  "author": { "name": "Gecko" },
+  "homepage": "https://geckovision.tech",
+  "license": "Apache-2.0",
+  "keywords": ["solana", "commerce", "storefront", "spl-token", "agent-payments"],
+  "extensions": {
+    "tech.geckovision": {
+      "surface": "let_me_buy",
+      "programId": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+      "graph": "tech.geckovision/graph.json",
+      "score": "tech.geckovision/score.json",
+      "provenanceNote": "Every seed recipe in graph.json carries the tier it was recovered at. `manual` means a human wrote it down and it is pinned by a derived address matching a live mainnet account — never by care."
+    }
+  }
+}

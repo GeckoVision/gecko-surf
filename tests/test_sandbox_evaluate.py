@@ -154,7 +154,29 @@ def test_mode_note_marks_the_result_synthetic() -> None:
 
 def test_sandbox_never_writes_the_corpus() -> None:
     # Control-plane gate (invariant #1): no corpus import / record call site may
-    # ever appear in the sandbox module. Structural, not behavioral — grep the source.
-    src = Path(sandbox.__file__).read_text(encoding="utf-8")
-    assert "corpus.record" not in src
-    assert re.search(r"^\s*(from|import)\s+\S*corpus", src, re.MULTILINE) is None
+    # ever appear in the sandbox package. Structural, not behavioral — grep the source.
+    #
+    # Scans EVERY module in the package, not just `sandbox.__file__`. When
+    # gecko/sandbox.py became gecko/sandbox/ (to make room for the fork sandbox),
+    # `sandbox.__file__` stopped naming the probe engine and started naming a
+    # re-export shim — a gate reading only that file would have gone on passing
+    # while checking nothing. Globbing the package is the same gate, un-bypassed,
+    # and it now covers the surfnet module too.
+    package_dir = Path(sandbox.__file__).parent
+    modules = sorted(package_dir.glob("*.py"))
+    assert {path.name for path in modules} >= {
+        "__init__.py",
+        "cheatcodes.py",
+        "probe.py",
+        "rehearse.py",
+        "surfnet.py",
+        # the rehearsal's MCP tool: named here so the grep provably covers the one
+        # module on this surface an anonymous caller can reach.
+        "try_purchase.py",
+    }
+    for module in modules:
+        src = module.read_text(encoding="utf-8")
+        assert "corpus.record" not in src, module.name
+        assert re.search(r"^\s*(from|import)\s+\S*corpus", src, re.MULTILINE) is None, (
+            module.name
+        )
