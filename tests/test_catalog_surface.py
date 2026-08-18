@@ -65,6 +65,11 @@ def test_surface_lists_the_catalog_tools() -> None:
         # PDAs derived here and bytes built by the catalog's own builder. Unsigned like
         # the rest — pinned in tests/test_prepare_instruction.py.
         "prepare_instruction",
+        # Derivation as a primitive — pinned here because a correct refusal that leaves
+        # the caller to hand-roll a bump loop pushes the guess outside where we can
+        # check it, which is how a valid-looking wrong address gets built.
+        "derive_ata",
+        "derive_pda",
     ]
 
 

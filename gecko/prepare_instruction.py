@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Any, Callable, Literal, Mapping
 
 from .pda import (
+    ConstantPdaSeedNode,
     PdaNode,
     ResolverPdaSeedNode,
     VariablePdaSeedNode,
@@ -35,7 +36,11 @@ from .pda import (
 from .program_graph import ProgramGraph, build_program_graph
 
 __all__ = [
+    "DERIVE_ATA_TOOL",
+    "DERIVE_PDA_TOOL",
     "PREPARE_INSTRUCTION_TOOL",
+    "derive_ata_result",
+    "derive_pda_result",
     "PrepareInstructionRefusal",
     "AccountOrigin",
     "plan_accounts",
@@ -51,8 +56,11 @@ AccountOrigin = Literal["pinned", "derived", "supplied"]
 #: The associated-token program, recognised only to REPORT that a sibling account is an
 #: ATA — never to infer that an unconstrained slot is one.
 ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+#: The legacy SPL Token program — the default a caller means unless they say Token-2022.
+TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 PrepareInstructionRefusal = Literal[
+    "argument-invalid",
     "program-unknown",
     "instruction-unknown",
     "accounts-unresolved",
@@ -191,9 +199,12 @@ def _why_absent(account: Any, instruction: Any, graph: ProgramGraph) -> str:
         node = graph.pdas.get(other.name)
         if node is not None and node.program_id == ATA_PROGRAM:
             return (
-                "not a PDA in this IDL — the caller supplies it. Note that the sibling "
-                f"`{other.name}` IS declared as an associated token account; if this slot "
-                "is the same shape for a different owner, it derives the same way."
+                "not a PDA in this IDL — the caller supplies it. The sibling "
+                f"`{other.name}` IS declared as an associated token account, so if this "
+                "slot is the same shape for a different owner, call `derive_ata` with "
+                "that owner and the mint. DO NOT hand-roll the bump loop: one caller "
+                "did, skipped the on-curve check, and got a valid-looking address at "
+                "bump 255 where the real one was 254."
             )
     return "not a PDA — the caller must supply this address"
 
@@ -271,18 +282,74 @@ def prepare_instruction_result(
             resolved_accounts=resolved,
         )
 
+    # WE FETCH THE BLOCKHASH, so we can state when these bytes STOP BEING LANDABLE.
+    #
+    # Leaving it to the builder costs the caller the one number they need most. A hosted
+    # signer that spends the window loading its own tools between prepare and sign gets a
+    # bare `BlockhashNotFound` and nothing to tell it the cause was TIME. `prepare_purchase`
+    # learned this the hard way and reports a budget; there is no reason the other 4,000+
+    # programs in a catalog should inherit the lesson separately.
+    blockhash: str | None = None
+    last_valid: int | None = None
+    current_height: int | None = None
+    if rpc_call and rpc_url:
+        try:
+            latest = (
+                rpc_call(rpc_url, "getLatestBlockhash", [{"commitment": "finalized"}])
+                .get("result", {})
+                .get("value", {})
+            )
+            blockhash = latest.get("blockhash")
+            last_valid = latest.get("lastValidBlockHeight")
+            current_height = (rpc_call(rpc_url, "getBlockHeight", []) or {}).get(
+                "result"
+            )
+        except Exception:  # noqa: BLE001 - an absent budget is honest; a wrong one is not
+            blockhash = last_valid = current_height = None
+
     try:
-        transaction = build_call(
-            program_id=program_id,
-            instruction=instruction,
-            accounts=resolved,
-            args={name: values[name] for name in declared_args},
-            payer=payer,
-        )
+        build_kwargs: dict[str, Any] = {
+            "program_id": program_id,
+            "instruction": instruction,
+            "accounts": resolved,
+            "args": {name: values[name] for name in declared_args},
+            "payer": payer,
+        }
+        if blockhash:
+            build_kwargs["blockhash"] = blockhash
+        try:
+            transaction = build_call(**build_kwargs)
+        except TypeError:
+            # a builder that does not accept a blockhash fetches its own; the budget is
+            # then unknown, and saying so beats reporting one that is not this tx's
+            build_kwargs.pop("blockhash", None)
+            blockhash = last_valid = current_height = None
+            transaction = build_call(**build_kwargs)
     except Exception as exc:  # noqa: BLE001
         return _refuse(
             "build-failed", f"the builder refused: {type(exc).__name__}: {exc}"
         )
+
+    # THE BINDING IS WHAT MAKES `verify_signed_transaction` REACHABLE HERE.
+    #
+    # Without it that tool only works for one storefront, and every other program in the
+    # catalog loses the ability to prove — AFTER signing, BEFORE broadcast — that the bytes
+    # coming back are the bytes that were checked. That is the strongest safety property on
+    # this surface, and it should not stop at the edge of one program.
+    binding: str | None = None
+    strength: str | None = None
+    try:
+        from .txbind import BindingStrength, message_binding
+
+        # `exact` because these bytes carry OUR blockhash and are the ones that will be
+        # signed. Structural is right when a simulation replaced the blockhash; here it
+        # would bind less than we can honestly bind.
+        chosen: BindingStrength = "exact" if blockhash else "structural"
+        binding = message_binding(transaction, encoding="base64", strength=chosen)
+        strength = chosen
+    except Exception:  # noqa: BLE001 - a binding we cannot compute is absent, not fatal
+        binding = None
+        strength = None
 
     result: dict[str, Any] = {
         "refused": False,
@@ -293,7 +360,36 @@ def prepare_instruction_result(
         "account_origins": origins,
         "derivation_order": list(target.derivation_order),
         "transaction_base64": transaction,
+        "binding": binding,
+        "binding_strength": strength,
+        "next_step": (
+            "sign these exact bytes, then call `verify_signed_transaction` with this "
+            "`binding` BEFORE broadcasting — it catches a signer that returned different "
+            "bytes than the ones checked here."
+            if binding
+            else "no binding could be computed for these bytes; "
+            "`verify_signed_transaction` cannot check them."
+        ),
     }
+    if last_valid is not None:
+        remaining = (
+            None if current_height is None else max(0, last_valid - current_height)
+        )
+        result["expires"] = {
+            "blockhash": blockhash,
+            "last_valid_block_height": last_valid,
+            "current_block_height": current_height,
+            "blocks_remaining": remaining,
+            "seconds_remaining_estimate": (
+                None if remaining is None else round(remaining * 0.4)
+            ),
+            "note": (
+                "these bytes stop being landable once the chain passes "
+                "`last_valid_block_height`. Re-calling this is free. Load your signer's "
+                "tools BEFORE calling it: a cold client can spend the whole budget "
+                "discovering how to sign."
+            ),
+        }
 
     if rpc_call and rpc_url:
         simulation = rpc_call(
@@ -380,3 +476,160 @@ PREPARE_INSTRUCTION_TOOL = {
         "additionalProperties": False,
     },
 }
+
+# ---------------------------------------------------------------------------
+# derivation as a PRIMITIVE
+# ---------------------------------------------------------------------------
+
+DERIVE_ATA_TOOL = {
+    "name": "derive_ata",
+    "description": (
+        "The associated token account for an owner + mint. Use this instead of computing "
+        "it yourself.\n"
+        "\n"
+        "WHY THIS TOOL EXISTS. An agent following a correct refusal hand-rolled this "
+        "derivation, skipped the ed25519 on-curve check, and produced a well-formed WRONG "
+        "address at bump 255 — the real one is 254. Refusing to guess is right; refusing "
+        "in a way that pushes the guess outside where it can be checked is not. The loop "
+        "is subtle, the failure is silent, and nobody should write it twice."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "owner": {
+                "type": "string",
+                "description": "base58 wallet that owns the tokens",
+            },
+            "mint": {"type": "string", "description": "base58 token mint"},
+            "token_program": {
+                "type": "string",
+                "description": (
+                    "base58 token program. Defaults to the legacy SPL Token program; pass "
+                    "the Token-2022 id for a Token-2022 mint — they derive DIFFERENT "
+                    "addresses and only one of them is the account the program expects."
+                ),
+            },
+        },
+        "required": ["owner", "mint"],
+        "additionalProperties": False,
+    },
+}
+
+DERIVE_PDA_TOOL = {
+    "name": "derive_pda",
+    "description": (
+        "Derive a program address from explicit seeds, with the bump found the way the "
+        "runtime finds it — descending from 255 until the result is OFF the ed25519 "
+        "curve. A hand-rolled loop that skips the curve check returns a plausible address "
+        "for an account that cannot exist."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "program_id": {"type": "string"},
+            "seeds": {
+                "type": "array",
+                "description": (
+                    "in order. Each entry is {utf8}, {pubkey}, or {u64|u32|u16|u8} — the "
+                    "integer width MATTERS: the same value at u8 and u64 derives two "
+                    "different valid addresses."
+                ),
+                "items": {"type": "object"},
+            },
+        },
+        "required": ["program_id", "seeds"],
+        "additionalProperties": False,
+    },
+}
+
+
+def derive_ata_result(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """The ATA for owner+mint, derived — never guessed."""
+    args = arguments or {}
+    owner = str(args.get("owner") or "").strip()
+    mint = str(args.get("mint") or "").strip()
+    token_program = str(args.get("token_program") or TOKEN_PROGRAM).strip()
+    if not owner or not mint:
+        return _refuse("argument-missing", "derive_ata needs an `owner` and a `mint`")
+    try:
+        derived = derive_pda(
+            PdaNode(
+                "ata",
+                (
+                    VariablePdaSeedNode("owner", source="account", encoding="pubkey"),
+                    VariablePdaSeedNode(
+                        "token_program", source="account", encoding="pubkey"
+                    ),
+                    VariablePdaSeedNode("mint", source="account", encoding="pubkey"),
+                ),
+                ATA_PROGRAM,
+            ),
+            {"owner": owner, "token_program": token_program, "mint": mint},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _refuse("argument-invalid", f"{type(exc).__name__}: {exc}")
+    return {
+        "refused": False,
+        "address": derived.address,
+        "bump": derived.bump,
+        "owner": owner,
+        "mint": mint,
+        "token_program": token_program,
+        "note": (
+            "the bump is the first value from 255 downward that lands OFF the ed25519 "
+            "curve; a loop that omits that check can return a different, unusable address."
+        ),
+    }
+
+
+def derive_pda_result(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """One program address from explicit, ordered seeds."""
+    args = arguments or {}
+    program_id = str(args.get("program_id") or "").strip()
+    raw_seeds = args.get("seeds")
+    if not program_id or not isinstance(raw_seeds, list) or not raw_seeds:
+        return _refuse(
+            "argument-missing", "derive_pda needs a `program_id` and `seeds`"
+        )
+
+    seeds: list[Any] = []
+    bindings: dict[str, Any] = {}
+    for index, seed in enumerate(raw_seeds):
+        if not isinstance(seed, Mapping) or len(seed) != 1:
+            return _refuse(
+                "argument-invalid",
+                f"seed {index} must be exactly one of "
+                "{utf8|pubkey|u64|u32|u16|u8}: <value>",
+            )
+        kind, value = next(iter(seed.items()))
+        name = f"s{index}"
+        if kind == "utf8":
+            seeds.append(
+                ConstantPdaSeedNode(value=str(value).encode(), encoding="utf8")
+            )
+            continue
+        if kind == "pubkey":
+            seeds.append(VariablePdaSeedNode(name, source="account", encoding="pubkey"))
+            bindings[name] = str(value)
+            continue
+        widths = {"u64": 8, "u32": 4, "u16": 2, "u8": 1}
+        if kind in widths:
+            seeds.append(
+                VariablePdaSeedNode(
+                    name, source="argument", encoding="le", width=widths[kind]
+                )
+            )
+            bindings[name] = int(value)
+            continue
+        return _refuse("argument-invalid", f"seed {index}: unknown kind {kind!r}")
+
+    try:
+        derived = derive_pda(PdaNode("pda", tuple(seeds), program_id), bindings)
+    except Exception as exc:  # noqa: BLE001
+        return _refuse("argument-invalid", f"{type(exc).__name__}: {exc}")
+    return {
+        "refused": False,
+        "address": derived.address,
+        "bump": derived.bump,
+        "program_id": program_id,
+    }

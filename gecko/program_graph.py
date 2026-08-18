@@ -87,6 +87,44 @@ class AccountRef:
     derive_from: tuple[SeedBinding, ...] = ()
     address: str | None = None
 
+    @property
+    def satisfiable(self) -> bool:
+        """True iff a CALLER of this instruction could actually bind every seed.
+
+        NOT the same question as :attr:`resolvable`, and conflating them was a real
+        defect. `resolvable` asks "was a recipe recovered for this account" — a fact about
+        extraction. This asks "can the recipe be SATISFIED from what this instruction
+        offers" — a fact about the caller.
+
+        jurassic_fi's `dust_token_account` is the case that proved they differ: its recipe
+        extracts cleanly — no flagged seed, nothing unresolved in the RECIPE — and building
+        it still fails, because one seed names `dust_authority`, which this instruction
+        does not carry. Comprehension reported "zero flagged gaps" and the build then
+        failed with a missing binding. A surface that says "no gaps" about something that
+        cannot be built from what it offers is making exactly the confident wrong claim
+        this project exists to remove.
+        """
+        return self.resolvable and not any(
+            binding.kind == "unresolved" for binding in self.derive_from
+        )
+
+    @property
+    def caller_must_supply(self) -> tuple[str, ...]:
+        """Seed names this instruction does not bind — the caller passes them in.
+
+        Named for what a caller DOES with them rather than for what is missing. These are
+        exactly the keys `prepare_instruction` expects in `values`, and they are usually
+        read off-chain first (`launch.admin` lives inside the account being derived). Not
+        "impossible": a value with nowhere to come from and a value that comes from a
+        chain read look identical here, and calling both unbindable would overstate the
+        first and understate the second.
+        """
+        return tuple(
+            binding.seed_name
+            for binding in self.derive_from
+            if binding.kind == "unresolved"
+        )
+
 
 @dataclass(frozen=True)
 class InstructionGraph:
@@ -226,6 +264,12 @@ def _account_to_json(acct: AccountRef) -> dict[str, Any]:
         d["address"] = acct.address
     if acct.is_pda:
         d["resolvable"] = acct.resolvable
+        # Emitted BESIDE `resolvable`, never instead of it: one says a recipe was
+        # recovered, the other says a caller of THIS instruction can satisfy it. A
+        # consumer that reads only the first will call an unbuildable account clean.
+        d["satisfiable"] = acct.satisfiable
+        if not acct.satisfiable:
+            d["caller_must_supply"] = list(acct.caller_must_supply)
         d["derive_from"] = [
             {
                 "seed": b.seed_name,

@@ -121,7 +121,15 @@ def orquestra_seams(
         accounts: dict[str, str],
         args: dict[str, Any],
         payer: str,
+        blockhash: str | None = None,
     ) -> str:
+        """``blockhash`` lets the CALLER own the expiry budget.
+
+        When the builder fetches its own, nobody downstream knows when these bytes stop
+        being landable — the caller cannot state a budget for a blockhash it never saw.
+        Passing one in is also what makes a local fork work at all; see
+        :func:`fork_blockhash_provider`.
+        """
         request: dict[str, Any] = {
             "projectId": project_id_for(program_id),
             "instruction": instruction,
@@ -131,7 +139,9 @@ def orquestra_seams(
             "network": network,
             "encoding": "base64",
         }
-        if blockhash_provider is not None:
+        if blockhash is not None:
+            request["recentBlockhash"] = blockhash
+        elif blockhash_provider is not None:
             request["recentBlockhash"] = blockhash_provider()
         try:
             text = mcp.call_tool("build_instruction", request)
