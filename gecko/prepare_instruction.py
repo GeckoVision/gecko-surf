@@ -48,6 +48,10 @@ __all__ = [
 #: ``supplied`` is the caller's claim and is the only one nobody has verified.
 AccountOrigin = Literal["pinned", "derived", "supplied"]
 
+#: The associated-token program, recognised only to REPORT that a sibling account is an
+#: ATA — never to infer that an unconstrained slot is one.
+ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
 PrepareInstructionRefusal = Literal[
     "program-unknown",
     "instruction-unknown",
@@ -98,7 +102,15 @@ def plan_accounts(
     resolved: dict[str, str] = {}
     origins: list[dict[str, str]] = []
     missing: list[dict[str, Any]] = []
+    by_name = {a.name: a for a in target.accounts}
 
+    # PASS 1 — everything that needs no derivation.
+    #
+    # THIS PASS EXISTS BECAUSE IDL ORDER IS NOT DEPENDENCY ORDER. jurassic_fi's
+    # `contribute` lists `payment_vault` (index 5) BEFORE `token_program` (index 6), and
+    # the vault's associated-token recipe seeds on the token program — so a single walk in
+    # IDL order tried to derive the vault while its own seed was still unresolved, and
+    # reported a missing binding for an account the instruction PINS two slots later.
     for account in target.accounts:
         if account.address:
             resolved[account.name] = account.address
@@ -112,22 +124,18 @@ def plan_accounts(
         if account.signer and payer:
             resolved[account.name] = payer
             origins.append({"account": account.name, "origin": "supplied"})
-            continue
-        if not account.is_pda:
-            missing.append(
-                {
-                    "account": account.name,
-                    "why": "not a PDA — the caller must supply this address",
-                    "signer": account.signer,
-                }
-            )
-            continue
 
-        node = graph.pdas.get(account.name)
+    # PASS 2 — derive the PDAs in DEPENDENCY order, which the graph already computed.
+    for name in target.derivation_order:
+        candidate = by_name.get(name)
+        if candidate is None or name in resolved:
+            continue
+        account = candidate
+        node = graph.pdas.get(name)
         if node is None or not account.resolvable:
             missing.append(
                 {
-                    "account": account.name,
+                    "account": name,
                     "why": "the graph flags this recipe unresolvable",
                     "needs": sorted(
                         {b.seed_name for b in account.derive_from if not b.encoding}
@@ -135,24 +143,59 @@ def plan_accounts(
                 }
             )
             continue
-
-        # Seed values come from what the caller holds plus what we have already derived —
-        # which is why derivation_order matters: `user_position` needs `launch` first.
         bindings: dict[str, Any] = {**resolved, **values}
         try:
-            resolved[account.name] = derive_pda(node, bindings).address
+            resolved[name] = derive_pda(node, bindings).address
         except Exception as exc:  # noqa: BLE001 - a failure to derive is an ANSWER
             missing.append(
                 {
-                    "account": account.name,
+                    "account": name,
                     "why": f"{type(exc).__name__}: {exc}",
                     "needs": sorted(_unbound(node, bindings)),
                 }
             )
             continue
-        origins.append({"account": account.name, "origin": "derived"})
+        origins.append({"account": name, "origin": "derived"})
+
+    # PASS 3 — whatever is still absent, named with what it would take.
+    for account in target.accounts:
+        if account.name in resolved or any(
+            m["account"] == account.name for m in missing
+        ):
+            continue
+        missing.append(
+            {
+                "account": account.name,
+                "why": _why_absent(account, target, graph),
+                "signer": account.signer,
+            }
+        )
 
     return resolved, origins, missing
+
+
+def _why_absent(account: Any, instruction: Any, graph: ProgramGraph) -> str:
+    """Why an account could not be filled, said so a caller can act on it.
+
+    For a plain account the IDL does not constrain, "the caller supplies this" is true and
+    thin. When a SIBLING account in the same instruction is declared as an associated
+    token account, that is a fact worth passing on — the caller can decide whether this
+    slot is the same shape. Stated as the sibling's recipe, never as a conclusion about
+    this one: inferring an ATA and deriving it would be the guess this module refuses.
+    """
+    if account.is_pda:
+        return "declared as a PDA but no recipe was recovered for it"
+    for other in instruction.accounts:
+        if other.name == account.name or not other.is_pda:
+            continue
+        node = graph.pdas.get(other.name)
+        if node is not None and node.program_id == ATA_PROGRAM:
+            return (
+                "not a PDA in this IDL — the caller supplies it. Note that the sibling "
+                f"`{other.name}` IS declared as an associated token account; if this slot "
+                "is the same shape for a different owner, it derives the same way."
+            )
+    return "not a PDA — the caller must supply this address"
 
 
 def _unbound(node: PdaNode, bindings: Mapping[str, Any]) -> set[str]:

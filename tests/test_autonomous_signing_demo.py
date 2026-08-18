@@ -446,6 +446,11 @@ def test_surfpool_status_reports_absence_as_a_sentence_not_a_falsy_value(
     assert "NOT run" in status.detail and "NOTHING here was proved" in status.detail
 
 
+# Marked `fork` so `-m "not fork"` can actually deselect it. Without the marker this
+# test starts a validator on a lane meant to be offline, and a fork that boots but then
+# hits a slow or rate-limited upstream fails with a TimeoutError the SurfpoolError skip
+# below cannot catch — a red suite for a leg that simply did not run.
+@pytest.mark.fork
 @pytest.mark.skipif(
     not surfpool_status().available or os.getenv("GECKO_FORK_DEMO") == "0",
     reason=(
