@@ -61,6 +61,10 @@ def test_surface_lists_the_catalog_tools() -> None:
         # somebody else signs, and this proves the signed bytes are the checked ones
         # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.
         "verify_signed_transaction",
+        # The GENERAL form of prepare_purchase: any instruction of any catalog program,
+        # PDAs derived here and bytes built by the catalog's own builder. Unsigned like
+        # the rest — pinned in tests/test_prepare_instruction.py.
+        "prepare_instruction",
     ]
 
 
