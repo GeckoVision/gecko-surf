@@ -102,6 +102,8 @@ IDL: dict[str, Any] = {
     ],
 }
 
+MINT_FOR_ORDER = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
 VALUES = {
     "contributor": BUYER,
     "admin": ADMIN,
@@ -304,3 +306,62 @@ def test_no_program_no_call(program_id: str) -> None:
         build_call=RecordingBuilder(),
     )
     assert result["code"] == "program-unknown"
+
+
+# ---------------------------------------- IDL order is not dependency order
+
+
+def test_a_pinned_account_listed_AFTER_the_pda_that_seeds_on_it_still_resolves() -> (
+    None
+):
+    """Found end-to-end on jurassic_fi, and it is a one-line ordering mistake.
+
+    `contribute` lists `payment_vault` at index 5 and `token_program` at index 6, and the
+    vault's associated-token recipe seeds on the token program. Walking accounts in IDL
+    order tried to derive the vault while its own seed was still unresolved, and reported
+    a missing binding for an account the instruction PINS two slots later.
+
+    The graph already computes `derivation_order`; the fix is to use it. Pinned and
+    supplied accounts resolve first, then PDAs derive in dependency order.
+    """
+    token_program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    idl: dict[str, Any] = {
+        "address": PROGRAM,
+        "metadata": {"spec": "0.1.0"},
+        "instructions": [
+            {
+                "name": "contribute",
+                "args": [],
+                "accounts": [
+                    {"name": "contributor", "signer": True, "writable": True},
+                    {"name": "mint"},
+                    # the vault comes BEFORE the program it seeds on — the real IDL's order
+                    {
+                        "name": "vault",
+                        "writable": True,
+                        "pda": {
+                            "seeds": [
+                                {"kind": "account", "path": "contributor"},
+                                {"kind": "account", "path": "token_program"},
+                                {"kind": "account", "path": "mint"},
+                            ],
+                        },
+                    },
+                    {"name": "token_program", "address": token_program},
+                ],
+            }
+        ],
+        "accounts": [],
+        "types": [],
+    }
+    graph = build_program_graph(idl=idl, program_id=PROGRAM)
+    resolved, origins, missing = plan_accounts(
+        graph, "contribute", {"mint": MINT_FOR_ORDER}, payer=BUYER
+    )
+
+    assert missing == [], f"nothing should be missing: {missing}"
+    assert resolved["token_program"] == token_program
+    assert "vault" in resolved, "the vault must derive from the pinned token program"
+    origin_of = {o["account"]: o["origin"] for o in origins}
+    assert origin_of["vault"] == "derived"
+    assert origin_of["token_program"] == "pinned"

@@ -61,6 +61,54 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# PRE-FLIGHT: never build an image from a tree that is mid-merge.
+#
+# THIS EXISTS BECAUSE IT HAPPENED. On 2026-08-18 an image shipped with
+# `>>>>>>> 756f34c2…` still in gecko/artifact.py, taken from a working tree during
+# the window between a `git pull` and the conflict being resolved. The container
+# crash-looped on `SyntaxError: invalid decimal literal`, CloudFormation was left in
+# UPDATE_IN_PROGRESS, and recovery needed a forced ECS deployment.
+#
+# This script images WHATEVER IS ON DISK. So the check belongs here and nowhere else:
+# a failed local command costs a minute, a crash-looping production image costs an
+# outage. Checked with grep over tracked files rather than `git status`, because a
+# tree can be dirty for good reasons and still be perfectly deployable — it is the
+# CONFLICT MARKERS that are never deployable.
+CONFLICTED=$(git -C "$ENV_SCRIPT_DIR/.." grep -l -E '^(<{7}|>{7}) ' -- '*.py' '*.ts' '*.json' '*.toml' '*.sh' 2>/dev/null || true)
+if [[ -n "$CONFLICTED" ]]; then
+  echo "ERROR: refusing to build — these tracked files still carry merge conflict markers:" >&2
+  echo "$CONFLICTED" | sed 's/^/  - /' >&2
+  echo "" >&2
+  echo "Resolve the merge first. An image built from these crash-loops on import." >&2
+  exit 1
+fi
+
+# And the same failure one layer up: a module that cannot be imported cannot serve.
+# Cheap (a few seconds), catches a syntax error or a bad import anywhere in gecko/,
+# and it is the exact check the crash-looping container failed at runtime.
+if command -v uv >/dev/null 2>&1; then
+  if ! (cd "$ENV_SCRIPT_DIR/.." && uv run python -c "
+import importlib, pkgutil, sys
+import gecko
+bad = []
+for module in pkgutil.walk_packages(gecko.__path__, 'gecko.'):
+    try:
+        importlib.import_module(module.name)
+    except Exception as exc:
+        bad.append(f'{module.name}: {type(exc).__name__}: {exc}')
+if bad:
+    print('\n'.join(bad), file=sys.stderr)
+    sys.exit(1)
+" 2>&1); then
+    echo "" >&2
+    echo "ERROR: refusing to build — the above module(s) do not import." >&2
+    echo "The container would crash-loop on exactly this." >&2
+    exit 1
+  fi
+  echo "==> Pre-flight:  no conflict markers, every gecko module imports"
+fi
+
 echo "==> Region:      $REGION"
 echo "==> Stack:       $STACK_NAME"
 echo "==> Environment: $ENVIRONMENT"
