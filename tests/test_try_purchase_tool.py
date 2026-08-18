@@ -492,6 +492,10 @@ def test_the_tool_lands_a_real_purchase_on_a_real_fork() -> None:
                 "table": 7,
                 "rpc_url": fork.rpc_url,
             },
+            # `try_purchase` is account-gated (it makes this process talk to an endpoint
+            # the caller chose), so the end-to-end probe has to authenticate like a real
+            # client. The gate itself is covered anonymously, one test file down.
+            account="acct_test",
         )
 
     assert out["sandbox"] is True
