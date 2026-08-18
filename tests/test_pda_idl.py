@@ -363,3 +363,60 @@ def test_declaration_order_does_not_decide_which_recipe_wins() -> None:
     idl = _self_referential_idl()
     idl["instructions"] = list(reversed(idl["instructions"]))  # type: ignore[index]
     assert from_anchor_idl(idl)["launch"].resolvable
+
+
+def test_a_fixed_size_byte_array_argument_is_a_bindable_seed() -> None:
+    """`{"array": ["u8", 32]}` is 32 bytes, and 32 bytes are a seed.
+
+    Measured across a live catalogue: after the sibling-recipe and arg-field fixes, only
+    two patterns of unresolvable recipe were left. One is genuinely runtime data read off
+    another account (`pool.base_mint`) and is correctly refused. The other was this — nine
+    recipes refused with "unsupported seed type {'array': ['u8', 32]}", mostly on one
+    program. A fixed-width byte array is passed through verbatim; there is nothing to
+    infer and nothing to guess.
+    """
+    idl = {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "create_order",
+                "args": [{"name": "nonce", "type": {"array": ["u8", 32]}}],
+                "accounts": [
+                    {
+                        "name": "order",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": [111, 114, 100]},
+                                {"kind": "arg", "path": "nonce"},
+                            ]
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    node = from_anchor_idl(idl)["order"]
+    assert node.resolvable, f"a [u8; 32] argument is bindable, got {node.seeds}"
+    _, nonce = node.seeds
+    assert isinstance(nonce, VariablePdaSeedNode)
+    assert nonce.name == "nonce" and nonce.encoding == "bytes"
+
+
+def test_an_array_of_something_other_than_bytes_is_still_refused() -> None:
+    """`[u64; 4]` has an element width and an order we would have to assume. Refuse it."""
+    idl = {
+        "address": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "instructions": [
+            {
+                "name": "x",
+                "args": [{"name": "ids", "type": {"array": ["u64", 4]}}],
+                "accounts": [
+                    {
+                        "name": "thing",
+                        "pda": {"seeds": [{"kind": "arg", "path": "ids"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    assert not from_anchor_idl(idl)["thing"].resolvable

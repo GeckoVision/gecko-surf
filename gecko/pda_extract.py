@@ -354,10 +354,9 @@ def _idl_arg_seed(
         head, _, field = path.partition(".")
         struct = _defined_name(arg_types.get(head))
         declared = _field_type(type_defs or {}, struct, field) if struct else None
-        if isinstance(declared, str):
-            encoded = _idl_scalar_seed(path, declared)
-            if encoded is not None:
-                return encoded
+        encoded = _idl_scalar_seed(path, declared) if declared is not None else None
+        if encoded is not None:
+            return encoded
         return ResolverPdaSeedNode(
             name=head,
             depends_on=(head,),
@@ -368,7 +367,7 @@ def _idl_arg_seed(
             ),
         )
     ty = arg_types.get(path)
-    encoded = _idl_scalar_seed(path, ty) if isinstance(ty, str) else None
+    encoded = _idl_scalar_seed(path, ty)
     if encoded is not None:
         return encoded
     return ResolverPdaSeedNode(
@@ -378,13 +377,25 @@ def _idl_arg_seed(
     )
 
 
-def _idl_scalar_seed(name: str, declared: str) -> PdaSeed | None:
-    """One IDL scalar type -> a bindable seed, or ``None`` when we cannot encode it.
+def _idl_scalar_seed(name: str, declared: Any) -> PdaSeed | None:
+    """One IDL type -> a bindable seed, or ``None`` when we cannot encode it.
 
     Shared by the plain and the dotted argument paths so the two cannot drift: an
     argument and a field of an argument struct are encoded the same way, and the width
     of an integer is read rather than assumed.
     """
+    # A FIXED-SIZE BYTE ARRAY IS ALREADY BYTES. `{"array": ["u8", 32]}` is passed through
+    # verbatim — there is nothing to infer and no order to assume, so refusing it was
+    # refusing something we can do. Any OTHER element type is still refused: `[u64; 4]`
+    # has both a per-element width and an endianness we would have to guess, and a guessed
+    # seed derives a valid address for the wrong account.
+    if isinstance(declared, dict):
+        array = declared.get("array")
+        if isinstance(array, (list, tuple)) and len(array) == 2 and array[0] == "u8":
+            return VariablePdaSeedNode(name, source="argument", encoding="bytes")
+        return None
+    if not isinstance(declared, str):
+        return None
     if declared in _IDL_INT_WIDTHS:
         return VariablePdaSeedNode(
             name, source="argument", encoding="le", width=_IDL_INT_WIDTHS[declared]
