@@ -23,12 +23,13 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from .mcp_client import McpClient, McpError
 
 __all__ = [
     "OrquestraBuildError",
+    "fork_blockhash_provider",
     "ORQUESTRA_MCP_URL",
     "resolve_project_id",
     "orquestra_seams",
@@ -65,9 +66,7 @@ def resolve_project_id(client: McpClient, program_id: str) -> str:
 
 
 def _fetch_idl(project_id: str, *, api_base: str, timeout: int) -> dict[str, Any]:
-    request = urllib.request.Request(
-        f"{api_base}/idl/{project_id}", headers=USER_AGENT
-    )
+    request = urllib.request.Request(f"{api_base}/idl/{project_id}", headers=USER_AGENT)
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         payload = json.loads(response.read())
     idl = payload.get("idl") or payload
@@ -85,11 +84,22 @@ def orquestra_seams(
     network: str = "mainnet-beta",
     timeout: int = 45,
     client: McpClient | None = None,
+    blockhash_provider: Callable[[], str] | None = None,
 ) -> tuple[Any, Any]:
     """Build the ``(idl_fetch, build_call)`` pair `prepare_instruction` expects.
 
     The project id is resolved once on the first call and reused, so a prepare costs one
     search rather than two.
+
+    ``blockhash_provider`` IS WHAT MAKES A LOCAL FORK POSSIBLE. Left unset, the builder
+    fetches a blockhash for ``network`` itself — a mainnet one, which a fork has never
+    seen and rejects with "Blockhash not found". The obvious fix, handing the builder the
+    fork's own ``rpcUrl``, is correctly refused by their SSRF allowlist (a localhost URL
+    is exactly what that allowlist exists to block, and we would not want it relaxed).
+
+    So the blockhash travels the other way: we read it from the fork and pass it as
+    ``recentBlockhash``, which their schema already accepts. Their builder never has to
+    reach our machine, and the allowlist stays as strict as it should be.
     """
     mcp = client or McpClient(mcp_url)
     resolved: dict[str, str] = {}
@@ -100,7 +110,9 @@ def orquestra_seams(
         return resolved[program_id]
 
     def idl_fetch(program_id: str) -> dict[str, Any]:
-        return _fetch_idl(project_id_for(program_id), api_base=api_base, timeout=timeout)
+        return _fetch_idl(
+            project_id_for(program_id), api_base=api_base, timeout=timeout
+        )
 
     def build_call(
         *,
@@ -110,19 +122,19 @@ def orquestra_seams(
         args: dict[str, Any],
         payer: str,
     ) -> str:
+        request: dict[str, Any] = {
+            "projectId": project_id_for(program_id),
+            "instruction": instruction,
+            "accounts": accounts,
+            "args": args,
+            "feePayer": payer,
+            "network": network,
+            "encoding": "base64",
+        }
+        if blockhash_provider is not None:
+            request["recentBlockhash"] = blockhash_provider()
         try:
-            text = mcp.call_tool(
-                "build_instruction",
-                {
-                    "projectId": project_id_for(program_id),
-                    "instruction": instruction,
-                    "accounts": accounts,
-                    "args": args,
-                    "feePayer": payer,
-                    "network": network,
-                    "encoding": "base64",
-                },
-            )
+            text = mcp.call_tool("build_instruction", request)
         except McpError as exc:
             raise OrquestraBuildError(f"the builder refused: {exc}") from exc
         match = _TRANSACTION.search(text)
@@ -134,3 +146,23 @@ def orquestra_seams(
         return match.group(1)
 
     return idl_fetch, build_call
+
+
+def fork_blockhash_provider(rpc_url: str, rpc_call: Any = None) -> Callable[[], str]:
+    """A provider that reads the blockhash from ONE chain — the fork you name.
+
+    Bound to a single url on purpose: a rehearsal that could take its blockhash from
+    somewhere other than the chain it lands on is a rehearsal of nothing.
+    """
+    from .rpc import default_rpc_call
+
+    call = rpc_call or default_rpc_call
+
+    def provider() -> str:
+        result = call(rpc_url, "getLatestBlockhash", [])
+        blockhash = ((result.get("result") or {}).get("value") or {}).get("blockhash")
+        if not blockhash:
+            raise OrquestraBuildError(f"{rpc_url} returned no blockhash")
+        return str(blockhash)
+
+    return provider
