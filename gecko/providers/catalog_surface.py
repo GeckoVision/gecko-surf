@@ -38,11 +38,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..orquestra_client import OrquestraClient, OrquestraClientError
+from ..orquestra_build import orquestra_seams
+from ..prepare_instruction import PREPARE_INSTRUCTION_TOOL, prepare_instruction_result
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
-from ..rpc import RpcCall
+from ..rpc import RpcCall, default_rpc_call
 from ..simulate import BuildCall
 from ..wallet_binding import WalletDirectory
 
@@ -76,6 +78,14 @@ class OrquestraCatalogSurface:
     purchase_build_call: BuildCall | None = None
     purchase_rpc_call: RpcCall | None = None
     wallets: WalletDirectory | None = None
+    #: The two seams `prepare_instruction` needs, built lazily against the catalogue so
+    #: serving stays possible with no network until a tool actually asks for one.
+    instruction_seams: tuple[Any, Any] | None = None
+    #: The RPC the simulation runs against. A FIELD, never an argument: this surface is
+    #: unauthenticated, and a caller-supplied URL would turn it into an SSRF proxy. The
+    #: purchase path solves the same problem with an injected `url_guard`; here there is
+    #: nothing to guard because the caller never gets to choose.
+    instruction_rpc_url: str = "https://api.mainnet-beta.solana.com"
 
     surface_id = "orquestra:catalog"
 
@@ -163,6 +173,10 @@ class OrquestraCatalogSurface:
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
             VERIFY_SIGNED_TOOL,
+            # The general form of `prepare_purchase`: any instruction of any catalog
+            # program, with the PDAs derived here and the bytes built by the catalog's
+            # own builder. Unsigned, like everything else on this surface.
+            PREPARE_INSTRUCTION_TOOL,
         ]
 
     def call_tool(
@@ -184,6 +198,8 @@ class OrquestraCatalogSurface:
             return self._comprehend_program(args)
         if name == "prepare_purchase":
             return self._prepare_purchase(args, account=account)
+        if name == "prepare_instruction":
+            return self._prepare_instruction(args)
         if name == "try_purchase":
             # `account` is passed for a REACHABILITY gate, not a wallet binding: a
             # rehearsal spends nothing of anyone's and its buyer is a keypair born and
@@ -276,6 +292,28 @@ class OrquestraCatalogSurface:
         except (OrquestraClientError, ValueError) as exc:
             out["catalog"] = {"error": str(exc)}
         return out
+
+    def _prepare_instruction(self, args: dict[str, Any]) -> Any:
+        """Derive the accounts here, let the catalogue's own builder encode the bytes.
+
+        That split is the whole point and it is measured: a catalogue holding an IDL can
+        already construct an instruction, but it cannot derive an account whose seed is a
+        field of that same account. Our accounts handed to the catalogue's builder
+        produced a jurassic_fi `contribute` that simulates on mainnet at 21,368 CU.
+
+        The RPC comes from the surface, never from ``args`` — see
+        :attr:`instruction_rpc_url`.
+        """
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, build_call = self.instruction_seams
+        return prepare_instruction_result(
+            args,
+            idl_fetch=idl_fetch,
+            build_call=build_call,
+            rpc_call=self.purchase_rpc_call or default_rpc_call,
+            rpc_url=self.instruction_rpc_url,
+        )
 
     def _prepare_purchase(
         self, args: dict[str, Any], *, account: str | None = None
