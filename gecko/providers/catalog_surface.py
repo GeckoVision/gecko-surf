@@ -264,21 +264,12 @@ class OrquestraCatalogSurface:
 
         if program:
             kind = classify_program_hint(program)
-            if kind == "impossible":
-                # NOT `no_start`. That shape means "nothing matched your intent", and
-                # answering it here would tell an agent the program does not exist when
-                # the string it passed could never have named one.
-                return {
-                    "error": f"invalid project slug {program!r} (alnum/dash only)",
-                    "hint": (
-                        "catalog slugs are opaque ids, so a human name is not a slug and "
-                        "guessing variants cannot succeed. Pass the program's base58 "
-                        "ADDRESS as `program` instead — that is the handle the chain "
-                        "gives you, and it resolves regardless of how the catalog names it."
-                    ),
-                }
             if kind == "address":
-                return self._start_from_address(program, args.get("intent", ""))
+                return self._start_from_address(program, intent)
+            # NOT a refusal. `jurassic_fi` is a bad SLUG and a perfectly good QUERY — the
+            # catalog's own text search accepts free text and finds it. Refusing here (as
+            # this did briefly) told an agent the name was unusable when the catalog would
+            # have answered it. The wired index gets first look; the search is the fallback.
 
         pages = []
         catalog_note = None
@@ -300,7 +291,45 @@ class OrquestraCatalogSurface:
         out = result.to_json()
         if catalog_note:
             out["catalog_note"] = catalog_note
+        # The wired index covers what we have comprehended and two catalog pages of 226,
+        # so a name it does not know is usually a name we have not paged to — not a name
+        # that does not exist. Ask the catalog before saying no.
+        if out.get("no_start") and program:
+            found = self._search_catalog(program)
+            if found:
+                out["catalog_matches"] = found
+                out["hint"] = (
+                    "the catalog knows this name. Call find_start again with `program` "
+                    "set to one of the program_ids below, or pass it straight to "
+                    "`prepare_instruction`."
+                )
         return out
+
+    def _search_catalog(self, query: str) -> list[dict[str, str]]:
+        """Ask the catalog's own text search. Free text — slug shape is irrelevant here."""
+        from ..mcp_client import McpClient, McpError
+        from ..orquestra_build import ORQUESTRA_MCP_URL
+
+        client = self.catalog_mcp or McpClient(ORQUESTRA_MCP_URL)
+        try:
+            text = client.call_tool("search_programs", {"query": query, "limit": 5})
+        except (McpError, OSError):
+            return []
+        matches: list[dict[str, str]] = []
+        name = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- **"):
+                name = stripped[4:].split("**")[0]
+                project = (
+                    stripped.split("projectId: `")[1].split("`")[0]
+                    if "projectId: `" in stripped
+                    else ""
+                )
+                matches.append({"name": name, "project_id": project, "program_id": ""})
+            elif stripped.startswith("Program: `") and matches:
+                matches[-1]["program_id"] = stripped.split("`")[1]
+        return [m for m in matches if m["name"]]
 
     def _list_programs(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..provider_config import load_packaged_provider
@@ -362,19 +391,40 @@ class OrquestraCatalogSurface:
                 "program_id": program_id,
                 "reason": f"the catalog does not index {program_id}: {exc}",
             }
-        return {
+        answer: dict[str, Any] = {
             "program_id": program_id,
             "project_id": project_id,
             "intent": intent,
-            "next": {
+        }
+        # ONLY NAME A TOOL THIS SURFACE ACTUALLY EXPOSES. A live agent followed this
+        # pointer to `prepare_instruction` and could not find it — its client was holding
+        # a stale tool list, but the pointer had no business being unconditional either.
+        # `find_start` exists to tell an agent where to start; a confident pointer at a
+        # tool that is not there is worse than no pointer, because the agent either fails
+        # or starts hand-rolling the instruction, which is the whole thing we prevent.
+        offered = {tool["name"] for tool in self.list_tools()}
+        if "prepare_instruction" in offered:
+            answer["next"] = {
                 "tool": "prepare_instruction",
                 "why": (
-                    "this program is in the catalog. `prepare_instruction` takes the "
-                    "program_id directly — it derives every PDA, builds the bytes, and "
-                    "simulates, or names what it cannot resolve."
+                    "takes the program_id directly — derives every PDA, builds the bytes "
+                    "through the catalog's own builder, and simulates, or names what it "
+                    "cannot resolve."
                 ),
-            },
-        }
+            }
+        else:
+            answer["next"] = {
+                "tool": "comprehend_program",
+                "with": {"project": project_id},
+                "why": (
+                    "this mount does not offer `prepare_instruction`, so it cannot build "
+                    "the transaction. `comprehend_program` returns the PDA recipes and "
+                    "provenance; the instruction encoding (discriminator, argument "
+                    "layout) is NOT included and must not be hand-rolled."
+                ),
+                "available_here": sorted(offered),
+            }
+        return answer
 
     def _prepare_instruction(self, args: dict[str, Any]) -> Any:
         """Derive the accounts here, let the catalogue's own builder encode the bytes.
@@ -427,7 +477,28 @@ class OrquestraCatalogSurface:
         try:
             surface = self._catalog_client().fetch_surface(project)
             result = comprehend_project(surface, api_id=api_id)
-        except (OrquestraClientError, ComprehendError) as exc:
+        except OrquestraClientError as exc:
+            # A 404 here means the catalog has no project under that identifier — which is
+            # an ANSWER, not a transport failure, and reads very differently to an agent.
+            # The raw "GET …/api/deaton/pda failed: HTTP Error 404" leaked a URL and left a
+            # live agent unable to tell "no such program" from "the catalog is down".
+            if "404" in str(exc):
+                return {
+                    "not_found": True,
+                    "project": project,
+                    "reason": (
+                        f"the catalog has no project under {project!r}. This tool takes a "
+                        "catalog slug or project id, NOT a human name, a token ticker or "
+                        "a program address."
+                    ),
+                    "hint": (
+                        "if you have the program's base58 ADDRESS, pass it to `find_start` "
+                        "as `program` — that resolves without needing the slug. If you "
+                        "only have a name, `find_start` will search the catalog for it."
+                    ),
+                }
+            return {"error": str(exc)}
+        except ComprehendError as exc:
             return {"error": str(exc)}
         return {
             "config": result.config,
