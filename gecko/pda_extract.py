@@ -40,6 +40,9 @@ __all__ = [
     "extract_seed_consts",
     "from_source",
     "from_anchor_idl",
+    "instruction_pdas",
+    "blocked_only_on_itself",
+    "only_untyped_seeds",
     "merge_pda_nodes",
     "merge_pda_nodes_with_origin",
 ]
@@ -518,6 +521,81 @@ def _idl_pda_program(
     return None
 
 
+def only_untyped_seeds(node: PdaNode) -> bool:
+    """True iff every seed this recipe cannot resolve is one it could not TYPE.
+
+    A resolver whose ``depends_on`` is exactly the thing it names — ``store_name``
+    depending on ``store_name`` — is not a dependency on data elsewhere. It is this
+    extractor saying "I know which value goes here and could not work out its encoding",
+    which happens when an instruction's IDL spells the seed differently from the arg
+    (``mark_as_delivered`` seeds on ``store_name`` while its arg is ``_store_name``,
+    Rust's unused-parameter convention copied verbatim).
+
+    That is a different thing from a seed reading another account, and it must not be
+    treated as a competing recipe: a sibling that typed the same seed has the SAME recipe,
+    better extracted. Keeping the untyped one instead would let one instruction's spelling
+    quirk make an account undecidable program-wide.
+    """
+    blockers = [s for s in node.seeds if isinstance(s, ResolverPdaSeedNode)]
+    return bool(blockers) and all(s.depends_on == (s.name,) for s in blockers)
+
+
+def blocked_only_on_itself(node: PdaNode) -> bool:
+    """True iff the only thing stopping this recipe is a read of the account it derives.
+
+    A seed like `launch.admin` inside the `launch` PDA is a dead end no caller can ever
+    open — the value lives in the account you are trying to address. It is also *safe* to
+    replace with a sibling instruction's recipe, because the program's own `seeds`
+    constraint proves the two agree: it re-derives the address from the stored fields and
+    rejects the transaction if it differs.
+
+    A seed reading a DIFFERENT account (`bonding_curve.creator` inside `creator_vault`) is
+    not that. It is real information the caller must supply, nothing proves a sibling's
+    input carries the same value, and silently swapping in the sibling's recipe would
+    report a derivable address where the caller has no way to compute one.
+    """
+    blockers = [s for s in node.seeds if isinstance(s, ResolverPdaSeedNode)]
+    return bool(blockers) and all(
+        s.depends_on and set(s.depends_on) <= {node.name} for s in blockers
+    )
+
+
+def instruction_pdas(
+    ix: dict[str, Any], *, program_id: Any, type_defs: dict[str, Any]
+) -> dict[str, PdaNode]:
+    """Every PDA recipe ONE instruction declares, keyed by account name.
+
+    A recipe belongs to an (instruction, account) pair, not to an account name: Orca's
+    whirlpool is seeded on a `tick_spacing` ARG by `initialize_pool` and on an
+    adaptive-fee-tier ACCOUNT READ by `initialize_pool_with_adaptive_fee`, and both are
+    correct. Callers that can keep them apart should — see `build_program_graph`, which
+    gives each instruction the recipe it actually declares.
+    """
+    arg_types = {a.get("name"): a.get("type") for a in ix.get("args", [])}
+    # accounts whose address the IDL pins (e.g. a fee/metadata program passed as
+    # an account) — these resolve an `account`-kind pda.program to a real id.
+    pinned = {
+        str(a.get("name")): str(a.get("address"))
+        for a in ix.get("accounts", [])
+        if isinstance(a, dict) and a.get("address")
+    }
+    found: dict[str, PdaNode] = {}
+    for acct in ix.get("accounts", []):
+        pda = acct.get("pda")
+        name = acct.get("name")
+        if not pda or not name:
+            continue
+        seeds = tuple(_idl_seed(s, arg_types, type_defs) for s in pda.get("seeds", []))
+        if not seeds:
+            continue
+        found[name] = PdaNode(
+            name=name,
+            seeds=seeds,
+            program_id=_idl_pda_program(pda, pinned, program_id),
+        )
+    return found
+
+
 def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     """Anchor 0.30+ IDL -> ``{account_name: PdaNode}`` for every account that carries
     a ``pda.seeds`` block.
@@ -543,29 +621,9 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
     }
     nodes: dict[str, PdaNode] = {}
     for ix in idl.get("instructions", []):
-        arg_types = {a.get("name"): a.get("type") for a in ix.get("args", [])}
-        # accounts whose address the IDL pins (e.g. a fee/metadata program passed as
-        # an account) — these resolve an `account`-kind pda.program to a real id.
-        pinned = {
-            str(a.get("name")): str(a.get("address"))
-            for a in ix.get("accounts", [])
-            if isinstance(a, dict) and a.get("address")
-        }
-        for acct in ix.get("accounts", []):
-            pda = acct.get("pda")
-            name = acct.get("name")
-            if not pda or not name:
-                continue
-            seeds = tuple(
-                _idl_seed(s, arg_types, type_defs) for s in pda.get("seeds", [])
-            )
-            if not seeds:
-                continue
-            candidate = PdaNode(
-                name=name,
-                seeds=seeds,
-                program_id=_idl_pda_program(pda, pinned, program_id),
-            )
+        for name, candidate in instruction_pdas(
+            ix, program_id=program_id, type_defs=type_defs
+        ).items():
             existing = nodes.get(name)
             # A RESOLVABLE DECLARATION BEATS AN UNRESOLVABLE ONE, WHATEVER THE ORDER.
             #
@@ -580,9 +638,31 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
             # This used to keep whichever declaration came first, and the IDL happens to
             # list `claim` first. That discarded the only usable recipe in the program and
             # took six instructions down with it, since `user_position`, `payment_vault`
-            # and `token_vault` all seed on `launch`. Order is not evidence. A recipe whose
-            # seeds can actually be bound is.
-            if existing is None or (not existing.resolvable and candidate.resolvable):
+            # and `token_vault` all seed on `launch`. Order is not evidence.
+            #
+            # But "resolvable wins" is too strong, and pump.fun shows why: nine
+            # instructions seed `creator_vault` on `bonding_curve.creator`, while
+            # `collect_creator_fee` seeds it on a plain `creator` account it happens to
+            # take. Promoting that recipe would report the PDA as cleanly derivable to a
+            # `buy` caller, who has no `creator` account at all. So the promotion is
+            # allowed only over a SELF-REFERENTIAL dead end — see
+            # :func:`blocked_only_on_itself`.
+            if existing is None:
+                nodes[name] = candidate
+            elif blocked_only_on_itself(existing) and candidate.resolvable:
+                nodes[name] = candidate  # the dead end, replaced by its proven twin
+            elif blocked_only_on_itself(candidate) and existing.resolvable:
+                pass  # the same pair, declared the other way round
+            elif only_untyped_seeds(existing) and candidate.resolvable:
+                nodes[name] = candidate  # same recipe, this one typed the seed
+            elif only_untyped_seeds(candidate) and existing.resolvable:
+                pass  # same recipe, the one already held typed the seed
+            elif existing.resolvable and not candidate.resolvable:
+                # Two genuinely different recipes, and this model holds one node per
+                # account name for the whole program — so it cannot be both. Keep the
+                # flagged one: understating what a single instruction can derive costs a
+                # caller a chain read, while overstating it hands them an address they
+                # have no way to compute. The gap it reports (`depends_on`) is real.
                 nodes[name] = candidate
     return nodes
 

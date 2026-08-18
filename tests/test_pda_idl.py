@@ -358,6 +358,81 @@ def test_a_resolvable_sibling_recipe_beats_a_self_referential_one() -> None:
     assert isinstance(launch_id, (VariablePdaSeedNode, ResolverPdaSeedNode))
 
 
+def _foreign_account_read_idl() -> dict[str, object]:
+    """pump.fun's shape: the same PDA, blocked on a read of a DIFFERENT account.
+
+    Nine instructions seed `creator_vault` on `bonding_curve.creator` — data inside a
+    bonding curve, not inside the vault being derived. `collect_creator_fee` seeds it on a
+    plain `creator` account, which that instruction happens to take and `buy` does not.
+    """
+    return {
+        "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "instructions": [
+            {
+                "name": "buy",
+                "args": [],
+                "accounts": [
+                    {"name": "bonding_curve"},
+                    {
+                        "name": "creator_vault",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": list(b"creator-vault")},
+                                {
+                                    "kind": "account",
+                                    "path": "bonding_curve.creator",
+                                    "account": "BondingCurve",
+                                },
+                            ]
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "collect_creator_fee",
+                "args": [],
+                "accounts": [
+                    {"name": "creator"},
+                    {
+                        "name": "creator_vault",
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": list(b"creator-vault")},
+                                {"kind": "account", "path": "creator"},
+                            ]
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def test_a_sibling_recipe_does_not_win_over_a_read_of_another_account() -> None:
+    """The limit on the rule above, and pump.fun is the case that sets it.
+
+    Promoting `collect_creator_fee`'s recipe program-wide would report `creator_vault` as
+    cleanly derivable to a `buy` caller — who has no `creator` account in that instruction
+    at all, and no way to compute one. Unlike the self-referential case, nothing proves the
+    two inputs carry the same value: `creator` is a caller-supplied account the program
+    checks, not a field the seeds constraint pins.
+
+    So `buy` keeps an honest flagged resolver naming `bonding_curve`, which is a real gap a
+    caller can close with a chain read, rather than a derivable-looking wrong answer.
+    """
+    for idl in (_foreign_account_read_idl(), None):
+        if idl is None:  # and the same answer with the instructions the other way round
+            idl = _foreign_account_read_idl()
+            idl["instructions"] = list(reversed(idl["instructions"]))  # type: ignore[index]
+        vault = from_anchor_idl(idl)["creator_vault"]
+        assert not vault.resolvable, (
+            "a recipe blocked on ANOTHER account's data must stay flagged, "
+            f"got seeds {vault.seeds}"
+        )
+        blocker = next(s for s in vault.seeds if isinstance(s, ResolverPdaSeedNode))
+        assert blocker.depends_on == ("bonding_curve",)
+
+
 def test_declaration_order_does_not_decide_which_recipe_wins() -> None:
     """The same IDL with the instructions the other way round must give the same answer."""
     idl = _self_referential_idl()

@@ -277,7 +277,13 @@ def test_an_idl_seed_kind_is_refused_by_his_encoder() -> None:
 def test_the_fake_context_refuses_a_project_it_was_not_given() -> None:
     """A fake that answered `null` here would be indistinguishable from a real
     registry miss, and one that answered the IDL for any id would let a flow name
-    the wrong project and pass. It names the key it was asked for instead."""
+    the wrong project and pass. It names the key it was asked for instead.
+
+    The surface that refuses moved upstream on 2026-08-17: `fetchProjectIdl` now
+    resolves visibility against D1 BEFORE any cache read (checking it only on the
+    D1 fallback served a cached private IDL to anyone), so an unknown project id
+    is refused at the `projects` row and never reaches the KV registry.
+    """
     outcome = run_fdl(
         make_purchase_doc(),
         {
@@ -294,7 +300,9 @@ def test_the_fake_context_refuses_a_project_it_was_not_given() -> None:
 
     assert not outcome.ok
     assert outcome.error is not None
-    assert 'ctx.idls.get("project:not-a-registered-project")' in outcome.error.message
+    assert (
+        'FROM projects WHERE id = "not-a-registered-project"' in outcome.error.message
+    )
     assert outcome.error.node_id == "ix_make_purchase"
     # The pure PDA stratum still ran, so the failure is provably the registry read.
     assert outcome.node_outputs["pda_receipts"]["address"] == JONASBAR_RECEIPTS
@@ -325,7 +333,10 @@ def test_the_fake_context_has_no_d1_and_says_so() -> None:
 
     assert not outcome.ok
     assert outcome.error is not None
-    assert outcome.error.message.startswith("ctx.db.prepare was read")
+    # The fake now serves one D1 statement (the project-visibility read), so the
+    # tripwire quotes the statement it refused rather than just naming the binding.
+    assert outcome.error.message.startswith("ctx.db.prepare(")
+    assert "protocol_descriptors" in outcome.error.message
     assert outcome.error.node_id == "fee"
 
 
