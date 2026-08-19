@@ -1632,7 +1632,19 @@ def find_start(
             # distinguishing terms. One shared noun is not evidence — "get me out of
             # hyUSD into USDC" matched metadao/fund on the single word "usdc" and was
             # served as a plan to run.
-            named = bool(matched & _identity_terms(card))
+            # Naming an action is not describing a task. `named` used to be sufficient
+            # on its own, and it served "buy a house" as pumpfun.buy on why=('buy',) —
+            # along with "sell my car", "deliver my mail" and "swap my shift with a
+            # coworker", 6 of the golden set's 12 out-of-scope rows, every one of them
+            # matching a single word that was the instruction's own name.
+            #
+            # The verb says what to do and says nothing about WHAT is acted on, so a
+            # runnable start now needs one matched term BEYOND the name. Note what could
+            # not have fixed this: "swap my shift with a coworker" and "swap sol for usdc"
+            # match the identical term set {swap}. No rule over the MATCHED words separates
+            # them — the evidence is in what the caller said beyond the verb.
+            identity = _identity_terms(card)
+            named = bool(matched & identity) and bool(matched - identity)
             corroborated = len(matched & distinguishing) >= 2
             # Only RUNNABLE cards are gated. A `surface` card already says "start from
             # this program's derive tools", which is a hedge, not a plan — demoting it

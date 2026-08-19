@@ -154,11 +154,15 @@ def test_cli_find_start_prints_the_ranked_start_legibly(capsys) -> None:
 
 
 def test_cli_find_start_json_round_trips(capsys) -> None:
-    code = find_start_main(["swap sol for usdc", "--json"])
+    # Was "swap sol for usdc" until 2026-08-19; that intent is now a documented casualty
+    # of the identity-term gate (meteora's card describes its implementation, not the
+    # task). This test is about JSON round-tripping, so it uses an intent that still
+    # routes rather than pinning the regression twice.
+    code = find_start_main(["stake my tokens on ore", "--json"])
     out = capsys.readouterr().out
     assert code == 0
     payload = json.loads(out)
-    assert payload["starts"][0]["program"] == "meteora"
+    assert payload["starts"][0]["program"] == "ore"
 
 
 def test_cli_find_start_no_start_exits_1_and_says_so(capsys) -> None:
@@ -175,27 +179,33 @@ def test_the_cli_exit_code_is_a_two_sided_falsifier_at_the_production_limit(
     """R-4. PR-7's DoD was unsatisfiable as written; THIS is the falsifier it has.
 
     The exit code is only evidence if it can come out both ways for the reason claimed.
-    It can, and the discriminating pair is deliberately awkward: ``buy a house`` is an
-    out-of-scope intent that CLEARS the floor and exits 0, while ``flumbuzzle the quantum
-    wombat`` finds nothing and exits 1. So the code tracks "did anything clear the floor",
-    which is not the same as "was the answer right" — ``buy a house`` exiting 0 is one of
-    the 8 authored false accepts, not a success.
 
-    Also pins that the CLI falsifies at PRODUCTION depth, checked behaviourally rather
-    than by reading the argparse literal. ``exchange tokens at the best rate on meteora``
-    is limit-sensitive: the router refuses it at 5 and serves a start at 10. Running it
-    with no ``--limit`` must therefore exit 1 — the shallow answer. A falsifier read at a
-    depth no agent is given would prove nothing about the agent's experience.
+    The pair used to be deliberately awkward: ``buy a house`` was an OUT-OF-SCOPE intent
+    that cleared the floor and exited 0, and this docstring called that "one of the 8
+    authored false accepts, not a success". On 2026-08-19 the identity-term gate closed
+    it — ``buy a house`` now exits 1 — so the 0 side moves to an in-scope intent and the
+    pair stops being awkward. Recorded rather than quietly swapped: the old pair was
+    documenting a defect, and the defect is gone.
+
+    The production-depth half went with it. It rested on ``exchange tokens at the best
+    rate on meteora`` being limit-sensitive — refused at 5, served at 10. No row in the
+    golden set is limit-sensitive any more (checked directly, and
+    ``test_the_router_refuses_at_serve_limit_what_it_serves_at_eval_limit`` records the
+    same closure from the other side), so the property cannot be pinned behaviourally
+    today. It is asserted here as an invariant instead: a row refused at the default depth
+    must stay refused when the caller looks deeper, because a floor that depends on how
+    hard you look is not a floor.
     """
-    assert find_start_main(["buy a house"]) == 0
+    assert find_start_main(["buy a beer"]) == 0
     capsys.readouterr()
     assert find_start_main(["flumbuzzle the quantum wombat"]) == 1
     capsys.readouterr()
-
-    limit_sensitive = "exchange tokens at the best rate on meteora"
-    assert find_start_main([limit_sensitive]) == 1, "the default must serve depth 5"
+    # the former false accept, now the second falsifying side
+    assert find_start_main(["buy a house"]) == 1
     capsys.readouterr()
-    assert find_start_main([limit_sensitive, "--limit", "10"]) == 0
+
+    # depth must not rescue a refusal
+    assert find_start_main(["buy a house", "--limit", "10"]) == 1
     capsys.readouterr()
 
 
