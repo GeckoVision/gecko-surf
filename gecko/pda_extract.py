@@ -22,8 +22,9 @@ data model — we never execute the source.
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
+from .idl_layout import LayoutError, account_discriminator, field_layout
 from .pda import (
     ConstantPdaSeedNode,
     OrderedPairPdaSeedNode,
@@ -464,10 +465,47 @@ def _idl_const_seed(seed: dict[str, Any]) -> PdaSeed:
     )
 
 
+def _read_recipe(seed: dict[str, Any], layout_idl: Mapping[str, Any] | None) -> Any:
+    """The pure-data recipe for reading a dotted account seed off-chain, or ``None``.
+
+    An Anchor IDL seed entry names the struct the field is read from —
+    ``{"kind": "account", "path": "launch.admin", "account": "Launch"}`` — and we used to
+    read ``path`` and discard ``account``. That key is what turns "runtime data" into a
+    mechanical read: 98% of dotted account seeds in the catalogue carry it.
+
+    ``None`` on any doubt. A recipe that cannot be computed is not approximated, because a
+    wrong offset decodes a wrong value and a wrong value derives a real, correctly
+    formatted, WRONG address. Returning nothing leaves the seed exactly as honest as it
+    was.
+    """
+    if layout_idl is None:
+        return None
+    account_type = seed.get("account")
+    path = str(seed.get("path", ""))
+    if not isinstance(account_type, str) or "." not in path:
+        return None
+    head, _, field = path.partition(".")
+    if "." in field:  # a nested path — one hop is all the layout can answer
+        return None
+    try:
+        layout = field_layout(layout_idl, account_type, field)
+        discriminator = account_discriminator(layout_idl, account_type)
+    except LayoutError:
+        return None
+    return {
+        "read": head,
+        "account_type": account_type,
+        "field": field,
+        **layout,
+        "discriminator": list(discriminator),
+    }
+
+
 def _idl_seed(
     seed: dict[str, Any],
     arg_types: dict[str, Any],
     type_defs: dict[str, Any] | None = None,
+    layout_idl: Mapping[str, Any] | None = None,
 ) -> PdaSeed:
     """One Anchor-IDL seed entry -> a PdaSeed."""
     kind = seed.get("kind")
@@ -479,10 +517,19 @@ def _idl_seed(
             head, _, field = path.partition(".")
             # named after the FIELD whose value fills the seed (`creator` for
             # `bonding_curve.creator`), depending on the account it is read from.
+            recipe = _read_recipe(seed, layout_idl)
             return ResolverPdaSeedNode(
                 name=field.split(".", 1)[0] or head,
                 depends_on=(head,),
-                reason=f"account field seed {path!r} — runtime data",
+                reason=(
+                    f"account field seed {path!r} — read it from the "
+                    f"{recipe['account_type']} account at byte {recipe['offset']}"
+                    if recipe
+                    else f"account field seed {path!r} — runtime data"
+                ),
+                # A recipe for HOW to read the value is not the value: the node stays
+                # unresolvable, and a resolver still has to go and read it.
+                resolve=recipe,
             )
         return VariablePdaSeedNode(path, source="account", encoding="pubkey")
     if kind == "arg":
@@ -561,7 +608,11 @@ def blocked_only_on_itself(node: PdaNode) -> bool:
 
 
 def instruction_pdas(
-    ix: dict[str, Any], *, program_id: Any, type_defs: dict[str, Any]
+    ix: dict[str, Any],
+    *,
+    program_id: Any,
+    type_defs: dict[str, Any],
+    layout_idl: Mapping[str, Any] | None = None,
 ) -> dict[str, PdaNode]:
     """Every PDA recipe ONE instruction declares, keyed by account name.
 
@@ -585,7 +636,9 @@ def instruction_pdas(
         name = acct.get("name")
         if not pda or not name:
             continue
-        seeds = tuple(_idl_seed(s, arg_types, type_defs) for s in pda.get("seeds", []))
+        seeds = tuple(
+            _idl_seed(s, arg_types, type_defs, layout_idl) for s in pda.get("seeds", [])
+        )
         if not seeds:
             continue
         found[name] = PdaNode(
