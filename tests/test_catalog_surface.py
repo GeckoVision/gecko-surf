@@ -44,6 +44,13 @@ def _surface(extra: dict[str, bytes] | None = None) -> OrquestraCatalogSurface:
 def test_surface_lists_the_catalog_tools() -> None:
     names = [t["name"] for t in _surface().list_tools()]
     assert names == [
+        # `start` leads: it is the one an agent should reach for, and the order of a tool
+        # list is part of its interface. Same routing as find_start, projected to the ONE
+        # call being made — pinned in tests/test_start_view.py.
+        "start",
+        # Kept, not replaced. find_start returns every candidate's FULL derive plan, which
+        # is what you want when comparing them and about three quarters of the answer when
+        # you are not.
         "find_start",
         "list_programs",
         "comprehend_program",

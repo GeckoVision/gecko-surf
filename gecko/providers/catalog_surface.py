@@ -198,6 +198,9 @@ class OrquestraCatalogSurface:
 
     def list_tools(self, **_kwargs: Any) -> list[dict[str, Any]]:
         return [
+            # `start` first: it is the one an agent should reach for, and the order a
+            # tool list is read in is part of its interface.
+            _START_TOOL,
             _FIND_START_TOOL,
             _LIST_PROGRAMS_TOOL,
             _COMPREHEND_TOOL,
@@ -240,6 +243,8 @@ class OrquestraCatalogSurface:
         unauthenticated, so it has no account to pass and every call is mode A.
         """
         args = arguments or {}
+        if name == "start":
+            return self._start(args)
         if name == "find_start":
             return self._find_start(args)
         if name == "list_programs":
@@ -276,6 +281,18 @@ class OrquestraCatalogSurface:
         return {"error": f"unknown tool {name!r}"}
 
     # -- tools --------------------------------------------------------------
+
+    def _start(self, args: dict[str, Any]) -> dict[str, Any]:
+        """`start` is `find_start`, projected. It deliberately reuses the whole handler
+        rather than re-deriving anything: the catalog ride-along, its honest-degraded
+        note and every refusal path are the same code, so the two tools cannot disagree
+        about what the router decided."""
+        from ..start_view import project_start
+
+        rendered = self._find_start(args)
+        if "starts" not in rendered:
+            return rendered  # an error dict — pass it through untouched
+        return project_start(rendered)
 
     def _find_start(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..find_start import find_start
@@ -635,6 +652,33 @@ _FIND_START_TOOL = {
         "additionalProperties": False,
     },
 }
+
+_START_TOOL = {
+    "name": "start",
+    "description": (
+        "The same routing as `find_start`, projected to the ONE call you are about "
+        "to make. You get the chosen start in full — the dependency-ordered derive "
+        "plan, every account's provenance tag, the DECLARED preludes, the honest "
+        "flagged gaps, the execute pointer — and the runners-up as names, scores and "
+        "what they matched on, with no plans attached. A derive plan is a plan to "
+        "CALL something, and you do not plan a call you are not making: `find_start` "
+        "spends about three quarters of its answer on candidates it has itself ruled "
+        "below the floor. Same floor, same refusals: when nothing is runnable you get "
+        "`start: null` and the closest GUESSES, never a fabricated match. Use "
+        "`find_start` instead when you want every candidate's full plan to compare. "
+        "Returns plans and pointers only — never signs or broadcasts."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "program": {"type": "string", "description": "optional program hint"},
+        },
+        "required": ["intent"],
+        "additionalProperties": False,
+    },
+}
+
 
 _LIST_PROGRAMS_TOOL = {
     "name": "list_programs",
