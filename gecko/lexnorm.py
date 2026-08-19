@@ -37,9 +37,28 @@ __all__ = [
 # truth: :mod:`gecko.find_start` used to declare its own copy and the catalog scorer had
 # none at all, which is exactly how function words came to decide a ranking.
 STOPWORDS = frozenset(
-    "a an and are as at be by can do does for from get give had has have how i if in "
-    "into is it me much my of on or our please should some that the then this to want "
-    "was we what when where which who why will with would you your".split()
+    (
+        "a an and are as at be by can do does for from get give had has have how i if in "
+        "into is it me much my of on or our please should some that the then this to want "
+        "was we what when where which who why will with would you your "
+        # Added 2026-08-19 after a measured miss: "swap one token for another" routed to
+        # let_me_buy.make_purchase because `one` scored alongside `token` and outvoted
+        # meteora's `swap`. Document frequency cannot catch a word like this — `one` is
+        # rare enough across cards to look distinguishing. It is not a rare term, it is a
+        # function word, so it is excluded by CLASS, not by count.
+        #
+        # Determiners, pronouns, quantifiers, conjunctions and degree adverbs only. Every
+        # word here was checked against the identity terms (program + instruction names)
+        # of all wired cards and collides with none. Directional prepositions are
+        # deliberately NOT here: "out", "up", "over" and their kin can carry real meaning
+        # on a financial surface ("cash out", "top up"), and dropping them would trade
+        # this bug for a quieter one.
+        "one another any anything something anyone someone these those there they them "
+        "their its am been being but nor not than too very just really also only ever "
+        "again still yet such own same other others each every either neither none few "
+        "many most more less all both here now while because so however therefore thing "
+        "things way ways lot lots kind sort about"
+    ).split()
 )
 
 # Doubled endings that are part of the stem, not a doubling introduced by the suffix:

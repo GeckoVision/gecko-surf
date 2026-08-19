@@ -470,3 +470,36 @@ def test_no_start_point_instructs_the_agent_to_pass_something_it_cannot() -> Non
     assert "Supply chain_verdicts" not in blob, (
         "the result tells an agent to pass a parameter the tool does not accept"
     )
+
+
+def test_a_function_word_does_not_outrank_the_verb_that_names_the_capability() -> None:
+    """Measured live, 2026-08-19: "swap one token for another" routed to
+    ``let_me_buy.make_purchase``, because ``one`` and ``token`` both scored and beat
+    ``meteora.swap``'s single ``swap``. Dropping the word ``one`` from the same sentence
+    returned the right program — so a filler word was outvoting the verb.
+
+    Document frequency (``_distinguishing_terms``) cannot catch this: ``one`` is rare
+    enough across cards to look distinguishing. It is not a rare term, it is a function
+    word, and function words are excluded by class rather than by count.
+    """
+    result = find_start("swap one token for another", limit=3)
+
+    top = result.starts[0]
+    assert top.program == "meteora", (
+        f"a filler word still outranks the verb: {top.program}.{top.instruction} "
+        f"won on {top.why}"
+    )
+    assert "one" not in top.why
+    assert "another" not in top.why
+
+
+def test_dropping_a_filler_word_does_not_change_the_answer() -> None:
+    """The same intent with and without its filler words must route identically —
+    otherwise the ranking is reading English grammar as evidence about Solana."""
+    with_filler = find_start("swap one token for another", limit=1).starts[0]
+    without = find_start("swap token", limit=1).starts[0]
+
+    assert (with_filler.program, with_filler.instruction) == (
+        without.program,
+        without.instruction,
+    )
