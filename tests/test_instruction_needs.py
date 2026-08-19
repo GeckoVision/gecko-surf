@@ -87,3 +87,72 @@ def test_an_instruction_with_no_args_at_all_is_never_told_it_builds_one() -> Non
 
     (need,) = needs
     assert "you build it" not in need["why"], need["why"]
+
+
+# --- the callability split -------------------------------------------------------
+#
+# `needs` non-empty used to mean four different things at once, and a 200-program sample
+# of the live catalogue reported "17.7% blocked" as a result. Decomposed, that was ~8%
+# with no derivable recipe at all and ~10% where the recipe is known and a named value has
+# to be fetched — plus a slice that was not blocked in any sense, because the caller
+# constructs the value themselves.
+#
+# Those are three different products: the first needs source recovery or enumeration, the
+# second needs one chain read, the third needs nothing. A single number that averages them
+# is not a measurement, and this one was about to be quoted to a partner.
+
+from gecko.artifact import callability
+
+
+def _instr(name: str, *, needs: bool, unresolvable: bool) -> dict[str, object]:
+    return {
+        "name": name,
+        "needs": [{"value": "x", "why": "y"}] if needs else [],
+        "unresolvable": ["some_account"] if unresolvable else [],
+    }
+
+
+def test_the_three_states_are_counted_apart() -> None:
+    split = callability(
+        [
+            _instr("a", needs=False, unresolvable=False),
+            _instr("b", needs=True, unresolvable=False),
+            _instr("c", needs=False, unresolvable=True),
+        ]
+    )
+
+    assert split["instructions"] == 3
+    assert split["buildable_now"] == 1
+    assert split["needs_a_lookup"] == 1
+    assert split["uncallable"] == 1
+
+
+def test_the_states_are_mutually_exclusive_and_total() -> None:
+    """An instruction that is both unresolvable and needs a lookup must be counted ONCE,
+    in the worse bucket. Double-counting is how a rate climbs above what it measures."""
+    split = callability(
+        [
+            _instr("a", needs=True, unresolvable=True),
+            _instr("b", needs=True, unresolvable=False),
+        ]
+    )
+
+    assert split["uncallable"] == 1
+    assert split["needs_a_lookup"] == 1
+    assert split["buildable_now"] == 0
+    assert (
+        split["buildable_now"] + split["needs_a_lookup"] + split["uncallable"]
+        == split["instructions"]
+    )
+
+
+def test_uncallable_is_the_worse_bucket() -> None:
+    """No recipe exists — a chain read cannot help, because there is nothing to read INTO."""
+    split = callability([_instr("a", needs=True, unresolvable=True)])
+
+    assert split["uncallable"] == 1
+    assert split["needs_a_lookup"] == 0
+
+
+def test_an_empty_program_reports_zeroes_not_a_division() -> None:
+    assert callability([])["instructions"] == 0
