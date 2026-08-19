@@ -375,7 +375,14 @@ def test_packaged_configs_carry_the_computed_origins() -> None:
     # the sweep has to have actually run on something — an empty loop passes silently.
     # `==`, so adding a packaged config is a visible edit here: `let_me_buy` landed on
     # this line rather than sliding in unchecked.
-    assert checked == ["let_me_buy", "metadao_ico", "meteora", "ore", "pumpfun"]
+    assert checked == [
+        "jurassic_fi",
+        "let_me_buy",
+        "metadao_ico",
+        "meteora",
+        "ore",
+        "pumpfun",
+    ]
 
 
 def test_the_origin_completeness_exemption_is_exactly_jupiter() -> None:

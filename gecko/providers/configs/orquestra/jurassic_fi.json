@@ -1,0 +1,177 @@
+{
+  "api_id": "jurassic_fi",
+  "kind": "program",
+  "spec_source": {
+    "type": "program",
+    "value": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm"
+  },
+  "program": {
+    "program_id": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+    "orquestra_project": "d2decec3-acdf-4946-bbb7-252a3c14ce2c",
+    "intents": [],
+    "pdas": {
+      "launch": {
+        "program_id": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "launch",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "admin",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "params.launch_id",
+            "source": "argument",
+            "encoding": "le",
+            "width": 8
+          }
+        ]
+      },
+      "user_position": {
+        "program_id": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "user_position",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "launch",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "contributor",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "payment_mint_allowlist": {
+        "program_id": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "payment_mint_allowlist",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "payment_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "payment_vault": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "launch",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_program",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "payment_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "token_vault": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "launch",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_program",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "dust_token_account": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "dust_authority",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_program",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "metadata": {
+        "program_id": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "metadata",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "metadata_program",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      }
+    },
+    "pda_origins": {
+      "launch": "extracted",
+      "user_position": "extracted",
+      "payment_mint_allowlist": "extracted",
+      "payment_vault": "extracted",
+      "token_vault": "extracted",
+      "dust_token_account": "extracted",
+      "metadata": "extracted"
+    },
+    "notes": "Jurassic Finance token sale (jurassic_fi_token_sale) \u2014 a real-world-asset sale: a museum-grade Triceratops skull fractionalised as $TRCH1, live on mainnet. Eight instructions, and SIX of them cannot derive their own root account, because `launch` is seeded on ['launch', launch.admin, launch.launch_id] \u2014 two fields of the account being derived. Orquestra's derive_pda dead-ends here and says so honestly: to compute the account you need what is inside it. Gecko reads admin and launch_id off the chain and derives it, then hands the accounts back to Orquestra's OWN builder. WIDTH IS LOAD-BEARING: params.launch_id is a u64 (le, width 8). Read at u8 it derives a DIFFERENT, perfectly valid address \u2014 correctly formatted, resolvable, and not the sale. No schema check catches that, which is why the width is recovered rather than assumed. In `contribute` the launch_id arrives as an ARGUMENT (params.launch_id), so a caller who knows the sale can supply it; the self-reference only blocks callers who must discover the launch first. Known gap: dust_token_account reads as clean in the IDL but is not buildable from it \u2014 a sibling recipe supplies the missing seed."
+  }
+}

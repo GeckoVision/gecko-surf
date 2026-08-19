@@ -383,14 +383,16 @@ def _snapshot() -> dict[str, list[dict]]:
 # ``test_the_cap_never_reorders_or_drops_an_account``, which needs no baseline.
 # `==`, not `in`: a fourth entry has to turn ``test_the_post_snapshot_cards_are_exactly_
 # these`` red before it can be skipped.
-_POST_SNAPSHOT_CARDS = frozenset({"let_me_buy/SURFACE"})
+_POST_SNAPSHOT_CARDS = frozenset({"let_me_buy/SURFACE", "jurassic_fi/SURFACE"})
 
 
 def test_the_post_snapshot_cards_are_exactly_these() -> None:
     """The skip list is a claim about which cards the pre-R7 pin cannot cover — so it
     is asserted, and every name in it must really be missing from the fixture."""
     snapshot = _snapshot()
-    assert _POST_SNAPSHOT_CARDS == frozenset({"let_me_buy/SURFACE"})
+    assert _POST_SNAPSHOT_CARDS == frozenset(
+        {"let_me_buy/SURFACE", "jurassic_fi/SURFACE"}
+    )
     assert _POST_SNAPSHOT_CARDS.isdisjoint(snapshot)
     keys = {f"{c.api_id}/{c.intent_name or 'SURFACE'}" for c in _wired_cards()}
     assert keys - set(snapshot) == _POST_SNAPSHOT_CARDS

@@ -571,8 +571,125 @@ _SELL_AND_DELIVER = ChainSpec(
 
 # api_id → the chains declared for that program. Keyed, not scanned, so an unwired
 # program can never pick up another program's chain.
+# jurassic_fi (Jurassic Finance) — a real-world-asset sale: a museum-grade Triceratops
+# skull fractionalised as $TRCH1. Contribute USDC while the sale is open, claim $TRCH1
+# after it settles. Both steps are hand-authored from the LIVE IDL's own account lists
+# (the same trust class as StartSpec) and asserted in tests/test_jurassic_chain.py.
+#
+# The join is `user_position`: contribute writes it, claim reads it. The IDL states each
+# instruction's accounts; it never states that one call must follow the other. That is
+# exactly the edge an IDL loses and a lifecycle needs.
+_USER_POSITION_BASIS = (
+    "the packaged program config states user_position = ['user_position', launch, "
+    "contributor], and the live IDL lists it [writable] on BOTH contribute and claim — "
+    "the same address for the same contributor in the same launch, so the two calls "
+    "address one account"
+)
+
+_JURASSIC_SURFACE_NAMED = (
+    "contributor",
+    "payment_mint",
+    "contributor_payment_account",
+    "token_mint",
+    "contributor_token_account",
+    "token_program",
+    "system_program",
+)
+
+_CONTRIBUTE_THEN_CLAIM = ChainSpec(
+    name="contribute_then_claim",
+    api_id="jurassic_fi",
+    summary=(
+        "contribute to a token sale, then claim the tokens it owes you — contribute "
+        "opens the position the sale records your stake in; claim pays that position "
+        "out once the sale has settled"
+    ),
+    steps=(
+        ChainStepSpec(
+            instruction="contribute",
+            # Kept deliberately spare. Every word here is retrieval surface, and the
+            # let_me_buy cards already taught this repo that incidental prose ("new",
+            # "before") serves a card as a RUNNABLE start for intents it has nothing
+            # to do with. Rarity is not distinctiveness.
+            description=(
+                "Contribute USDC to a Jurassic Finance token sale and receive a claim "
+                "on $TRCH1. The sale must be open; the payment mint is fixed by the "
+                "launch, and the amount is in that mint's base units."
+            ),
+            inputs=(
+                "admin",
+                "launch_id",
+                "requested_amount",
+                "min_accepted_amount",
+                "contributor",
+            ),
+            spec=StartSpec(
+                accounts=(
+                    "launch",
+                    "user_position",
+                    "payment_vault",
+                ),
+                surface_named=_JURASSIC_SURFACE_NAMED,
+                recovered={
+                    "launch": (
+                        "seeded on ['launch', launch.admin, launch.launch_id] — two "
+                        "fields of the account being derived, so the surface cannot "
+                        "derive it from itself. In contribute the id arrives as the "
+                        "ARGUMENT params.launch_id at width 8 (u64); read at u8 it "
+                        "derives a different, perfectly valid address"
+                    )
+                },
+            ),
+        ),
+        ChainStepSpec(
+            instruction="claim",
+            description=(
+                "Claim the $TRCH1 a settled Jurassic Finance sale owes a contributor, "
+                "paying out the position that contribute recorded. The sale must have "
+                "settled, and only the contributor named in the position can claim it."
+            ),
+            inputs=("admin", "launch_id", "contributor"),
+            spec=StartSpec(
+                accounts=(
+                    "launch",
+                    "user_position",
+                    "token_vault",
+                    "dust_token_account",
+                ),
+                surface_named=_JURASSIC_SURFACE_NAMED,
+                gaps=(
+                    GapSpec(
+                        name="dust_token_account",
+                        note=(
+                            "reads as clean in the IDL but is not buildable from it — "
+                            "the seed the recipe needs is carried by a sibling account, "
+                            "not by this one"
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    edges=(
+        ChainEdge(
+            produces="contribute",
+            consumes="claim",
+            account="user_position",
+            kind="initializes",
+            basis=_USER_POSITION_BASIS,
+            refuted_by=(
+                "a claim that lands against a launch the contributor never contributed "
+                "to, or a user_position readable by claim without contribute having "
+                "written it"
+            ),
+        ),
+    ),
+)
+
+
 _DECLARED_CHAINS: dict[str, tuple[ChainSpec, ...]] = {
     "let_me_buy": (_OPEN_A_STORE, _SELL_AND_DELIVER),
+    "jurassic_fi": (_CONTRIBUTE_THEN_CLAIM,),
 }
 
 
