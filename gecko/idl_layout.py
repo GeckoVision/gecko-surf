@@ -40,7 +40,9 @@ __all__ = [
     "ANCHOR_DISCRIMINATOR_LEN",
     "LayoutError",
     "account_discriminator",
+    "account_size",
     "field_layout",
+    "field_offset",
 ]
 
 #: Anchor prefixes every account's data with an 8-byte discriminator. An offset that
@@ -154,13 +156,20 @@ def account_discriminator(idl: Mapping[str, Any], account_type: str) -> bytes:
     raise LayoutError(f"account {account_type!r} is not declared in idl.accounts")
 
 
-def field_layout(
+def field_offset(
     idl: Mapping[str, Any], account_type: str, field_name: str
 ) -> dict[str, Any]:
-    """``{offset, width, type}`` for ``field_name`` inside ``account_type``.
+    """``{offset, type}`` for ``field_name`` — WITHOUT requiring its own width.
 
-    The offset counts from the start of the account's DATA, discriminator included, so it
-    can be handed straight to a `getAccountInfo` slice.
+    Split out of :func:`field_layout` because the two questions are genuinely different.
+    "Where does this field start?" is answerable whenever everything BEFORE it is
+    fixed-width; "how many bytes is it?" is not answerable for a Borsh ``string``. A
+    string is self-describing on the wire (a 4-byte length prefix, then its bytes), so a
+    reader that knows the offset can decode it exactly — and refusing the offset because
+    the width is dynamic would be over-refusal, which this module calls a wrong answer.
+
+    The refusal that matters is unchanged and lives here: a variable-width field BEFORE
+    the target makes the target's offset depend on runtime content, and that raises.
     """
     offset = ANCHOR_DISCRIMINATOR_LEN
     for field in _struct_fields(idl, account_type):
@@ -168,7 +177,6 @@ def field_layout(
         if field.get("name") == field_name:
             return {
                 "offset": offset,
-                "width": _width(declared, idl, frozenset({account_type})),
                 "type": declared if isinstance(declared, str) else "composite",
             }
         # Only what PRECEDES the target moves it. Refusing on a variable-width field that
@@ -183,3 +191,41 @@ def field_layout(
                 "field after it sits at an offset that depends on runtime content"
             ) from exc
     raise LayoutError(f"field {field_name!r} is not declared on {account_type!r}")
+
+
+def _declared_type(idl: Mapping[str, Any], account_type: str, field_name: str) -> Any:
+    for field in _struct_fields(idl, account_type):
+        if field.get("name") == field_name:
+            return field.get("type")
+    raise LayoutError(f"field {field_name!r} is not declared on {account_type!r}")
+
+
+def field_layout(
+    idl: Mapping[str, Any], account_type: str, field_name: str
+) -> dict[str, Any]:
+    """``{offset, width, type}`` for ``field_name`` inside ``account_type``.
+
+    The offset counts from the start of the account's DATA, discriminator included, so it
+    can be handed straight to a `getAccountInfo` slice. Refuses when the field's own
+    width is dynamic — a caller that only needs the position asks :func:`field_offset`.
+    """
+    located = field_offset(idl, account_type, field_name)
+    width = _width(
+        _declared_type(idl, account_type, field_name), idl, frozenset({account_type})
+    )
+    return {"offset": located["offset"], "width": width, "type": located["type"]}
+
+
+def account_size(idl: Mapping[str, Any], account_type: str) -> int:
+    """The exact byte length of ``account_type``, discriminator included, or raise.
+
+    Only a struct whose every field is fixed-width has a static size; anything holding a
+    ``string``/``vec``/``option`` does not, and this raises rather than returning a
+    plausible number. That distinction is not cosmetic: the size becomes a ``dataSize``
+    filter, and a wrong one returns an EMPTY account list that reads exactly like "there
+    are none".
+    """
+    total = ANCHOR_DISCRIMINATOR_LEN
+    for field in _struct_fields(idl, account_type):
+        total += _width(field.get("type"), idl, frozenset({account_type}))
+    return total

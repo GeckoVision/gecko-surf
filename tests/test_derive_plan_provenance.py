@@ -368,6 +368,31 @@ def _plan_json(card) -> list[dict]:  # noqa: ANN001 - _Card is module-private
     return [asdict(s) for s in _derive_plan(card)]
 
 
+#: Fields added to ``DeriveStep`` AFTER the pre-R7 snapshot was captured. The snapshot
+#: cannot speak to a field that did not exist when it was taken, and back-filling one
+#: into it would forge the baseline — so the comparison projects them away and this set
+#: makes that projection an explicit, reviewed claim rather than a silent hole. Adding a
+#: field without adding it here turns the comparison red, which is the point.
+FIELDS_ADDED_SINCE_SNAPSHOT = frozenset({"supplied_by"})
+
+
+def _pinned(step: dict) -> dict:
+    """One plan step reduced to the fields the pre-R7 snapshot actually pinned."""
+    return {k: v for k, v in step.items() if k not in FIELDS_ADDED_SINCE_SNAPSHOT}
+
+
+def test_the_fields_added_since_the_snapshot_are_exactly_these() -> None:
+    """The projection above is a claim about the schema, so it is asserted against the
+    schema. A field that appears in a plan and in neither the snapshot nor this set is a
+    field nobody decided to exempt."""
+    snapshot = _snapshot()
+    pinned_keys = {key for plan in snapshot.values() for step in plan for key in step}
+    live_keys = {
+        key for card in _wired_cards() for step in _plan_json(card) for key in step
+    }
+    assert live_keys - pinned_keys == FIELDS_ADDED_SINCE_SNAPSHOT
+
+
 def _snapshot() -> dict[str, list[dict]]:
     """The pre-R7 derive plans for every wired card, captured from the unmodified
     code before the schema change landed (the C5 pin)."""
@@ -408,7 +433,8 @@ def test_with_origins_absent_every_plan_is_byte_identical_to_pre_r7() -> None:
         key = f"{card.api_id}/{card.intent_name or 'SURFACE'}"
         if key in _POST_SNAPSHOT_CARDS:
             continue
-        assert _plan_json(replace(card, origins={})) == snapshot[key], (
+        live = [_pinned(step) for step in _plan_json(replace(card, origins={}))]
+        assert live == snapshot[key], (
             f"{key}: the no-origin path drifted from the pre-R7 plan"
         )
         compared.append(key)

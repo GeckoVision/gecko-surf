@@ -365,3 +365,73 @@ def test_a_pinned_account_listed_AFTER_the_pda_that_seeds_on_it_still_resolves()
     origin_of = {o["account"]: o["origin"] for o in origins}
     assert origin_of["vault"] == "derived"
     assert origin_of["token_program"] == "pinned"
+
+
+# ------------------------------------------- the spelling that cost a round trip
+
+
+def test_the_input_name_find_start_advertises_binds_the_dotted_seed() -> None:
+    """`find_start` names the input `launch_id`; the recipe's seed is `params.launch_id`,
+    because Anchor writes an argument-struct field as a dotted path. A live agent supplied
+    exactly what it had been told to supply and was refused for a missing binding — a full
+    round trip lost to two spellings of one value.
+    """
+    graph = build_program_graph(idl=IDL, program_id=PROGRAM)
+    short = {k: v for k, v in VALUES.items() if k != "params.launch_id"}
+
+    resolved, origins, missing = plan_accounts(graph, "contribute", short, payer=BUYER)
+
+    assert missing == [], f"nothing should be missing: {missing}"
+    # and it derives the SAME address the dotted spelling does — an alias, not a fallback
+    dotted, _origins, _missing = plan_accounts(
+        graph,
+        "contribute",
+        {k: v for k, v in VALUES.items() if k != "launch_id"},
+        payer=BUYER,
+    )
+    assert resolved["launch"] == dotted["launch"]
+
+    aliases = {o["account"]: o.get("aliased_seeds") for o in origins}
+    assert aliases["launch"] == {"params.launch_id": "launch_id"}, (
+        "an accommodation the caller cannot see is one they cannot check"
+    )
+
+
+def test_an_ambiguous_short_name_binds_nothing() -> None:
+    """Two dotted seeds sharing a last segment have no unambiguous short name, and
+    substituting a value under an ambiguous one is a guess — which derives a real,
+    correctly formatted, wrong address."""
+    from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode
+    from gecko.prepare_instruction import seed_aliases
+
+    node = PdaNode(
+        name="pool",
+        seeds=(
+            ConstantPdaSeedNode(b"pool", "utf8"),
+            VariablePdaSeedNode("a.id", source="argument", encoding="le", width=8),
+            VariablePdaSeedNode("b.id", source="argument", encoding="le", width=8),
+        ),
+        program_id=PROGRAM,
+    )
+
+    assert seed_aliases(node, {"id": 7}) == {}
+
+
+def test_the_mirror_spelling_binds_too() -> None:
+    """The caller holding `params.launch_id` for a recipe spelling it `launch_id` is the
+    same mismatch read from the other end."""
+    from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode
+    from gecko.prepare_instruction import seed_aliases
+
+    node = PdaNode(
+        name="launch",
+        seeds=(
+            ConstantPdaSeedNode(b"launch", "utf8"),
+            VariablePdaSeedNode("launch_id", source="argument", encoding="le", width=8),
+        ),
+        program_id=PROGRAM,
+    )
+
+    assert seed_aliases(node, {"params.launch_id": 100}) == {
+        "launch_id": ("params.launch_id", 100)
+    }

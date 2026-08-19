@@ -51,6 +51,7 @@ from ..prepare_instruction import (
     prepare_instruction_result,
 )
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
+from ..read_accounts import READ_ACCOUNTS_TOOL, read_accounts_result
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
@@ -217,6 +218,12 @@ class OrquestraCatalogSurface:
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
             VERIFY_SIGNED_TOOL,
+            # The step BEFORE building, and it sits here because that is where it is
+            # reached for. A derive plan can be perfect and still unusable when nothing
+            # says WHICH admin and WHICH id the sale a person named actually has — a
+            # live agent hit exactly that, and got past it only by calling raw
+            # getProgramAccounts and hex-dumping a 552-byte account by hand.
+            READ_ACCOUNTS_TOOL,
             # The general form of `prepare_purchase`: any instruction of any catalog
             # program, with the PDAs derived here and the bytes built by the catalog's
             # own builder. Unsigned, like everything else on this surface.
@@ -259,6 +266,8 @@ class OrquestraCatalogSurface:
             return derive_ata_result(args)
         if name == "derive_pda":
             return derive_pda_result(args)
+        if name == "read_accounts":
+            return self._read_accounts(args)
         if name == "program_lifecycle":
             return self._program_lifecycle(args)
         if name == "try_purchase":
@@ -510,6 +519,23 @@ class OrquestraCatalogSurface:
             rpc_url=self.instruction_rpc_url,
         )
 
+    def _read_accounts(self, args: dict[str, Any]) -> Any:
+        """Read live instances of one account type — same IDL seam, same RPC field.
+
+        The RPC comes from the surface and never from ``args``, for the reason
+        :attr:`instruction_rpc_url` states: a caller-supplied URL on an unauthenticated
+        mount is an SSRF proxy.
+        """
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, _build = self.instruction_seams
+        return read_accounts_result(
+            args,
+            idl_fetch=idl_fetch,
+            rpc_url=self.instruction_rpc_url,
+            rpc_call=self.purchase_rpc_call,
+        )
+
     def _prepare_purchase(
         self, args: dict[str, Any], *, account: str | None = None
     ) -> dict[str, Any]:
@@ -640,7 +666,14 @@ _FIND_START_TOOL = {
         "execute pointer. Unwired catalog programs come back as comprehend-first "
         "pointers. Honest below the floor: 'no start found' + closest GUESSES, "
         "never a fabricated match. Returns plans and pointers only — never signs "
-        "or broadcasts."
+        "or broadcasts.\n"
+        "READ `readiness` BEFORE YOU BUILD, AND DO NOT READ `gaps` AS READINESS. "
+        "`gaps` grades derivation RECIPES, so `gaps: []` means every recipe is "
+        "trusted and says nothing about whether you can run this. `readiness."
+        "must_obtain` is what still has no value: accounts the program names and "
+        "nothing derives, plus the declared inputs. When one of them is a fact about "
+        "an existing account of that program (which admin, which id), `read_accounts` "
+        "reads it off the chain and proves it by re-derivation."
     ),
     "inputSchema": {
         "type": "object",
