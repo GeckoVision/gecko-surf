@@ -41,7 +41,15 @@ from typing import Any
 from ..orquestra_client import OrquestraClient, OrquestraClientError
 from ..artifact import instruction_encoding
 from ..orquestra_build import ORQUESTRA_MCP_URL, orquestra_seams
-from ..prepare_instruction import PREPARE_INSTRUCTION_TOOL, prepare_instruction_result
+from ..lifecycle import LIFECYCLE_TOOL, build_lifecycle
+from ..prepare_instruction import (
+    DERIVE_ATA_TOOL,
+    DERIVE_PDA_TOOL,
+    PREPARE_INSTRUCTION_TOOL,
+    derive_ata_result,
+    derive_pda_result,
+    prepare_instruction_result,
+)
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
@@ -210,6 +218,15 @@ class OrquestraCatalogSurface:
             # program, with the PDAs derived here and the bytes built by the catalog's
             # own builder. Unsigned, like everything else on this surface.
             PREPARE_INSTRUCTION_TOOL,
+            # Derivation as a primitive. An agent that follows a correct refusal should
+            # not have to hand-roll a bump loop — one did, skipped the on-curve check,
+            # and produced a valid-looking address for an account that cannot exist.
+            DERIVE_ATA_TOOL,
+            DERIVE_PDA_TOOL,
+            # The edges. An instruction LIST has none, so a catalogue cannot say that
+            # `claim` must follow `contribute` — that fact only exists by comparing two
+            # instructions' recipes to each other, which is what a graph is for.
+            LIFECYCLE_TOOL,
         ]
 
     def call_tool(
@@ -233,6 +250,12 @@ class OrquestraCatalogSurface:
             return self._prepare_purchase(args, account=account)
         if name == "prepare_instruction":
             return self._prepare_instruction(args)
+        if name == "derive_ata":
+            return derive_ata_result(args)
+        if name == "derive_pda":
+            return derive_pda_result(args)
+        if name == "program_lifecycle":
+            return self._program_lifecycle(args)
         if name == "try_purchase":
             # `account` is passed for a REACHABILITY gate, not a wallet binding: a
             # rehearsal spends nothing of anyone's and its buyer is a keypair born and
@@ -427,6 +450,27 @@ class OrquestraCatalogSurface:
             }
         return answer
 
+    def _program_lifecycle(self, args: dict[str, Any]) -> dict[str, Any]:
+        """The instruction ordering for one catalog program."""
+        from ..program_graph import build_program_graph
+
+        program_id = str(args.get("program_id") or "").strip()
+        if not program_id:
+            return {"error": "program_lifecycle needs a `program_id` (base58)"}
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, _ = self.instruction_seams
+        try:
+            idl = idl_fetch(program_id)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "not_found": True,
+                "program_id": program_id,
+                "reason": f"the catalog could not resolve it: {type(exc).__name__}",
+            }
+        graph = build_program_graph(idl=idl, program_id=program_id)
+        return build_lifecycle(graph, idl).to_json()
+
     def _prepare_instruction(self, args: dict[str, Any]) -> Any:
         """Derive the accounts here, let the catalogue's own builder encode the bytes.
 
@@ -512,6 +556,12 @@ class OrquestraCatalogSurface:
                 for name, prov in result.provenance.items()
             },
             "flagged": list(result.flagged),
+            # SATISFIABILITY IS A DIFFERENT QUESTION FROM EXTRACTION, and reporting only
+            # the first is how this surface said "zero flagged gaps" about
+            # `dust_token_account` and then failed to build it with a missing binding.
+            # `flagged` answers "was a recipe recovered". This answers "can a caller of
+            # this instruction satisfy it", per instruction, naming the values to pass.
+            "buildable": _buildability(surface),
             # THE OTHER HALF OF A CALL. Recipes say WHICH accounts; this says how the
             # call becomes bytes. A live agent with recipes and no encoding correctly
             # refused to hand-roll the byte layout for an instruction moving USDC —
@@ -532,6 +582,33 @@ class OrquestraCatalogSurface:
                 "sha256 convention agree."
             ),
         }
+
+
+def _buildability(surface: Any) -> dict[str, Any]:
+    """Per instruction, which PDA slots a caller can satisfy — and what the rest need.
+
+    Reported ALONGSIDE `flagged`, never instead of it. A recipe can extract perfectly and
+    still be unbuildable from a given instruction, and a reader who sees only "extracted,
+    nothing flagged" will believe an account is ready when the build will fail.
+    """
+    from ..program_graph import build_program_graph
+
+    try:
+        graph = build_program_graph(idl=surface.idl, program_id=surface.program_id)
+    except Exception as exc:  # noqa: BLE001 - a graph we cannot build is a data point
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+    out: dict[str, Any] = {}
+    for instruction in graph.instructions:
+        needs: dict[str, list[str]] = {}
+        for account in instruction.accounts:
+            if account.is_pda and not account.satisfiable:
+                needs[account.name] = list(account.caller_must_supply)
+        out[instruction.name] = {
+            "all_pdas_satisfiable": not needs,
+            "caller_must_supply": needs,
+        }
+    return out
 
 
 _FIND_START_TOOL = {
