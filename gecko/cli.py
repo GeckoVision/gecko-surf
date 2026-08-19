@@ -62,6 +62,7 @@ _SUBCOMMANDS = (
     "graph",
     "correlate",
     "export-arazzo",
+    "export-plugin",
     "workflows",
     "index",
     "metrics",
@@ -1003,6 +1004,12 @@ def _cmd_correlate(argv: list[str]) -> int:
     return 0
 
 
+_PLUGIN_SKILL_LEDE = (
+    "Call this program correctly the first time. Accounts are derived from the IDL and "
+    "source with their byte widths and provenance, never guessed."
+)
+
+
 def _cmd_export_arazzo(argv: list[str]) -> int:
     """`gecko export-arazzo <spec> [<spec> ...] --op <operationId>` — the derived plan
     as a portable Arazzo 1.0 document.
@@ -1109,6 +1116,97 @@ def _print_withheld(withheld: list[Any]) -> None:
     for w in withheld:
         print(f"    {w.method.upper():6} {w.target}  (reachable from {w.producer})")
     print("    Name one explicitly with `gecko export-arazzo --op <id>` to accept it.")
+
+
+def _cmd_export_plugin(argv: list[str]) -> int:
+    """`gecko export-plugin <program-id-or-project> --out <dir>` — a provider-branded
+    Agent Plugin tree the PROVIDER can publish as theirs.
+
+    Thin transport, like `gecko export-arazzo`: fetch the surface, build the artifact,
+    render the surface files, hand them to the pure `gecko.plugin_export.build_plugin`,
+    write. Every decision that matters — the manifest shape, what is sanitized, what is
+    refused, and the fact that authorship is never fabricated — lives in the package.
+
+    `--author` is optional ON PURPOSE and is never inferred. The tree carries the
+    provider's name because they publish it, which makes an invented author a claim about
+    someone else's words rather than a missing convenience.
+    """
+    from .artifact import build_artifact
+    from .orquestra_client import OrquestraClient
+    from .plugin_export import ProviderIdentity, build_plugin, write_plugin
+
+    p = argparse.ArgumentParser(
+        prog="gecko export-plugin",
+        description="Export a provider-branded Agent Plugin (Agent Plugins 1.0.0 + A2A).",
+    )
+    p.add_argument("project", help="The Orquestra project id or slug to export.")
+    p.add_argument(
+        "--out", required=True, help="Directory to write the plugin tree to."
+    )
+    p.add_argument("--name", required=True, help="Plugin name (a safe directory name).")
+    p.add_argument("--display-name", required=True, help="What a human reads.")
+    p.add_argument("--homepage", default="", help="The provider's own site.")
+    p.add_argument(
+        "--author",
+        default=None,
+        help="Optional. Never inferred — omit it rather than guess the provider's name.",
+    )
+    p.add_argument("--mcp-url", default=None, help="The live MCP endpoint agents call.")
+    p.add_argument("--version", default="0.1.0", help="Plugin version (default 0.1.0).")
+    args = p.parse_args(argv)
+
+    surface = OrquestraClient().fetch_surface(args.project)
+    artifact = build_artifact(
+        surface.idl, generated_from=f"orquestra project {args.project}"
+    )
+
+    lines = [f"# {args.display_name}", "", _PLUGIN_SKILL_LEDE, ""]
+    skills: list[dict[str, object]] = []
+    for spec in artifact["instructions"]:
+        name = str(spec.get("name") or spec.get("instruction") or "")
+        if not name:
+            continue
+        lines.append(f"## {name}")
+        needs = spec.get("needs") or []
+        if needs:
+            # The whole reason this file is worth shipping: an agent that knows WHAT to
+            # fetch first can act, where "unresolvable" only tells it to stop.
+            fetch = ", ".join(str(n.get("value") or n.get("account")) for n in needs)
+            lines.append(f"Fetch first: {fetch}")
+        lines.append("")
+        skills.append(
+            {
+                "id": name,
+                "name": name.replace("_", " "),
+                "description": f"{name} on {args.display_name}",
+                "tags": ["solana"],
+            }
+        )
+
+    body = "\n".join(lines)
+    files = build_plugin(
+        provider=ProviderIdentity(
+            name=args.name,
+            display_name=args.display_name,
+            description=_PLUGIN_SKILL_LEDE,
+            homepage=args.homepage,
+        ),
+        surface_files={
+            "llms.txt": body,
+            "SKILL.md": body,
+            f"gecko/{args.name}.artifact.json": json.dumps(artifact, indent=2),
+        },
+        version=args.version,
+        author=args.author,
+        mcp_url=args.mcp_url,
+        generated_from=f"orquestra project {args.project}",
+        skills=skills,
+    )
+    for written in write_plugin(files, args.out):
+        print(f"  {written}")
+    print(f"\n{len(files)} files -> {args.out}")
+    print("Publish it as yours: the manifest names no author unless you passed one.")
+    return 0
 
 
 def _cmd_workflows(argv: list[str]) -> int:
@@ -1959,6 +2057,10 @@ def _print_help() -> None:
         "  export-arazzo <spec>...  the derived plan as a portable Arazzo 1.0 doc "
         "(names only, no values)"
     )
+    print(
+        "  export-plugin <project> --out <dir>  a provider-branded Agent Plugin "
+        "(Agent Plugins 1.0.0 + A2A card)"
+    )
     print("\nBare `gecko <spec>` is shorthand for `gecko serve <spec>`.")
 
 
@@ -2342,6 +2444,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_correlate(rest)
     if cmd == "export-arazzo":
         return _cmd_export_arazzo(rest)
+    if cmd == "export-plugin":
+        return _cmd_export_plugin(rest)
     if cmd == "workflows":
         return _cmd_workflows(rest)
     if cmd == "index":
