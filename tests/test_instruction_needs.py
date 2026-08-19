@@ -20,7 +20,7 @@ shipped inside the plugin trees `gecko export-plugin` hands to providers.
 
 from __future__ import annotations
 
-from gecko.artifact import instruction_needs
+from gecko.artifact import callability, instruction_needs
 
 #: The recipe as the program-wide merge produces it: `id` is declared as a field of an
 #: ARGUMENT struct, because the sibling that declares this account really does take one.
@@ -100,8 +100,6 @@ def test_an_instruction_with_no_args_at_all_is_never_told_it_builds_one() -> Non
 # Those are three different products: the first needs source recovery or enumeration, the
 # second needs one chain read, the third needs nothing. A single number that averages them
 # is not a measurement, and this one was about to be quoted to a partner.
-
-from gecko.artifact import callability
 
 
 def _instr(name: str, *, needs: bool, unresolvable: bool) -> dict[str, object]:
