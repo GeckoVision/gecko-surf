@@ -107,14 +107,32 @@ def instruction_needs(
                 None,
             )
             head = seed.partition(".")[0]
+            # Does THIS instruction actually take that argument? The recipe may have been
+            # imported from a sibling that does, and `source` describes the sibling's
+            # declaration, not this call's. Telling a caller they already hold a value
+            # they were never given invites them to invent one — and an invented seed
+            # derives a real, correctly formatted, resolvable, WRONG address.
+            declares_head = any(
+                arg.get("name") == head for arg in instruction.get("args", []) or ()
+            )
             if "." in seed and source == "account":
                 entry["why"] = (
                     f"a field of the `{head}` account — read it on-chain and pass it in"
                 )
-            elif "." in seed and source == "argument":
+            elif "." in seed and source == "argument" and declares_head:
                 entry["why"] = (
                     f"a field of the `{head}` argument struct — you build it, so pass "
                     f"`{seed}` directly"
+                )
+            elif "." in seed and source == "argument":
+                # The recipe says "argument", this instruction says otherwise. Name the
+                # disagreement rather than resolving it: the caller has to find the value,
+                # and they now know why nothing here supplies it.
+                entry["why"] = (
+                    f"the recipe reads it from a `{head}` argument, but this instruction "
+                    f"declares no `{head}` — it was carried from a sibling instruction, "
+                    f"so the value must come from somewhere else. Do not invent it: a "
+                    f"made-up seed derives a real, valid, wrong address."
                 )
             elif not recipe.get("resolvable", True):
                 entry["why"] = (

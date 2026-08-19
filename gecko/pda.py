@@ -346,6 +346,13 @@ def _pubkey_bytes(name: str, value: str | int | bytes) -> bytes:
     )
 
 
+#: The runtime's own PDA limits (solana.com/docs/core/pda/pda-derivation). Enforced in
+#: :func:`derive_pda` because the layer below PANICS rather than raising — see the check
+#: there for why that distinction is load-bearing.
+MAX_SEEDS = 16
+MAX_SEED_LEN = 32
+
+
 def derive_pda(
     node: PdaNode,
     bindings: Mapping[str, str | int | bytes] | None = None,
@@ -395,6 +402,26 @@ def derive_pda(
         raise PdaDerivationError(
             f"program_id {prog!r} is not a valid base58 pubkey"
         ) from exc
+
+    # The runtime's own limits, checked HERE because the layer below does not raise —
+    # it panics. solders surfaces a Rust panic as `PanicException`, which subclasses
+    # BaseException, so every `except Exception` between here and the MCP transport misses
+    # it and the tool crashes instead of refusing. Verified live: a 40-byte utf8 seed
+    # escaped `derive_pda_result`'s handler as PanicException.
+    #
+    # An availability bug, not a correctness one — it cannot produce a wrong address. But
+    # this is the primitive we tell agents to use INSTEAD of hand-rolling a derivation, so
+    # it has to fail the way we promise: a refusal that says what was wrong.
+    if len(seed_bytes) > MAX_SEEDS:
+        raise PdaDerivationError(
+            f"{len(seed_bytes)} seeds — a PDA takes at most {MAX_SEEDS}"
+        )
+    for index, raw in enumerate(seed_bytes):
+        if len(raw) > MAX_SEED_LEN:
+            raise PdaDerivationError(
+                f"seed {index} is {len(raw)} bytes — a PDA seed is at most "
+                f"{MAX_SEED_LEN}"
+            )
 
     address, bump = pubkey_cls.find_program_address(seed_bytes, program_pubkey)
     return DerivedPda(address=str(address), bump=bump, node=node)
