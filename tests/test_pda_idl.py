@@ -551,3 +551,95 @@ def test_the_limits_do_not_refuse_a_legal_derivation() -> None:
     )
 
     assert derive_pda(node, {}).address
+
+
+def test_owner_match_alone_does_not_prove_the_account_is_the_right_type() -> None:
+    """A derivation witness has to check the discriminator, not just the owner.
+
+    `verify_derivation` checked existence and owner. Owner-match proves the PROGRAM owns
+    the account; it proves nothing about WHICH of the program's account types it is. Every
+    account a program owns matches its own owner, so a derivation that lands on the wrong
+    type — a `UserPosition` where a `Launch` was meant — passes an owner-only check.
+
+    Anchor writes an 8-byte type tag as the first bytes of account data, and the IDL
+    declares it (see `gecko/idl_layout.account_discriminator`). Checking it is free and it
+    is the only part of the witness that distinguishes types.
+
+    Fails CLOSED: unreadable data is `None`, never `True`. An unverifiable claim and a
+    verified one must not be the same value.
+    """
+    import base64
+
+    from gecko.pda import ConstantPdaSeedNode, PdaNode
+    from gecko.pda_testkit import verify_derivation
+
+    program = "11111111111111111111111111111111"
+    node = PdaNode(
+        "launch", (ConstantPdaSeedNode(b"launch", encoding="utf8"),), program
+    )
+    wanted = bytes([144, 51, 51, 163, 206, 85, 213, 38])
+    other = bytes([251, 248, 209, 1, 2, 3, 4, 5])
+
+    def _rpc(payload: bytes) -> object:
+        def call(_url: str, _method: str, _params: object) -> dict[str, object]:
+            return {
+                "result": {
+                    "value": {
+                        "owner": program,
+                        "data": [base64.b64encode(payload).decode(), "base64"],
+                    }
+                }
+            }
+
+        return call
+
+    right = verify_derivation(
+        node, {}, rpc_call=_rpc(wanted + b"\x00" * 40), discriminator=wanted
+    )
+    assert right.owner_matches is True
+    assert right.discriminator_matches is True
+
+    # the account the owner check cannot tell apart
+    wrong = verify_derivation(
+        node, {}, rpc_call=_rpc(other + b"\x00" * 40), discriminator=wanted
+    )
+    assert wrong.owner_matches is True, "owner still matches — that is the point"
+    assert wrong.discriminator_matches is False
+
+
+def test_an_unreadable_discriminator_is_unknown_not_verified() -> None:
+    from gecko.pda import ConstantPdaSeedNode, PdaNode
+    from gecko.pda_testkit import verify_derivation
+
+    program = "11111111111111111111111111111111"
+    node = PdaNode(
+        "launch", (ConstantPdaSeedNode(b"launch", encoding="utf8"),), program
+    )
+
+    def call(_url: str, _method: str, _params: object) -> dict[str, object]:
+        return {"result": {"value": {"owner": program}}}  # no data field
+
+    check = verify_derivation(
+        node, {}, rpc_call=call, discriminator=bytes([1, 2, 3, 4, 5, 6, 7, 8])
+    )
+
+    assert check.discriminator_matches is None
+
+
+def test_without_a_discriminator_nothing_changes() -> None:
+    """Additive: callers that pass none get exactly today's behaviour."""
+    from gecko.pda import ConstantPdaSeedNode, PdaNode
+    from gecko.pda_testkit import verify_derivation
+
+    program = "11111111111111111111111111111111"
+    node = PdaNode(
+        "launch", (ConstantPdaSeedNode(b"launch", encoding="utf8"),), program
+    )
+
+    def call(_url: str, _method: str, _params: object) -> dict[str, object]:
+        return {"result": {"value": {"owner": program}}}
+
+    check = verify_derivation(node, {}, rpc_call=call)
+
+    assert check.owner_matches is True
+    assert check.discriminator_matches is None

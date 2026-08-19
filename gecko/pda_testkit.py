@@ -24,6 +24,8 @@ never account payload data (control-plane invariant #1).
 
 from __future__ import annotations
 
+import base64
+
 import os
 import shutil
 import signal
@@ -110,6 +112,13 @@ class DerivationCheck:
     exists: bool
     owner: str | None
     owner_matches: bool | None  # None when no program id was available to compare
+    #: Does the account's 8-byte Anchor type tag match the one expected?
+    #:
+    #: ``None`` when no discriminator was supplied or the data could not be read — an
+    #: unverifiable claim and a verified one must never be the same value. Owner-match
+    #: alone cannot answer this: EVERY account a program owns matches that program's
+    #: owner, so a derivation landing on the wrong TYPE passes an owner-only check.
+    discriminator_matches: bool | None = None
 
 
 def verify_derivation(
@@ -119,12 +128,19 @@ def verify_derivation(
     rpc_url: str = LOCAL_RPC,
     program_id: str | None = None,
     rpc_call: RpcCall | None = None,
+    discriminator: bytes | None = None,
 ) -> DerivationCheck:
     """Derive ``node`` and check the address holds a real account owned by the program.
 
     ``rpc_call`` is injectable for offline testing; by default it posts to the local
-    surfpool fork. The account's *owner* and existence are public metadata — the
-    payload is never read or stored.
+    surfpool fork. The account's *owner*, existence and 8-byte type tag are public
+    structural metadata — no other byte of the payload is read, compared, or stored.
+
+    ``discriminator`` is the type tag the caller expects, as
+    :func:`gecko.idl_layout.account_discriminator` reads it from the IDL. Supplying it
+    turns the check from "the program owns this" into "the program owns this AND it is
+    the type we meant", which is the only part that distinguishes one of a program's
+    account types from another.
     """
     call = rpc_call or _default_rpc_call
     derived = derive_pda(node, bindings, program_id=program_id)
@@ -140,7 +156,34 @@ def verify_derivation(
         exists=exists,
         owner=owner,
         owner_matches=owner_matches,
+        discriminator_matches=_discriminator_matches(value, discriminator),
     )
+
+
+def _discriminator_matches(value: object, expected: bytes | None) -> bool | None:
+    """Compare the account's leading type tag, or return ``None``.
+
+    Reads exactly the first ``len(expected)`` bytes and compares them. The rest of the
+    account data is never decoded, returned, or retained, and the observed tag is not
+    reported either — a boolean answers the question, and echoing account bytes back
+    would put payload where a verdict belongs.
+
+    Every failure path is ``None``, never ``False``: a malformed response means we could
+    not check, which is a different fact from checking and disagreeing.
+    """
+    if not expected or not isinstance(value, dict):
+        return None
+    raw = value.get("data")
+    encoded = raw[0] if isinstance(raw, (list, tuple)) and raw else raw
+    if not isinstance(encoded, str):
+        return None
+    try:
+        head = base64.b64decode(encoded)[: len(expected)]
+    except (ValueError, TypeError):
+        return None
+    if len(head) < len(expected):
+        return None
+    return head == expected
 
 
 class SurfpoolFork:
