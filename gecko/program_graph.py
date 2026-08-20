@@ -474,6 +474,49 @@ def derivation_order_for(
     return derivation_order_with_cycle(pdas, accounts)[0]
 
 
+def _importable_here(
+    node: PdaNode, account_names: set[str], arg_names: set[str]
+) -> PdaNode | None:
+    """A sibling instruction's recipe, but only if THIS instruction can bind it.
+
+    An account name is not a recipe key. When an instruction does not declare a slot as a
+    PDA, the program-wide map still holds whatever a *sibling* declared under that name,
+    and importing it unconditionally states something about this instruction that nothing
+    checked. Two measured cases, both live in the catalogue:
+
+    - ``main::close_old_collateral_signatures`` takes ``args: []`` and a plain
+      ``collateral`` slot. ``create_collateral`` seeds that name on the arg field
+      ``new_collateral.id``. Imported, the plan asks this caller for
+      ``new_collateral.id`` — a field of a struct the instruction has no argument for.
+      ``new_collateral.id`` (36 IDLs) and ``new_coordinator.id`` (52) are the two most
+      common unhinted needed values in the whole catalogue, and both are this artifact.
+    - ``escrow::cancel_order`` takes ``user_token_account`` as an OPTIONAL refund
+      destination with no ``pda`` block; ``post_sell_order`` declares that name as the ATA
+      of ``user`` + ``token``. Imported, the slot is marked derivable and the instruction
+      is reported blocked on ``user`` — an account ``cancel_order`` does not take at all,
+      while the address it actually wants is the *initiator's* ATA. Wrong, and plausible.
+
+    So the import is gated on the only thing this join can actually verify: every seed of
+    the imported recipe binds to an account or an argument of THIS instruction. Measured
+    across 196 cached catalogue IDLs — 413 imports, 243 refused, 170 kept, and **zero**
+    that a caller could satisfy today were refused. The refused ones stop being "a PDA you
+    cannot derive" and become "an account you supply", which is true and actionable.
+
+    Deliberately gated on the BINDINGS, not on :attr:`AccountRef.satisfiable`, which also
+    folds in ``node.resolvable``. Resolvability is a fact about the extraction and is the
+    same for the sibling that declared it; it is already reported on its own, and refusing
+    on it would collapse the two questions this module keeps apart. That distinction is
+    worth 27 recipes: gating on ``satisfiable`` would refuse 270 instead of 243.
+
+    Nothing is destroyed either way — the recipe stays in :attr:`ProgramGraph.pdas` with
+    its origin, where it is true. Only the claim about this instruction stops.
+    """
+    bindings = _bind_seeds(node, account_names, arg_names)
+    if any(binding.kind == "unresolved" for binding in bindings):
+        return None
+    return node
+
+
 def build_program_graph(
     idl: dict[str, Any] | None = None,
     source: str | None = None,
@@ -553,7 +596,9 @@ def build_program_graph(
             # recipe; a seed reading ANOTHER account does not, and stays flagged here.
             declared = declared_here.get(name)
             merged = pdas.get(name)
-            node = declared or merged
+            node = declared
+            if node is None and merged is not None:
+                node = _importable_here(merged, account_names, arg_names)
             #
             # An EXTRACTION GAP defers the same way, for a different reason: when this
             # instruction spells a seed differently from its own arg (`mark_as_delivered`
