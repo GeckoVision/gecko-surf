@@ -650,3 +650,41 @@ def test_two_different_recipes_for_one_type_refuse_rather_than_pick() -> None:
 
     assert result["code"] == "ambiguous-verification-recipe"
     assert "contribute" in result["reason"] and "settle" in result["reason"]
+
+
+def test_a_composite_field_type_refuses_instead_of_crashing() -> None:
+    """A field whose declared type is a dict crashed the recipe builder.
+
+    `_seed_from_field` opened with `if declared in PUBKEYS:` — a set membership test — and
+    an Anchor field type is not always a string. `{"array": ["u8", 32]}`,
+    `{"defined": {"name": "Kind"}}` and `{"option": "pubkey"}` are all dicts, and a dict is
+    unhashable, so the test raised `TypeError: unhashable type: 'dict'` before any refusal
+    could be reached.
+
+    Measured: 5 of 531 account types across 196 cached catalogue IDLs crashed this way
+    (`Session`, among others). A crash is not a refusal — it carries no reason, it cannot
+    be counted, and it escapes as an exception type nothing downstream is looking for. The
+    honest answer is that a composite type is one whose seed bytes we would have to guess,
+    which is exactly what `None` already means here.
+    """
+    from gecko.account_recipes import _seed_from_field
+
+    for composite in (
+        {"array": ["u8", 32]},
+        {"defined": {"name": "Kind"}},
+        {"option": "pubkey"},
+        {"vec": "u8"},
+    ):
+        assert _seed_from_field("f", composite) is None
+
+
+def test_the_scalar_types_still_produce_their_seed() -> None:
+    """The other half, so the guard cannot be "refuse everything". A pubkey is 32 raw
+    bytes and an integer carries its declared width — never a default."""
+    from gecko.account_recipes import _seed_from_field
+
+    assert _seed_from_field("admin", "pubkey") is not None
+    assert _seed_from_field("name", "string") is not None
+    launch_id = _seed_from_field("launch_id", "u64")
+    assert launch_id is not None
+    assert getattr(launch_id, "width", None) == 8

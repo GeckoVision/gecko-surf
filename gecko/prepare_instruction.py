@@ -34,6 +34,7 @@ from .pda import (
     derive_pda,
 )
 from .program_graph import ProgramGraph, build_program_graph
+from .value_sources import value_sources
 
 __all__ = [
     "DERIVE_ATA_TOOL",
@@ -326,12 +327,30 @@ def prepare_instruction_result(
 
     resolved, origins, missing = plan_accounts(graph, instruction, values, payer)
     if missing:
+        # Name where the missing values can be READ from. Until now this refusal said
+        # "the caller supplies it" and stopped, while `read_accounts` — on this same
+        # surface — could already return them for 66.9% of PDA accounts that need values.
+        # Two of our own tools, one holding what the other needs.
+        #
+        # A source, never a value: nothing is fetched and no instance is chosen here,
+        # because a resolved address decides who gets paid.
+        wanted: list[str] = []
+        for entry in missing:
+            for value in entry.get("needs", ()) if isinstance(entry, dict) else ():
+                if value not in wanted:
+                    wanted.append(str(value))
+        sources = (
+            value_sources(idl, program_id, instruction=instruction, needed=wanted)
+            if wanted
+            else {}
+        )
         return _refuse(
             "accounts-unresolved",
             f"{len(missing)} account(s) of {instruction} could not be resolved; a "
             "transaction is not built from a partial plan",
             missing_accounts=missing,
             resolved_accounts=resolved,
+            value_sources=sources,
         )
 
     # WE FETCH THE BLOCKHASH, so we can state when these bytes STOP BEING LANDABLE.

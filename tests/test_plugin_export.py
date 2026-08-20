@@ -74,9 +74,9 @@ def test_authorship_is_never_fabricated() -> None:
     assert "author" not in manifest
 
     named = json.loads(
-        build_plugin(
-            provider=PROVIDER, surface_files=SURFACE, author="Berkay Oztunc"
-        )["plugin.json"]
+        build_plugin(provider=PROVIDER, surface_files=SURFACE, author="Berkay Oztunc")[
+            "plugin.json"
+        ]
     )
     assert named["author"] == {"name": "Berkay Oztunc"}
 
@@ -102,7 +102,9 @@ def test_the_surface_artifacts_are_carried_into_the_tree() -> None:
 
 
 def test_an_agent_card_is_a2a_shaped() -> None:
-    card = json.loads(_plugin(mcp_url="https://api.example.test/mcp")["agent-card.json"])
+    card = json.loads(
+        _plugin(mcp_url="https://api.example.test/mcp")["agent-card.json"]
+    )
 
     assert card["name"] == "Orquestra"
     assert card["url"] == "https://api.example.test/mcp"
