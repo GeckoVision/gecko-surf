@@ -177,6 +177,16 @@ def _seed_from_field(name: str, declared: Any) -> PdaSeed | None:
     read, never defaulted: a ``u64`` read as ``u8`` derives a different, perfectly valid,
     wrong address, which is the defect this repo has already paid for once.
     """
+    # An Anchor field type is not always a string: `{"array": [...]}`, `{"defined": {...}}`,
+    # `{"option": ...}` and `{"vec": ...}` are dicts, and a dict is unhashable — so the
+    # membership test below raised `TypeError: unhashable type: 'dict'` before any refusal
+    # could be reached. 5 of 531 catalogue account types crashed this way.
+    #
+    # A crash is not a refusal: it carries no reason, it cannot be counted, and it escapes
+    # as an exception type nothing downstream is watching for. A composite is simply a type
+    # whose seed bytes we would have to guess, which is what `None` already means here.
+    if not isinstance(declared, str):
+        return None
     if declared in PUBKEYS:
         return VariablePdaSeedNode(name, source="account", encoding="pubkey")
     if isinstance(declared, str) and declared in INTEGERS:
