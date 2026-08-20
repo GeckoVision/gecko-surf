@@ -242,3 +242,326 @@ def test_to_json_is_serializable_and_complete() -> None:
 def test_requires_an_input() -> None:
     with pytest.raises(ValueError):
         build_program_graph()
+
+
+# ---------------------------------------------------------------------------
+# the sibling-recipe import rule — a recipe this instruction cannot satisfy is
+# not this instruction's recipe
+# ---------------------------------------------------------------------------
+
+
+def _collateral_idl() -> dict[str, object]:
+    """`main` (AwW51ngTLTvfd31gXBhZ2XYTCKsdSV553XKmc8WPAfiM), two instructions.
+
+    `create_collateral` declares `collateral` from an ARG FIELD (`new_collateral.id`).
+    `close_old_collateral_signatures` takes the same account as a plain slot — no `pda`
+    block — and has NO ARGS AT ALL. Importing the sibling's recipe there invents a need
+    for a struct field the caller of that instruction never builds.
+    """
+    return {
+        "address": "AwW51ngTLTvfd31gXBhZ2XYTCKsdSV553XKmc8WPAfiM",
+        "instructions": [
+            {
+                "name": "create_collateral",
+                "args": [
+                    {
+                        "name": "new_collateral",
+                        "type": {"defined": {"name": "NewCollateral"}},
+                    }
+                ],
+                "accounts": [
+                    {"name": "sender", "signer": True, "writable": True},
+                    {"name": "coordinator"},
+                    {
+                        "name": "collateral",
+                        "writable": True,
+                        "pda": {
+                            "seeds": [
+                                {"kind": "const", "value": list(b"Collateral")},
+                                {"kind": "arg", "path": "new_collateral.id"},
+                                {"kind": "account", "path": "coordinator"},
+                            ]
+                        },
+                    },
+                    {
+                        "name": "collateral_authority",
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": list(b"CollateralAuthority"),
+                                },
+                                {"kind": "account", "path": "collateral"},
+                            ]
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "close_old_collateral_signatures",
+                "args": [],
+                "accounts": [
+                    {"name": "sender", "signer": True, "writable": True},
+                    {"name": "coordinator"},
+                    {"name": "collateral"},
+                    {
+                        "name": "collateral_authority",
+                        "writable": True,
+                        "pda": {
+                            "seeds": [
+                                {
+                                    "kind": "const",
+                                    "value": list(b"CollateralAuthority"),
+                                },
+                                {"kind": "account", "path": "collateral"},
+                            ]
+                        },
+                    },
+                    {"name": "collateral_admin_signatures", "writable": True},
+                ],
+            },
+        ],
+        "types": [
+            {
+                "name": "NewCollateral",
+                "type": {"kind": "struct", "fields": [{"name": "id", "type": "u64"}]},
+            }
+        ],
+    }
+
+
+def test_an_instruction_with_no_args_cannot_need_an_arg_field() -> None:
+    """`new_collateral.id` is the 2nd most common unhinted need in the whole catalogue
+    (36 of 196 IDLs), and every one of them is this artifact.
+
+    `close_old_collateral_signatures` takes `args: []`. There is no `new_collateral` to
+    hold an `id`, so a plan that asks its caller for `new_collateral.id` asks for
+    something that does not exist in that instruction — a wrong-but-plausible need. The
+    account is a slot the caller supplies; say that.
+    """
+    graph = build_program_graph(idl=_collateral_idl())
+    close = {i.name: i for i in graph.instructions}["close_old_collateral_signatures"]
+    collateral = {a.name: a for a in close.accounts}["collateral"]
+
+    assert collateral.is_pda is False, (
+        "an instruction that does not declare an account as a PDA, and could not "
+        "satisfy the sibling recipe anyway, must report a caller-supplied slot"
+    )
+    assert collateral.caller_must_supply == ()
+    assert "collateral" not in close.derivation_order
+
+    # and the recipe is NOT destroyed — it stays in the program-wide map, where it is
+    # true, with its origin. Only the claim about THIS instruction stops.
+    assert "collateral" in graph.pdas
+    assert graph.origins["collateral"] == "extracted"
+
+
+def test_the_sibling_recipe_still_lands_where_this_instruction_can_satisfy_it() -> None:
+    """The other half of the rule: `create_collateral` declares `collateral` itself and
+    still derives it, and `collateral_authority` — declared by both — is untouched."""
+    graph = build_program_graph(idl=_collateral_idl())
+    ixs = {i.name: i for i in graph.instructions}
+
+    create = {a.name: a for a in ixs["create_collateral"].accounts}
+    assert create["collateral"].is_pda and create["collateral"].satisfiable
+    assert create["collateral_authority"].satisfiable
+    # dependency-first: the authority is seeded on the collateral
+    order = ixs["create_collateral"].derivation_order
+    assert order.index("collateral") < order.index("collateral_authority")
+
+    # `collateral_authority` is declared by BOTH instructions; the close path keeps it,
+    # now derived from a caller-supplied `collateral`.
+    close = {a.name: a for a in ixs["close_old_collateral_signatures"].accounts}
+    assert close["collateral_authority"].is_pda
+    assert close["collateral_authority"].satisfiable
+
+
+def _escrow_idl() -> dict[str, object]:
+    """`escrow` (BUMb1Z3Fc7cH3VPJWwjzyfifYYcZYJGYUp9idHsdyw7D), reduced.
+
+    `post_sell_order` declares `user_token_account` as the ATA of `user` + `token`.
+    `cancel_order` takes the same NAME as an OPTIONAL, undeclared slot — and has no
+    `user` account at all (the wallet there is `initiator`).
+    """
+    ata_program = [
+        140,
+        151,
+        37,
+        143,
+        78,
+        36,
+        137,
+        241,
+        187,
+        61,
+        16,
+        41,
+        20,
+        142,
+        13,
+        131,
+        11,
+        90,
+        19,
+        153,
+        218,
+        255,
+        16,
+        132,
+        4,
+        142,
+        123,
+        216,
+        219,
+        233,
+        248,
+        89,
+    ]
+    token_program = [
+        6,
+        221,
+        246,
+        225,
+        215,
+        101,
+        161,
+        147,
+        217,
+        203,
+        225,
+        70,
+        206,
+        235,
+        121,
+        172,
+        28,
+        180,
+        133,
+        237,
+        95,
+        91,
+        55,
+        145,
+        58,
+        140,
+        245,
+        133,
+        126,
+        255,
+        0,
+        169,
+    ]
+    return {
+        "address": "BUMb1Z3Fc7cH3VPJWwjzyfifYYcZYJGYUp9idHsdyw7D",
+        "instructions": [
+            {
+                "name": "post_sell_order",
+                "args": [],
+                "accounts": [
+                    {"name": "user", "signer": True, "writable": True},
+                    {"name": "token"},
+                    {
+                        "name": "user_token_account",
+                        "writable": True,
+                        "pda": {
+                            "seeds": [
+                                {"kind": "account", "path": "user"},
+                                {"kind": "const", "value": token_program},
+                                {"kind": "account", "path": "token"},
+                            ],
+                            "program": {"kind": "const", "value": ata_program},
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "cancel_order",
+                "args": [{"name": "order_id", "type": "u64"}],
+                "accounts": [
+                    {"name": "authority", "signer": True, "writable": True},
+                    {"name": "initiator"},
+                    {
+                        "name": "user_token_account",
+                        "docs": ["Required for SELL cancels (refund destination)."],
+                        "writable": True,
+                        "optional": True,
+                    },
+                    {"name": "token"},
+                    {"name": "token_program"},
+                ],
+            },
+        ],
+    }
+
+
+def test_an_undeclared_slot_does_not_inherit_a_sibling_ata_recipe() -> None:
+    """The same NAME is not the same ACCOUNT.
+
+    `cancel_order`'s `user_token_account` is an optional refund destination with no `pda`
+    block. Importing `post_sell_order`'s ATA recipe marks it derivable-in-principle and
+    then reports the instruction blocked on `user` — an account `cancel_order` does not
+    take. The truthful report is a caller-supplied slot.
+    """
+    graph = build_program_graph(idl=_escrow_idl())
+    cancel = {i.name: i for i in graph.instructions}["cancel_order"]
+    ata = {a.name: a for a in cancel.accounts}["user_token_account"]
+
+    assert ata.is_pda is False
+    assert ata.derive_from == ()
+    assert "user" not in ata.caller_must_supply
+    assert cancel.derivation_order == ()
+
+    # the declaring instruction is unchanged
+    post = {i.name: i for i in graph.instructions}["post_sell_order"]
+    posted = {a.name: a for a in post.accounts}["user_token_account"]
+    assert posted.is_pda and posted.satisfiable
+
+
+def test_the_4057_deferrals_are_not_imports_and_do_not_change() -> None:
+    """The gate above is on IMPORTS ONLY — an instruction that has no declaration of
+    its own. The two deferrals that keep this repo honest both start from a declaration
+    the instruction DID make, and neither goes through it.
+
+    1. jurassic_fi's self-referential root: `claim` declares `launch` from `launch.admin`
+       — a dead end — and correctly takes the sibling's derivable recipe, because the
+       program re-derives the address from the stored fields and rejects a mismatch.
+    2. pump.fun's `creator_vault`: a seed reading ANOTHER account is not a dead end, and
+       must still refuse to be rescued by a sibling.
+    """
+    from tests.test_pda_idl import _foreign_account_read_idl, _self_referential_idl
+
+    graph = build_program_graph(idl=_self_referential_idl())
+    claim = {i.name: i for i in graph.instructions}["claim"]
+    launch = {a.name: a for a in claim.accounts}["launch"]
+    assert launch.is_pda and launch.resolvable
+    # derived from the sibling's inputs, not from a read of itself
+    assert [b.seed_name for b in launch.derive_from] == ["admin", "params.launch_id"]
+
+    pump = build_program_graph(idl=_foreign_account_read_idl())
+    buy = {i.name: i for i in pump.instructions}["buy"]
+    vault = {a.name: a for a in buy.accounts}["creator_vault"]
+    assert vault.is_pda and vault.resolvable is False
+    # `buy` DOES take `bonding_curve`, so the seed binds — and the recipe is still not
+    # resolvable, because nothing typed the field read off it. `resolvable` and
+    # `satisfiable` are different questions and both are reported.
+    assert [b.bound_to for b in vault.derive_from] == ["bonding_curve"]
+    assert vault.caller_must_supply == ()
+    assert vault.satisfiable is False
+
+
+def test_a_source_recovered_recipe_still_reaches_an_instruction_that_can_bind_it() -> (
+    None
+):
+    """The import path is narrowed, not closed. The #4057 rescue lands through it —
+    the IDL dropped `config`'s pda block entirely, source recovered it, and the
+    instruction can satisfy every seed — so it must still arrive."""
+    idl_missing = {
+        "address": ORE_PROGRAM,
+        "instructions": [
+            {"name": "init_config", "accounts": [{"name": "config"}], "args": []}
+        ],
+    }
+    graph = build_program_graph(idl=idl_missing, source=ORE_SOURCE)
+    config = {a.name: a for a in graph.instructions[0].accounts}["config"]
+    assert config.is_pda and config.satisfiable
+    assert graph.origins["config"] == "recovered"
