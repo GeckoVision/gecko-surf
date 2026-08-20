@@ -1,4 +1,26 @@
-# jurassic_fi: six of eight instructions cannot derive their own root account
+# jurassic_fi: six of eight instructions could not derive their own root account
+
+> **UPDATE, 2026-08-19 — this is now fixed, and the numbers below are the BEFORE.**
+>
+> The fix this document argues for (carry a resolvable sibling recipe across instructions,
+> with provenance) has shipped in `gecko/pda_extract.py`. Re-measured against the same live
+> program on 2026-08-19:
+>
+> | | |
+> |---|---|
+> | buildable with no lookup | **3** — `initialize_launch`, `initialize_payment_mint_allowlist`, `remove_payment_mint_allowlist` |
+> | need a value fetched first | **5** — `claim`, `contribute`, `fail_pending_settlement`, `refund`, `settle_success` |
+> | **uncallable** | **0** |
+>
+> Two words in the old title were doing damage even while the count was right. **"Cannot
+> derive" is not what is true now: the recipe is known for every account**, and what remains
+> is that two named values — `admin` and `params.launch_id` — have to be read before the
+> call is built. "Uncallable" and "needs a lookup" are different problems with different
+> fixes, and `gecko/artifact.py::callability` now counts them apart rather than averaging
+> them into one figure.
+>
+> Left standing rather than edited away: this was accurate when measured, and the change
+> came from our own work. A measurement that improves is not an erratum.
 
 **Status:** measured 2026-08-17 against mainnet, through Orquestra's MCP and our own graph.
 Every address below is reproducible. Nothing was signed and nothing was sent.
@@ -99,7 +121,8 @@ showcase:
 `gecko/program_graph.py` builds each instruction's account list independently, so `launch` is
 correctly unresolvable in `claim` and correctly resolvable in `initialize_launch`, and the two
 never meet. Carrying the recipe across turns **six uncallable instructions into callable
-ones** on this program alone — and this pattern is not rare, because every Anchor program that
+ones** on this program alone *(shipped 2026-08-19; the measured result is 5 needing a
+lookup and 0 uncallable — see the update at the top)* — and this pattern is not rare, because every Anchor program that
 stores its own seed values has it.
 
 It must carry provenance, not silently upgrade: the recipe is `recovered`, from a sibling

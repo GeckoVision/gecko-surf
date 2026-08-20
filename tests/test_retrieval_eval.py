@@ -384,7 +384,13 @@ def test_surface_gold_rows_keep_their_ranks() -> None:
     by_intent = {o.row.intent: o for o in evaluate_golden().rows}
     assert by_intent["stake my tokens on ore"].gold_rank == 1
     assert by_intent["mine ore and claim the rewards"].gold_rank == 2
-    assert by_intent["refund my contribution from a failed ico"].gold_rank == 1
+    # "refund my contribution from a failed ico" held rank 1 until 2026-08-19 and is one of
+    # the 7 rows the identity-term gate costs: it reached metadao_ico's SURFACE card on
+    # `ico` alone, which is the program's own name and nothing else. Refusing it is the
+    # gate working, not a ranking regression — the same permissiveness served "buy a
+    # house". It returns when the card carries the vocabulary of a refund rather than only
+    # the program's name.
+    assert by_intent["refund my contribution from a failed ico"].gold_rank is None
 
 
 # --- the measured floors (R-3) ---------------------------------------------------
@@ -401,16 +407,36 @@ def test_surface_gold_rows_keep_their_ranks() -> None:
 #
 # Measured on main at 15b5044, cold. Raising any of these is a real improvement and the
 # floor should be raised with it; lowering one is a regression that has to be argued.
-RECALL_AT_1_FLOOR = 25 / 33
-RECALL_AT_3_FLOOR = 30 / 33
-MRR_FLOOR = 5 / 6
+# LOWERED 2026-08-19, and here is the argument the comment above demands.
+#
+# The corroboration gate used to accept on an identity-term match ALONE. That branch was
+# not buying recall, it was borrowing it: the same rule that reached these rows served
+# "buy a house" as pumpfun.buy, "sell my car" as pumpfun.sell and "swap my shift with a
+# coworker" as meteora.swap — 6 of the golden set's 12 out-of-scope rows, each on a single
+# word that was the instruction's own name. Requiring one matched term BEYOND the name
+# took false accepts from 8/12 to 2/12 and cost 7 in-scope rows.
+#
+# Four of those 7 are meteora rows, and they are lost for one reason: `meteora.swap`'s card
+# reads "Plan a Meteora DLMM swap. Give input_mint, output_mint, bin_step, base_factor..."
+# It describes the IMPLEMENTATION and never the words a person says, so "swap sol for usdc"
+# matches only {swap}. The card is thin; the gate is not wrong.
+#
+# These floors are therefore a FLOOR ON A KNOWN DEBT, not a new normal. What repays it is
+# value-domain recognition — knowing sol and usdc are members of `solana-token-mint` and
+# crediting the card that consumes that domain. What must NOT repay it is pasting this
+# fixture's vocabulary into the config, which would make the eval score itself.
+RECALL_AT_1_FLOOR = 23 / 33
+RECALL_AT_3_FLOOR = 27 / 33
+MRR_FLOOR = 25 / 33
 
 # The precision side. These 8 are AUTHORED, not accidental: e6a6b20 ("out-of-scope rows
 # that carry an identity term — 8/8 false-accept") committed them to measure what the
 # floor lets through when an out-of-scope intent shares a term with a wired card. A
 # ceiling, not a floor: the number must not grow unnoticed, and driving it DOWN is the
 # improvement.
-FALSE_ACCEPT_CEILING = 8
+# 8 -> 2 on 2026-08-19 with the identity-term gate. Driving it down is the improvement,
+# so the ceiling follows it down: 2 must not silently become 3.
+FALSE_ACCEPT_CEILING = 2
 
 
 def test_the_measured_retrieval_floors_hold() -> None:
@@ -437,9 +463,9 @@ def test_the_floors_are_exact_fractions_not_rounded_literals() -> None:
     A rounded-up decimal (0.7576 > 25/33) passes a human read and then fails `>=` against
     its own source measurement. This catches that at the point of authorship.
     """
-    assert RECALL_AT_1_FLOOR == 25 / 33
-    assert RECALL_AT_3_FLOOR == 30 / 33
-    assert MRR_FLOOR == 5 / 6
+    assert RECALL_AT_1_FLOOR == 23 / 33
+    assert RECALL_AT_3_FLOOR == 27 / 33
+    assert MRR_FLOOR == 25 / 33
 
     # The specific literals that were drafted, and why they could not work.
     assert 0.7576 > 25 / 33, (
@@ -518,9 +544,15 @@ def test_the_router_refuses_at_serve_limit_what_it_serves_at_eval_limit() -> Non
         "truncation now equals a shallow call — if the floor stopped being "
         "limit-sensitive, count_wrong_instruction_accepts can stop re-querying"
     )
-    assert refused_shallow_served_deep, (
-        "no row is refused at SERVE_LIMIT but served at EVAL_LIMIT — the "
-        "eval-vs-production gap this pins has closed, which is good news to record"
+    # This used to assert the gap was NON-empty, pinning rows that a shallow call refused
+    # and a deep call served. On 2026-08-19 the identity-term gate CLOSED that gap, and
+    # the old assertion's own failure message said this outcome was "good news to record".
+    # Recorded: the floor no longer depends on how deep the caller looked, which is the
+    # property we wanted. `truncation_differs` above still holds, so
+    # count_wrong_instruction_accepts must keep re-querying at SERVE_LIMIT.
+    assert not refused_shallow_served_deep, (
+        "a row is refused at SERVE_LIMIT but served at EVAL_LIMIT again — the floor has "
+        f"become depth-sensitive: {refused_shallow_served_deep}"
     )
 
 
@@ -668,9 +700,13 @@ def test_evaluate_golden_accepts_a_custom_fixture(tmp_path: Path) -> None:
     golden.write_text(
         json.dumps(
             {
-                "intent": "swap sol for usdc",
-                "gold_program": "meteora",
-                "gold_instruction": "swap",
+                # Was "swap sol for usdc" until 2026-08-19. That row is now a
+                # documented casualty of the identity-term gate (meteora's card
+                # describes its implementation, not the task), and this test is about
+                # whether a CUSTOM FIXTURE is honoured — not about that row.
+                "intent": "stake my tokens on ore",
+                "gold_program": "ore",
+                "gold_instruction": None,
             }
         )
         + "\n",

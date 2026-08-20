@@ -30,11 +30,16 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable, Mapping, Sequence
 
 from .networks import UNKNOWN_NETWORK, coerce_network
 from .prepare_purchase import USDC_MINT, _resolve_rpc_url
 from .rpc import RpcCall, RpcError, default_rpc_call
+from .token_program import (
+    MintTokenProgram,
+    read_mint_token_programs,
+    unknown_token_program,
+)
 
 __all__ = [
     "LET_ME_BUY_PROGRAM_ID",
@@ -246,6 +251,39 @@ def authority_span(raw: bytes) -> tuple[int, int]:
     return start, cursor.position
 
 
+def _product_fields(
+    products: Sequence[StoreProduct],
+    programs: Mapping[str, MintTokenProgram],
+) -> list[dict[str, Any]]:
+    """One menu line per product, including the token program that owns its mint.
+
+    ``mint_note`` is a human LABEL and stays exactly as it was. ``token_program`` is the
+    fact underneath it: two mints can both say "USDC" to a person and sit on different
+    token programs, in which case a wallet holding one cannot pay with it for the other.
+    The program is read from the mint account; when the read failed it says so rather than
+    falling back to the common case.
+    """
+    return [
+        {
+            "name": entry.name,
+            "price_raw": entry.price_raw,
+            "decimals": entry.decimals,
+            "price_ui": entry.price_ui,
+            "mint": entry.mint,
+            "mint_note": "USDC" if entry.mint == USDC_MINT else None,
+            "token_program": programs.get(
+                entry.mint,
+                unknown_token_program(entry.mint, "this mint was not read"),
+            ).field(),
+        }
+        for entry in products
+    ]
+
+
+def _mints_of(listings: Iterable[StoreListing]) -> list[str]:
+    return [product.mint for listing in listings for product in listing.products]
+
+
 def list_stores(
     *,
     rpc_url: str,
@@ -258,6 +296,11 @@ def list_stores(
     and prices), ``skipped`` (accounts that did not decode — counted, never guessed at),
     and ``truncated`` (True when the node returned more accounts than the cap and the
     tail was NOT read; a partial directory says so rather than passing as complete).
+
+    Each product also carries the ``token_program`` that owns its mint, READ from the mint
+    account in one batched round trip per listing — never inferred from the label, the
+    decimals or the address. Two mints can present the same human name ("USDC") on
+    different token programs and be different assets; the label alone cannot show that.
 
     ``product`` filters case-insensitively on a substring, so "water" finds both
     "Water" and "Sparkling water". The filter is applied AFTER decoding: a store with no
@@ -283,26 +326,29 @@ def list_stores(
         else None
     )
 
-    stores: list[dict[str, Any]] = []
+    listings: list[StoreListing] = []
     skipped = 0
     for row in rows[:_MAX_ACCOUNTS]:
         try:
             account = row["account"]
             raw = base64.b64decode(account["data"][0])
-            listing = decode_store(raw, address=str(row["pubkey"]))
+            listings.append(decode_store(raw, address=str(row["pubkey"])))
         except (StoreDecodeError, KeyError, TypeError, ValueError, IndexError):
             # Not this layout, or not the shape a node answers with. Counted, not guessed.
             skipped += 1
             continue
-        products = [
-            {
-                "name": entry.name,
-                "price_raw": entry.price_raw,
-                "decimals": entry.decimals,
-                "price_ui": entry.price_ui,
-                "mint": entry.mint,
-                "mint_note": "USDC" if entry.mint == USDC_MINT else None,
-            }
+
+    # ONE read per DISTINCT mint for the whole directory, before any filtering: a menu
+    # prices many products in the same mint, and reading it per line item would be a round
+    # trip per row. Nothing is kept past this call.
+    programs = read_mint_token_programs(
+        _mints_of(listings), rpc_url=rpc_url, rpc_call=call
+    )
+
+    stores: list[dict[str, Any]] = []
+    for listing in listings:
+        matched = [
+            entry
             for entry in listing.products
             if needle is None or needle in entry.name.lower()
         ]
@@ -311,23 +357,15 @@ def list_stores(
         # which is how a person got there. An empty result must mean "nothing on this
         # network", never "your word did not literally appear in a product name".
         match_kind = None
+        selected: Sequence[StoreProduct]
         if needle is None:
-            match_kind = None
-        elif products:
+            selected = matched
+        elif matched:
             match_kind = "product"
+            selected = matched
         elif needle in listing.store_name.lower():
             match_kind = "store_name"
-            products = [
-                {
-                    "name": entry.name,
-                    "price_raw": entry.price_raw,
-                    "decimals": entry.decimals,
-                    "price_ui": entry.price_ui,
-                    "mint": entry.mint,
-                    "mint_note": "USDC" if entry.mint == USDC_MINT else None,
-                }
-                for entry in listing.products
-            ]
+            selected = listing.products
         else:
             # Still nothing. The widening must not become "everything matches", or the
             # filter stops carrying information.
@@ -348,7 +386,7 @@ def list_stores(
                     "telegram_channel_id": listing.telegram_channel_id,
                     "set": bool(listing.telegram_channel_id),
                 },
-                "products": products,
+                "products": _product_fields(selected, programs),
             }
         )
 
@@ -363,6 +401,14 @@ def list_stores(
             "still verifies everything before anything signs. Every store here is "
             "buyable through prepare_purchase, which re-reads the one you name from its "
             "own account rather than trusting this list."
+        ),
+        "mint_note_caveat": (
+            "`mint_note` is a human LABEL, and two different mints can wear the same one. "
+            "Match on `mint` and `token_program`, never on the label: a token-2022 mint "
+            "and a classic-spl-token mint are different assets even when both are called "
+            "USDC-something, and a wallet holding one CANNOT pay with it where the other "
+            "is priced. `token_program.read: false` means the mint could not be read and "
+            "the program is unknown — it does not mean classic."
         ),
     }
 
@@ -425,7 +471,15 @@ LIST_STORES_TOOL: dict[str, Any] = {
         "`prepare_purchase` — which starts a ~40-second clock on a live blockhash. Each "
         "product carries `price_ui` for display and `price_raw` + `decimals` + `mint` for "
         "anything else; a store may price in a mint that is not USDC, so read the mint "
-        "rather than assuming one. Read-only; nothing here holds a key."
+        "rather than assuming one. "
+        "EACH PRODUCT ALSO CARRIES `token_program` — the program that owns its mint, read "
+        "from the mint account. `mint_note` is only a human label, and two different mints "
+        "can wear the same one: a `token-2022` mint and a `classic-spl-token` mint are "
+        "DIFFERENT ASSETS even when both read as a dollar stablecoin, and a wallet holding "
+        "one cannot pay with it where the other is priced. Check the buyer's holding "
+        "against `mint` AND `token_program` before preparing. `token_program.read: false` "
+        "means the mint could not be read, which is not the same as classic. "
+        "Read-only; nothing here holds a key."
     ),
     "inputSchema": {
         "type": "object",

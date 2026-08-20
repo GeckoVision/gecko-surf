@@ -89,7 +89,7 @@ def plan_accounts(
     instruction: str,
     values: Mapping[str, Any],
     payer: str | None = None,
-) -> tuple[dict[str, str], list[dict[str, str]], list[dict[str, Any]]]:
+) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve every account slot of ``instruction``.
 
     Returns ``(resolved, origins, missing)``. An account is resolved from, in order: the
@@ -108,7 +108,7 @@ def plan_accounts(
         return {}, [], []
 
     resolved: dict[str, str] = {}
-    origins: list[dict[str, str]] = []
+    origins: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
     by_name = {a.name: a for a in target.accounts}
 
@@ -152,6 +152,8 @@ def plan_accounts(
             )
             continue
         bindings: dict[str, Any] = {**resolved, **values}
+        aliased = seed_aliases(node, bindings)
+        bindings.update({seed: value for seed, (_from, value) in aliased.items()})
         try:
             resolved[name] = derive_pda(node, bindings).address
         except Exception as exc:  # noqa: BLE001 - a failure to derive is an ANSWER
@@ -163,7 +165,13 @@ def plan_accounts(
                 }
             )
             continue
-        origins.append({"account": name, "origin": "derived"})
+        origin: dict[str, Any] = {"account": name, "origin": "derived"}
+        if aliased:
+            # Never silent. The caller sees which of their names filled which seed.
+            origin["aliased_seeds"] = {
+                seed: source for seed, (source, _value) in aliased.items()
+            }
+        origins.append(origin)
 
     # PASS 3 — whatever is still absent, named with what it would take.
     for account in target.accounts:
@@ -207,6 +215,50 @@ def _why_absent(account: Any, instruction: Any, graph: ProgramGraph) -> str:
                 "bump 255 where the real one was 254."
             )
     return "not a PDA — the caller must supply this address"
+
+
+def seed_aliases(
+    node: PdaNode, values: Mapping[str, Any]
+) -> dict[str, tuple[str, Any]]:
+    """Accept the spelling the caller was GIVEN for a seed this recipe spells differently.
+
+    A LIVE AGENT LOST A FULL ROUND TRIP TO THIS. ``find_start`` advertises the input as
+    ``launch_id``; the recipe's seed is ``params.launch_id``, because Anchor writes an
+    argument-struct field as a dotted path. The agent supplied exactly what it was told to
+    supply and was refused for a missing binding.
+
+    This is a SPELLING accommodation and nothing else. It binds the dotted seed
+    ``a.b`` from a caller value spelled ``b``, and the plain seed ``b`` from a caller
+    value spelled ``a.b`` — and only when the short name is unambiguous across this
+    recipe's seeds. Two seeds ending in the same segment alias nothing: substituting a
+    value under an ambiguous name is a guess, and a wrong seed derives a real, correctly
+    formatted, wrong address.
+    """
+    names = {
+        seed.name
+        for seed in node.seeds
+        if isinstance(seed, (VariablePdaSeedNode, ResolverPdaSeedNode))
+    }
+    tails: dict[str, list[str]] = {}
+    for name in names:
+        if "." in name:
+            tails.setdefault(name.rsplit(".", 1)[1], []).append(name)
+
+    aliased: dict[str, tuple[str, Any]] = {}
+    for tail, owners in tails.items():
+        if len(owners) != 1:
+            continue  # ambiguous — two dotted seeds share this last segment
+        (dotted,) = owners
+        if dotted not in values and tail in values:
+            aliased[dotted] = (tail, values[tail])
+    # and the mirror: the caller spelled it `params.launch_id` where the seed is plain
+    for key, value in values.items():
+        if "." not in str(key):
+            continue
+        tail = str(key).rsplit(".", 1)[1]
+        if tail in names and tail not in values:
+            aliased[tail] = (str(key), value)
+    return aliased
 
 
 def _unbound(node: PdaNode, bindings: Mapping[str, Any]) -> set[str]:
@@ -439,10 +491,11 @@ PREPARE_INSTRUCTION_TOOL = {
         "which nothing downstream catches.\n"
         "\n"
         "TWO THINGS AGENTS GET WRONG HERE. (1) Some seeds are fields of the account being "
-        "derived — you must read them off-chain first and pass them as values; the "
-        "refusal will name exactly which. (2) An instruction's later arguments are not "
-        "optional detail: a minimum-amount or slippage argument is how you say what you "
-        "will NOT accept, and omitting it is refused rather than defaulted.\n"
+        "derived — read them off-chain first (`read_accounts` does it and proves each "
+        "answer by re-derivation) and pass them as values; the refusal will name exactly "
+        "which. (2) An instruction's later arguments are not optional detail: a "
+        "minimum-amount or slippage argument is how you say what you will NOT accept, "
+        "and omitting it is refused rather than defaulted.\n"
         "\n"
         "Each account comes back saying how it got its address — `pinned` (the program's "
         "own word), `derived` (computed here), `supplied` (your claim, and the only one "
@@ -467,7 +520,10 @@ PREPARE_INSTRUCTION_TOOL = {
                 "type": "object",
                 "description": (
                     "account name -> base58 address, and argument name -> value. Seed "
-                    "values read off-chain go here too, under the seed's own name."
+                    "values read off-chain go here too. Either spelling of a dotted seed "
+                    "works — `launch_id` and `params.launch_id` both bind the seed "
+                    "`params.launch_id`, so the name `find_start` gave you is accepted "
+                    "as-is; the response says which of your names filled which seed."
                 ),
                 "additionalProperties": True,
             },

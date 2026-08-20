@@ -23,7 +23,7 @@ defensible in the first place.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .program_graph import ProgramGraph, build_program_graph
 
@@ -107,14 +107,32 @@ def instruction_needs(
                 None,
             )
             head = seed.partition(".")[0]
+            # Does THIS instruction actually take that argument? The recipe may have been
+            # imported from a sibling that does, and `source` describes the sibling's
+            # declaration, not this call's. Telling a caller they already hold a value
+            # they were never given invites them to invent one — and an invented seed
+            # derives a real, correctly formatted, resolvable, WRONG address.
+            declares_head = any(
+                arg.get("name") == head for arg in instruction.get("args", []) or ()
+            )
             if "." in seed and source == "account":
                 entry["why"] = (
                     f"a field of the `{head}` account — read it on-chain and pass it in"
                 )
-            elif "." in seed and source == "argument":
+            elif "." in seed and source == "argument" and declares_head:
                 entry["why"] = (
                     f"a field of the `{head}` argument struct — you build it, so pass "
                     f"`{seed}` directly"
+                )
+            elif "." in seed and source == "argument":
+                # The recipe says "argument", this instruction says otherwise. Name the
+                # disagreement rather than resolving it: the caller has to find the value,
+                # and they now know why nothing here supplies it.
+                entry["why"] = (
+                    f"the recipe reads it from a `{head}` argument, but this instruction "
+                    f"declares no `{head}` — it was carried from a sibling instruction, "
+                    f"so the value must come from somewhere else. Do not invent it: a "
+                    f"made-up seed derives a real, valid, wrong address."
                 )
             elif not recipe.get("resolvable", True):
                 entry["why"] = (
@@ -125,6 +143,38 @@ def instruction_needs(
                     "not an account or argument of this instruction; the caller supplies it"
                 )
     return sorted(needs.values(), key=lambda n: n["value"])
+
+
+def callability(instructions: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """Split instructions by what it would actually take to call them.
+
+    ``needs`` non-empty used to mean four different things at once, and a 200-program
+    sample of the live catalogue reported "17.7% blocked" because of it. Decomposed, that
+    was roughly 8% with no derivable recipe at all and 10% where the recipe is known and a
+    named value has to be fetched — plus a slice that was not blocked in any sense,
+    because the caller constructs the value themselves.
+
+    Those are three different problems with three different fixes: source recovery or
+    on-chain enumeration, one chain read, and nothing. A single number that averages them
+    is not a measurement.
+
+    The buckets are mutually exclusive and total, and ``uncallable`` wins ties: when no
+    recipe exists, a chain read cannot help because there is nothing to read into.
+    """
+    buildable = lookup = uncallable = 0
+    for instruction in instructions:
+        if instruction.get("unresolvable"):
+            uncallable += 1
+        elif instruction.get("needs"):
+            lookup += 1
+        else:
+            buildable += 1
+    return {
+        "instructions": len(instructions),
+        "buildable_now": buildable,
+        "needs_a_lookup": lookup,
+        "uncallable": uncallable,
+    }
 
 
 def build_artifact(
@@ -205,9 +255,8 @@ def build_artifact(
                 1 for r in pdas.values() if not r.get("resolvable", True)
             ),
             "by_origin": origins,
-            "instructions_needing_a_chain_read": sum(
-                1 for i in instructions if i["needs"]
-            ),
+            # Split, not summed: see `callability` for why one number here was wrong.
+            "callability": callability(instructions),
         },
     }
 

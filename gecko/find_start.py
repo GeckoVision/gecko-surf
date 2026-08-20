@@ -207,6 +207,15 @@ class ChainSpec:
 # --- results ---------------------------------------------------------------------
 
 
+#: Who produces an account's ADDRESS. This is a different axis from ``provenance``, and
+#: conflating them is what made a plan read as ready when it was not: ``provenance``
+#: grades the RECIPE (did the surface state it, did we recover it, is it flagged), while
+#: this says whether there is a recipe to run at all. A ``caller`` step is routinely
+#: ``extracted`` — the program artifact really does name the slot — and still has no
+#: obtainable value until the caller goes and finds one.
+AccountSupplier = Literal["derived", "caller"]
+
+
 @dataclass(frozen=True)
 class DeriveStep:
     """One account of the dependency-ordered derive plan, provenance-tagged."""
@@ -215,6 +224,9 @@ class DeriveStep:
     provenance: AccountProvenance
     note: str = ""
     resolver: str | None = None  # the declared read recipe/reason, when present
+    #: Defaults to ``caller`` because that is the fail-closed value: a step that never
+    #: said who produces it must not read as one Gecko derives.
+    supplied_by: AccountSupplier = "caller"
 
 
 # The closed chain-AGREEMENT vocabulary this module ACCEPTS as evidence. It is not a
@@ -283,6 +295,54 @@ class ChainPlan:
     note: str
 
 
+# Whether a plan can be RUN. Deliberately NOT a bool and deliberately not called
+# "ready": ``no_blockers_found`` means this router found nothing left to obtain, which is
+# weaker than a promise that the call will land, and ``not_assessed`` exists so a
+# hand-built StartPoint can never read as approval it never earned.
+ReadinessStatus = Literal["blocked", "no_blockers_found", "not_assessed"]
+
+
+@dataclass(frozen=True)
+class Readiness:
+    """What ``gaps`` never answered: is there anything left to obtain before building?
+
+    A LIVE AGENT SESSION IS WHY THIS EXISTS. It read ``gaps: []`` as "this plan is ready
+    to run" while five of the instruction's eight accounts had no obtainable value. It
+    was not misreading: ``gaps`` grades DERIVATION RECIPES, so an empty list means every
+    recipe here is trusted, and says nothing whatsoever about whether the caller can
+    produce the values those recipes consume. Both facts are true at once and they are
+    different facts, so this is a separate field rather than a redefinition of ``gaps``.
+
+    ``must_obtain`` is the union of the two things a caller still has to go and find: the
+    plan's accounts that NOTHING here derives (``supplied_by == "caller"``), and the
+    declared ``inputs``.
+    """
+
+    status: ReadinessStatus
+    must_obtain: tuple[str, ...]
+    note: str
+
+
+#: The honest default for a :class:`StartPoint` built outside the router (tests, fixtures,
+#: an eval harness). "Not assessed" is a third value on purpose — a missing assessment and
+#: a passed one must never be the same value.
+READINESS_NOT_ASSESSED = Readiness(
+    status="not_assessed",
+    must_obtain=(),
+    note="this start point was not built by the router, so nothing assessed it",
+)
+
+
+_READINESS_NOTE = (
+    "`gaps` grades DERIVATION RECIPES, not readiness: an empty `gaps` means every recipe "
+    "in this plan is trusted, NOT that the plan can run. Everything in `must_obtain` "
+    "still has no value here — the accounts among them are slots the program NAMES and "
+    "nothing derives, and the rest are the declared inputs. When the value you need is a "
+    "fact about an existing account of this program (which admin, which id), "
+    "`read_accounts` reads it off the chain and proves it by re-derivation."
+)
+
+
 @dataclass(frozen=True)
 class StartPoint:
     """One ranked starting point. ``kind`` is honest: ``start`` = a runnable plan —
@@ -308,6 +368,9 @@ class StartPoint:
     execute: dict[str, str] | None
     serve: str
     chain: ChainPlan
+    #: Defaulted so a StartPoint built outside the router stays constructible — and
+    #: defaulted to NOT ASSESSED, never to a pass.
+    readiness: Readiness = READINESS_NOT_ASSESSED
     note: str = ""
 
 
@@ -571,8 +634,125 @@ _SELL_AND_DELIVER = ChainSpec(
 
 # api_id → the chains declared for that program. Keyed, not scanned, so an unwired
 # program can never pick up another program's chain.
+# jurassic_fi (Jurassic Finance) — a real-world-asset sale: a museum-grade Triceratops
+# skull fractionalised as $TRCH1. Contribute USDC while the sale is open, claim $TRCH1
+# after it settles. Both steps are hand-authored from the LIVE IDL's own account lists
+# (the same trust class as StartSpec) and asserted in tests/test_jurassic_chain.py.
+#
+# The join is `user_position`: contribute writes it, claim reads it. The IDL states each
+# instruction's accounts; it never states that one call must follow the other. That is
+# exactly the edge an IDL loses and a lifecycle needs.
+_USER_POSITION_BASIS = (
+    "the packaged program config states user_position = ['user_position', launch, "
+    "contributor], and the live IDL lists it [writable] on BOTH contribute and claim — "
+    "the same address for the same contributor in the same launch, so the two calls "
+    "address one account"
+)
+
+_JURASSIC_SURFACE_NAMED = (
+    "contributor",
+    "payment_mint",
+    "contributor_payment_account",
+    "token_mint",
+    "contributor_token_account",
+    "token_program",
+    "system_program",
+)
+
+_CONTRIBUTE_THEN_CLAIM = ChainSpec(
+    name="contribute_then_claim",
+    api_id="jurassic_fi",
+    summary=(
+        "contribute to a token sale, then claim the tokens it owes you — contribute "
+        "opens the position the sale records your stake in; claim pays that position "
+        "out once the sale has settled"
+    ),
+    steps=(
+        ChainStepSpec(
+            instruction="contribute",
+            # Kept deliberately spare. Every word here is retrieval surface, and the
+            # let_me_buy cards already taught this repo that incidental prose ("new",
+            # "before") serves a card as a RUNNABLE start for intents it has nothing
+            # to do with. Rarity is not distinctiveness.
+            description=(
+                "Contribute USDC to a Jurassic Finance token sale and receive a claim "
+                "on $TRCH1. The sale must be open; the payment mint is fixed by the "
+                "launch, and the amount is in that mint's base units."
+            ),
+            inputs=(
+                "admin",
+                "launch_id",
+                "requested_amount",
+                "min_accepted_amount",
+                "contributor",
+            ),
+            spec=StartSpec(
+                accounts=(
+                    "launch",
+                    "user_position",
+                    "payment_vault",
+                ),
+                surface_named=_JURASSIC_SURFACE_NAMED,
+                recovered={
+                    "launch": (
+                        "seeded on ['launch', launch.admin, launch.launch_id] — two "
+                        "fields of the account being derived, so the surface cannot "
+                        "derive it from itself. In contribute the id arrives as the "
+                        "ARGUMENT params.launch_id at width 8 (u64); read at u8 it "
+                        "derives a different, perfectly valid address"
+                    )
+                },
+            ),
+        ),
+        ChainStepSpec(
+            instruction="claim",
+            description=(
+                "Claim the $TRCH1 a settled Jurassic Finance sale owes a contributor, "
+                "paying out the position that contribute recorded. The sale must have "
+                "settled, and only the contributor named in the position can claim it."
+            ),
+            inputs=("admin", "launch_id", "contributor"),
+            spec=StartSpec(
+                accounts=(
+                    "launch",
+                    "user_position",
+                    "token_vault",
+                    "dust_token_account",
+                ),
+                surface_named=_JURASSIC_SURFACE_NAMED,
+                gaps=(
+                    GapSpec(
+                        name="dust_token_account",
+                        note=(
+                            "reads as clean in the IDL but is not buildable from it — "
+                            "the seed the recipe needs is carried by a sibling account, "
+                            "not by this one"
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    edges=(
+        ChainEdge(
+            produces="contribute",
+            consumes="claim",
+            account="user_position",
+            kind="initializes",
+            basis=_USER_POSITION_BASIS,
+            refuted_by=(
+                "a claim that lands against a launch the contributor never contributed "
+                "to, or a user_position readable by claim without contribute having "
+                "written it"
+            ),
+        ),
+    ),
+)
+
+
 _DECLARED_CHAINS: dict[str, tuple[ChainSpec, ...]] = {
     "let_me_buy": (_OPEN_A_STORE, _SELL_AND_DELIVER),
+    "jurassic_fi": (_CONTRIBUTE_THEN_CLAIM,),
 }
 
 
@@ -867,12 +1047,17 @@ def _account_step(
     has_recipe = bool(resolver_seeds) and all(
         s.resolve is not None for s in resolver_seeds
     )
+    # A recipe is what makes an address derivable. Without a node there is nothing to run,
+    # however well the surface names the slot — and that is the fact an empty `gaps` was
+    # never reporting.
+    supplier: AccountSupplier = "derived" if node is not None else "caller"
     if resolver_seeds and not has_recipe:
         return DeriveStep(
             account=name,
             provenance="flagged",
             note=overlay_why.get(name, ""),
             resolver=resolver_note,
+            supplied_by="caller",
         )
     if name in recovered:
         return DeriveStep(
@@ -880,6 +1065,7 @@ def _account_step(
             provenance="recovered",
             note=recovered[name],
             resolver=resolver_note,
+            supplied_by=supplier,
         )
     if name in overlay_pdas:
         return DeriveStep(
@@ -887,6 +1073,7 @@ def _account_step(
             provenance="recovered",
             note=overlay_why.get(name, "beyond-surface recipe (manual overlay)"),
             resolver=resolver_note,
+            supplied_by=supplier,
         )
     if has_recipe:
         return DeriveStep(
@@ -894,9 +1081,10 @@ def _account_step(
             provenance="recovered",
             note="a declared control-plane read recipe resolves this seed at plan time",
             resolver=resolver_note,
+            supplied_by=supplier,
         )
     if node is not None or name in surface_named:
-        return DeriveStep(account=name, provenance="extracted")
+        return DeriveStep(account=name, provenance="extracted", supplied_by=supplier)
     return DeriveStep(
         account=name,
         provenance="flagged",
@@ -1222,6 +1410,24 @@ def _chain_plan(
     )
 
 
+def _readiness_of(inputs: tuple[str, ...], plan: tuple[DeriveStep, ...]) -> Readiness:
+    """What is left to obtain: accounts nothing derives, then the declared inputs.
+
+    Order matters to a reader — the accounts come first because they are the half a
+    caller does NOT expect to be missing, having just been handed a derive plan that
+    lists them.
+    """
+    accounts = tuple(
+        dict.fromkeys(step.account for step in plan if step.supplied_by == "caller")
+    )
+    must_obtain = tuple(dict.fromkeys(accounts + inputs))
+    return Readiness(
+        status="blocked" if must_obtain else "no_blockers_found",
+        must_obtain=must_obtain,
+        note=_READINESS_NOTE,
+    )
+
+
 def _gaps_of(card: _Card, plan: tuple[DeriveStep, ...]) -> tuple[GapSpec, ...]:
     declared = {g.name: g for g in (card.spec.gaps if card.spec else ())}
     out: list[GapSpec] = []
@@ -1368,6 +1574,7 @@ def _start_point(
         execute=execute,
         serve=f"gecko-orquestra --program {card.api_id} --stdio",
         chain=chain,
+        readiness=_readiness_of(card.inputs, plan),
         note=note,
     )
 
@@ -1515,7 +1722,19 @@ def find_start(
             # distinguishing terms. One shared noun is not evidence — "get me out of
             # hyUSD into USDC" matched metadao/fund on the single word "usdc" and was
             # served as a plan to run.
-            named = bool(matched & _identity_terms(card))
+            # Naming an action is not describing a task. `named` used to be sufficient
+            # on its own, and it served "buy a house" as pumpfun.buy on why=('buy',) —
+            # along with "sell my car", "deliver my mail" and "swap my shift with a
+            # coworker", 6 of the golden set's 12 out-of-scope rows, every one of them
+            # matching a single word that was the instruction's own name.
+            #
+            # The verb says what to do and says nothing about WHAT is acted on, so a
+            # runnable start now needs one matched term BEYOND the name. Note what could
+            # not have fixed this: "swap my shift with a coworker" and "swap sol for usdc"
+            # match the identical term set {swap}. No rule over the MATCHED words separates
+            # them — the evidence is in what the caller said beyond the verb.
+            identity = _identity_terms(card)
+            named = bool(matched & identity) and bool(matched - identity)
             corroborated = len(matched & distinguishing) >= 2
             # Only RUNNABLE cards are gated. A `surface` card already says "start from
             # this program's derive tools", which is a hedge, not a plan — demoting it
@@ -1603,7 +1822,10 @@ def jsonl_miss_logger(path: str) -> MissLogger:
 
 def _render_step(index: int, step: DeriveStep) -> list[str]:
     tag = "FLAGGED" if step.provenance == "flagged" else step.provenance
-    line = f"    {index:>2}. {step.account:<28} [{tag}]"
+    # OUTSIDE the bracket on purpose: the bracket is the provenance tag and readers
+    # (and tests) pin it. Who supplies the address is a second axis, not a fourth tag.
+    supplier = "  <- YOU SUPPLY THIS" if step.supplied_by == "caller" else ""
+    line = f"    {index:>2}. {step.account:<28} [{tag}]{supplier}"
     lines = [line]
     if step.note:
         lines.append(f"        {step.note}")
@@ -1680,6 +1902,13 @@ def format_result(result: FindStartResult) -> str:
             lines.append("    flagged gaps (honest — resolve before building):")
             for gap in point.gaps:
                 lines.append(f"      ! {gap.name}: {gap.note}")
+        if point.readiness.status != "not_assessed":
+            lines.append(f"    readiness:  {point.readiness.status.upper()}")
+            if point.readiness.must_obtain:
+                lines.append(
+                    "      still to obtain: " + ", ".join(point.readiness.must_obtain)
+                )
+            lines.append(f"      {point.readiness.note}")
         if point.execute:
             method = point.execute.get("method", "GET")
             lines.append(

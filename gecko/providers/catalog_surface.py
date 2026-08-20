@@ -51,6 +51,7 @@ from ..prepare_instruction import (
     prepare_instruction_result,
 )
 from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
+from ..read_accounts import READ_ACCOUNTS_TOOL, read_accounts_result
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
@@ -198,6 +199,9 @@ class OrquestraCatalogSurface:
 
     def list_tools(self, **_kwargs: Any) -> list[dict[str, Any]]:
         return [
+            # `start` first: it is the one an agent should reach for, and the order a
+            # tool list is read in is part of its interface.
+            _START_TOOL,
             _FIND_START_TOOL,
             _LIST_PROGRAMS_TOOL,
             _COMPREHEND_TOOL,
@@ -214,6 +218,12 @@ class OrquestraCatalogSurface:
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
             VERIFY_SIGNED_TOOL,
+            # The step BEFORE building, and it sits here because that is where it is
+            # reached for. A derive plan can be perfect and still unusable when nothing
+            # says WHICH admin and WHICH id the sale a person named actually has — a
+            # live agent hit exactly that, and got past it only by calling raw
+            # getProgramAccounts and hex-dumping a 552-byte account by hand.
+            READ_ACCOUNTS_TOOL,
             # The general form of `prepare_purchase`: any instruction of any catalog
             # program, with the PDAs derived here and the bytes built by the catalog's
             # own builder. Unsigned, like everything else on this surface.
@@ -240,6 +250,8 @@ class OrquestraCatalogSurface:
         unauthenticated, so it has no account to pass and every call is mode A.
         """
         args = arguments or {}
+        if name == "start":
+            return self._start(args)
         if name == "find_start":
             return self._find_start(args)
         if name == "list_programs":
@@ -254,6 +266,8 @@ class OrquestraCatalogSurface:
             return derive_ata_result(args)
         if name == "derive_pda":
             return derive_pda_result(args)
+        if name == "read_accounts":
+            return self._read_accounts(args)
         if name == "program_lifecycle":
             return self._program_lifecycle(args)
         if name == "try_purchase":
@@ -276,6 +290,18 @@ class OrquestraCatalogSurface:
         return {"error": f"unknown tool {name!r}"}
 
     # -- tools --------------------------------------------------------------
+
+    def _start(self, args: dict[str, Any]) -> dict[str, Any]:
+        """`start` is `find_start`, projected. It deliberately reuses the whole handler
+        rather than re-deriving anything: the catalog ride-along, its honest-degraded
+        note and every refusal path are the same code, so the two tools cannot disagree
+        about what the router decided."""
+        from ..start_view import project_start
+
+        rendered = self._find_start(args)
+        if "starts" not in rendered:
+            return rendered  # an error dict — pass it through untouched
+        return project_start(rendered)
 
     def _find_start(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..find_start import find_start
@@ -493,6 +519,23 @@ class OrquestraCatalogSurface:
             rpc_url=self.instruction_rpc_url,
         )
 
+    def _read_accounts(self, args: dict[str, Any]) -> Any:
+        """Read live instances of one account type — same IDL seam, same RPC field.
+
+        The RPC comes from the surface and never from ``args``, for the reason
+        :attr:`instruction_rpc_url` states: a caller-supplied URL on an unauthenticated
+        mount is an SSRF proxy.
+        """
+        if self.instruction_seams is None:
+            self.instruction_seams = orquestra_seams()
+        idl_fetch, _build = self.instruction_seams
+        return read_accounts_result(
+            args,
+            idl_fetch=idl_fetch,
+            rpc_url=self.instruction_rpc_url,
+            rpc_call=self.purchase_rpc_call,
+        )
+
     def _prepare_purchase(
         self, args: dict[str, Any], *, account: str | None = None
     ) -> dict[str, Any]:
@@ -623,7 +666,14 @@ _FIND_START_TOOL = {
         "execute pointer. Unwired catalog programs come back as comprehend-first "
         "pointers. Honest below the floor: 'no start found' + closest GUESSES, "
         "never a fabricated match. Returns plans and pointers only — never signs "
-        "or broadcasts."
+        "or broadcasts.\n"
+        "READ `readiness` BEFORE YOU BUILD, AND DO NOT READ `gaps` AS READINESS. "
+        "`gaps` grades derivation RECIPES, so `gaps: []` means every recipe is "
+        "trusted and says nothing about whether you can run this. `readiness."
+        "must_obtain` is what still has no value: accounts the program names and "
+        "nothing derives, plus the declared inputs. When one of them is a fact about "
+        "an existing account of that program (which admin, which id), `read_accounts` "
+        "reads it off the chain and proves it by re-derivation."
     ),
     "inputSchema": {
         "type": "object",
@@ -635,6 +685,33 @@ _FIND_START_TOOL = {
         "additionalProperties": False,
     },
 }
+
+_START_TOOL = {
+    "name": "start",
+    "description": (
+        "The same routing as `find_start`, projected to the ONE call you are about "
+        "to make. You get the chosen start in full — the dependency-ordered derive "
+        "plan, every account's provenance tag, the DECLARED preludes, the honest "
+        "flagged gaps, the execute pointer — and the runners-up as names, scores and "
+        "what they matched on, with no plans attached. A derive plan is a plan to "
+        "CALL something, and you do not plan a call you are not making: `find_start` "
+        "spends about three quarters of its answer on candidates it has itself ruled "
+        "below the floor. Same floor, same refusals: when nothing is runnable you get "
+        "`start: null` and the closest GUESSES, never a fabricated match. Use "
+        "`find_start` instead when you want every candidate's full plan to compare. "
+        "Returns plans and pointers only — never signs or broadcasts."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "program": {"type": "string", "description": "optional program hint"},
+        },
+        "required": ["intent"],
+        "additionalProperties": False,
+    },
+}
+
 
 _LIST_PROGRAMS_TOOL = {
     "name": "list_programs",

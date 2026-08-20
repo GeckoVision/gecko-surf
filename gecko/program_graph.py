@@ -518,7 +518,15 @@ def build_program_graph(
 
     instructions: list[InstructionGraph] = []
     for ix in (idl or {}).get("instructions", []):
-        declared_here = instruction_pdas(ix, program_id=prog, type_defs=idl_type_defs)
+        declared_here = instruction_pdas(
+            ix,
+            program_id=prog,
+            type_defs=idl_type_defs,
+            # The IDL itself, so a dotted account seed can carry WHERE to read its
+            # value from — the `account` key Anchor already declares and we used to
+            # discard. Optional everywhere else, so nothing that omits it changes.
+            layout_idl=idl,
+        )
         arg_pairs = tuple(
             (a.get("name", ""), _type_str(a.get("type"))) for a in ix.get("args", [])
         )

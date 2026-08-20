@@ -470,3 +470,117 @@ def test_no_start_point_instructs_the_agent_to_pass_something_it_cannot() -> Non
     assert "Supply chain_verdicts" not in blob, (
         "the result tells an agent to pass a parameter the tool does not accept"
     )
+
+
+def test_a_function_word_does_not_outrank_the_verb_that_names_the_capability() -> None:
+    """Measured live, 2026-08-19: "swap one token for another" routed to
+    ``let_me_buy.make_purchase``, because ``one`` and ``token`` both scored and beat
+    ``meteora.swap``'s single ``swap``. Dropping the word ``one`` from the same sentence
+    returned the right program — so a filler word was outvoting the verb.
+
+    Document frequency (``_distinguishing_terms``) cannot catch this: ``one`` is rare
+    enough across cards to look distinguishing. It is not a rare term, it is a function
+    word, and function words are excluded by class rather than by count.
+    """
+    result = find_start("swap one token for another", limit=3)
+
+    top = result.starts[0]
+    assert top.program == "meteora", (
+        f"a filler word still outranks the verb: {top.program}.{top.instruction} "
+        f"won on {top.why}"
+    )
+    assert "one" not in top.why
+    assert "another" not in top.why
+
+
+def test_dropping_a_filler_word_does_not_change_the_answer() -> None:
+    """The same intent with and without its filler words must route identically —
+    otherwise the ranking is reading English grammar as evidence about Solana."""
+    with_filler = find_start("swap one token for another", limit=1).starts[0]
+    without = find_start("swap token", limit=1).starts[0]
+
+    assert (with_filler.program, with_filler.instruction) == (
+        without.program,
+        without.instruction,
+    )
+
+
+def test_naming_the_verb_is_not_describing_the_task() -> None:
+    """Measured 2026-08-19: 8 of the golden set's 12 out-of-scope intents cleared the floor
+    and were served as RUNNABLE starts. Six of them matched on a single word, and that word
+    was the instruction's own name:
+
+        "buy a house"                   -> pumpfun.buy               why=('buy',)
+        "sell my car"                   -> pumpfun.sell              why=('sell',)
+        "deliver my mail"               -> let_me_buy.mark_as_delivered
+        "swap my shift with a coworker" -> meteora.swap              why=('swap',)
+
+    The corroboration gate has two branches, and the ``named`` branch was unconditional: a
+    match on a program or instruction NAME was treated as sufficient evidence on its own.
+    But naming an action is not describing a task. "buy" says what to do; it says nothing
+    about WHAT is being bought, and every one of these intents supplied that object —
+    house, car, mail, shift — in words no wired card carries.
+
+    Note what could not fix this: "swap my shift with a coworker" and "swap sol for usdc"
+    match the identical term set ``{swap}``. Nothing about the matched words separates them.
+    The evidence is in what the caller said BEYOND the verb, so that is what the gate now
+    requires.
+    """
+    for intent in (
+        "buy a house",
+        "sell my car",
+        "deliver my mail",
+        "swap my shift with a coworker",
+        "buy groceries for the week",
+    ):
+        result = find_start(intent, limit=5)
+        assert result.no_start, (
+            f"{intent!r} was served as a runnable start: "
+            f"{result.starts[0].program}.{result.starts[0].instruction} "
+            f"on why={result.starts[0].why}"
+        )
+
+
+def test_the_verb_plus_an_object_still_routes() -> None:
+    """The other half of the rule, so the fix cannot be "refuse everything". These name an
+    action AND say what it acts on, which is exactly the evidence the gate now asks for."""
+    for intent, program in (
+        ("buy a beer", "let_me_buy"),
+        ("stake my tokens on ore", "ore"),
+        ("claim my ore mining rewards", "ore"),
+    ):
+        result = find_start(intent, limit=5)
+        assert not result.no_start, f"{intent!r} lost its start"
+        assert result.starts[0].program == program
+
+
+def test_a_card_that_describes_its_implementation_cannot_be_reached_by_task_words() -> (
+    None
+):
+    """The gate's measured COST, pinned rather than hidden.
+
+    `swap sol for usdc` no longer routes, and the reason is not the gate. `meteora.swap`'s
+    card reads "Plan a Meteora DLMM swap. Give input_mint, output_mint, bin_step,
+    base_factor..." — it describes the IMPLEMENTATION and never the words a person says.
+    So the only term that matches is `swap`, which is the instruction's own name, and one
+    verb is exactly what the gate stopped accepting.
+
+    The permissive gate was not buying recall, it was borrowing it: the same branch that
+    let this through also served "buy a house" as pumpfun.buy. Four of the seven rows the
+    gate costs are meteora rows, all thin in the same way.
+
+    The fix is to enrich the card from the PROGRAM ARTIFACT — its declared value domains,
+    IDL errors and events — never by pasting this test's own vocabulary into the config,
+    which would make the eval score itself. Until that lands, this is the honest state.
+    """
+    result = find_start("swap sol for usdc", limit=5)
+
+    assert result.no_start
+    meteora_swap = [
+        point
+        for point in result.starts
+        if point.program == "meteora" and point.instruction == "swap"
+    ]
+    assert meteora_swap, "meteora.swap should still be offered as a candidate"
+    assert meteora_swap[0].kind == "guess"
+    assert meteora_swap[0].why == ("swap",)
