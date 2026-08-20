@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from gecko.rpc import RpcError
 from gecko.store_directory import (
     LET_ME_BUY_PROGRAM_ID,
     LIST_STORES_TOOL,
@@ -354,3 +355,209 @@ def test_a_word_matching_nothing_still_returns_nothing() -> None:
     )
 
     assert list_stores_result({"product": "lobster"}, rpc_call=rpc)["stores"] == []
+
+
+# -- the look-alike asset ----------------------------------------------------------
+
+
+#: USDG on mainnet — 6 decimals, "a dollar stablecoin" to a person, and owned by
+#: Token-2022. Presented beside USDC with only a label, the two are indistinguishable.
+USDG = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
+CLASSIC = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+
+class MintAwareRpc:
+    """A node that answers the program scan AND `getMultipleAccounts` on the mints.
+
+    ``owners`` maps mint -> owning program, or to ``None`` for "no account here". A mint
+    absent from the map comes back as a null entry, which is what a node says about an
+    address that is not a mint at all.
+    """
+
+    def __init__(
+        self, rows: list[dict[str, Any]], owners: dict[str, str | None]
+    ) -> None:
+        self.rows = rows
+        self.owners = owners
+        self.calls: list[tuple[str, list[Any]]] = []
+
+    def __call__(self, url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        self.calls.append((method, params))
+        if method == "getProgramAccounts":
+            return {"result": self.rows}
+        if method == "getMultipleAccounts":
+            values: list[dict[str, Any] | None] = []
+            for mint in params[0]:
+                owner = self.owners.get(mint)
+                values.append(
+                    None
+                    if owner is None
+                    else {"owner": owner, "lamports": 1, "data": ["", "base64"]}
+                )
+            return {"result": {"value": values}}
+        raise AssertionError(f"unexpected method {method}")
+
+
+def test_two_stores_priced_in_look_alike_mints_are_distinguishable_on_the_menu() -> (
+    None
+):
+    """The hole: both products say "a dollar stablecoin"; only the token program differs.
+
+    An agent holding classic-SPL USDC reading a Token-2022 price has, without this field,
+    nothing on the surface telling it the two are not interchangeable — the ATA, the
+    transfer instruction and the signing program are all different.
+    """
+    rpc = MintAwareRpc(
+        _rows(
+            ("A1", encode_store("geckocoffee", products=[("Espresso", 100_000, 6)])),
+            (
+                "B1",
+                encode_store("usdgbar", products=[("Espresso", 100_000, 6)], mint=USDG),
+            ),
+        ),
+        owners={USDC: CLASSIC, USDG: TOKEN_2022},
+    )
+
+    out = list_stores(rpc_url="http://node", rpc_call=rpc)
+    by_store = {
+        store["store"]: store["products"][0]["token_program"] for store in out["stores"]
+    }
+
+    assert by_store["geckocoffee"] == {
+        "address": CLASSIC,
+        "name": "classic-spl-token",
+        "read": True,
+        "recognised": True,
+    }
+    assert by_store["usdgbar"] == {
+        "address": TOKEN_2022,
+        "name": "token-2022",
+        "read": True,
+        "recognised": True,
+    }
+    # …and the two are told apart by the FIELD, not by the label, which is identical.
+    assert by_store["geckocoffee"]["name"] != by_store["usdgbar"]["name"]
+
+
+def test_an_unreadable_mint_is_unknown_and_never_assumed_classic() -> None:
+    """Fail closed: the common case is classic SPL, which is exactly why the default
+    cannot be classic SPL. Unknown and classic must not be the same value."""
+    rpc = MintAwareRpc(_rows(("A1", encode_store("geckocoffee"))), owners={USDC: None})
+
+    program = list_stores(rpc_url="http://node", rpc_call=rpc)["stores"][0]["products"][
+        0
+    ]["token_program"]
+
+    assert program["read"] is False
+    assert program["address"] is None
+    assert program["name"] == "unknown" != "classic-spl-token"
+    assert "no account exists" in program["reason"]
+
+
+def test_a_node_that_cannot_answer_the_mint_read_still_lists_the_menu() -> None:
+    """An RPC failure on the mint read degrades the FIELD, never the directory: a menu
+    that vanishes because one lookup failed is worse than a menu with a stated unknown."""
+
+    def rpc(url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        if method == "getProgramAccounts":
+            return {"result": _rows(("A1", encode_store("geckocoffee")))}
+        raise RpcError("JSON-RPC getMultipleAccounts failed: code=-32603")
+
+    out = list_stores(rpc_url="http://node", rpc_call=rpc)
+    program = out["stores"][0]["products"][0]["token_program"]
+
+    assert out["stores"][0]["store"] == "geckocoffee"
+    assert program["read"] is False and program["name"] == "unknown"
+    assert "RpcError" in program["reason"]
+
+
+def test_the_token_program_is_read_from_the_mint_not_inferred() -> None:
+    """The rule that matters more than the field. A mint whose owner is neither token
+    program reports THAT owner — it is not coerced into a known name, and the fact that
+    the value tracks the node's answer proves nothing is inferred from the address."""
+    odd_owner = "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya"
+    rpc = MintAwareRpc(
+        _rows(("A1", encode_store("geckocoffee"))), owners={USDC: odd_owner}
+    )
+
+    program = list_stores(rpc_url="http://node", rpc_call=rpc)["stores"][0]["products"][
+        0
+    ]["token_program"]
+
+    assert program == {
+        "address": odd_owner,
+        "name": odd_owner,
+        "read": True,
+        "recognised": False,
+    }
+    # And the mint the label calls "USDC" is still labelled — the note is additive.
+    assert (
+        list_stores(rpc_url="http://node", rpc_call=rpc)["stores"][0]["products"][0][
+            "mint_note"
+        ]
+        == "USDC"
+    )
+
+
+def test_each_distinct_mint_is_read_once_per_call_not_once_per_product() -> None:
+    rpc = MintAwareRpc(
+        _rows(
+            (
+                "A1",
+                encode_store(
+                    "geckocoffee",
+                    products=[
+                        ("Espresso", 100_000, 6),
+                        ("Water", 50_000, 6),
+                        ("Wine", 200_000, 6),
+                    ],
+                ),
+            ),
+            ("A2", encode_store("jonasbar", products=[("Water", 100_000, 6)])),
+        ),
+        owners={USDC: CLASSIC},
+    )
+
+    list_stores(rpc_url="http://node", rpc_call=rpc)
+
+    mint_reads = [
+        params for method, params in rpc.calls if method == "getMultipleAccounts"
+    ]
+    assert len(mint_reads) == 1, "one batched round trip for the whole directory"
+    assert mint_reads[0][0] == [USDC], "four products, one distinct mint, one read"
+
+
+def test_a_filtered_product_still_carries_its_token_program() -> None:
+    """The field must survive both filter paths — a product-name match and the widening
+    to a store-name match — or an agent that searched would lose the very warning it needs.
+    """
+    rpc = MintAwareRpc(
+        _rows(("A1", encode_store("geckocoffee", products=[("Espresso", 100_000, 6)]))),
+        owners={USDC: CLASSIC},
+    )
+
+    matched = list_stores(rpc_url="http://node", rpc_call=rpc, product="espresso")
+    widened = list_stores(rpc_url="http://node", rpc_call=rpc, product="coffee")
+
+    for out in (matched, widened):
+        assert (
+            out["stores"][0]["products"][0]["token_program"]["name"]
+            == "classic-spl-token"
+        )
+
+
+def test_the_menu_says_a_label_is_not_an_asset() -> None:
+    """The cheapest half of the fix: say it, so an agent need not infer it from a field
+    it has never seen before."""
+    out = list_stores_result(
+        {"network": "mainnet"},
+        rpc_call=MintAwareRpc(
+            _rows(("A1", encode_store("geckocoffee"))), owners={USDC: CLASSIC}
+        ),
+    )
+
+    assert "label" in out["mint_note_caveat"]
+    assert "token-2022" in out["mint_note_caveat"]
+    assert "cannot pay" in out["mint_note_caveat"].lower()
+    assert "token_program" in LIST_STORES_TOOL["description"]
