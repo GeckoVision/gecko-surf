@@ -42,7 +42,21 @@ USER_AGENT = {"User-Agent": "gecko-surf/prepare-instruction"}
 #: `search_programs` answers in prose, and the project id is the one machine-readable
 #: thing in it. Anchored on the literal label so a reworded sentence fails loudly here
 #: rather than silently matching some other backticked token.
-_PROJECT_ID = re.compile(r"projectId:\s*`([0-9a-fA-F-]{8,})`")
+# The catalogue uses TWO id formats and this used to know only one: `[0-9a-fA-F-]{8,}`,
+# hex and dashes, written for the UUID-shaped ids newer entries carry. The older entries
+# carry a short alphanumeric id — `p7o7nf4pucllzadrmiqhf` — which contains p, n, u and z
+# and silently did not match. Every generic tool then refused those programs with "it may
+# not be indexed" while find_start and list_stores knew them perfectly well.
+#
+# Measured: 49 of 4,499 catalogue programs carry a non-hex id. That 1.1% is SPL Token,
+# Associated Token Account, Token 2022, Pumpfun AMM, Meteora AMM, Meteora DLMM and
+# Let Me Buy — the oldest-indexed and most depended-upon entries in the catalogue. The
+# blast radius of a parsing assumption is not proportional to how often it fires.
+#
+# The charset is now what an id may actually contain, and the backtick delimiters do the
+# bounding. It is still anchored to the `projectId:` label, so a missing id refuses
+# rather than matching the next quoted thing on the line.
+_PROJECT_ID = re.compile(r"projectId:\s*`([0-9A-Za-z._-]{8,})`")
 #: `build_instruction` returns the transaction in a fenced span.
 _TRANSACTION = re.compile(r"`([A-Za-z0-9+/=]{100,})`")
 

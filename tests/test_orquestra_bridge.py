@@ -427,3 +427,65 @@ def test_the_projected_flow_simulates_on_chain_for_exactly_the_measured_compute(
     # new one. Override it for a storefront that is not the one it was measured on.
     expected_cu = int(os.environ.get("GECKO_BRIDGE_EXPECTED_CU", MAKE_PURCHASE_CU))
     assert simulation["computeUnits"] == expected_cu
+
+
+def test_a_project_id_that_is_not_a_uuid_still_resolves() -> None:
+    """The catalogue uses TWO id formats and our regex only knew one.
+
+    `_PROJECT_ID` was `[0-9a-fA-F-]{8,}` — hex and dashes, written for the UUID-shaped ids
+    the newer catalogue entries carry. jurassic_fi is `d2decec3-acdf-4946-…` and matched.
+    let_me_buy is `p7o7nf4pucllzadrmiqhf`, which contains `p`, `n`, `u` and `z`, and did
+    not — so every generic tool refused it with "the catalogue could not resolve
+    BUYux…: it may not be indexed", while `find_start`, `list_stores` and
+    `program_lifecycle` all knew the program perfectly well.
+
+    Measured against the live catalogue: 49 of 4,499 programs carry a non-hex project id.
+    That is 1.1%, and it contains **SPL Token, Associated Token Account, Token 2022,
+    Pumpfun AMM, Meteora AMM, Meteora DLMM and Let Me Buy** — the oldest-indexed and most
+    depended-upon entries. The blast radius of a parsing assumption is not proportional to
+    how often it fires.
+    """
+    from gecko.orquestra_build import resolve_project_id
+
+    class _Catalogue:
+        def call_tool(self, _name: str, _args: dict) -> str:
+            return (
+                "Found 1 program(s) — sorted by weekly active users:\n\n"
+                "- **Let Me Buy** (projectId: `p7o7nf4pucllzadrmiqhf`)\n"
+                "  Program: `BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya`\n"
+            )
+
+    assert (
+        resolve_project_id(_Catalogue(), "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya")
+        == "p7o7nf4pucllzadrmiqhf"
+    )
+
+
+def test_a_uuid_project_id_still_resolves() -> None:
+    """The other half, so the widened pattern cannot have broken what already worked."""
+    from gecko.orquestra_build import resolve_project_id
+
+    class _Catalogue:
+        def call_tool(self, _name: str, _args: dict) -> str:
+            return (
+                "- **Jurassic** (projectId: `d2decec3-acdf-4946-bbb7-252a3c14ce2c`)\n"
+            )
+
+    assert (
+        resolve_project_id(_Catalogue(), "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm")
+        == "d2decec3-acdf-4946-bbb7-252a3c14ce2c"
+    )
+
+
+def test_a_response_with_no_project_id_still_refuses() -> None:
+    """Widening the charset must not turn "not indexed" into a silent wrong answer."""
+    import pytest
+
+    from gecko.orquestra_build import OrquestraBuildError, resolve_project_id
+
+    class _Empty:
+        def call_tool(self, _name: str, _args: dict) -> str:
+            return "No programs found matching your query."
+
+    with pytest.raises(OrquestraBuildError, match="no project id"):
+        resolve_project_id(_Empty(), "11111111111111111111111111111111")
