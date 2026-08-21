@@ -23,6 +23,13 @@ lives in the engine path.
 
 from __future__ import annotations
 
+from .catalog_sync import (
+    Endpoint,
+    ProgramSurface,
+    let_me_buy_surface,
+    surface_spec_rev,
+    sync_surface,
+)
 from .collections import Collection, InMemoryCollection
 from .projections import ProjectionError, record_call_outcome
 from .scores import N_FLOOR, EndpointScore, endpoint_score
@@ -35,4 +42,9 @@ __all__ = [
     "N_FLOOR",
     "EndpointScore",
     "endpoint_score",
+    "Endpoint",
+    "ProgramSurface",
+    "let_me_buy_surface",
+    "surface_spec_rev",
+    "sync_surface",
 ]
