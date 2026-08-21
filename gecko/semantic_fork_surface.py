@@ -30,7 +30,8 @@ from gecko.semantic_catalogue import get_item
 from gecko.semantic_gate import LiveItemState, ProposedPurchase
 from gecko.semantic_grader import PurchaseRecord
 from gecko.semantic_runner import SpendResult
-from gecko.store_directory import StoreListing, decode_store
+from gecko.semantic_seed import read_store_on_fork
+from gecko.store_directory import StoreListing
 
 
 class ForkSurfaceError(Exception):
@@ -38,19 +39,16 @@ class ForkSurfaceError(Exception):
 
 
 def _read_listing(store_address: str, rpc_url: str, rpc_call: RpcCall) -> StoreListing:
-    result = rpc_call(
-        rpc_url, "getAccountInfo", [store_address, {"encoding": "base64"}]
-    )
-    value = result.get("value") if isinstance(result, dict) else None
-    if not value:
+    # read_store_on_fork is robust to surfpool's getAccountInfo lag: a store
+    # seeded via setAccount shows in getProgramAccounts before getAccountInfo
+    # materialises it, so a bare getAccountInfo would false-fail on a fresh seed.
+    listing = read_store_on_fork(store_address, rpc_url, rpc_call)
+    if listing is None:
         raise ForkSurfaceError(
             f"store account {store_address} does not exist on this fork — seed the "
-            "geckocoffee store before running scenarios"
+            "store first (scripts/semantic_seed_fork.py) before running scenarios"
         )
-    import base64
-
-    raw = base64.b64decode(value["data"][0])
-    return decode_store(raw, address=store_address)
+    return listing
 
 
 @dataclass
