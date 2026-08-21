@@ -31,7 +31,11 @@ from .catalog_sync import (
     sync_surface,
 )
 from .collections import Collection, InMemoryCollection
-from .projections import ProjectionError, record_call_outcome
+from .projections import (
+    ProjectionError,
+    record_call_outcome,
+    record_simulated_outcome,
+)
 from .scores import N_FLOOR, EndpointScore, endpoint_score
 
 __all__ = [
@@ -39,6 +43,7 @@ __all__ = [
     "InMemoryCollection",
     "ProjectionError",
     "record_call_outcome",
+    "record_simulated_outcome",
     "N_FLOOR",
     "EndpointScore",
     "endpoint_score",
