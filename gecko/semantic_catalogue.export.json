@@ -8,7 +8,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3000000,
+      "price_lamports": 120000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -20,7 +20,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3500000,
+      "price_lamports": 140000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -32,7 +32,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 2500000,
+      "price_lamports": 100000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -44,7 +44,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3200000,
+      "price_lamports": 128000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -56,7 +56,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3500000,
+      "price_lamports": 140000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -68,7 +68,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4200000,
+      "price_lamports": 168000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -80,7 +80,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": true,
-      "price_lamports": 2500000,
+      "price_lamports": 100000,
       "is_plain_water": false,
       "ambiguous_without_intent": true
     },
@@ -92,7 +92,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4000000,
+      "price_lamports": 160000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -104,7 +104,7 @@
       "milk": "oat",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 6000000,
+      "price_lamports": 240000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -116,7 +116,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4200000,
+      "price_lamports": 168000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -128,7 +128,7 @@
       "milk": "oat",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 6200000,
+      "price_lamports": 248000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -140,7 +140,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4300000,
+      "price_lamports": 172000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -152,7 +152,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4000000,
+      "price_lamports": 160000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -164,7 +164,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3000000,
+      "price_lamports": 120000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -176,7 +176,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4400000,
+      "price_lamports": 176000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -188,7 +188,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 4800000,
+      "price_lamports": 192000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -200,7 +200,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 4600000,
+      "price_lamports": 184000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -212,7 +212,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 3800000,
+      "price_lamports": 152000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -224,7 +224,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4500000,
+      "price_lamports": 180000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -236,7 +236,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 5500000,
+      "price_lamports": 220000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -248,7 +248,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 5000000,
+      "price_lamports": 200000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -260,7 +260,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 4500000,
+      "price_lamports": 180000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -272,7 +272,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 5000000,
+      "price_lamports": 200000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -284,7 +284,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 4800000,
+      "price_lamports": 192000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -296,7 +296,7 @@
       "milk": "dairy",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 1500000,
+      "price_lamports": 60000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -308,7 +308,7 @@
       "milk": "dairy",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 4000000,
+      "price_lamports": 160000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -320,7 +320,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 1500000,
+      "price_lamports": 60000,
       "is_plain_water": true,
       "ambiguous_without_intent": false
     },
@@ -332,7 +332,7 @@
       "milk": "none",
       "sweetened": false,
       "decaf": false,
-      "price_lamports": 2000000,
+      "price_lamports": 80000,
       "is_plain_water": true,
       "ambiguous_without_intent": false
     },
@@ -344,7 +344,7 @@
       "milk": "none",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 2500000,
+      "price_lamports": 100000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     },
@@ -356,7 +356,7 @@
       "milk": "none",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 3500000,
+      "price_lamports": 140000,
       "is_plain_water": false,
       "ambiguous_without_intent": true
     },
@@ -368,7 +368,7 @@
       "milk": "none",
       "sweetened": true,
       "decaf": false,
-      "price_lamports": 5200000,
+      "price_lamports": 208000,
       "is_plain_water": false,
       "ambiguous_without_intent": false
     }

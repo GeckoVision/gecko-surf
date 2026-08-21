@@ -67,7 +67,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="none",
-        price=3_000_000,
+        price=120_000,
     ),
     _item(
         "americano",
@@ -75,7 +75,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="none",
-        price=3_500_000,
+        price=140_000,
     ),
     _item(
         "espresso-single",
@@ -83,7 +83,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="none",
-        price=2_500_000,
+        price=100_000,
     ),
     _item(
         "espresso-double",
@@ -91,7 +91,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="none",
-        price=3_200_000,
+        price=128_000,
     ),
     _item(
         "long-black",
@@ -99,9 +99,9 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="none",
-        price=3_500_000,
+        price=140_000,
     ),
-    _item("red-eye", "Red Eye", coffee=True, temp="hot", milk="none", price=4_200_000),
+    _item("red-eye", "Red Eye", coffee=True, temp="hot", milk="none", price=168_000),
     _item(
         "decaf-espresso",
         "Decaf Espresso",
@@ -109,7 +109,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="hot",
         milk="none",
         decaf=True,
-        price=2_500_000,
+        price=100_000,
         flags=("ambiguous_without_intent",),
     ),
     _item(
@@ -118,7 +118,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="dairy",
-        price=4_000_000,
+        price=160_000,
     ),
     _item(
         "oat-cappuccino",
@@ -126,28 +126,26 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="oat",
-        price=6_000_000,
+        price=240_000,
     ),
-    _item("latte", "Latte", coffee=True, temp="hot", milk="dairy", price=4_200_000),
-    _item(
-        "oat-latte", "Oat Latte", coffee=True, temp="hot", milk="oat", price=6_200_000
-    ),
+    _item("latte", "Latte", coffee=True, temp="hot", milk="dairy", price=168_000),
+    _item("oat-latte", "Oat Latte", coffee=True, temp="hot", milk="oat", price=248_000),
     _item(
         "flat-white",
         "Flat White",
         coffee=True,
         temp="hot",
         milk="dairy",
-        price=4_300_000,
+        price=172_000,
     ),
-    _item("cortado", "Cortado", coffee=True, temp="hot", milk="dairy", price=4_000_000),
+    _item("cortado", "Cortado", coffee=True, temp="hot", milk="dairy", price=160_000),
     _item(
         "espresso-macchiato",
         "Espresso Macchiato",
         coffee=True,
         temp="hot",
         milk="dairy",
-        price=3_000_000,
+        price=120_000,
     ),
     _item(
         "latte-macchiato",
@@ -155,7 +153,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="hot",
         milk="dairy",
-        price=4_400_000,
+        price=176_000,
     ),
     _item(
         "mocha",
@@ -164,7 +162,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="hot",
         milk="dairy",
         sweet=True,
-        price=4_800_000,
+        price=192_000,
     ),
     _item(
         "sweet-iced-latte",
@@ -173,7 +171,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="iced",
         milk="dairy",
         sweet=True,
-        price=4_600_000,
+        price=184_000,
     ),
     _item(
         "iced-americano",
@@ -181,10 +179,10 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=True,
         temp="iced",
         milk="none",
-        price=3_800_000,
+        price=152_000,
     ),
     _item(
-        "cold-brew", "Cold Brew", coffee=True, temp="iced", milk="none", price=4_500_000
+        "cold-brew", "Cold Brew", coffee=True, temp="iced", milk="none", price=180_000
     ),
     _item(
         "affogato",
@@ -193,7 +191,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="iced",
         milk="dairy",
         sweet=True,
-        price=5_500_000,
+        price=220_000,
     ),
     _item(
         "dirty-chai",
@@ -202,7 +200,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="hot",
         milk="dairy",
         sweet=True,
-        price=5_000_000,
+        price=200_000,
     ),
     _item(
         "chai-latte",
@@ -211,7 +209,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="hot",
         milk="dairy",
         sweet=True,
-        price=4_500_000,
+        price=180_000,
     ),
     _item(
         "matcha-latte",
@@ -219,7 +217,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=False,
         temp="hot",
         milk="dairy",
-        price=5_000_000,
+        price=200_000,
     ),
     _item(
         "turmeric-latte",
@@ -227,7 +225,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=False,
         temp="hot",
         milk="dairy",
-        price=4_800_000,
+        price=192_000,
     ),
     _item(
         "babyccino",
@@ -235,7 +233,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=False,
         temp="hot",
         milk="dairy",
-        price=1_500_000,
+        price=60_000,
     ),
     _item(
         "hot-chocolate",
@@ -244,7 +242,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="hot",
         milk="dairy",
         sweet=True,
-        price=4_000_000,
+        price=160_000,
     ),
     _item(
         "still-water",
@@ -252,7 +250,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=False,
         temp="none",
         milk="none",
-        price=1_500_000,
+        price=60_000,
         flags=("is_plain_water",),
     ),
     _item(
@@ -261,7 +259,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         coffee=False,
         temp="none",
         milk="none",
-        price=2_000_000,
+        price=80_000,
         flags=("is_plain_water",),
     ),
     _item(
@@ -271,7 +269,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="none",
         milk="none",
         sweet=True,
-        price=2_500_000,
+        price=100_000,
     ),
     _item(
         "coconut-water",
@@ -280,7 +278,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="none",
         milk="none",
         sweet=True,
-        price=3_500_000,
+        price=140_000,
         flags=("ambiguous_without_intent",),
     ),
     _item(
@@ -290,7 +288,7 @@ CATALOGUE: tuple[MenuItem, ...] = (
         temp="iced",
         milk="none",
         sweet=True,
-        price=5_200_000,
+        price=208_000,
     ),
 )
 
