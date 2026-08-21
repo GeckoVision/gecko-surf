@@ -16,7 +16,7 @@ the allowlist has no field for any of them.
 
 from __future__ import annotations
 
-from gecko.corpus import CallOutcome, to_record
+from gecko.corpus import CallOutcome, SimulatedOutcome, to_record, to_simulated_record
 from gecko.keyregistry import KEY_PREFIX
 
 from .collections import Collection
@@ -24,6 +24,23 @@ from .collections import Collection
 
 class ProjectionError(Exception):
     """Raised when a write would violate the control-plane boundary. Fail closed."""
+
+
+def _attribution(run_id: str, api_key_id: str) -> None:
+    """Fail closed unless both ids are present and the key is a HASH, not a secret."""
+    if not run_id:
+        raise ProjectionError(
+            "run_id is required — an unattributed outcome is not gradable"
+        )
+    if not api_key_id:
+        raise ProjectionError(
+            "api_key_id is required — an unattributed outcome is not gradable"
+        )
+    if api_key_id.startswith(KEY_PREFIX):
+        raise ProjectionError(
+            "api_key_id looks like a PLAINTEXT key; pass its hash (keyregistry.hash_key) — "
+            "the store never holds a secret"
+        )
 
 
 def record_call_outcome(
@@ -41,26 +58,37 @@ def record_call_outcome(
     as an argument: it is derived from mode at the outcome boundary and must stay
     that way, or the observed-only score could be gamed.
     """
-    if not run_id:
-        raise ProjectionError(
-            "run_id is required — an unattributed outcome is not gradable"
-        )
-    if not api_key_id:
-        raise ProjectionError(
-            "api_key_id is required — an unattributed outcome is not gradable"
-        )
-    if api_key_id.startswith(KEY_PREFIX):
-        raise ProjectionError(
-            "api_key_id looks like a PLAINTEXT key; pass its hash (keyregistry.hash_key) — "
-            "the store never holds a secret"
-        )
-
+    _attribution(run_id, api_key_id)
     record = to_record(
         outcome
     )  # enforces the §1 allowlist; fails closed on any extra key
     # Attach control-plane identifiers only. These are ids, not payloads, and
     # they are added AFTER the allowlist check so they cannot be a smuggling path
     # for outcome fields: the allowlist already rejected anything payload-shaped.
+    record["run_id"] = run_id
+    record["api_key_id"] = api_key_id
+    collection.insert_one(record)
+    return record
+
+
+def record_simulated_outcome(
+    collection: Collection,
+    outcome: SimulatedOutcome,
+    *,
+    run_id: str,
+    api_key_id: str,
+) -> dict[str, object]:
+    """Write one :class:`~gecko.corpus.SimulatedOutcome` — the recorded/fork feed.
+
+    Same discipline as :func:`record_call_outcome`, through the SimulatedOutcome
+    allowlist (:func:`gecko.corpus.to_simulated_record`): the row carries an
+    instruction NAME, a values-free ``recipe_hash``, a closed ``revert_class``,
+    compute units, slot and network — never args, never a payload. ``source`` is
+    fixed to ``"simulated"`` on the outcome, so these rows power the simulate/land
+    rate at their own evidence tier and never the observed FCC rate.
+    """
+    _attribution(run_id, api_key_id)
+    record = to_simulated_record(outcome)
     record["run_id"] = run_id
     record["api_key_id"] = api_key_id
     collection.insert_one(record)

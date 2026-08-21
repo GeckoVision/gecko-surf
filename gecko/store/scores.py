@@ -27,6 +27,7 @@ from .collections import Collection
 N_FLOOR = 20
 
 _OBSERVED = "observed"
+_SIMULATED = "simulated"
 
 
 @dataclass(frozen=True)
@@ -43,10 +44,11 @@ class EndpointScore:
     spec_rev: str
     n: int  # qualifying observed rows seen for FCC
     first_call_correct: float | None
+    simulate_land: float | None = None  # from the simulated feed (recorded/fork)
+    n_simulated: int = 0  # simulated rows seen for the simulate/land rate
     # The rest of the vector — filled by their own feeds as they land.
     routability: float | None = None
     derive_readiness: float | None = None
-    simulate_land: float | None = None
     refusal: float | None = None
 
 
@@ -70,19 +72,42 @@ def endpoint_score(
     to ``spec_rev`` (the immutable defs that produced the calls), so a number can
     always be re-derived against the exact surface that generated it.
     """
-    query = {
-        "surface_id": surface_id,
-        "operation_id": operation_id,
-        "surface_rev": spec_rev,
-        "source": _OBSERVED,
-    }
-    rows = list(collection.find(query))
-    n = len(rows)
-    fcc_hits = sum(1 for row in rows if row.get("first_call_correct") is True)
+    # FCC — from the wire-observed CallOutcome feed only.
+    observed = list(
+        collection.find(
+            {
+                "surface_id": surface_id,
+                "operation_id": operation_id,
+                "surface_rev": spec_rev,
+                "source": _OBSERVED,
+            }
+        )
+    )
+    n = len(observed)
+    fcc_hits = sum(1 for row in observed if row.get("first_call_correct") is True)
+
+    # simulate/land — from the SimulatedOutcome feed (recorded/fork, $0). It keys
+    # on ``instruction`` (SimulatedOutcome's field) rather than ``operation_id``,
+    # and is NOT filtered to observed: a simulated pass is legitimate at its own
+    # evidence tier, which the caller reads alongside the score.
+    simulated = list(
+        collection.find(
+            {
+                "surface_id": surface_id,
+                "instruction": operation_id,
+                "source": _SIMULATED,
+            }
+        )
+    )
+    n_sim = len(simulated)
+    land_hits = sum(1 for row in simulated if row.get("status") == "pass")
+
     return EndpointScore(
         surface_id=surface_id,
         operation_id=operation_id,
         spec_rev=spec_rev,
         n=n,
         first_call_correct=_rate(fcc_hits, n),
+        simulate_land=_rate(land_hits, n_sim),
+        n_simulated=n_sim,
     )
