@@ -151,6 +151,18 @@ def rehearse_instruction(
         },
         idl_fetch=idl_fetch,
         build_call=build_call,
+        # THE FORK'S OWN RPC, and this is the binding this module claims in its docstring.
+        # Without it `prepare_instruction_result` fetches no blockhash — it only does so
+        # `if rpc_call and rpc_url` — and the transaction goes out carrying whatever the
+        # REMOTE builder stamped, which is a mainnet hash. Against a fork that hash does
+        # not exist: `BlockhashNotFound`, observed live.
+        #
+        # It reads as flakiness and is not. A freshly started fork still holds mainnet's
+        # recent blockhashes, so the same code lands; a fork that has diverged a few
+        # hundred thousand blocks rejects it. The fork tests were passing or failing on
+        # the AGE of the fork.
+        rpc_call=call,
+        rpc_url=proof.rpc_url,
         # No simulation here: this run LANDS the transaction, and simulating first would
         # only tell us about a state the send then changes.
     )

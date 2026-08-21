@@ -774,3 +774,61 @@ def test_a_receipt_recording_a_different_price_than_moved_is_a_discrepancy() -> 
     ), f"the receipt/price mismatch was not reported: {judged.discrepancies}"
     # the money itself moved correctly — this finding is about the RECORD, not the transfer
     assert not any("do not cancel" in p for p in judged.discrepancies)
+
+
+def test_the_general_rehearsal_reaches_only_the_proven_fork() -> None:
+    """`rehearse_instruction` sent transactions the fork could not accept.
+
+    It called `prepare_instruction_result` with neither `rpc_call` nor `rpc_url`, and that
+    function fetches a blockhash only `if rpc_call and rpc_url`. So the transaction went
+    out carrying whatever the REMOTE builder stamped — a mainnet hash — and against a fork
+    that hash does not exist: `BlockhashNotFound`, observed live on a fork that had been
+    running since the previous day.
+
+    It looked like flakiness and was not. A freshly started fork still holds mainnet's
+    recent blockhashes, so the same code lands; a fork that has diverged a few hundred
+    thousand blocks rejects it. The fork tests were passing or failing on the AGE of the
+    fork, which is why they seemed intermittent.
+
+    `_with_fresh_blockhash`'s docstring already recorded the cause — "the builder stamps a
+    blockhash from ITS OWN RPC. Against a fork that hash does not exist
+    (BlockhashNotFound, observed)" — and `rehearse.py` passes its fork URL through for
+    exactly this reason. The general rehearsal was the sibling that did not.
+
+    This pins the binding the module's own docstring claims: "the transaction is built
+    against the FORK, never mainnet."
+    """
+    from gecko.sandbox import rehearse_instruction as module
+    from gecko.sandbox.surfnet import ephemeral_signer
+
+    proof = offline_proof()
+    fork = FakeFork(proof.rpc_url)
+    seen: dict[str, object] = {}
+
+    def _fake_prepare(_args, **kwargs):  # noqa: ANN001, ANN003
+        seen["rpc_url"] = kwargs.get("rpc_url")
+        seen["rpc_call"] = kwargs.get("rpc_call")
+        return {"refused": True, "code": "stop", "reason": "the test stops here"}
+
+    original = module.prepare_instruction_result
+    module.prepare_instruction_result = _fake_prepare  # type: ignore[assignment]
+    try:
+        module.rehearse_instruction(
+            proof,
+            signer=ephemeral_signer(proof),
+            program_id="11111111111111111111111111111111",
+            instruction="noop",
+            values={},
+            idl_fetch=lambda _p: {},
+            build_call=lambda **_k: None,
+            rpc_call=fork,
+        )
+    finally:
+        module.prepare_instruction_result = original  # type: ignore[assignment]
+
+    assert seen.get("rpc_url") == proof.rpc_url, (
+        "the preparation was not told which chain it is building for, so the builder's "
+        "own (mainnet) blockhash goes out and the fork rejects it"
+    )
+    assert seen.get("rpc_call") is not None
+    assert {url for url, _ in fork.seen} <= {proof.rpc_url}
