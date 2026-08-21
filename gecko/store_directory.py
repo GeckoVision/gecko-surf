@@ -49,8 +49,10 @@ __all__ = [
     "StoreProduct",
     "authority_span",
     "decode_store",
+    "encode_store",
     "list_stores",
     "list_stores_result",
+    "receipts_discriminator",
 ]
 
 #: The deployed storefront program this directory enumerates.
@@ -215,6 +217,77 @@ def decode_store(raw: bytes, *, address: str) -> StoreListing:
         products=tuple(products),
         telegram_channel_id=telegram_channel_id,
     )
+
+
+def receipts_discriminator() -> bytes:
+    """Anchor's 8-byte account discriminator for the ``Receipts`` account.
+
+    ``sha256("account:Receipts")[:8]`` — the derivation Anchor itself uses, and
+    verified byte-for-byte against the live geckocoffee account
+    (``def5ed403b311df6``). Computed rather than hardcoded so it stays honest if
+    the derivation is ever the thing in question; a wrong discriminator is
+    skipped on READ (``decode_store`` starts past it) but REJECTED by the program
+    on a real purchase, so a store seeded with the wrong one reads fine and
+    cannot be bought from — the exact trap this function exists to avoid.
+    """
+    import hashlib
+
+    return hashlib.sha256(b"account:Receipts").digest()[:8]
+
+
+def _encode_string(text: str) -> bytes:
+    body = text.encode("utf-8")
+    return len(body).to_bytes(4, "little") + body
+
+
+def _encode_pubkey(address: str) -> bytes:
+    from solders.pubkey import Pubkey
+
+    return bytes(Pubkey.from_string(address))
+
+
+def encode_store(
+    listing: StoreListing,
+    *,
+    discriminator: bytes | None = None,
+    receipt_rows: int = 0,
+) -> bytes:
+    """Encode a :class:`StoreListing` into ``Receipts`` account bytes.
+
+    The faithful inverse of :func:`decode_store`, in the program IDL's own
+    layout. Used to SEED a store on a fork through the setAccount cheatcode: the
+    bytes this returns, written at ``receipts_pda(name)`` with the program as
+    owner, are a store buyers can list and buy from.
+
+    ``discriminator`` defaults to :func:`receipts_discriminator` — the real
+    Anchor bytes, so a seeded store is BUYABLE, not merely readable. ``receipt_rows``
+    seeds an EMPTY receipts vec by default (a fresh store has sold nothing);
+    seeding rows is not supported because a receipt carries a real buyer and
+    seeding fictional buyers is exactly the kind of fabricated state this repo
+    refuses. ``total_purchases`` is taken from the listing.
+
+    A round-trip (``decode_store(encode_store(x)) == x`` for the fields decode
+    returns) is asserted in the tests; this function is only ever the writer.
+    """
+    if receipt_rows != 0:
+        raise StoreDecodeError(
+            "encode_store seeds an empty receipts vec only (rows carry real buyers)"
+        )
+    parts = [
+        discriminator if discriminator is not None else receipts_discriminator(),
+        (0).to_bytes(4, "little"),  # receipts vec: empty
+        listing.total_purchases.to_bytes(8, "little"),
+        _encode_string(listing.store_name),
+        _encode_pubkey(listing.authority),
+        len(listing.products).to_bytes(4, "little"),
+    ]
+    for product in listing.products:
+        parts.append(product.price_raw.to_bytes(8, "little"))
+        parts.append(bytes([product.decimals]))
+        parts.append(_encode_pubkey(product.mint))
+        parts.append(_encode_string(product.name))
+    parts.append(_encode_string(listing.telegram_channel_id))
+    return b"".join(parts)
 
 
 def authority_span(raw: bytes) -> tuple[int, int]:
