@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal, Mapping
 
+from .program_errors import name_program_error
 from .pda import (
     ConstantPdaSeedNode,
     PdaNode,
@@ -478,13 +479,40 @@ def prepare_instruction_result(
         )
         value = (simulation.get("result") or {}).get("value") or {}
         if value.get("err") is not None:
-            return _refuse(
-                "simulation-reverted",
-                "the program rejected this call; the bytes are not handed over",
-                error=value.get("err"),
-                logs=(value.get("logs") or [])[-12:],
-                accounts=resolved,
+            # Named from the FULL log, then truncated for display. The origin of a CPI'd
+            # error is the FIRST failure line, which a deep call stack can push outside
+            # the last twelve — naming off the truncated view would credit whichever
+            # program happened to survive the cut.
+            named = name_program_error(
+                value.get("err"),
+                logs=value.get("logs") or (),
+                idl=idl,
+                program_id=program_id,
             )
+            extra: dict[str, Any] = {
+                "error": value.get("err"),
+                "logs": (value.get("logs") or [])[-12:],
+                "accounts": resolved,
+            }
+            if named is not None:
+                # A DISTINCT field: the raw `error` is the runtime's, untouched, and this
+                # is what the program's own table says about it — never merged, so a
+                # reader can always tell which is which.
+                extra["program_error"] = {
+                    "code": named.code,
+                    "name": named.name,
+                    "message": named.message,
+                    "program": named.program,
+                    "source": named.source,
+                    "unnamed_because": named.unnamed_because,
+                }
+            reason = "the program rejected this call; the bytes are not handed over"
+            if named is not None and named.named:
+                reason = (
+                    f"the program rejected this call with {named.describe()}; "
+                    "the bytes are not handed over"
+                )
+            return _refuse("simulation-reverted", reason, **extra)
         result["simulation"] = {
             "err": None,
             "compute_units": value.get("unitsConsumed"),
