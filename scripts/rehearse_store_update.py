@@ -48,6 +48,13 @@ from gecko.store_directory import decode_store, encode_store  # noqa: E402
 #: every one, whatever its history. The program allocates at initialize and never grows.
 KNOWN_ACCOUNT_SIZE = 3_681
 
+#: MEASURED on a fork, 2026-08-21, and it is a COUNT — not a byte budget. `add_product`
+#: refuses the 21st product with `VectorLimitReached` (6008) on a store with 21 purchases
+#: AND on a virgin store with zero purchases and every one of its 3,681 bytes free. The
+#: byte margin below is therefore necessary but NOT sufficient, and reporting it alone is
+#: what let this script call a 31-item plan a pass.
+MAX_PRODUCTS = 20
+
 
 def plan(live_names: list[str], catalogue_names: list[str]) -> dict[str, list[str]]:
     """The delete/add plan, ordered so no step reverts.
@@ -138,14 +145,28 @@ def main() -> int:
     print(f"   growth needed                     {growth:>+7,}")
     margin = receipts_bytes - growth
     print(f"   margin after                      {margin:>+7,}")
+    end_count = len(end_listing.products)
+    print(
+        f"\n   products after the update         {end_count:>7,} of {MAX_PRODUCTS} allowed"
+    )
+    if end_count > MAX_PRODUCTS:
+        print(
+            f"\n   REFUSED: {end_count} products exceeds the program's cap of "
+            f"{MAX_PRODUCTS}. add_product number {MAX_PRODUCTS + 1} reverts with "
+            "VectorLimitReached (6008) and the store is left HALF-UPDATED — the deletes "
+            "already landed. The byte margin above is irrelevant: the cap is a count, "
+            "measured on a store with no purchases and every byte free."
+        )
+        return 3
     if margin < 0:
         print(
-            "\n   REFUSED: the end state does not fit. Some add_product WILL hit "
-            "VectorLimitReached (6008), and the store would be left half-updated."
+            "\n   REFUSED: the end state does not fit in the allocated bytes. Some "
+            "add_product WILL hit VectorLimitReached (6008), and the store would be "
+            "left half-updated."
         )
         return 3
     print(
-        f"\n   fits, with {margin:,} bytes to spare "
+        f"\n   fits: {end_count} of {MAX_PRODUCTS} product slots, {margin:,} bytes to spare "
         f"(~{margin // 75} more receipts at ~75 bytes each)"
     )
 
