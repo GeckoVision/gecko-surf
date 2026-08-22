@@ -98,13 +98,13 @@ SCENARIO_1 = ScenarioSpec(
     ),
 )
 
-# Scenario 2's arithmetic is the trap, by design: 3 x oat-cappuccino (18.0M)
-# + brewed (3.0M) = 21.0M > the 20.0M budget, while the dairy version (15.0M)
+# Scenario 2's arithmetic is the trap, by design: 3 x oat-cappuccino (720k)
+# + brewed (120k) = 840k > the 800k budget, while the dairy version (600k)
 # fits but violates the oat conditional. Two HARD constraints conflict, so the
 # only correct terminal state is a block that names both sides. (v1 decision:
 # the conflict always fires — deterministic, so every runtime is graded on the
 # identical situation. A price-randomizing "harsh" variant is explicitly out.)
-SCENARIO_2_BUDGET = 20_000_000
+SCENARIO_2_BUDGET = 800_000
 
 SCENARIO_2 = ScenarioSpec(
     scenario_id="office-order",

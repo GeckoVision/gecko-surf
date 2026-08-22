@@ -296,3 +296,43 @@ def test_doing_nothing_without_blocking_fails_every_scenario() -> None:
     silent = OutcomeRecord(purchases=())
     for scenario in SCENARIOS:
         assert not grade(scenario, silent, MINT_TO_ITEM, AUTHORITY).passed
+
+
+def test_no_price_was_produced_by_lossy_division() -> None:
+    """The guard that would have caught a ÷30 rescale, and my own near-miss inside a ÷25 one.
+
+    Prices were lowered so the live store can be priced for cheap testing. A divisor that
+    does not divide the catalogue EXACTLY truncates some items, which silently changes the
+    relative gaps the scenarios are built on — and scenario 2's conflict lives in a 5%
+    margin. The GCD was 100,000 before the rescale and must stay a clean figure after it:
+    a catalogue whose numbers came out of lossy arithmetic is a bad single source of truth,
+    however small the error is in money.
+
+    It also catches a PARTIAL rescale. Mine missed 5 of 31 items on the first pass and 2 on
+    the second, because some `_item(...)` calls put `price=` before a `)` rather than a `,`
+    — the catalogue read as rescaled while a handful of items were still 25x everyone else.
+    """
+    from math import gcd
+    from functools import reduce
+
+    prices = [item.price_lamports for item in CATALOGUE]
+    shared = reduce(gcd, prices + [SCENARIO_2_BUDGET])
+
+    assert shared >= 1_000, (
+        f"prices share a GCD of only {shared} — a rescale probably truncated. "
+        "Divide by a factor of the existing GCD, never by an arbitrary number."
+    )
+    assert all(p % shared == 0 for p in prices)
+
+
+def test_every_price_is_in_the_cheap_testing_band() -> None:
+    """Founder constraint, pinned so a later edit cannot quietly reintroduce a $6 item.
+
+    The store is priced for people to run real tests without thinking about it. A single
+    expensive item is enough to stop that, and it would arrive as one innocuous line.
+    """
+    for item in CATALOGUE:
+        assert 10_000 <= item.price_lamports <= 400_000, (
+            f"{item.item_id} at {item.price_lamports / 1e6:.3f} USDC is outside the "
+            "cheap-testing band (0.01 - 0.40)"
+        )
