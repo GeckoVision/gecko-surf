@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal, Mapping
 
+from .error_overlay import remediation_for
 from .program_errors import name_program_error
 from .pda import (
     ConstantPdaSeedNode,
@@ -498,7 +499,7 @@ def prepare_instruction_result(
                 # A DISTINCT field: the raw `error` is the runtime's, untouched, and this
                 # is what the program's own table says about it — never merged, so a
                 # reader can always tell which is which.
-                extra["program_error"] = {
+                detail: dict[str, Any] = {
                     "code": named.code,
                     "name": named.name,
                     "message": named.message,
@@ -506,6 +507,17 @@ def prepare_instruction_result(
                     "source": named.source,
                     "unnamed_because": named.unnamed_because,
                 }
+                # Gecko's advice about the error rides in ITS OWN nested field, labelled
+                # as ours. Only attached when the error was actually attributed to a
+                # program — advice about an error we could not place is a guess.
+                advice = remediation_for(named.program, named.code)
+                if advice is not None:
+                    detail["remediation"] = {
+                        "guidance": advice.guidance,
+                        "established_by": advice.established_by,
+                        "source": advice.source,
+                    }
+                extra["program_error"] = detail
             reason = "the program rejected this call; the bytes are not handed over"
             if named is not None and named.named:
                 reason = (
