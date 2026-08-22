@@ -40,7 +40,7 @@ sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
 from gecko.orquestra_build import orquestra_seams  # noqa: E402
 from gecko.prepare_instruction import prepare_instruction_result  # noqa: E402
-from gecko.rpc import default_rpc_call  # noqa: E402
+from gecko.rpc import RpcError, default_rpc_call  # noqa: E402
 from gecko.sandbox.rehearse import _sign  # noqa: E402
 from gecko.showcase import MAX_PRODUCTS, end_state, to_add  # noqa: E402
 from gecko.store_accounts import receipts_pda  # noqa: E402
@@ -76,20 +76,46 @@ class LocalSigner:
         return f"LocalSigner(pubkey={self._pubkey}, secret=<redacted>)"
 
 
-def _read_store(url: str, address: str):  # noqa: ANN202
-    value = (
-        default_rpc_call(url, "getAccountInfo", [address, {"encoding": "base64"}]).get(
-            "result"
-        )
-        or {}
-    ).get("value") or {}
-    if not value:
-        raise SystemExit(f"no store account at {address} on {url}")
-    return decode_store(base64.b64decode(value["data"][0]), address=address)
+def _read_store(url: str, address: str, *, min_slot: int | None = None):  # noqa: ANN202
+    """Read the store, refusing a node that has not caught up to `min_slot`.
+
+    A read-back after a broadcast is the one read that MUST NOT be served from a lagging
+    node: a stale answer looks exactly like a sequence that did not land, and would report
+    a successful seed as a failure. `minContextSlot` makes the node say "I am behind"
+    instead of answering from an older state — a loud failure in place of a silent one.
+    Observed for real: a dry run moments after the mainnet seed still showed the pre-seed
+    four products from a stale public node.
+    """
+    config: dict[str, object] = {"encoding": "base64"}
+    if min_slot is not None:
+        config |= {"commitment": "confirmed", "minContextSlot": min_slot}
+    for attempt in range(12):
+        try:
+            value = (
+                default_rpc_call(url, "getAccountInfo", [address, config]).get("result")
+                or {}
+            ).get("value") or {}
+        except (RpcError, OSError) as exc:
+            # Two different failures, one correct response: the node is behind the slot we
+            # require (RpcError), or the public endpoint timed out (URLError, an OSError —
+            # observed against api.mainnet-beta). Both are worth waiting out; neither is
+            # worth answering from.
+            if attempt == 11:
+                raise SystemExit(f"could not read {address} on {url}: {exc}") from exc
+            time.sleep(2)
+            continue
+        if value:
+            return decode_store(base64.b64decode(value["data"][0]), address=address)
+        time.sleep(2)
+    raise SystemExit(f"no store account at {address} on {url} after 12 attempts")
 
 
 def _confirm(url: str, signature: str, *, seconds: int = 60) -> dict | None:
-    """Poll until the transaction is visible, then hand back its meta. None on timeout."""
+    """Poll until the transaction is visible, then hand back its meta AND its slot.
+
+    The slot is what lets the final read-back refuse a node that has not seen this
+    transaction yet, so it is carried alongside the meta rather than discarded.
+    """
     for _ in range(seconds):
         result = default_rpc_call(
             url,
@@ -97,7 +123,7 @@ def _confirm(url: str, signature: str, *, seconds: int = 60) -> dict | None:
             [signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
         ).get("result")
         if result:
-            return dict(result.get("meta") or {})
+            return dict(result.get("meta") or {}) | {"_slot": result.get("slot")}
         time.sleep(1)
     return None
 
@@ -156,6 +182,7 @@ def main() -> int:
         raise SystemExit("the store carries no product to read a pricing mint from")
 
     total_cu = total_fee = 0
+    last_slot: int | None = None
     for index, item in enumerate(adds, 1):
         label = (
             f"  {index:>2}/{len(adds)} {item.name:26} {item.price_lamports / 1e6:>6.3f}"
@@ -214,14 +241,13 @@ def main() -> int:
         if meta.get("err") is not None:
             print(f"{label}  REVERTED  {json.dumps(meta['err'])}  {signature}")
             return 2
+        last_slot = meta.get("_slot") or last_slot
         cu = int(meta.get("computeUnitsConsumed") or 0)
         fee = int(meta.get("fee") or 0)
         total_cu += cu
         total_fee += fee
         print(f"{label}  {cu:>7,} CU  {fee:>6,} lamports  {signature}")
 
-    after = _read_store(args.rpc_url, address)
-    got = tuple((p.name, p.price_raw) for p in after.products)
     if not args.broadcast:
         print(
             f"\nAll {len(adds)} simulate clean against live state. Nothing was signed.\n"
@@ -233,6 +259,8 @@ def main() -> int:
         )
         return 0
 
+    after = _read_store(args.rpc_url, address, min_slot=last_slot)
+    got = tuple((p.name, p.price_raw) for p in after.products)
     print(f"\nafter: {len(got)} products · {total_cu:,} CU · {total_fee:,} lamports")
     want, have = dict(intended), dict(got)
     divergences = [n for n, p in want.items() if have.get(n) != p]
