@@ -24,6 +24,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import yaml
@@ -34,6 +35,7 @@ from .agentnative import build_artifacts
 from .client import AgentApiClient
 from .docs_reader import from_docs as recover_from_docs
 from .netguard import UnsafeUrlError, safe_get, validate_public_url
+from .surfaces import safe_surface_id
 
 logger = logging.getLogger("gecko.comprehend_service")
 
@@ -338,3 +340,76 @@ def comprehend_submission(
         source, from_docs=from_docs, max_bytes=max_bytes
     )
     return _summarize(client, warnings)
+
+
+@dataclass(frozen=True)
+class ServableResult:
+    """A comprehended submission PLUS the spec needed to actually serve it.
+
+    Everything :class:`ComprehendResult` carries, and two things it deliberately does not:
+    the parsed ``spec`` and the canonical ``slug``.
+
+    WHY THIS IS A SEPARATE RESULT rather than a field on the summary. `POST /comprehend`
+    is a PUBLIC, unauthenticated door: it comprehends a submission FOR THE SUBMITTER and
+    hands back what their API becomes. Returning the parsed spec there would turn that
+    door into a general fetch-and-parse proxy — anyone could point it at any URL and get
+    structured output back. So the spec-bearing shape exists only behind an authenticated
+    caller, and the public summary stays exactly as it was.
+
+    Still control plane only: a spec is the API's SURFACE, which is the thing Gecko is
+    allowed to hold (invariant #1). No response payloads, no user data, no secrets.
+
+    ``slug`` is normalized HERE so a caller storing it and a host mounting it cannot
+    disagree — two slugifiers is one bug waiting for a name with punctuation in it.
+    """
+
+    slug: str
+    spec: dict[str, Any]
+    summary: ComprehendResult
+
+
+def comprehend_servable(
+    source: str,
+    *,
+    from_docs: bool = False,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> ServableResult:
+    """Comprehend one URL into a SERVABLE surface: the spec, its slug, and the summary.
+
+    The fetch goes through the same guard as every other door — ``netguard`` resolves the
+    host, refuses private/loopback/link-local addresses, PINS the connection to the
+    resolved IP, and refuses redirects. That is why a caller should route through here
+    rather than fetching the provider's URL itself: a plain HTTP client replicates none of
+    it, and a URL that resolves public once and internal the second time walks straight
+    through one.
+
+    ``quarantined`` on the summary is a SEPARATE judgement about the spec's CONTENT
+    (draft markers, poison flags, low confidence) and says nothing about where the bytes
+    came from. A caller must honour both and treat neither as the other's substitute.
+    """
+    client, warnings = comprehend_client(
+        source, from_docs=from_docs, max_bytes=max_bytes
+    )
+    summary = _summarize(client, warnings)
+    return ServableResult(
+        slug=safe_surface_id(summary.name),
+        spec=client.spec,
+        summary=summary,
+    )
+
+
+def servable_payload(result: ServableResult) -> dict[str, Any]:
+    """The wire shape — flat, so a consumer does not have to know our dataclasses."""
+    summary = result.summary
+    return {
+        "slug": result.slug,
+        "spec": result.spec,
+        "name": summary.name,
+        "description": summary.description,
+        "op_count": summary.op_count,
+        "usable_tool_count": summary.usable_tool_count,
+        "tools": summary.tools,
+        "artifacts": summary.artifacts,
+        "quarantined": summary.quarantined,
+        "warnings": summary.warnings,
+    }
