@@ -106,6 +106,19 @@ declare -A PARAMS=(
   # per account (`gecko keys grant <account> --surface birdeye`) — anonymous traffic
   # can never reach the mount, so the quota is spent by named developers only.
   [BIRDEYE_API_KEY]="BIRDEYE_API_KEY"
+
+  # Shared secret for POST /comprehend/servable (gecko/http_server.py) — the
+  # spec-bearing sibling of /comprehend, used by gecko-app to stand up a
+  # per-provider MCP mount. `/comprehend` stays public and returns a SUMMARY;
+  # this one returns the PARSED SPEC, which left open would make the host a
+  # general fetch-and-parse proxy for any URL a stranger names.
+  #
+  # Unset or sentinel => the route answers 404, identical to a path that was
+  # never registered. So a sentinel deploy is SAFE and simply leaves the door
+  # shut; only a real value opens it. Must MATCH the value gecko-app sends in
+  # X-Gecko-Servable-Token, and the two are configured independently — the
+  # value is never transmitted between the two systems.
+  [GECKO_SERVABLE_TOKEN]="GECKO_SERVABLE_TOKEN"
 )
 
 echo "==> Region:     $REGION"
@@ -165,6 +178,11 @@ declare -A REQUIRED_AT_BOOT=(
   [PRIVY_APP_SECRET]="__unset__"
   # Sentinel keeps `birdeye` in RECORDED mode. Push a real key to go live.
   [BIRDEYE_API_KEY]="__unset__"
+  # Sentinel keeps /comprehend/servable ABSENT (404). The engine treats the
+  # sentinel as unset for this param specifically because `__unset__` is a
+  # literal in a PUBLIC repo — honouring it as a real secret would turn the
+  # placeholder that keeps the door shut into the key that opens it.
+  [GECKO_SERVABLE_TOKEN]="__unset__"
 )
 
 SKIPPED=()

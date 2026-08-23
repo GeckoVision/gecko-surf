@@ -26,6 +26,7 @@ from gecko.http_server import (  # noqa: E402
     SERVABLE_PATH,
     SERVABLE_TOKEN_ENV,
     SERVABLE_TOKEN_HEADER,
+    SERVABLE_TOKEN_SENTINEL,
     build_multi_surface_app,
 )
 
@@ -141,3 +142,36 @@ def test_a_missing_url_is_refused_before_anything_is_fetched(monkeypatch) -> Non
         r = c.post(SERVABLE_PATH, json={}, headers={SERVABLE_TOKEN_HEADER: TOKEN})
     assert r.status_code == 400
     assert "url" in r.json()["error"]
+
+
+def test_the_ssm_boot_sentinel_is_not_a_usable_token(monkeypatch) -> None:
+    """An ECS `Secrets:` ValueFrom must resolve or the task dies at boot, so every wired
+    param is pushed with the `__unset__` placeholder when it has no real value.
+
+    That placeholder is a literal in a PUBLIC repository. If it were honoured as a real
+    secret, a sentinel-provisioned deploy would accept it from anyone who read the file —
+    the value that exists to keep the door SHUT would be the key that opens it.
+    """
+    monkeypatch.setenv(SERVABLE_TOKEN_ENV, SERVABLE_TOKEN_SENTINEL)
+    _stub(monkeypatch)
+    with TestClient(_app()) as c:
+        r = c.post(
+            SERVABLE_PATH,
+            json={"url": "https://acme.test/openapi.json"},
+            headers={SERVABLE_TOKEN_HEADER: SERVABLE_TOKEN_SENTINEL},
+        )
+    assert r.status_code == 404
+
+
+def test_whitespace_around_a_real_token_does_not_defeat_it(monkeypatch) -> None:
+    """SSM values pick up trailing newlines; the env side is stripped, so a correct
+    token must still match rather than silently closing the door."""
+    monkeypatch.setenv(SERVABLE_TOKEN_ENV, f"  {TOKEN}\n")
+    _stub(monkeypatch)
+    with TestClient(_app()) as c:
+        r = c.post(
+            SERVABLE_PATH,
+            json={"url": "https://acme.test/openapi.json"},
+            headers={SERVABLE_TOKEN_HEADER: TOKEN},
+        )
+    assert r.status_code == 200
