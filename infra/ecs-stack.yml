@@ -458,6 +458,13 @@ Resources:
             # is granted per account, so anonymous traffic never reaches the mount.
             - Name: BIRDEYE_API_KEY
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/BIRDEYE_API_KEY
+            # Shared secret for POST /comprehend/servable. Unset or the __unset__
+            # sentinel => the route answers 404 (absent, not merely refused), so a
+            # sentinel deploy boots clean with the door shut. Must exist in SSM
+            # before this ValueFrom resolves, or the task fails at boot with
+            # ResourceInitializationError.
+            - Name: GECKO_SERVABLE_TOKEN
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_SERVABLE_TOKEN
           LogConfiguration:
             LogDriver: awslogs
             Options:

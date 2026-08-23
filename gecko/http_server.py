@@ -123,6 +123,16 @@ SERVABLE_PATH = "/comprehend/servable"
 #: has not deliberately configured it cannot accidentally deploy it open.
 SERVABLE_TOKEN_ENV = "GECKO_SERVABLE_TOKEN"
 SERVABLE_TOKEN_HEADER = "X-Gecko-Servable-Token"
+#: The SSM boot sentinel (infra/push-ssm-params.sh). An ECS `Secrets:` ValueFrom must
+#: resolve or the task dies at boot, so every wired param is pushed with this placeholder
+#: when it has no real value, and the runtime treats it as unset — the convention
+#: gecko/events.py, x402_pay.py, keyregistry.py and privy_server.py all follow.
+#:
+#: IT IS LOAD-BEARING HERE IN A WAY IT IS NOT ELSEWHERE. This value is a literal in a
+#: PUBLIC repository. Treating it as a real secret would mean a sentinel-provisioned
+#: deploy accepts `X-Gecko-Servable-Token: __unset__` from anyone who reads this file —
+#: the placeholder that exists to keep the door SHUT would be the key that opens it.
+SERVABLE_TOKEN_SENTINEL = "__unset__"
 META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
@@ -1487,6 +1497,8 @@ def build_multi_surface_app(
         between "disabled" and "does not exist".
         """
         expected = os.environ.get(SERVABLE_TOKEN_ENV, "").strip()
+        if expected == SERVABLE_TOKEN_SENTINEL:
+            expected = ""
         presented = request.headers.get(SERVABLE_TOKEN_HEADER, "")
         # compare_digest so a wrong token costs the same time as a right one.
         if not expected or not hmac.compare_digest(presented, expected):
