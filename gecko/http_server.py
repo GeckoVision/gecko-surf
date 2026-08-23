@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import os
@@ -115,6 +116,13 @@ def _sse_limit(env_name: str, default: int) -> int:
 
 # The 'submit your API' front doors: a human/agent HTTP POST and an agent MCP tool.
 COMPREHEND_PATH = "/comprehend"
+#: The SPEC-bearing sibling. Authenticated, because it returns the parsed surface rather
+#: than a summary: left open it would be a general fetch-and-parse proxy for any URL.
+SERVABLE_PATH = "/comprehend/servable"
+#: Shared secret for SERVABLE_PATH. UNSET MEANS THE DOOR DOES NOT EXIST — an operator who
+#: has not deliberately configured it cannot accidentally deploy it open.
+SERVABLE_TOKEN_ENV = "GECKO_SERVABLE_TOKEN"
+SERVABLE_TOKEN_HEADER = "X-Gecko-Servable-Token"
 META_SURFACE_NAME = "gecko"  # the meta MCP surface mounts at /gecko/mcp
 # A submission body is a tiny JSON envelope ({"url": ...}); cap it hard.
 MAX_COMPREHEND_REQUEST_BYTES = 64 * 1024
@@ -1172,8 +1180,10 @@ def build_multi_surface_app(
 
     from .comprehend_service import (
         ComprehendError,
+        comprehend_servable,
         comprehend_submission,
         ensure_submittable,
+        servable_payload,
     )
     from .mcp_server import MetaComprehendSurface
     from .waf import WafMiddleware
@@ -1468,6 +1478,55 @@ def build_multi_surface_app(
             )
         return JSONResponse(asdict(result))
 
+    async def _servable(request: Request) -> Any:
+        """`/comprehend` plus the parsed spec and canonical slug — for a trusted host.
+
+        FAIL CLOSED, AND ABSENT RATHER THAN GUARDED. With no token configured this
+        answers 404, identical to a path that was never routed: an operator who has not
+        set the secret has not opened the door, and a prober cannot tell the difference
+        between "disabled" and "does not exist".
+        """
+        expected = os.environ.get(SERVABLE_TOKEN_ENV, "").strip()
+        presented = request.headers.get(SERVABLE_TOKEN_HEADER, "")
+        # compare_digest so a wrong token costs the same time as a right one.
+        if not expected or not hmac.compare_digest(presented, expected):
+            return JSONResponse({"error": "not found"}, status_code=404)
+
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit():
+            if int(declared) > MAX_COMPREHEND_REQUEST_BYTES:
+                return JSONResponse(
+                    {"error": "request body too large"}, status_code=413
+                )
+        body = await request.body()
+        if len(body) > MAX_COMPREHEND_REQUEST_BYTES:
+            return JSONResponse({"error": "request body too large"}, status_code=413)
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": "body must be a JSON object"}, status_code=400
+            )
+        url = payload.get("url")
+        if not isinstance(url, str) or not url:
+            return JSONResponse({"error": "missing 'url'"}, status_code=400)
+        try:
+            ensure_submittable(url)  # http(s) only — a schemeless path would be an LFI
+            result = comprehend_servable(
+                url, from_docs=bool(payload.get("from_docs", False))
+            )
+        except ComprehendError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception:  # noqa: BLE001 - never leak a stack / 500 from this door
+            logger.exception("unexpected error comprehending a servable submission")
+            return JSONResponse(
+                {"error": "could not comprehend that URL — please try again"},
+                status_code=502,
+            )
+        return JSONResponse(servable_payload(result))
+
     async def _events_onboard(request: Request) -> Any:
         # ALWAYS an empty 204 — success and every rejection look identical on the
         # wire, so a probing scraper learns nothing. Fire-and-forget: ANY failure
@@ -1569,6 +1628,7 @@ def build_multi_surface_app(
         Route("/.well-known/x402", endpoint=_well_known_x402),
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
+        Route(SERVABLE_PATH, endpoint=_servable, methods=["POST"]),
         # The `gecko add` onboard-ping ingest (see parse_onboard_ping above).
         Route(EVENTS_ONBOARD_PATH, endpoint=_events_onboard, methods=["POST"]),
     ]
