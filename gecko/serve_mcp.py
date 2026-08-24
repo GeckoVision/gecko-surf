@@ -51,6 +51,7 @@ from .http_server import (
 from .examples.ore import build_ore_surface
 from .jito_surface import build_jito_surface, build_jito_tips_surface
 from .mcp_server import McpSurface
+from .provider_sync import fetch_provider_surfaces
 from .providers.catalog_surface import OrquestraCatalogSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
@@ -397,6 +398,18 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
                 ),
             )
         )
+
+    # Provider self-service surfaces, read from the control plane at BOOT (see
+    # gecko.provider_sync). Appended LAST and refused on any collision, so the built-in
+    # names above always win: a remote row can add a mount, never replace one.
+    #
+    # Unconfigured or unreachable => an empty list and the host serves exactly what it
+    # served before. That is deliberate: a sign-up service being down must never be able
+    # to take these mounts offline.
+    for name, spec in fetch_provider_surfaces(
+        reserved_names=[existing for existing, _ in surfaces]
+    ):
+        surfaces.append((name, spec))
     return surfaces
 
 

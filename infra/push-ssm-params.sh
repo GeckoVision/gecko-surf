@@ -119,6 +119,14 @@ declare -A PARAMS=(
   # X-Gecko-Servable-Token, and the two are configured independently — the
   # value is never transmitted between the two systems.
   [GECKO_SERVABLE_TOKEN]="GECKO_SERVABLE_TOKEN"
+
+  # Provider self-service boot sync (gecko/provider_sync.py) — the host reads the
+  # control plane's ACTIVE surface list at boot and mounts each at /{slug}/mcp.
+  # Either one unset/sentinel => no fetch is attempted and the host serves exactly
+  # its built-in surfaces. A URL without a token is treated as unconfigured, not as
+  # a request to fetch anonymously (the endpoint is gated; it would 401 every boot).
+  [GECKO_PROVIDER_SYNC_URL]="GECKO_PROVIDER_SYNC_URL"
+  [GECKO_PROVIDER_SYNC_TOKEN]="GECKO_PROVIDER_SYNC_TOKEN"
 )
 
 echo "==> Region:     $REGION"
@@ -183,6 +191,10 @@ declare -A REQUIRED_AT_BOOT=(
   # literal in a PUBLIC repo — honouring it as a real secret would turn the
   # placeholder that keeps the door shut into the key that opens it.
   [GECKO_SERVABLE_TOKEN]="__unset__"
+  # Sentinels keep provider sync OFF: no fetch, built-ins only. Push real values to
+  # turn provider self-service on; a restart then mounts every active surface.
+  [GECKO_PROVIDER_SYNC_URL]="__unset__"
+  [GECKO_PROVIDER_SYNC_TOKEN]="__unset__"
 )
 
 SKIPPED=()
