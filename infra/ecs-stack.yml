@@ -465,6 +465,13 @@ Resources:
             # ResourceInitializationError.
             - Name: GECKO_SERVABLE_TOKEN
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_SERVABLE_TOKEN
+            # Provider self-service boot sync. Either unset/sentinel => no fetch and the
+            # host serves built-ins only, so a sign-up service being down can never take
+            # the existing mounts offline.
+            - Name: GECKO_PROVIDER_SYNC_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_PROVIDER_SYNC_URL
+            - Name: GECKO_PROVIDER_SYNC_TOKEN
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_PROVIDER_SYNC_TOKEN
           LogConfiguration:
             LogDriver: awslogs
             Options:
