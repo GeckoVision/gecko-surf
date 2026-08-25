@@ -200,12 +200,20 @@ class SurfpoolFork:
         mainnet_rpc: str,
         *,
         port: int = 8899,
+        ws_port: int | None = None,
         binary: str = "surfpool",
         ready_timeout: float = 30.0,
         rpc_call: RpcCall | None = None,
     ) -> None:
         self.mainnet_rpc = mainnet_rpc
         self.port = port
+        # `--port` moves the RPC port and NOTHING ELSE: surfpool's WebSocket port is
+        # separate and defaults to 8900, so two forks on different `port` values still
+        # collide on it and the second dies with "WebSocket port 8900 is already in use"
+        # — reported by the caller as the far less obvious "exited before becoming ready".
+        # Defaulting to port+1 reproduces surfpool's own pairing (8899/8900), so existing
+        # callers are unchanged while a second fork can now actually run.
+        self.ws_port = port + 1 if ws_port is None else ws_port
         self.binary = binary
         self.ready_timeout = ready_timeout
         self._rpc_call = rpc_call or _default_rpc_call
@@ -230,6 +238,8 @@ class SurfpoolFork:
                 self.mainnet_rpc,
                 "--port",
                 str(self.port),
+                "--ws-port",
+                str(self.ws_port),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
