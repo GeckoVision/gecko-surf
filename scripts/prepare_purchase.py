@@ -53,6 +53,7 @@ from gecko.simulate import simulate  # noqa: E402
 from gecko.store_accounts import (  # noqa: E402
     StoreAccounts,
     StoreResolutionError,
+    TOKEN_PROGRAM_ID,
     derive_ata,
     purchase_accounts,
     purchase_args,
@@ -221,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    ata = derive_ata(args.signer, store.mint)
+    ata = derive_ata(args.signer, store.mint, token_program=TOKEN_PROGRAM_ID)
     balance = token_balance(ata, args.rpc_url)
     print(f"signer          {args.signer}")
     print(f"store           {store.store_name}  ({store.receipts})")

@@ -39,6 +39,7 @@ from gecko.simulate import BuiltTx, simulate  # noqa: E402
 from gecko.txbind import _b58decode, evaluate_tx  # noqa: E402
 from gecko.store_accounts import (  # noqa: E402
     StoreResolutionError,
+    TOKEN_PROGRAM_ID,
     derive_ata,
     resolve_store,
 )
@@ -88,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     except StoreResolutionError as exc:
         print(f"   STOP: {exc}")
         return 2
-    ata = derive_ata(args.signer, store.mint)
+    ata = derive_ata(args.signer, store.mint, token_program=TOKEN_PROGRAM_ID)
     print(f"   signer       {args.signer}")
     print(f"   store        {store.store_name}  paying {store.token_account}")
     print(f"   token acct   {ata}   (derived, not looked up)")
