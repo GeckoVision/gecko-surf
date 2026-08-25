@@ -194,14 +194,14 @@ class FakeFork:
         account.update(params[1])
 
     def _surfnet_setTokenAccount(self, params: list[Any]) -> None:  # noqa: N802
-        from gecko.store_accounts import derive_ata
+        from gecko.store_accounts import TOKEN_PROGRAM_ID, derive_ata
 
         owner, mint, update = params[0], params[1], params[2]
         program = params[3] if len(params) > 3 else None
-        ata = (
-            derive_ata(owner, mint, token_program=program)
-            if program
-            else derive_ata(owner, mint)
+        # A cheatcode that named no program funded a CLASSIC account — say so rather
+        # than leaning on a default, so this fake keys on the same ATA the code derives.
+        ata = derive_ata(
+            owner, mint, token_program=program or TOKEN_PROGRAM_ID
         )
         self.accounts[ata] = {
             "lamports": 2_039_280,
