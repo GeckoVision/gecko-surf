@@ -1,0 +1,28 @@
+{
+  "intents": ["plan_swap"],
+  "pdas": {
+    "whirlpool": {
+      "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      "seeds": [
+        {"kind": "constant", "value": "whirlpool", "encoding": "utf8"},
+        {"kind": "variable", "name": "whirlpools_config", "source": "account", "encoding": "pubkey"},
+        {"kind": "variable", "name": "token_mint_a", "source": "account", "encoding": "pubkey"},
+        {"kind": "variable", "name": "token_mint_b", "source": "account", "encoding": "pubkey"},
+        {"kind": "variable", "name": "tick_spacing", "source": "argument", "encoding": "le", "width": 2}
+      ]
+    },
+    "tick_array": {
+      "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      "seeds": [
+        {"kind": "constant", "value": "tick_array", "encoding": "utf8"},
+        {"kind": "variable", "name": "whirlpool", "source": "account", "encoding": "pubkey"},
+        {"kind": "variable", "name": "start_tick_index", "source": "argument", "encoding": "utf8"}
+      ]
+    }
+  },
+  "why": {
+    "whirlpool": "The surface derives the 5th seed as a RESOLVER on adaptive_fee_tier.fee_tier_index (runtime data), which makes the pool underivable. Verified against mainnet: the seed is a caller-supplied u16 LE tick_spacing. config=2LecshUwdy9xi7meFgHtFJQNSKk4KdTrcpvaB56dP2NQ + USDG + USDC + ts=1 reproduces 9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps exactly; ts=2 and ts=64 yield 8RosFZADnHd9TaK5a6Czy6groS7xpxUd4eDRiuaSYgaz and aw99i9EpTmomdbziRiD2x2Mkv9UwyazyDfUmEKAW5Hc, both well-formed and both the WRONG pool. tick_spacing is NOT derivable from the mint pair — the caller must supply the fee tier, exactly as Meteora DLMM's base_factor must be supplied. Mint order is byte-order (USDG < USDC); reversing yields a pool that does not exist.",
+    "tick_array": "The surface reads the IDL arg start_tick_index: i32 and encodes it as 4-byte LE. That is WRONG. Orca seeds with the ASCII DECIMAL STRING of the index. Verified against mainnet for pool 9RqDTfwC... at tick_current_index=2: ASCII reproduces 2QRj3Ug2RZ9ffSCP3pp7U6ex45adrnMW7u5HAihfH2mE (start 0), 6o9yaeyc8rHKKbdRxN8M3F9Qii5zpBC33gH2L1GUNBPj (-88) and 94cnSkfZfnpkS8yBs1XuqugRUJWruTkMhMPPPfiBdapm (-176), matching the accounts Jupiter's own router passes; the LE form yields E6dDVjxGEyXHuyUBAvTr9D9EbAMFaGGjpobdLjF3pbLY, DoLh1KgFpdvVEJtwxXMLjmPrXaPzoxcFF6Bqf8J2tSz4 and 2JgXfpLTifqswLRG2BdwjYvJbrNYo3iJnvx62YrEJRXM — well-formed, uninitialized, wrong. An arg's IDL type does not determine its seed encoding."
+  },
+  "notes": "Orca Whirlpool — a concentrated-liquidity AMM (CLMM). Holds the USDG/USDC liquidity Meteora DLMM does not: pool 9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps (tick_spacing 1, fee_rate 100 = 0.01%) carried ~$25.68M TVL against DLMM's $0.38, so it is the only venue with BOTH real depth and an ingestible on-chain IDL. VERIFIED AGAINST MAINNET: whirlpool@ts=1, oracle=['oracle', whirlpool] and all three swap tick_arrays reproduce exactly (tests/test_whirlpool_config.py). TRAPS, none of them in the IDL. (1) tick_spacing selects the pool among fee tiers and is NOT derivable from the mints — see why.whirlpool. (2) tick_array is seeded with the ASCII decimal index, not LE — see why.tick_array; span is 88 * tick_spacing. (3) There is NO liquidity bitmap. Unlike DLMM's bin_array_bitmap_extension, Whirlpool has no on-chain index of which tick arrays hold liquidity — array existence must be probed directly. (4) TWO tick-array layouts coexist: fixed TickArray (9,988 bytes) and DynamicTickArray (372 bytes). For the USDG/USDC swap the THIRD array is the dynamic one, so a parser that assumes 9,988 breaks on a real swap. (5) The oracle PDA ['oracle', whirlpool] = 4FQqY5C4fjReyc3MkMRqbR7bk9KRzXdCTbAXb5wbycVh DOES NOT EXIST on chain and must still be passed, WRITABLE. Whether it must be initialized depends on the pool's fee tier being adaptive — a live read, never an IDL fact. (6) swap_v2 (2b04ed0b1ac91e62), not swap (f8c69e91e17587c8): v1 cannot handle a Token-2022 mint, and USDG is Token-2022 while USDC is classic SPL, so token_program_a != token_program_b and memo_program is mandatory. (7) Both user ATAs must be seeded with their OWN mint's token program, read from the mint account's owner — using the wrong one yields a valid, empty, never-initialized account. NOT VERIFIED: Orca's own token_badge recipe is untested here (the address AhSVKq5Wy3yM5S46o9hEFKHmh7s77oAEyeJkUSZg1D9A is Meteora DLMM's badge for USDG under ['token_badge', mint], not Orca's); the a-to-b tick-array boundary shift Orca's SDK applies before flooring is untested at an array edge; adaptive-fee-tier behaviour is inferred from the null oracle, not read; and no Gecko-built raw swap_v2 has been simulated — the passing simulation went through Jupiter's CPI."
+}

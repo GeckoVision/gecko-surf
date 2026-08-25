@@ -1,0 +1,412 @@
+{
+  "api_id": "whirlpool",
+  "kind": "program",
+  "spec_source": {
+    "type": "program",
+    "value": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+  },
+  "program": {
+    "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    "orquestra_project": "4tj9k6117wn4xla89szsj",
+    "intents": [
+      "plan_swap"
+    ],
+    "pdas": {
+      "bundled_position": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "bundled_position",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "resolver",
+            "name": "position_bundle_mint",
+            "depends_on": [
+              "position_bundle"
+            ],
+            "reason": "account field seed 'position_bundle.position_bundle_mint' — runtime data"
+          },
+          {
+            "kind": "variable",
+            "name": "bundle_index",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2
+          }
+        ]
+      },
+      "position": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "position",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "position_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "token_badge": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "token_badge",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpools_config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "adaptive_fee_tier": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "fee_tier",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpools_config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "fee_tier_index",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2
+          }
+        ]
+      },
+      "config_extension": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "config_extension",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "config",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "tick_array": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "tick_array",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpool",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "start_tick_index",
+            "source": "argument",
+            "encoding": "utf8"
+          }
+        ]
+      },
+      "fee_tier": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "fee_tier",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "tick_spacing",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2
+          }
+        ]
+      },
+      "whirlpool": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "whirlpool",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpools_config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint_a",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint_b",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "tick_spacing",
+            "source": "argument",
+            "encoding": "le",
+            "width": 2
+          }
+        ]
+      },
+      "token_badge_a": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "token_badge",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpools_config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint_a",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "token_badge_b": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "token_badge",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpools_config",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "token_mint_b",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "oracle": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "oracle",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpool",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "position_bundle": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "position_bundle",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "position_bundle_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "position_bundle_token_account": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "position_bundle_owner",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "constant",
+            "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "position_bundle_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "reward_token_badge": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "token_badge",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "resolver",
+            "name": "whirlpools_config",
+            "depends_on": [
+              "whirlpool"
+            ],
+            "reason": "account field seed 'whirlpool.whirlpools_config' — runtime data"
+          },
+          {
+            "kind": "variable",
+            "name": "reward_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "lock_config": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "lock_config",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "position",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "position_token_account": {
+        "program_id": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "seeds": [
+          {
+            "kind": "variable",
+            "name": "owner",
+            "source": "account",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "constant",
+            "value": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "encoding": "pubkey"
+          },
+          {
+            "kind": "variable",
+            "name": "position_mint",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "oracle_one": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "oracle",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpool_one",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      },
+      "oracle_two": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "seeds": [
+          {
+            "kind": "constant",
+            "value": "oracle",
+            "encoding": "utf8"
+          },
+          {
+            "kind": "variable",
+            "name": "whirlpool_two",
+            "source": "account",
+            "encoding": "pubkey"
+          }
+        ]
+      }
+    },
+    "pda_origins": {
+      "bundled_position": "extracted",
+      "position": "extracted",
+      "token_badge": "extracted",
+      "adaptive_fee_tier": "extracted",
+      "config_extension": "extracted",
+      "tick_array": "manual",
+      "fee_tier": "extracted",
+      "whirlpool": "manual",
+      "token_badge_a": "extracted",
+      "token_badge_b": "extracted",
+      "oracle": "extracted",
+      "position_bundle": "extracted",
+      "position_bundle_token_account": "extracted",
+      "reward_token_badge": "extracted",
+      "lock_config": "extracted",
+      "position_token_account": "extracted",
+      "oracle_one": "extracted",
+      "oracle_two": "extracted"
+    },
+    "notes": "Orca Whirlpool — a concentrated-liquidity AMM (CLMM). Holds the USDG/USDC liquidity Meteora DLMM does not: pool 9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps (tick_spacing 1, fee_rate 100 = 0.01%) carried ~$25.68M TVL against DLMM's $0.38, so it is the only venue with BOTH real depth and an ingestible on-chain IDL. VERIFIED AGAINST MAINNET: whirlpool@ts=1 and oracle=['oracle', whirlpool] both reproduce exactly. TRAPS, none of them in the IDL. (1) tick_spacing selects the pool among fee tiers and is NOT derivable from the mints — see why.whirlpool. (2) tick_array is seeded with the ASCII decimal index, not LE — see why.tick_array; span is 88 * tick_spacing. (3) There is NO liquidity bitmap. Unlike DLMM's bin_array_bitmap_extension, Whirlpool has no on-chain index of which tick arrays hold liquidity — array existence must be probed directly. (4) TWO tick-array layouts coexist: fixed TickArray (9,988 bytes) and DynamicTickArray (372 bytes). For the USDG/USDC swap the THIRD array is the dynamic one, so a parser that assumes 9,988 breaks on a real swap. (5) The oracle PDA ['oracle', whirlpool] = 4FQqY5C4fjReyc3MkMRqbR7bk9KRzXdCTbAXb5wbycVh DOES NOT EXIST on chain and must still be passed, WRITABLE. Whether it must be initialized depends on the pool's fee tier being adaptive — a live read, never an IDL fact. (6) swap_v2 (2b04ed0b1ac91e62), not swap (f8c69e91e17587c8): v1 cannot handle a Token-2022 mint, and USDG is Token-2022 while USDC is classic SPL, so token_program_a != token_program_b and memo_program is mandatory. (7) Both user ATAs must be seeded with their OWN mint's token program, read from the mint account's owner — using the wrong one yields a valid, empty, never-initialized account. NOT VERIFIED: Orca's own token_badge recipe is untested here (the address AhSVKq5Wy3yM5S46o9hEFKHmh7s77oAEyeJkUSZg1D9A is Meteora DLMM's badge for USDG under ['token_badge', mint], not Orca's); the a-to-b tick-array boundary shift Orca's SDK applies before flooring is untested at an array edge; adaptive-fee-tier behaviour is inferred from the null oracle, not read; and no Gecko-built raw swap_v2 has been simulated — the passing simulation went through Jupiter's CPI."
+  }
+}
