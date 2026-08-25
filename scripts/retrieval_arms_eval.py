@@ -23,6 +23,7 @@ leaves recall@3 < 0.8. This harness reports whether that condition fires per set
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -38,6 +39,26 @@ from gecko.evaluate import RECALL_KS, evaluate_golden, load_golden  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "fixtures" / "golden"
+
+
+def _fixture_rev(path: Path) -> tuple[str, int]:
+    """`(short digest, task count)` for one golden file — the set's REVISION.
+
+    Every number in this report is measured against a specific partition of a specific
+    task list, and the partition MOVES: one comparison of two runs a fortnight apart
+    showed near_dup recall dropping 0.85 -> 0.67, which looked like a product regression
+    and was a re-bucketed fixture (near_dup 13 -> 9 tasks, keyword_echo 8 -> 14). Without
+    a stamp there is no way to tell those two causes apart after the fact.
+
+    So: two runs are comparable only when the digest matches. A changed digest means the
+    question changed, and the honest response is to re-baseline rather than to read a
+    trend.
+    """
+    raw = path.read_bytes()
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    return hashlib.sha256(raw).hexdigest()[:12], len(lines)
+
+
 SCORE_DEPTH = max(RECALL_KS) + 10  # >= 20, uncensored above the deepest k
 GATE_RECALL3 = 0.8  # dense/RRF (arm D) fires only where BM25 leaves recall@3 below this
 
@@ -108,7 +129,9 @@ def run() -> dict[str, Any]:
     for name, (spec, session_factory) in CASES.items():
         client = AgentApiClient(str(spec), session=session_factory())
         usable = {t["name"] for t in client.list_tools()}
-        tasks = load_golden(GOLDEN / f"{name}_tasks.jsonl")
+        task_file = GOLDEN / f"{name}_tasks.jsonl"
+        fixture_digest, fixture_tasks = _fixture_rev(task_file)
+        tasks = load_golden(task_file)
         try:
             catalog._tokens = _baseline_tokens
             card_a = _card(_Retriever(client.search_scored), tasks)
@@ -122,6 +145,7 @@ def run() -> dict[str, Any]:
         # The AGGREGATE recall is a blend of archetypes, and the sets are not balanced, so a
         # set that is mostly keyword_echo reports a number no paraphrase ever has to earn.
         # The gate is decided on the aggregate; this is what the aggregate is hiding.
+        fixture = {"rev": fixture_digest, "tasks": fixture_tasks}
         by_arch: dict[str, dict[str, Any]] = {}
         for arch in sorted({t.archetype for t in tasks} - {"out_of_scope"}):
             slice_ = [t for t in tasks if t.archetype == arch]
@@ -132,6 +156,7 @@ def run() -> dict[str, Any]:
             }
         out[name] = {
             "n": len(usable),
+            "fixture": fixture,
             "arms": {"A": card_a, "B": card_b, "C": card_c},
             "by_archetype": by_arch,
         }
@@ -158,7 +183,22 @@ def format_report(results: dict[str, Any]) -> str:
     ]
     for name, r in results.items():
         n = r["n"]
+        fixture = r.get("fixture") or {}
         lines.append(f"## {name} ({n} usable ops)")
+        # THE STAMP. A figure without the fixture revision it was measured against is not
+        # comparable to any other run — see `_fixture_rev`.
+        lines.append(
+            f"golden-set rev `{fixture.get('rev', '?')}` · "
+            f"{fixture.get('tasks', '?')} task(s) in the fixture file"
+        )
+        lines.append("")
+        # The archetype buckets below sum to FEWER than the fixture count: they count
+        # POSITIVE tasks only. Said here so a reader does not chase the difference as a
+        # bug, and so a denominator quoted from one table is never confused for the other.
+        lines.append(
+            "_The archetype table counts positive tasks, so its rows sum to at most the "
+            "fixture count above — quote the denominator you actually used._"
+        )
 
         # PER-ARCHETYPE FIRST, because the aggregate below it is the misleading number.
         # `paraphrase_no_overlap` is a worst-case FLOOR by construction — the golden-set
