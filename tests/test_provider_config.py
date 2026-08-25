@@ -382,6 +382,7 @@ def test_packaged_configs_carry_the_computed_origins() -> None:
         "meteora",
         "ore",
         "pumpfun",
+        "whirlpool",
     ]
 
 

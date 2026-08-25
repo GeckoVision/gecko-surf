@@ -85,7 +85,7 @@ def test_the_ata_recipe_is_the_one_the_program_actually_uses() -> None:
     from_recipe = derive_pda(
         node, {"owner": owner, "token_program": TOKEN_PROGRAM, "mint": USDC}
     )
-    assert from_recipe.address == derive_ata(owner, USDC)
+    assert from_recipe.address == derive_ata(owner, USDC, token_program=TOKEN_PROGRAM)
 
 
 def test_a_swapped_seed_pair_still_derives_and_that_is_the_danger() -> None:
@@ -107,7 +107,7 @@ def test_a_swapped_seed_pair_still_derives_and_that_is_the_danger() -> None:
     wrong = derive_pda(
         reversed_node, {"owner": owner, "token_program": TOKEN_PROGRAM, "mint": USDC}
     )
-    assert wrong.address != derive_ata(owner, USDC)
+    assert wrong.address != derive_ata(owner, USDC, token_program=TOKEN_PROGRAM)
     assert len(wrong.address) >= 32, "it is a real address — that is the whole problem"
 
 
@@ -147,7 +147,7 @@ def test_the_ata_recipe_matches_a_real_mainnet_account() -> None:
 
     from gecko.rpc import default_rpc_call  # local: the offline legs need no transport
 
-    address = derive_ata(config["authority"], USDC)
+    address = derive_ata(config["authority"], USDC, token_program=TOKEN_PROGRAM)
     info = default_rpc_call(
         "https://api.mainnet-beta.solana.com",
         "getAccountInfo",

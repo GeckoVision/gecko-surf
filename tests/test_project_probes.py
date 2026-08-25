@@ -194,8 +194,8 @@ def test_receipts_matches_the_address_mainnet_confirmed() -> None:
 
 def test_both_token_accounts_are_the_right_owners_ata() -> None:
     case = case_for("make_purchase")
-    assert case.accounts["sender_token_account"] == derive_ata(BUYER, USDC)
-    assert case.accounts["recipient_token_account"] == derive_ata(AUTHORITY, USDC)
+    assert case.accounts["sender_token_account"] == derive_ata(BUYER, USDC, token_program=TOKEN_PROGRAM)
+    assert case.accounts["recipient_token_account"] == derive_ata(AUTHORITY, USDC, token_program=TOKEN_PROGRAM)
     assert (
         case.accounts["sender_token_account"]
         != case.accounts["recipient_token_account"]

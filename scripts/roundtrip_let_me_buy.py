@@ -53,7 +53,7 @@ from typing import Any, Mapping, Sequence
 
 from gecko.program_graph import ProgramGraph, build_program_graph
 from gecko.project.fdl import FdlProjectionError, to_fdl
-from gecko.store_accounts import derive_ata, receipts_pda
+from gecko.store_accounts import TOKEN_PROGRAM_ID, derive_ata, receipts_pda
 from scripts.orquestra_bridge import (
     BridgeError,
     CompileOutcome,
@@ -360,8 +360,8 @@ def expectations(
     """
     ours = {
         "receipts": receipts_pda(config["store"]),
-        "sender_token_account": derive_ata(config["buyer"], USDC),
-        "recipient_token_account": derive_ata(config["authority"], USDC),
+        "sender_token_account": derive_ata(config["buyer"], USDC, token_program=TOKEN_PROGRAM_ID),
+        "recipient_token_account": derive_ata(config["authority"], USDC, token_program=TOKEN_PROGRAM_ID),
     }
     if set(ours) != DERIVABLE_SLOTS:
         raise ExpectationError(

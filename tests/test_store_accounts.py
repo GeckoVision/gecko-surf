@@ -43,6 +43,8 @@ from gecko.store_directory import LET_ME_BUY_PROGRAM_ID, StoreProduct
 from test_store_directory import encode_store
 
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+#: let_me_buy pins this in the IDL, so every ATA on its path derives under it.
+CLASSIC_TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 #: Measured on mainnet, and the exact strings ``scripts/prepare_purchase.py`` and
 #: ``scripts/autonomous_purchase.py`` used to hardcode as STORE_RECEIPTS / STORE_AUTHORITY
@@ -127,7 +129,7 @@ def test_jonasbars_derived_accounts_equal_the_constants_they_replace() -> None:
     replacement was plausible rather than faithful — and a plausible payee is a wrong one.
     """
     assert receipts_pda("jonasbar") == JONASBAR_RECEIPTS
-    assert derive_ata(JONASBAR_AUTHORITY, USDC) == JONASBAR_TOKEN_ACCOUNT
+    assert derive_ata(JONASBAR_AUTHORITY, USDC, token_program=CLASSIC_TOKEN) == JONASBAR_TOKEN_ACCOUNT
 
 
 def test_the_default_store_still_resolves_to_exactly_what_it_hardcoded() -> None:
@@ -165,7 +167,7 @@ def test_a_named_store_resolves_to_its_own_accounts_and_they_reach_the_plan() ->
     assert accounts["receipts"] == GECKOCOFFEE_RECEIPTS
     assert accounts["authority"] == GECKOCOFFEE_AUTHORITY
     assert accounts["recipient_token_account"] == GECKOCOFFEE_TOKEN_ACCOUNT
-    assert accounts["sender_token_account"] == derive_ata(BUYER, USDC)
+    assert accounts["sender_token_account"] == derive_ata(BUYER, USDC, token_program=CLASSIC_TOKEN)
     # The instruction argument and the accounts come from ONE object, so they agree.
     assert purchase_args(store, table=3)["store_name"] == "geckocoffee"
     assert allowed_destinations(store, buyer_ata=accounts["sender_token_account"]) == {
@@ -309,7 +311,7 @@ def test_an_empty_name_resolves_to_nothing_rather_than_to_a_default() -> None:
 def test_an_explicit_recipient_overrides_the_stores_token_account() -> None:
     """``--self-transfer`` binds the buyer's own account so the plan refusal can fire."""
     store = jonasbar_accounts()
-    buyer_ata = derive_ata(BUYER, USDC)
+    buyer_ata = derive_ata(BUYER, USDC, token_program=CLASSIC_TOKEN)
     accounts = purchase_accounts(store, buyer=BUYER, recipient=buyer_ata)
     assert accounts["recipient_token_account"] == buyer_ata
     assert accounts["sender_token_account"] == buyer_ata  # the collision, on purpose

@@ -407,8 +407,10 @@ def _snapshot() -> dict[str, list[dict]]:
 # instead by the snapshot-FREE formulation in
 # ``test_the_cap_never_reorders_or_drops_an_account``, which needs no baseline.
 # `==`, not `in`: a fourth entry has to turn ``test_the_post_snapshot_cards_are_exactly_
-# these`` red before it can be skipped.
-_POST_SNAPSHOT_CARDS = frozenset({"let_me_buy/SURFACE", "jurassic_fi/SURFACE"})
+# these`` red before it can be skipped. whirlpool was the fourth, and it did.
+_POST_SNAPSHOT_CARDS = frozenset(
+    {"let_me_buy/SURFACE", "jurassic_fi/SURFACE", "whirlpool/SURFACE"}
+)
 
 
 def test_the_post_snapshot_cards_are_exactly_these() -> None:
@@ -416,7 +418,7 @@ def test_the_post_snapshot_cards_are_exactly_these() -> None:
     is asserted, and every name in it must really be missing from the fixture."""
     snapshot = _snapshot()
     assert _POST_SNAPSHOT_CARDS == frozenset(
-        {"let_me_buy/SURFACE", "jurassic_fi/SURFACE"}
+        {"let_me_buy/SURFACE", "jurassic_fi/SURFACE", "whirlpool/SURFACE"}
     )
     assert _POST_SNAPSHOT_CARDS.isdisjoint(snapshot)
     keys = {f"{c.api_id}/{c.intent_name or 'SURFACE'}" for c in _wired_cards()}

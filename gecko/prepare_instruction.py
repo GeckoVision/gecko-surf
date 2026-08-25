@@ -619,13 +619,17 @@ DERIVE_ATA_TOOL = {
             "token_program": {
                 "type": "string",
                 "description": (
-                    "base58 token program. Defaults to the legacy SPL Token program; pass "
-                    "the Token-2022 id for a Token-2022 mint — they derive DIFFERENT "
-                    "addresses and only one of them is the account the program expects."
+                    "base58 token program — REQUIRED, and it is a property OF THE MINT, "
+                    "not of the owner. It is the SECOND SEED, so classic SPL Token and "
+                    "Token-2022 derive DIFFERENT addresses for the same owner and mint. "
+                    "Read the mint account's `owner` field; that IS the token program. "
+                    "Never infer it from the mint address, its decimals, or a label — "
+                    "the wrong one is not rejected, it is a valid, off-curve address for "
+                    "an account that was never initialized."
                 ),
             },
         },
-        "required": ["owner", "mint"],
+        "required": ["owner", "mint", "token_program"],
         "additionalProperties": False,
     },
 }
@@ -663,9 +667,25 @@ def derive_ata_result(arguments: Mapping[str, Any]) -> dict[str, Any]:
     args = arguments or {}
     owner = str(args.get("owner") or "").strip()
     mint = str(args.get("mint") or "").strip()
-    token_program = str(args.get("token_program") or TOKEN_PROGRAM).strip()
+    token_program = str(args.get("token_program") or "").strip()
     if not owner or not mint:
         return _refuse("argument-missing", "derive_ata needs an `owner` and a `mint`")
+    if not token_program:
+        # This defaulted to the legacy SPL Token program, which reproduced THIS TOOL'S
+        # OWN documented failure mode one field over: a well-formed WRONG address
+        # returned with `refused: false`, for every Token-2022 mint whose caller left
+        # the field out. The token program is a property OF THE MINT — it cannot be
+        # inferred from the mint address, its decimals, or its label, so absent is a
+        # refusal, not an assumption.
+        return _refuse(
+            "argument-missing",
+            "derive_ata needs a `token_program`: it is the SECOND SEED, so the classic "
+            "and Token-2022 programs derive DIFFERENT addresses for the same owner and "
+            "mint, and the wrong one is not rejected — it is a valid, off-curve address "
+            "for an account that was never initialized. Read the mint account's `owner` "
+            "field (that IS the token program) and pass it; never infer it from the "
+            f"mint address, its decimals, or a label. Classic is {TOKEN_PROGRAM}.",
+        )
     try:
         derived = derive_pda(
             PdaNode(

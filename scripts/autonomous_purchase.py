@@ -63,6 +63,7 @@ from gecko.spend_policy import (  # noqa: E402
 from gecko.store_accounts import (  # noqa: E402
     StoreResolutionError,
     allowed_destinations,
+    TOKEN_PROGRAM_ID,
     derive_ata,
     purchase_accounts,
     purchase_args,
@@ -264,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     except StoreResolutionError as exc:
         print(f"STOP: {exc}")
         return 2
-    buyer_ata = derive_ata(buyer, store.mint)
+    buyer_ata = derive_ata(buyer, store.mint, token_program=TOKEN_PROGRAM_ID)
     recipient = buyer_ata if args.self_transfer else store.token_account
 
     # The policy is authored HERE, before the run, by a human editing these numbers — but
