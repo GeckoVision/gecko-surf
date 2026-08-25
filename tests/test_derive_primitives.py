@@ -20,6 +20,10 @@ from gecko.prepare_instruction import derive_ata_result, derive_pda_result
 
 OWNER = "GpaLFMwQWh2xuBkMQGKmcYT5A1WgYJekofu6DJjp8W9c"
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+#: Live mainnet Token-2022 mint (Global Dollar) — the case the old default got wrong.
+USDG = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
+CLASSIC_TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 LAUNCH_PROGRAM = "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm"
 ADMIN = "6Dw1xBGXChPeS69hovvYMF2nmRxgdoA711TKuuAbN5rV"
 
@@ -30,7 +34,9 @@ def test_the_ata_bump_is_254_not_255() -> None:
     Both are asserted: an address alone would pass for a loop that happened to land on
     the right value by luck, and the bump is what the skipped check actually decides.
     """
-    result = derive_ata_result({"owner": OWNER, "mint": USDC})
+    result = derive_ata_result(
+        {"owner": OWNER, "mint": USDC, "token_program": CLASSIC_TOKEN}
+    )
 
     assert result["address"] == "DwwMEu6CYdevytmKM68xEfmBVtzrGQetUhNZyvbUKKvQ"
     assert result["bump"] == 254, (
@@ -41,16 +47,46 @@ def test_the_ata_bump_is_254_not_255() -> None:
 def test_token_2022_derives_a_different_account() -> None:
     """Not a detail: the two programs derive different addresses for the same owner and
     mint, and only one of them is the account a program will accept."""
-    legacy = derive_ata_result({"owner": OWNER, "mint": USDC})
+    legacy = derive_ata_result(
+        {"owner": OWNER, "mint": USDC, "token_program": CLASSIC_TOKEN}
+    )
     t22 = derive_ata_result(
-        {
-            "owner": OWNER,
-            "mint": USDC,
-            "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-        }
+        {"owner": OWNER, "mint": USDC, "token_program": TOKEN_2022}
     )
 
     assert legacy["address"] != t22["address"]
+
+
+def test_an_omitted_token_program_refuses_instead_of_assuming_classic() -> None:
+    """The tool used to default to the legacy SPL Token program, which reproduced its
+    OWN documented failure mode one field over: a well-formed WRONG address, returned
+    with ``refused: false``, for every Token-2022 mint whose caller left the field out.
+
+    USDG (2u1tsz..., Token-2022, live on mainnet) is the case that matters — the store
+    programs that pin classic SPL cannot settle it at all, and the wrong ATA is not
+    rejected by the runtime: it is a valid, off-curve address for an account that was
+    never initialized. The token program is a property OF THE MINT, read from the mint
+    account's `owner`. It cannot be inferred from the mint address, its decimals, or its
+    label, so the honest answer when it is absent is a refusal."""
+    result = derive_ata_result({"owner": OWNER, "mint": USDG})
+
+    assert result["refused"] is True
+    assert result["code"] == "argument-missing"
+    assert "address" not in result, "a refusal must not carry an address"
+    assert "owner" in result["reason"], (
+        "the refusal has to say HOW to get the value — read the mint account's owner"
+    )
+
+
+def test_supplying_the_token_program_still_derives() -> None:
+    """The refusal is about the ABSENT field, not a new restriction: both programs
+    derive exactly as before when the caller names which one the mint belongs to."""
+    for program in (CLASSIC_TOKEN, TOKEN_2022):
+        result = derive_ata_result(
+            {"owner": OWNER, "mint": USDG, "token_program": program}
+        )
+        assert result["refused"] is False
+        assert result["token_program"] == program
 
 
 def test_a_pda_derives_the_live_account_from_its_seeds() -> None:
@@ -91,7 +127,15 @@ def test_the_integer_WIDTH_changes_the_address(
     [
         ({}, "argument-missing"),
         ({"owner": OWNER}, "argument-missing"),
-        ({"owner": "not-base58!!", "mint": USDC}, "argument-invalid"),
+        ({"owner": OWNER, "mint": USDC}, "argument-missing"),  # no token_program
+        (
+            {
+                "owner": "not-base58!!",
+                "mint": USDC,
+                "token_program": CLASSIC_TOKEN,
+            },
+            "argument-invalid",
+        ),
     ],
 )
 def test_derive_ata_refuses_rather_than_returning_something(

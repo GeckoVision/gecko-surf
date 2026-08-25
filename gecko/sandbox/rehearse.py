@@ -271,7 +271,7 @@ def rehearse_purchase(
     touched = (
         buyer.pubkey,
         derive_ata(buyer.pubkey, listed.mint, token_program=TOKEN_PROGRAM_ID),
-        derive_ata(resolved.authority, listed.mint),
+        derive_ata(resolved.authority, listed.mint, token_program=TOKEN_PROGRAM_ID),
         receipts_pda(resolved.store_name),
     )
     blank = Rehearsal(

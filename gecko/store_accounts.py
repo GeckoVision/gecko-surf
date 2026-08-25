@@ -99,11 +99,20 @@ class StoreAccountsMismatch(StoreResolutionError):
     """
 
 
-def derive_ata(owner: str, mint: str, *, token_program: str = TOKEN_PROGRAM_ID) -> str:
+def derive_ata(owner: str, mint: str, *, token_program: str) -> str:
     """The associated token account for ``owner`` and ``mint`` — a PDA, so derived.
 
     THE single implementation. It was copied into two scripts, which is how a purchase
     ends up derived one way and verified another; every caller in the repo imports this.
+
+    ``token_program`` is REQUIRED and has no default. It used to default to classic SPL
+    Token, which is safe only while every mint in play happens to be classic — a live
+    fact about today's listings, never an invariant. It is the SECOND SEED, so the same
+    (owner, mint) yields two different, both well-formed, both off-curve addresses under
+    the two programs, and the wrong one is not rejected by the runtime: it is an account
+    that was simply never initialized. It is a property OF THE MINT — read the mint
+    account's ``owner`` (see :func:`gecko.token_program.read_mint_token_programs`), never
+    infer it from the mint address, its decimals, or a label.
     """
     from solders.pubkey import Pubkey
 
@@ -153,7 +162,12 @@ class StoreAccounts:
                 "different stores; naming one and paying the other is the exact fault "
                 "the program refuses with ConstraintSeeds (2006)."
             )
-        expected = derive_ata(self.authority, self.product.mint)
+        # Classic SPL Token is not a default here, it is the program's own constraint:
+        # let_me_buy PINS `token_program` to it in the IDL, so a Token-2022 mint has no
+        # path through `make_purchase` at all and its ATA is not the account to check.
+        expected = derive_ata(
+            self.authority, self.product.mint, token_program=TOKEN_PROGRAM_ID
+        )
         if self.token_account != expected:
             raise StoreAccountsMismatch(
                 f"token_account {self.token_account} is not "
@@ -191,7 +205,10 @@ class ResolvedStore:
                     product=entry,
                     receipts=self.receipts,
                     authority=self.authority,
-                    token_account=derive_ata(self.authority, entry.mint),
+                    # classic is the IDL's pin, not an assumption — see StoreAccounts
+                    token_account=derive_ata(
+                        self.authority, entry.mint, token_program=TOKEN_PROGRAM_ID
+                    ),
                 )
         listed = ", ".join(entry.name for entry in self.products) or "nothing"
         raise ProductNotOnMenu(
@@ -374,7 +391,11 @@ def purchase_accounts(
         "authority": store.authority,
         "mint": store.mint,
         "sender_token_account": (
-            derive_ata(buyer, store.mint) if sender is None else sender
+            # classic is the IDL's pin, not an assumption — see StoreAccounts. It is the
+            # SAME program named in `token_program` below, so these two cannot disagree.
+            derive_ata(buyer, store.mint, token_program=TOKEN_PROGRAM_ID)
+            if sender is None
+            else sender
         ),
         "recipient_token_account": (
             store.token_account if recipient is None else recipient

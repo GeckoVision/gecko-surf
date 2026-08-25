@@ -104,7 +104,13 @@ class FakeChain:
             owner, mint, update = params[0], params[1], params[2]
             from gecko.sandbox.cheatcodes import derive_ata
 
-            self.tokens[derive_ata(owner, mint)] = (mint, owner, int(update["amount"]))
+            # params[3] is the token program the cheatcode funded under — deriving with
+            # anything else would key this fake on an account the real code never touches.
+            self.tokens[derive_ata(owner, mint, token_program=params[3])] = (
+                mint,
+                owner,
+                int(update["amount"]),
+            )
             return {"result": {"value": None}}
         if method == "getBalance":
             # fund_sol verifies its own write with getBalance, not getAccountInfo.
