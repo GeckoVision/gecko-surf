@@ -412,6 +412,28 @@ _POST_SNAPSHOT_CARDS = frozenset(
     {"let_me_buy/SURFACE", "jurassic_fi/SURFACE", "whirlpool/SURFACE"}
 )
 
+#: (card, account) pairs whose INPUT changed after the pin was taken, so the pin no
+#: longer describes them. Not a projection like ``FIELDS_ADDED_SINCE_SNAPSHOT`` and not a
+#: skip like ``_POST_SNAPSHOT_CARDS``: those two say the baseline cannot speak, this one
+#: says the baseline spoke about a config that has since been corrected. Every other step
+#: of these same cards is still compared byte for byte, and each entry costs a line here
+#: plus a matching downgrade in ``test_origins_only_downgrade_and_exactly_the_known_
+#: accounts`` — so a change can move exactly one account and cannot move it upward.
+#:
+#: pumpfun ``bonding_curve``: the IDL declares it two derivable ways (14 instructions
+#: seed it on `mint`, 4 v2 instructions on `base_mint`, no instruction carries both) and
+#: the extractor used to answer from whichever the IDL listed first. It now refuses that
+#: name-keyed recipe, and the overlay asserts `mint` by hand — so the account is
+#: `recovered` (hand-supplied) where the pin recorded `extracted` (read off the surface).
+#: The surface did not get worse; the claim about it did get true.
+_INPUT_CHANGED_SINCE_SNAPSHOT = frozenset(
+    {
+        ("pumpfun/SURFACE", "bonding_curve"),
+        ("pumpfun/plan_buy", "bonding_curve"),
+        ("pumpfun/plan_sell", "bonding_curve"),
+    }
+)
+
 
 def test_the_post_snapshot_cards_are_exactly_these() -> None:
     """The skip list is a claim about which cards the pre-R7 pin cannot cover — so it
@@ -436,12 +458,39 @@ def test_with_origins_absent_every_plan_is_byte_identical_to_pre_r7() -> None:
         if key in _POST_SNAPSHOT_CARDS:
             continue
         live = [_pinned(step) for step in _plan_json(replace(card, origins={}))]
-        assert live == snapshot[key], (
-            f"{key}: the no-origin path drifted from the pre-R7 plan"
-        )
+        pinned = [
+            step
+            for step in snapshot[key]
+            if (key, step["account"]) not in _INPUT_CHANGED_SINCE_SNAPSHOT
+        ]
+        assert [
+            step
+            for step in live
+            if (key, step["account"]) not in _INPUT_CHANGED_SINCE_SNAPSHOT
+        ] == pinned, f"{key}: the no-origin path drifted from the pre-R7 plan"
         compared.append(key)
     # the sweep must have actually run — a fully-skipped loop passes silently
     assert sorted(compared) == sorted(snapshot)
+
+
+def test_every_exempted_account_really_did_change() -> None:
+    """The exemption list is a claim, so it is falsified: an entry that does NOT differ
+    from the pin is stale, and a stale entry is a hole where a real drift can hide."""
+    snapshot = _snapshot()
+    still_pinned = []
+    for card in _wired_cards():
+        key = f"{card.api_id}/{card.intent_name or 'SURFACE'}"
+        live = {s["account"]: _pinned(s) for s in _plan_json(replace(card, origins={}))}
+        for step in snapshot.get(key, []):
+            pair = (key, step["account"])
+            if (
+                pair in _INPUT_CHANGED_SINCE_SNAPSHOT
+                and live.get(step["account"]) == step
+            ):
+                still_pinned.append(pair)
+    assert still_pinned == [], (
+        f"exempted but unchanged — drop these from the list: {still_pinned}"
+    )
 
 
 def test_origins_only_downgrade_and_exactly_the_known_accounts() -> None:
@@ -471,6 +520,15 @@ def test_origins_only_downgrade_and_exactly_the_known_accounts() -> None:
         ("metadao_ico/SURFACE", "launch_signer", "extracted", "recovered"),
         ("meteora/SURFACE", "reserve", "extracted", "recovered"),
         ("meteora/plan_swap", "reserve", "extracted", "recovered"),
+        # justified here, in the commit that caused it: pump.fun's IDL declares
+        # `bonding_curve` two derivable ways (14 instructions seed it on `mint`, 4 v2
+        # instructions on `base_mint`, no instruction carries both), and the extractor
+        # used to answer from whichever the IDL listed first. It now refuses that
+        # name-keyed recipe and the overlay asserts `mint` by hand, so the tag drops
+        # from "read off the surface" to "hand-supplied" — which is what it always was.
+        ("pumpfun/SURFACE", "bonding_curve", "extracted", "recovered"),
+        ("pumpfun/plan_buy", "bonding_curve", "extracted", "recovered"),
+        ("pumpfun/plan_sell", "bonding_curve", "extracted", "recovered"),
     ]
 
 

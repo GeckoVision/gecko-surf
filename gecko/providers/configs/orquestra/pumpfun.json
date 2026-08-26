@@ -89,7 +89,7 @@
       "mint_authority": "extracted",
       "event_authority": "extracted",
       "global_volume_accumulator": "extracted",
-      "bonding_curve": "extracted",
+      "bonding_curve": "manual",
       "bonding_curve_v2": "manual",
       "user_volume_accumulator": "extracted",
       "creator_vault": "manual",

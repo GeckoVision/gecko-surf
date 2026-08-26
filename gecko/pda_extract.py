@@ -607,6 +607,69 @@ def blocked_only_on_itself(node: PdaNode) -> bool:
     )
 
 
+def _seed_operand(seed: PdaSeed, index: int) -> str:
+    """A short, stable name for what fills one seed slot — for a human-readable reason.
+
+    Deliberately not an encoding of the seed: this is only ever read by a person or an
+    agent deciding which instruction to go and ask.
+    """
+    if isinstance(seed, (VariablePdaSeedNode, ResolverPdaSeedNode)):
+        return seed.name
+    if isinstance(seed, OrderedPairPdaSeedNode):
+        return f"{seed.select}({seed.left}, {seed.right})"
+    if isinstance(seed, ConstantPdaSeedNode):
+        try:
+            return f"the constant {seed.value.decode('utf-8')!r}"
+        except UnicodeDecodeError:
+            return f"the constant {b58_encode(seed.value)}"
+    return f"seed {index}"
+
+
+def disputed_recipe(name: str, a: PdaNode, b: PdaNode) -> PdaNode:
+    """One flagged recipe standing for two derivable ones that disagree.
+
+    This map holds one recipe per account NAME for a whole program, and two instructions
+    may each declare that name derivably and differently — ORE's `miner` is seeded on
+    `signer` by `automate` and on `authority` by `deploy`, and both derive, to different
+    addresses. Neither is wrong; the KEY is wrong, and no evidence available here picks
+    between them. So the account is reported as not derivable from this map, with both
+    operands named, rather than answered from whichever instruction the IDL listed first.
+
+    Canonical in the two inputs: the result does not depend on which one arrived first,
+    which is the property the old behaviour lacked. Seeds both sides agree on are kept —
+    the caller still learns the prefix and the shape — and only the slots that disagree
+    become flagged. A differing ``program_id`` makes the whole recipe unknown rather than
+    silently one of the two.
+    """
+    width = max(len(a.seeds), len(b.seeds))
+    seeds: list[PdaSeed] = []
+    for i in range(width):
+        left = a.seeds[i] if i < len(a.seeds) else None
+        right = b.seeds[i] if i < len(b.seeds) else None
+        if left == right and left is not None:
+            seeds.append(left)
+            continue
+        operands = sorted(
+            {_seed_operand(s, i) for s in (left, right) if s is not None}
+        ) or ["nothing"]
+        seeds.append(
+            ResolverPdaSeedNode(
+                name=f"{name}_seed_{i}",
+                depends_on=(),
+                reason=(
+                    f"two instructions of this program declare `{name}` with different, "
+                    f"both-derivable recipes: seed {i} is {' in one and '.join(operands)}"
+                    " in the other. An account name is not a recipe key and this map "
+                    "holds one recipe per name, so neither is reported as THE recipe — "
+                    "read the recipe off the instruction you are calling "
+                    "(`InstructionGraph.accounts[].pda`)."
+                ),
+            )
+        )
+    program_id = a.program_id if a.program_id == b.program_id else None
+    return PdaNode(name, tuple(seeds), program_id)
+
+
 def instruction_pdas(
     ix: dict[str, Any],
     *,
@@ -717,6 +780,20 @@ def from_anchor_idl(idl: dict[str, Any]) -> dict[str, PdaNode]:
                 # caller a chain read, while overstating it hands them an address they
                 # have no way to compute. The gap it reports (`depends_on`) is real.
                 nodes[name] = candidate
+            elif (
+                existing.resolvable
+                and candidate.resolvable
+                and existing.seeds != candidate.seeds
+            ):
+                # AND THE CASE THE CHAIN USED TO FALL OFF THE END OF. Both derive, and
+                # they derive DIFFERENT addresses; every rule above needs one side to be
+                # flagged or provably the same recipe, and neither holds here. With no
+                # `else` this kept whichever instruction came first — the one thing the
+                # comment above says is not evidence — and ORE's `miner`, which is
+                # `automate`'s `signer` and `deploy`'s `authority`, silently became
+                # `signer` program-wide. That is a well-formed, off-curve, WRONG address
+                # on an instruction that stakes SOL. Report the dispute instead.
+                nodes[name] = disputed_recipe(name, existing, candidate)
     return nodes
 
 

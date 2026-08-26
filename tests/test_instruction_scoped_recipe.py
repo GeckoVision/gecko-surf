@@ -67,14 +67,18 @@ def test_the_fixture_really_does_declare_two_different_recipes(
         name: _declared(ore_idl, ore.program_id, name)
         for name in ("automate", "deploy")
     }
+    bound = {"signer": SIGNER, "authority": AUTHORITY}
     for account in ("miner", "automation"):
         by_deploy = declared["deploy"][account]
         by_automate = declared["automate"][account]
         assert by_deploy.required_bindings == ("authority",)
         assert by_automate.required_bindings == ("signer",)
-        # and the program-wide map holds the OTHER one, purely because `automate`
-        # is listed first
-        assert ore.pdas[account].required_bindings == ("signer",)
+        assert (
+            derive_pda(by_deploy, bound).address
+            != derive_pda(by_automate, bound).address
+        ), "the two declarations must produce different addresses"
+        # and the name-keyed map, which cannot hold both, no longer claims either
+        assert not ore.pdas[account].resolvable
 
 
 @pytest.mark.parametrize("account", ["miner", "automation"])
@@ -87,16 +91,16 @@ def test_the_plan_derives_what_this_instruction_declares(
         {"signer": SIGNER, "authority": AUTHORITY, "entropyVar": SIGNER},
         payer=None,
     )
-    declared = _declared(ore_idl, ore.program_id, "deploy")[account]
-    expected = derive_pda(declared, {"signer": SIGNER, "authority": AUTHORITY}).address
-    program_wide = derive_pda(
-        ore.pdas[account], {"signer": SIGNER, "authority": AUTHORITY}
-    ).address
+    bound = {"signer": SIGNER, "authority": AUTHORITY}
+    expected = derive_pda(_declared(ore_idl, ore.program_id, "deploy")[account], bound)
+    by_the_other = derive_pda(
+        _declared(ore_idl, ore.program_id, "automate")[account], bound
+    )
 
-    assert expected != program_wide, "the two recipes must produce different addresses"
-    assert resolved[account] == expected, (
-        f"`deploy` seeds {account} on `authority`; the plan used the program-wide "
-        "recipe seeded on `signer`"
+    assert expected.address != by_the_other.address
+    assert resolved[account] == expected.address, (
+        f"`deploy` seeds {account} on `authority`; the plan used the recipe seeded "
+        "on `signer`"
     )
     assert next(o["origin"] for o in origins if o["account"] == account) == "derived"
 
