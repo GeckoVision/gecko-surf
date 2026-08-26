@@ -5,7 +5,23 @@ it cannot derive, simulates against the network you name, and prints the bytes p
 BINDING. It never signs and never broadcasts. ``scripts/sign_and_send.py`` is the only
 file in this repository that can sign a mainnet transaction.
 
+    # prepare only — derives, simulates, prints the bytes and the binding. Signs nothing.
     uv run python scripts/prepare_whirlpool_swap.py --signer <YOUR_PUBKEY>
+
+    # prepare AND settle, in one call — no window for the blockhash to expire in
+    uv run python scripts/prepare_whirlpool_swap.py --signer <YOUR_PUBKEY> \
+        --keypair ~/.config/solana/id.json --send
+
+TWO MODES, AND WHEN EACH IS RIGHT. Without ``--send`` this is a twin of
+``prepare_purchase.py``: it hands you bytes plus a binding to carry to
+``sign_and_send.py`` in another terminal. That flow has the stronger substitution check —
+see below — and is right whenever the bytes have a journey to make.
+
+With ``--send`` it is a twin of ``autonomous_purchase.py``: prepare, verify, sign, settle,
+in one process. Use it because a blockhash lives about a minute and a human copying two
+long base58 strings between terminals outlives it — measured, on the first real run: the
+transaction was correct and the pre-flight refused it anyway because it had gone stale.
+``_settle`` states exactly what that trade does and does not give up.
 
 WHY THE BINDING TRAVELS WITH THE BYTES. ``sign_and_send.py`` runs four checks and three of
 them are self-referential — the fresh receipt is computed FROM the bytes in ``--tx``, so
@@ -39,19 +55,25 @@ from __future__ import annotations
 
 import argparse
 import base64
-import time
+import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from gecko.handoff import verify_handoff  # noqa: E402
 from gecko.idl_layout import field_offset  # noqa: E402
+from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.pda import b58_encode, derive_pda  # noqa: E402
 from gecko.prepare_instruction import prepare_instruction_result  # noqa: E402
 from gecko.provider_config import load_packaged_provider  # noqa: E402
 from gecko.providers.catalog_surface import orquestra_seams  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
+from gecko.simulate import BuiltTx, simulate  # noqa: E402
 from gecko.store_accounts import derive_ata  # noqa: E402
+
+DEFAULT_KEYPAIR = Path.home() / ".config" / "solana" / "id.json"
 
 WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
 #: The USDG/USDC pool: tick_spacing 1, fee_rate 100 (0.01%), the only USDG/USDC venue with
@@ -129,7 +151,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--signer", required=True, help="your base58 pubkey; pays fees AND is token_authority")
     parser.add_argument("--rpc-url", default="https://api.mainnet-beta.solana.com")
-    parser.add_argument("--network", default="mainnet", help="what --rpc-url points at; YOU say, nothing guesses")
+    parser.add_argument(
+        "--network",
+        default="mainnet",
+        choices=sorted(NETWORKS),
+        help=(
+            "what --rpc-url points at. YOU say; nothing guesses — a fork proxy answers at "
+            "any hostname, so the URL is evidence of nothing. Constrained here because "
+            "`coerce_network` maps an unrecognised string to 'unknown' rather than raising, "
+            "so a typo would otherwise travel silently to the gate."
+        ),
+    )
     parser.add_argument("--pool", default=DEFAULT_POOL)
     parser.add_argument(
         "--direction",
@@ -139,6 +171,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--amount", type=int, default=100_000, help="input amount in the INPUT mint's base units (default 0.1 of a 6-decimal stable)")
     parser.add_argument("--slippage-bps", type=int, default=100, help="how far the sqrt price may move before the program refuses (default 100)")
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        help="sign with --keypair and BROADCAST, in this one call. Without it nothing is signed.",
+    )
+    parser.add_argument(
+        "--keypair",
+        type=Path,
+        default=DEFAULT_KEYPAIR,
+        help="key to sign with when --send is passed. Never printed, never leaves this process.",
+    )
     args = parser.parse_args(argv)
 
     url = args.rpc_url
@@ -254,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
     if not binding:
         return _stop("no binding could be computed for these bytes; the handoff cannot be checked")
 
+    if args.send:
+        return _settle(args, result["transaction_base64"], binding)
+
     # sign_and_send.py decodes --tx as BASE58 and nothing converts for you. The binding is
     # computed over the decoded MESSAGE, so it is the same either way — the encoding trap
     # is only in the bytes.
@@ -272,6 +318,118 @@ def main(argv: list[str] | None = None) -> int:
         "\n  mixed Token-2022/classic transfer. It does NOT prove multi-array traversal —"
         "\n  a test-sized swap never leaves its starting tick array. Prove that on a fork."
     )
+    return 0
+
+
+def _settle(args: argparse.Namespace, transaction_base64: str, prepared_binding: str) -> int:
+    """Sign these exact bytes and broadcast, without letting them leave the process.
+
+    WHY THIS EXISTS, AND WHAT IT TRADES. The two-terminal flow
+    (``prepare`` -> copy -> ``sign_and_send --expect-binding``) has one comparison whose
+    two sides have different origins, and it is the only one that can refuse a
+    SUBSTITUTION: a binding written down before the bytes travelled, checked against a
+    binding computed from the bytes that arrived. That check is worth having whenever
+    there is a journey.
+
+    It also has a failure mode we hit on the first real run: a blockhash lives about a
+    minute, and a human copying two long base58 strings between terminals outlives it.
+    The transaction was correct and the pre-flight refused it anyway, because by then it
+    was stale. ``autonomous_purchase.py`` names this exact trade in its own docstring and
+    resolves it the same way — one call, no window.
+
+    So the honest accounting is NOT "we dropped a check to go faster". The carried
+    binding exists to catch bytes being rewritten IN TRANSIT. Here there is no transit:
+    the transaction is built, verified and signed inside one process and is never
+    serialised to a terminal, a clipboard or a file. The check is not weakened; it has
+    nothing left to check. What still runs, and can still refuse:
+
+    * the fee payer must BE this keypair's pubkey — signing for an account you do not
+      control produces a valid signature the network rejects, and wastes a blockhash;
+    * a receipt re-taken against current state, ``replaceRecentBlockhash: false``, so a
+      transaction that has gone stale or now reverts is caught rather than sent;
+    * ``verify_handoff`` at ``require="exact"`` on the network YOU named — which refuses a
+      stale blockhash, a reverting simulation, a message that loads accounts from a
+      lookup table, and a receipt from another network.
+
+    The keypair is read here, never printed, and never leaves this process.
+    """
+    from solders.keypair import Keypair
+    from solders.transaction import Transaction
+
+    if not args.keypair.exists():
+        return _stop(f"no keypair at {args.keypair}")
+    # `coerce_network` maps anything it does not recognise to "unknown" rather than
+    # raising, so this cannot be the place a bad --network is caught. argparse `choices`
+    # is, and "unknown" itself stays a legal answer that refuses at verify_handoff below.
+    network = coerce_network(args.network)
+
+    keypair = Keypair.from_bytes(bytes(json.loads(args.keypair.read_text())))
+    signer = str(keypair.pubkey())
+    raw = base64.b64decode(transaction_base64)
+    fee_payer = str(Transaction.from_bytes(raw).message.account_keys[0])
+
+    print("\n" + "-" * 66)
+    print(f"  keypair pubkey  {signer}")
+    print(f"  tx fee payer    {fee_payer}")
+    if fee_payer != signer:
+        return _stop(
+            "this transaction pays from an account your keypair does not control.\n"
+            "  Signing it would produce a signature the network rejects. Re-run with\n"
+            f"  --signer {signer}, or point --keypair at the key for {fee_payer}."
+        )
+
+    receipt = simulate(
+        {},
+        rpc_url=args.rpc_url,
+        rpc_call=default_rpc_call,
+        build_call=lambda _plan: BuiltTx(tx=transaction_base64, encoding="base64"),
+        replace_blockhash=False,
+        network_label=f"re-simulated at signing time ({network}, read-only)",
+        network=network,
+        track=[signer],
+    )
+    print(f"  receipt         {receipt.status.upper()}", end="")
+    print(f"   {receipt.units_consumed:,} CU" if receipt.units_consumed else "")
+    if receipt.revert_class:
+        print(f"  class           {receipt.revert_class}")
+
+    handoff = verify_handoff(
+        transaction_base64, receipt, encoding="base64", require="exact", expected_network=network
+    )
+    print(f"  binding         {handoff.binding}")
+    print(f"  approved        {handoff.approved}: {handoff.reason}")
+    if not handoff.approved or handoff.transaction_base64 is None:
+        return _stop("the pre-flight did not approve these bytes. Nothing was signed.")
+    if handoff.binding != prepared_binding:
+        # Same process, same bytes — so this can only differ if the code between prepare
+        # and here rewrote something. It is cheap, and a mismatch means a bug in US.
+        return _stop(
+            "the verified binding does not match the one this run just prepared.\n"
+            f"  prepared  {prepared_binding}\n"
+            f"  verified  {handoff.binding}\n"
+            "  These bytes never left the process, so this is a defect here, not a swap."
+        )
+
+    # Sign what the gate returned, never what was parsed above: verify_handoff hands back
+    # the SUBJECT it verified, and re-deriving a message from anything else reopens the
+    # window from the other side.
+    verified = Transaction.from_bytes(base64.b64decode(handoff.transaction_base64))
+    message = verified.message
+    signed = Transaction.populate(message, [keypair.sign_message(bytes(message))])
+
+    reply = default_rpc_call(
+        args.rpc_url,
+        "sendTransaction",
+        [
+            base64.b64encode(bytes(signed)).decode(),
+            {"encoding": "base64", "skipPreflight": False, "maxRetries": 3},
+        ],
+    )
+    if "error" in reply:
+        print(f"\n  SEND FAILED  {reply['error']}")
+        return 1
+    print(f"\n  SENT  {reply.get('result')}")
+    print(f"  {network} — verify it on chain before believing this line.")
     return 0
 
 
