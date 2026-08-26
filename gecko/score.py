@@ -41,6 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
+from .evidence import Uninterpretable, require_signal
 from .fcc_eval import (
     RunRecord,
     fcc_rate,
@@ -67,6 +68,19 @@ _INTENT_EPSILON = 0.001
 
 class ScoreError(RuntimeError):
     """The records cannot honestly produce a single surface's report."""
+
+
+def _require(measuring: str, **kwargs: object) -> None:
+    """`gecko.evidence.require_signal`, raised as this module's error.
+
+    The denominator refusals here ARE the evidence check — this module was one of the four
+    places that invented it independently — so they are stated once, there, and translated
+    to :class:`ScoreError` for callers that already catch it.
+    """
+    try:
+        require_signal(measuring, **kwargs)  # type: ignore[arg-type]
+    except Uninterpretable as exc:
+        raise ScoreError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -333,8 +347,7 @@ def score_surface(
     +0.55 API and a +0.00 API and therefore described neither.
     """
     rows = list(records)
-    if not rows:
-        raise ScoreError("no run records — there is nothing to report")
+    _require("this surface's report", denominators={"run_records": len(rows)})
 
     fixtures = sorted({r.fixture for r in rows})
     if len(fixtures) > 1:
@@ -356,6 +369,13 @@ def score_surface(
     before_score = _arm(rows, before)
     after_score = _arm(rows, after)
     intents = _intents(rows, before=before, after=after)
+    # Both arms exist; that is not yet a comparison. `_intents` keeps only the intents BOTH
+    # arms attempted, so an empty pairing means the two arms answered different questions
+    # and the headline difference is between two task lists, not between two arms.
+    _require(
+        f"{resolved} {before} -> {after} lift",
+        denominators={"paired_intents": len(intents)},
+    )
     runs = len({r.run for r in rows})
 
     partial = SurfaceScore(

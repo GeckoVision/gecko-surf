@@ -74,6 +74,39 @@ def test_records_from_two_surfaces_refuse_to_become_one_report() -> None:
     assert "score each separately" in message
 
 
+def test_arms_that_share_no_intent_refuse_rather_than_differencing_two_task_lists() -> (
+    None
+):
+    """Both arms present, both measured, NOTHING in common — so the lift is a difference of
+    two different questions.
+
+    `_intents` drops an intent only one arm attempted (rightly: an asymmetric task list
+    would flatter whichever arm ran the easy one), but the headline FCC is pooled over
+    every record regardless. Drop every pairing and the report still printed a lift, with
+    `tasks=0` as the only sign that nothing was actually compared.
+    """
+    records = [record(goal="buy water", arm="raw", run=r, fcc=False) for r in range(3)]
+    records += [
+        record(goal="swap a token", arm="gecko", run=r, fcc=True) for r in range(3)
+    ]
+    with pytest.raises(ScoreError) as excinfo:
+        score_surface(records)
+    message = str(excinfo.value)
+    assert "paired_intents" in message
+    assert "not a negative result" in message
+
+
+def test_one_shared_intent_is_enough_to_report_so_the_refusal_is_a_guard() -> None:
+    # The contrast arm: add the pairing back and the same records score normally.
+    records = [record(goal="buy water", arm="raw", run=r, fcc=False) for r in range(3)]
+    records += [
+        record(goal="swap a token", arm="gecko", run=r, fcc=True) for r in range(3)
+    ]
+    records += steady("top up the tab", before=False, after=True)
+    score = score_surface(records)
+    assert score.tasks == 1
+
+
 def test_a_missing_arm_refuses_rather_than_reporting_half_a_comparison() -> None:
     only_gecko = [
         record(goal="buy water", arm="gecko", run=r, fcc=True) for r in range(3)

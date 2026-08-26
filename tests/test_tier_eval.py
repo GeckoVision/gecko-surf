@@ -12,7 +12,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from gecko.evaluate import evaluate_tier, load_tier_labels
+from gecko.evidence import Joined, Signal, Uninterpretable, corpus_rev, require_signal
 from gecko.ingest import extract_operations, load_spec
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -26,20 +29,41 @@ SPEC_PATHS = {
 }
 
 
-def _labeled_operations() -> tuple[list, dict[str, str]]:
-    """Build exactly the labeled ops (per spec, collision-free) + the id->tier map."""
-    rows = load_tier_labels(LABELS)
+def _join_labels_to_ops(
+    rows: list[dict[str, str]],
+) -> tuple[list, dict[str, str], Signal]:
+    """Join the labels to the specs by ``operation_id``, and refuse a join that did not land.
+
+    The join is where this eval can go quiet without going red: a label whose id matches no
+    operation is simply skipped by ``evaluate_tier``, so a broken key shrinks the
+    denominator instead of failing, and the survivors can still clear the gate. ``Joined``
+    makes the claim explicit — every labeled op must be found — and the refusal names both
+    key shapes rather than reporting the shortfall as coverage.
+    """
     wanted: dict[str, set[str]] = {}
     for r in rows:
         wanted.setdefault(r["spec"], set()).add(r["operation_id"])
     labels = {r["operation_id"]: r["tier"] for r in rows}
     ops = []
+    matched: set[str] = set()
     for spec_name, ids in wanted.items():
         spec = load_spec(str(SPEC_PATHS[spec_name]))
         by_id = {o.operation_id: o for o in extract_operations(spec)}
-        for oid in ids:
-            assert oid in by_id, f"{spec_name}: labeled op {oid!r} not in spec"
+        for oid in sorted(ids & set(by_id)):
+            matched.add(oid)
             ops.append(by_id[oid])
+    signal = require_signal(
+        "tier labels -> spec operations",
+        denominators={"labeled_ops": len(labels)},
+        joined=Joined("labels->ops", claimed=set(labels), matched=matched),
+        corpus=[corpus_rev(LABELS, name="tier_labels")],
+    )
+    return ops, labels, signal
+
+
+def _labeled_operations() -> tuple[list, dict[str, str]]:
+    """Exactly the labeled ops (per spec, collision-free) + the id->tier map."""
+    ops, labels, _ = _join_labels_to_ops(load_tier_labels(LABELS))
     return ops, labels
 
 
@@ -74,13 +98,48 @@ def test_tier_precision_and_recall_clear_the_ship_gate() -> None:
     assert result.recall >= 0.80, (
         f"tier recall {result.recall:.3f} < 0.80. confusion={dict(result.confusion)}"
     )
-    # Sanity: the transfer class is actually exercised (not a vacuous pass).
-    assert result.transfer_true >= 5
-    assert result.transfer_high_pred >= 5
+    # The transfer class must be exercised on BOTH sides before those two rates mean
+    # anything: precision's denominator is the high-confidence transfer predictions, and
+    # recall's is the labeled transfers. Either one empty and the gate clears on a class
+    # nobody scored. Five is the floor a 0.95 precision claim needs to be worth stating.
+    require_signal(
+        "tier ship gate",
+        denominators={
+            "transfer_true": result.transfer_true,
+            "transfer_high_pred": result.transfer_high_pred,
+        },
+        floor=5,
+    )
     # The same question asked the way a gatekeeper should ask it. `clears_ship_gate` is
     # False on an unmeasured eval, so this no longer depends on the sanity lines above
     # being remembered at every other call site (see test_tier_eval_undetermined.py).
     assert result.clears_ship_gate()
+
+
+def test_a_label_join_on_the_wrong_key_is_uninterpretable_not_a_thin_pass() -> None:
+    """The labels join to the specs by ``operation_id``. Key them any other way — a spec
+    prefix left on, a rename on one side — and the join yields a handful of ops that can
+    still clear 0.95/0.80 on their own, while the class the gate exists to measure was
+    never scored. The refusal has to happen at the JOIN, before the rates are computed.
+    """
+    rows = load_tier_labels(LABELS)
+    mangled = [dict(r, operation_id=f"{r['spec']}:{r['operation_id']}") for r in rows]
+    with pytest.raises(Uninterpretable) as excinfo:
+        _join_labels_to_ops(mangled)
+    assert excinfo.value.reason == "join_shortfall"
+    # The message has to carry both key shapes, or the reader sees only a coverage number
+    # and reads a wiring bug as a thin result.
+    text = str(excinfo.value)
+    for key in sorted({r["operation_id"] for r in mangled})[:3]:
+        assert key in text
+    assert "matched like nothing" in text
+
+
+def test_the_real_join_covers_every_label_so_the_refusal_above_is_a_guard() -> None:
+    # The contrast arm: as committed, every labeled op joins, so the test above fails for
+    # the mangling and not because the join is broken for everyone.
+    _, _, signal = _join_labels_to_ops(load_tier_labels(LABELS))
+    assert signal.coverage == 1.0
 
 
 def test_low_confidence_false_positive_is_contained_not_blocking() -> None:

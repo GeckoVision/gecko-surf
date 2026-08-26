@@ -143,3 +143,58 @@ def test_harness_restores_the_shipped_tokenizer() -> None:
     before = catalog._tokens
     arms.run()
     assert catalog._tokens is before, "harness must not leave the module global patched"
+
+
+# --- evidence: the control that must light up before these numbers are readable ---------
+
+
+def test_every_set_carries_the_evidence_that_its_numbers_are_readable() -> None:
+    """Each set's card names its denominators, its join coverage and its corpus digest.
+
+    Formerly only the corpus digest was stamped (`_fixture_rev`); the join that decides
+    whether recall CAN be non-zero was never checked at all.
+    """
+    for name, r in arms.run().items():
+        sentence = r["evidence"]
+        assert f"usable_ops={r['n']}" in sentence, name
+        assert r["fixture"]["rev"] in sentence, name
+        assert "join coverage 100%" in sentence, name
+        assert "createTransferIntent" in sentence, f"{name}: the control is unnamed"
+
+
+def test_a_gold_op_that_does_not_join_the_surface_refuses_the_run() -> None:
+    """The wrong-key join: gold names that match no usable tool make recall 0 for a wiring
+    reason, and a 0 that could not have come out otherwise is not a finding."""
+    from gecko.evidence import Uninterpretable
+
+    with pytest.raises(Uninterpretable) as excinfo:
+        arms._set_evidence(
+            "birdeye",
+            usable={"defi_price", "token_overview"},
+            gold={"birdeye:defi_price", "birdeye:token_overview"},
+            positive_tasks=40,
+            task_file=arms.GOLDEN / "birdeye_tasks.jsonl",
+        )
+    assert excinfo.value.reason == "join_shortfall"
+
+
+def test_arms_wired_to_the_same_tokenizer_are_refused_before_being_differenced(
+    monkeypatch,
+) -> None:
+    """A/B differ ONLY by `catalog._tokens`. Wire the baseline arm to the shipped tokenizer
+    and the comparison becomes a value differenced with itself — which is what a silently
+    failed monkeypatch looks like, and it must not report as "no lift"."""
+    from gecko.evidence import Uninterpretable
+
+    monkeypatch.setattr(arms, "_baseline_tokens", arms._SHIPPED_TOKENS)
+    with pytest.raises(Uninterpretable) as excinfo:
+        arms.run()
+    assert excinfo.value.reason == "arms_identical"
+
+
+def test_the_tokenizer_arms_do_diverge_on_the_control_as_shipped() -> None:
+    # The contrast arm for the test above: unpatched, the two tokenizers really do answer
+    # the known positive differently, so that refusal is a guard and not a constant.
+    answers = {arm: run() for arm, run in arms._tokenizer_control().arms.items()}
+    assert answers["A"] != answers["B"]
+    assert all(answers.values()), "neither arm may be silent on the control"
