@@ -170,7 +170,15 @@ def plan_accounts(
         if candidate is None or name in resolved:
             continue
         account = candidate
-        node = graph.pdas.get(name)
+        # THIS INSTRUCTION'S recipe, not the program-wide one keyed by account name.
+        # `resolvable` was always judged from the per-instruction AccountRef and the
+        # derivation was done with `graph.pdas[name]`; where the two diverge — and
+        # `build_program_graph` documents that they do (Orca `whirlpool`, stableswap
+        # `token_vault`, and ORE's `miner`, declared on `authority` by `deploy` and on
+        # `signer` by five earlier instructions) — that judged one node and derived
+        # another. `graph.pdas` remains the fallback for a graph built by some other
+        # producer, which carries no per-account recipe.
+        node = account.pda or graph.pdas.get(name)
         if node is None or not account.resolvable:
             missing.append(
                 {
