@@ -27,7 +27,12 @@ from gecko.access import Session, public_session  # noqa: E402
 from gecko.client import AgentApiClient  # noqa: E402
 from gecko.dense import MongoAtlasDenseIndex  # noqa: E402
 from gecko.enrich import load_pinned_blurbs, safe_blurb  # noqa: E402
-from gecko.evaluate import RECALL_KS, evaluate_golden, load_golden  # noqa: E402
+from gecko.evaluate import (  # noqa: E402
+    RECALL_KS,
+    evaluate_golden,
+    load_golden,
+    recall_summary,
+)
 from gecko.fusion import RRF_K  # noqa: E402
 from gecko.ingest import extract_operations, load_spec  # noqa: E402
 from gecko.surfacedoc import surfacedoc_from_operation  # noqa: E402
@@ -69,33 +74,48 @@ class _Retriever:
         return self._fn(query, limit)
 
 
+def _rank_cell(row: dict) -> str:
+    """One per-task rank as the ranker earned it — a fallback-only position is shown as
+    ``fb@N`` rather than as a rank, so the table cannot be read as retrieval it did not do."""
+    if row["rank_ranker"] is not None:
+        return str(row["rank_ranker"])
+    if row["rank_with_fallback"] is not None:
+        return f"fb@{row['rank_with_fallback']}"
+    return "—"
+
+
+def _indent(block: str) -> str:
+    """Nest a multi-line summary under its bullet so both readings stay attached to the arm."""
+    return "\n".join(f"    {ln}" for ln in block.splitlines())
+
+
 def _rr_by_task(card: dict) -> dict[str, float]:
-    """Per positive task: reciprocal rank (1/rank, 0 on miss), keyed by goal."""
+    """Per positive task: the RANKER's reciprocal rank (1/rank, 0 on miss), keyed by goal.
+
+    ``rank_ranker``, not the fallback reading: the paired bootstrap below is the arms' whole
+    verdict, and a fallback position is the same query-independent prior in every arm — it
+    would credit each arm for retrieval none of them did, and penalise the arm that stops
+    needing it."""
     out: dict[str, float] = {}
     for r in card["per_task"]:
         if not r["expect_ops"]:
             continue
-        rank = r["rank"]
+        rank = r["rank_ranker"]
         out[r["goal"]] = (1.0 / rank) if rank else 0.0
     return out
 
 
 def _archetype_recall5(card: dict) -> dict[str, tuple[int, int]]:
+    """(ranker hits@5, n) per archetype — genuine hits only, same reading as everything else."""
     agg: dict[str, list[int]] = {}
     for r in card["per_task"]:
         if not r["expect_ops"]:
             continue
-        hit5 = 1 if (r["rank"] is not None and r["rank"] <= 5) else 0
+        rank = r["rank_ranker"]
+        hit5 = 1 if (rank is not None and rank <= 5) else 0
         h, n = agg.get(r["archetype"], [0, 0])
         agg[r["archetype"]] = [h + hit5, n + 1]
     return {k: (v[0], v[1]) for k, v in agg.items()}
-
-
-def _recall_line(block: dict) -> str:
-    r = block["recall_at"]
-    return (
-        " · ".join(f"@{k} {r[k]:.2f}" for k in RECALL_KS) + f" · MRR {block['mrr']:.3f}"
-    )
 
 
 def _bootstrap_ci(deltas: list[float], iters: int = 10000, seed: int = 7):
@@ -209,6 +229,13 @@ def _header() -> str:
             f">= {SCORE_DEPTH}; OOS by the confidence-floor guard. Retrieval rank only — NOT "
             f"first-call-correct. Pre-registered: RRF k={RRF_K} (not tuned on the set).",
             "",
+            "**Headline recall/MRR and the paired CI are the RANKER's — genuine hits only.** "
+            "The never-empty fallback appends a score-0 candidate when nothing matched; "
+            "counting it as a hit is what made enrichment look like a REGRESSION here "
+            "(an op cleared the intent gate, the fallback stopped firing, and the gold op "
+            "left the list: txodds 1.00 -> 0.92). The with-fallback line is printed beside "
+            "each arm for contrast.",
+            "",
             "OOS floor is LEXICAL-ANCHORED: a fused hit is 'genuine' (above the floor) only if "
             "the lexical arm scored it > 0. Measured on `voyage-4-lite`, dense cosine scores "
             "sit in a ~0.005-wide band across the whole pool (OOS z-scores overlap in-scope "
@@ -227,31 +254,40 @@ def _fixture_block(name, base, enriched, card_a, card_b, card_c) -> str:
         ("B enriched-lexical", card_b),
         ("C hybrid", card_c),
     ):
-        lines.append(
-            f"- **{arm}**: {_recall_line(card['after_fix'])} · "
-            f"OOS {card['oos_pass_rate']['after_fix']:.2f}"
-        )
-    lines.append("- recall@5 by archetype:")
+        # BOTH readings, labeled, from `recall_summary` — the enrichment arms are exactly
+        # where the fallback reading lies: adding blurbs lets an op clear the intent gate,
+        # the fallback stops firing, and the gold op DROPS out of the list. Read that way,
+        # txodds went 1.00 -> 0.92 and it was recorded as a regression.
+        lines.append(f"- **{arm}** · OOS {card['oos_pass_rate']['ranker']:.2f}")
+        lines.append(_indent(recall_summary(card)))
+    lines.append("- ranker recall@5 by archetype:")
     for arm, card in (("A", card_a), ("B", card_b), ("C", card_c)):
         cells = ", ".join(
             f"{a} {h}/{n}" for a, (h, n) in sorted(_archetype_recall5(card).items())
         )
         lines.append(f"    - {arm}: {cells}")
-    # per-task rank table (A -> B -> C)
-    lines += ["", "| goal | archetype | A | B | C |", "|---|---|---|---|---|"]
+    # per-task rank table (A -> B -> C). `fb@N` = the op sat at N only because the
+    # never-empty fallback put it there — a MISS for the ranker, and the cell that used to
+    # be printed as a plain rank next to genuine ones.
+    lines += [
+        "",
+        "Ranks are the ranker's; `fb@N` = fallback-only (a miss), `—` = absent.",
+        "",
+        "| goal | archetype | A | B | C |",
+        "|---|---|---|---|---|",
+    ]
     a_by = {r["goal"]: r for r in card_a["per_task"]}
     b_by = {r["goal"]: r for r in card_b["per_task"]}
     for r in card_c["per_task"]:
         g = r["goal"]
         if not r["expect_ops"]:
-            fa = "OOS✓" if a_by[g]["hit"] else "OOS✗"
-            fb = "OOS✓" if b_by[g]["hit"] else "OOS✗"
-            fc = "OOS✓" if r["hit"] else "OOS✗"
+            fa = "OOS✓" if a_by[g]["hit_ranker"] else "OOS✗"
+            fb = "OOS✓" if b_by[g]["hit_ranker"] else "OOS✗"
+            fc = "OOS✓" if r["hit_ranker"] else "OOS✗"
             lines.append(f"| {g} | {r['archetype']} | {fa} | {fb} | {fc} |")
         else:
-            lines.append(
-                f"| {g} | {r['archetype']} | {a_by[g]['rank']} | {b_by[g]['rank']} | {r['rank']} |"
-            )
+            cells = " | ".join(_rank_cell(row) for row in (a_by[g], b_by[g], r))
+            lines.append(f"| {g} | {r['archetype']} | {cells} |")
     return "\n".join(lines) + "\n\n"
 
 

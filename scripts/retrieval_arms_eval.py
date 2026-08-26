@@ -163,13 +163,26 @@ def run() -> dict[str, Any]:
     return out
 
 
-def _recall(card: dict[str, Any], k: int) -> float:
-    return float(card["after_fix"]["recall_at"][k])
+def _ranker_recall(card: dict[str, Any], k: int) -> float:
+    """recall@k the RANKER earned — genuine hits only.
+
+    The other reading (``with_fallback``) credits the never-empty fallback's position, which
+    is not retrieval: it reads flat across k, and it inverts a real improvement into a
+    regression once the ranker starts finding what the fallback was covering for."""
+    return float(card["ranker"]["recall_at"][k])
+
+
+def _fallback_recall(card: dict[str, Any], k: int) -> float:
+    """recall@k if the fallback counted as a hit. Printed for contrast, never as a result."""
+    return float(card["with_fallback"]["recall_at"][k])
 
 
 def gate_fires(card_c: dict[str, Any], n_ops: int) -> bool:
-    """The dense/RRF (arm D) gate: usable_ops > 50 AND BM25 recall@3 < 0.8 (retrieval spec §2)."""
-    return n_ops > 50 and _recall(card_c, 3) < GATE_RECALL3
+    """The dense/RRF (arm D) gate: usable_ops > 50 AND BM25 recall@3 < 0.8 (retrieval spec §2).
+
+    Decided on the RANKER's recall — a gate cleared by the fallback would be buying (or not
+    buying) a dense arm on the strength of a candidate that matched nothing."""
+    return n_ops > 50 and _ranker_recall(card_c, 3) < GATE_RECALL3
 
 
 def format_report(results: dict[str, Any]) -> str:
@@ -178,7 +191,14 @@ def format_report(results: dict[str, Any]) -> str:
         "",
         "Arms: **A** overlap+baseline-tokenizer · **B** overlap+camelCase · **C** BM25F "
         "(OpenAPI-remapped weights) · **D** BM25+dense/RRF (SKIPPED offline — needs Atlas "
-        "autoEmbed). recall over positive tasks (after-fix), OOS by the confidence-floor guard.",
+        "autoEmbed). recall over positive tasks, OOS by the confidence-floor guard.",
+        "",
+        "**Every recall/MRR figure here is the RANKER's — genuine hits only.** The "
+        "never-empty fallback appends a score-0 candidate when nothing matched; crediting "
+        "those positions reads FLAT across k and turns a real gain into a fake regression "
+        "(an op finally clears the intent gate, the fallback stops firing, and the gold op "
+        "leaves the list). The last two columns of each aggregate table show what that "
+        "reading would have added — for contrast, not to quote.",
         "",
     ]
     for name, r in results.items():
@@ -206,33 +226,44 @@ def format_report(results: dict[str, Any]) -> str:
         # list included — while `keyword_echo` is a ceiling. Averaging a floor, a ceiling
         # and a middle, over buckets of unequal and arbitrary size, produces a number that
         # moves when the MIX changes and is not comparable across surfaces.
-        lines.append(f"### {name} — recall@3 by archetype (read this one)")
+        lines.append(f"### {name} — ranker recall@3 by archetype (read this one)")
         lines.append("| archetype | tasks | B (overlap) | C (BM25) |")
         lines.append("|---|---|---|---|")
         for arch, cards in r["by_archetype"].items():
             lines.append(
-                f"| {arch} | {cards['n_tasks']} | {_recall(cards['B'], 3):.2f} "
-                f"| {_recall(cards['C'], 3):.2f} |"
+                f"| {arch} | {cards['n_tasks']} | {_ranker_recall(cards['B'], 3):.2f} "
+                f"| {_ranker_recall(cards['C'], 3):.2f} |"
             )
         lines.append("")
         lines.append(
             f"### {name} — aggregate (a blend of the above; do not compare across sets)"
         )
-        header = "| arm | " + " | ".join(f"r@{k}" for k in RECALL_KS) + " | MRR | OOS |"
+        header = (
+            "| arm | "
+            + " | ".join(f"ranker r@{k}" for k in RECALL_KS)
+            + " | ranker MRR | OOS | fallback-only tasks | r@20 if fallback counted |"
+        )
         lines.append(header)
-        lines.append("|" + "---|" * (len(RECALL_KS) + 3))
+        lines.append("|" + "---|" * (len(RECALL_KS) + 5))
         for arm in ("A", "B", "C"):
             card = r["arms"][arm]
-            cells = " | ".join(f"{_recall(card, k):.2f}" for k in RECALL_KS)
-            mrr = card["after_fix"]["mrr"]
-            oos = card["oos_pass_rate"]["after_fix"]
-            lines.append(f"| {arm} | {cells} | {mrr:.3f} | {oos:.2f} |")
-        lines.append("| D | — | — | — | — | (skipped: Atlas autoEmbed, not offline) |")
+            cells = " | ".join(f"{_ranker_recall(card, k):.2f}" for k in RECALL_KS)
+            mrr = card["ranker"]["mrr"]
+            oos = card["oos_pass_rate"]["ranker"]
+            lines.append(
+                f"| {arm} | {cells} | {mrr:.3f} | {oos:.2f} | {card['n_via_fallback']} | "
+                f"({_fallback_recall(card, max(RECALL_KS)):.2f}) |"
+            )
+        # 9 cells, matching the header exactly — a short row silently shifts every column
+        # after it when the table is rendered.
+        lines.append(
+            "| D | — | — | — | — | — | — | — | (skipped: Atlas autoEmbed, not offline) |"
+        )
         fires = gate_fires(r["arms"]["C"], n)
         lines.append(
-            f"- dense/RRF gate (ops>50 AND BM25 recall@3<{GATE_RECALL3}): "
+            f"- dense/RRF gate (ops>50 AND BM25 ranker recall@3<{GATE_RECALL3}): "
             f"**{'FIRES' if fires else 'does not fire'}** "
-            f"(ops={n}, BM25 recall@3={_recall(r['arms']['C'], 3):.2f})"
+            f"(ops={n}, BM25 ranker recall@3={_ranker_recall(r['arms']['C'], 3):.2f})"
         )
         lines.append("")
     return "\n".join(lines)

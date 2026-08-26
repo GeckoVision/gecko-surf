@@ -77,6 +77,10 @@ def test_tier_precision_and_recall_clear_the_ship_gate() -> None:
     # Sanity: the transfer class is actually exercised (not a vacuous pass).
     assert result.transfer_true >= 5
     assert result.transfer_high_pred >= 5
+    # The same question asked the way a gatekeeper should ask it. `clears_ship_gate` is
+    # False on an unmeasured eval, so this no longer depends on the sanity lines above
+    # being remembered at every other call site (see test_tier_eval_undetermined.py).
+    assert result.clears_ship_gate()
 
 
 def test_low_confidence_false_positive_is_contained_not_blocking() -> None:

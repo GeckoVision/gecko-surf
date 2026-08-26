@@ -12,6 +12,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _SPEC = importlib.util.spec_from_file_location(
     "retrieval_arms_eval",
     Path(__file__).resolve().parent.parent / "scripts" / "retrieval_arms_eval.py",
@@ -22,7 +24,10 @@ _SPEC.loader.exec_module(arms)
 
 
 def _recall(card: dict, k: int) -> float:
-    return float(card["after_fix"]["recall_at"][k])
+    """The RANKER's recall — genuine hits only. The arm comparison is meaningless under the
+    fallback reading: an arm that improves enough to stop the fallback firing loses recall
+    by it."""
+    return float(card["ranker"]["recall_at"][k])
 
 
 def test_covers_four_golden_sets_with_three_offline_arms() -> None:
@@ -68,7 +73,59 @@ def test_bm25_preserves_oos_pass_rate_everywhere() -> None:
     # (the lexical-anchored confidence floor). OOS pass-rate stays 1.00 across every arm/set.
     for r in arms.run().values():
         for card in r["arms"].values():
-            assert card["oos_pass_rate"]["after_fix"] == 1.0
+            assert card["oos_pass_rate"]["ranker"] == 1.0
+
+
+def test_the_report_never_quotes_a_recall_without_saying_which_reading() -> None:
+    """The headline defect: `after_fix` counted never-empty-fallback positions as hits, and
+    it was the number every report printed. Two things keep it from recurring — the arms
+    report labels its figures as the ranker's and shows the fallback reading beside them,
+    and the ambiguous key itself no longer resolves."""
+    from gecko.evaluate import AmbiguousMetric
+
+    results = arms.run()
+    text = arms.format_report(results)
+    assert "RANKER's — genuine hits only" in text
+    assert "fallback-only tasks" in text and "r@20 if fallback counted" in text
+    card = results["txodds"]["arms"]["B"]
+    with pytest.raises(AmbiguousMetric):
+        card["after_fix"]
+
+
+def test_the_dense_gate_is_decided_on_the_ranker_not_the_fallback() -> None:
+    """A card the two readings STRADDLE the gate on: the ranker finds nothing (recall@3
+    0.00, gate fires) while every gold op is present as a fallback (1.00, gate would not
+    fire). Built rather than measured, because no committed set happens to straddle 0.8 —
+    and a gate test that both readings answer the same way proves nothing."""
+    from dataclasses import dataclass
+
+    from gecko.evaluate import GoldenTask, evaluate_golden
+
+    @dataclass(frozen=True)
+    class _Hit:
+        name: str
+        is_fallback: bool
+
+    class _AllFallback:
+        def search_scored(self, query: str, limit: int) -> list[_Hit]:
+            return [_Hit("gold", True)]
+
+    tasks = [
+        GoldenTask(goal=f"q{i}", expect_ops=("gold",), archetype="keyword_echo")
+        for i in range(4)
+    ]
+    card = evaluate_golden(_AllFallback(), tasks, limit=30)
+    assert arms._ranker_recall(card, 3) == 0.0
+    assert arms._fallback_recall(card, 3) == 1.0  # the readings straddle GATE_RECALL3
+    assert arms.gate_fires(card, 51) is True
+
+
+def test_the_txodds_readings_really_do_diverge() -> None:
+    # Guards the above against the harness quietly ceasing to produce fallbacks at all:
+    # on txodds 5 of 12 positives are fallback-only, so ranker < with-fallback at depth 20.
+    card = arms.run()["txodds"]["arms"]["B"]
+    assert card["n_via_fallback"] > 0
+    assert arms._ranker_recall(card, 20) < arms._fallback_recall(card, 20)
 
 
 def test_bm25_flat_on_small_sets() -> None:
