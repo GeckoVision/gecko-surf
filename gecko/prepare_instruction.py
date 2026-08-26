@@ -98,13 +98,29 @@ def plan_accounts(
     Returns ``(resolved, origins, missing)``. An account is resolved from, in order: the
     address the IDL PINS (the program's own word, and never something to ask a caller for
     — asking is how a flow ends up parameterising the token program), a value the caller
-    SUPPLIED, the PAYER for a signer slot nobody filled, or DERIVATION from the graph.
-    Anything left is reported with the seeds it still needs, never filled in.
+    SUPPLIED, the PAYER for the ONE plain signer slot nobody filled, or DERIVATION from
+    the graph. Anything left is reported with the seeds it still needs, never filled in.
 
-    The payer rule earns its place: an instruction's signer slot is the actor, the payer
-    signs, and making a caller repeat their own address under whatever local name the
-    program chose (`contributor`, `user`, `authority`) is a question with one possible
-    answer. It is recorded as `supplied`, not `derived` — nobody verified it.
+    The payer rule earns its place exactly once per instruction: an instruction's lone
+    open signer slot is the actor, the payer signs, and making a caller repeat their own
+    address under whatever local name the program chose (`contributor`, `user`,
+    `authority`) is a question with one possible answer. It is recorded as `supplied`,
+    not `derived` — nobody verified it.
+
+    IT DOES NOT EARN THE SECOND SLOT, and this used to fill every one of them. Measured
+    on the captured IDLs: meteora `initialize_position` is signed by [payer, position,
+    owner], `initialize_position_by_operator` by [payer, base, operator],
+    `rebalance_liquidity` by [owner, rent_payer], pump.fun `create` by [mint, user] — all
+    of them got the payer's single key. Nothing downstream catches that: this module
+    simulates with `sigVerify: False`, which cannot tell one actor from three, so the
+    residual is a clean-simulating transaction with the WRONG ACTOR in it. Several open
+    signers is a question with several answers, so it is asked, not answered.
+
+    A signer slot that is a PDA is never the payer's either, whatever the count: a
+    program-derived signer is signed for by the program, and the payer's key in that slot
+    is wrong AND cascades into every sibling that seeds on it (pump.fun
+    `set_mayhem_virtual_params`: `mayhem_token_vault` seeds on the `sol_vault_authority`
+    PDA). Those are left to PASS 2, which derives them.
     """
     target = next((ix for ix in graph.instructions if ix.name == instruction), None)
     if target is None:
@@ -132,9 +148,21 @@ def plan_accounts(
             resolved[account.name] = supplied
             origins.append({"account": account.name, "origin": "supplied"})
             continue
-        if account.signer and payer:
-            resolved[account.name] = payer
-            origins.append({"account": account.name, "origin": "supplied"})
+
+    # PASS 1b — the payer, and only into the slot where it is the ONE answer.
+    #
+    # Runs before PASS 2 because derived accounts seed on signer slots (jurassic_fi's
+    # `user_position` seeds on `contributor`), so the binding has to exist by then.
+    open_signers = tuple(
+        a
+        for a in target.accounts
+        if a.signer and not a.is_pda and a.name not in resolved
+    )
+    if payer and len(open_signers) == 1:
+        only = open_signers[0]
+        resolved[only.name] = payer
+        origins.append({"account": only.name, "origin": "supplied"})
+        open_signers = ()
 
     # PASS 2 — derive the PDAs in DEPENDENCY order, which the graph already computed.
     for name in target.derivation_order:
@@ -177,6 +205,7 @@ def plan_accounts(
         origins.append(origin)
 
     # PASS 3 — whatever is still absent, named with what it would take.
+    several = {a.name for a in open_signers} if len(open_signers) > 1 else set()
     for account in target.accounts:
         if account.name in resolved or any(
             m["account"] == account.name for m in missing
@@ -185,12 +214,33 @@ def plan_accounts(
         missing.append(
             {
                 "account": account.name,
-                "why": _why_absent(account, target, graph),
+                "why": (
+                    _why_several_signers(open_signers)
+                    if account.name in several
+                    else _why_absent(account, target, graph)
+                ),
                 "signer": account.signer,
             }
         )
 
     return resolved, origins, missing
+
+
+def _why_several_signers(open_signers: tuple[Any, ...]) -> str:
+    """Why the payer was NOT poured into every open signer slot.
+
+    Names all of them, because the ambiguity is the answer: the caller can see that the
+    instruction wants several distinct actors and which ones, instead of being told
+    "supply this" about each slot separately.
+    """
+    named = ", ".join(f"`{a.name}`" for a in open_signers)
+    return (
+        f"this instruction is signed by {len(open_signers)} distinct actors "
+        f"({named}) and the payer is only one of them — supply each by name. The "
+        "payer fills a signer slot only when it is the last one open, where it is "
+        "the single possible answer. Simulation here runs with `sigVerify` disabled "
+        "and cannot tell one signer from several, so guessing would not be caught."
+    )
 
 
 def _why_absent(account: Any, instruction: Any, graph: ProgramGraph) -> str:
