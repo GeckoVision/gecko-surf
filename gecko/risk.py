@@ -599,6 +599,29 @@ def _extract_amount(args: dict[str, Any]) -> Decimal | None:
     return max(amounts) if amounts else None
 
 
+def _has_unnamed_amount(args: dict[str, Any]) -> bool:
+    """Is there a parseable amount under a key ``_CAP_AMOUNT_TOKENS`` does not recognise?
+
+    This is the exact shape of the cap bypass. ``_extract_amount`` reads only
+    {amount, price, total, cost, fee}, so a provider calling the same field ``units``,
+    ``notional``, ``lamports`` or ``value_minor`` makes it return ``None`` — and the cap
+    predicate then reported nothing at all. The operator had configured a cap; the cap did
+    not apply; nobody was told.
+
+    Deliberately narrow, because a control that cries wolf gets switched off. It fires only
+    when the call REALLY carries a number we could not classify — not on every write that
+    happens to have no amount, which is most of them.
+    """
+    for key, val in _walk_args(args):
+        if set(_token_list(key)) & _CAP_AMOUNT_TOKENS:
+            continue
+        if isinstance(val, (dict, list)):  # containers are walked, not parsed
+            continue
+        if _parse_amount(val) is not None:
+            return True
+    return False
+
+
 def _extract_recipients(args: dict[str, Any]) -> list[str]:
     """String values under recipient-shaped arg keys (at any nesting depth)."""
     out: list[str] = []
@@ -619,7 +642,31 @@ def _cap_signal(
     if not _is_write_method(method):
         return []  # a read moves no value
     amount = _extract_amount(args)
-    if amount is None:  # fail SAFE: unparseable/absent amount cannot assert over-cap
+    if amount is None:
+        # We cannot assert over-cap on an amount we cannot read — but silence here was
+        # fail-OPEN, not fail-safe: it let the provider's choice of field name switch the
+        # operator's cap off, with no signal. `gecko/spend_policy.py` does the same job the
+        # other way, refusing `amount-unresolvable` rather than falling quiet.
+        #
+        # WEIGHT, and why it is not `_governance_points`. On a CONFIRMED transfer this
+        # carries `cap.exceeded`'s full weight: we cannot show the amount is under the cap,
+        # and "unproven" deserves the same answer as "breached" when real value is moving.
+        # Anywhere else it scores ZERO and is reported only. Measured: at the 15-point
+        # `GOVERNANCE_POINTS_OTHER` weight, a benign `createReport {"page_count": 42}` hit
+        # step_up (op.write 15 + 15 = 30) — a control that cries wolf on every write with a
+        # number in it is a control someone turns off. The operator still SEES the reason;
+        # it just does not move the score away from a transfer.
+        if _has_unnamed_amount(args):
+            transfer = tier is not None and tier.tier == "transfer"
+            return [
+                Reason(
+                    "cap.unevaluated",
+                    GOVERNANCE_POINTS_TRANSFER if transfer else 0,
+                    "the operator spend cap could not be evaluated: this call carries an "
+                    "amount under a field name this check does not recognise, so the cap "
+                    "was NOT applied",
+                )
+            ]
         return []
     if amount > agent_policy.spend_cap:
         return [

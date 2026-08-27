@@ -672,6 +672,36 @@ def test_evaluate_golden_aggregates_are_consistent() -> None:
     ) - report.out_of_scope - report.causes.get("coverage_gap", 0)
 
 
+def test_a_golden_set_whose_gold_joins_nothing_refuses_instead_of_reporting_zero(
+    tmp_path,
+) -> None:
+    """recall@1 0.00 · recall@3 0.00 · MRR 0.00 over a denominator of ZERO.
+
+    Every row here names a program nothing serves, so none is scoreable — the same shape
+    as a renamed program id or a moved wiring file. The three floors then read exactly
+    like a ranker that found nothing, which is the one reading the numbers cannot support.
+    """
+    from gecko.evidence import Uninterpretable
+
+    unwired = tmp_path / "golden.jsonl"
+    unwired.write_text(
+        '{"intent": "buy a wombat token on the curve", "gold_program": "nosuchprogram", '
+        '"gold_instruction": "buy"}\n'
+        '{"intent": "sell a wombat token on the curve", "gold_program": "nosuchprogram", '
+        '"gold_instruction": "sell"}\n'
+    )
+    with pytest.raises(Uninterpretable) as excinfo:
+        evaluate_golden(unwired)
+    assert excinfo.value.reason == "empty_denominator"
+    assert "scoreable" in str(excinfo.value)
+
+
+def test_the_committed_set_still_scores_so_that_refusal_is_a_guard() -> None:
+    # The contrast arm for the test above: the committed fixture has a real denominator,
+    # so the refusal fires on the empty join and not on every run.
+    assert evaluate_golden().scoreable > 0
+
+
 def test_records_never_carry_intent_text() -> None:
     """Control plane: the categorical records hold names/scores/ranks only."""
     report = evaluate_golden()

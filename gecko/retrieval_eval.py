@@ -29,6 +29,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Mapping
 
+from .evidence import require_signal
 from .find_start import (
     CandidateRecord,
     FindStartResult,
@@ -382,17 +383,20 @@ def evaluate_golden(
         and (o.row.gold_program, o.row.gold_instruction) in cards_by_gold
     ]
     n = len(scoreable)
-    recall_at_1 = sum(1 for o in scoreable if o.gold_rank == 1) / n if n else 0.0
+    # These three were `... / n if n else 0.0`, which reports recall@1/recall@3/MRR of
+    # 0.00 when the gold->card join produced NOTHING — indistinguishable, in the report
+    # and in a deck, from a router that found nothing. A coverage_gap on some rows is a
+    # designed outcome here; a coverage gap on ALL of them is an empty denominator, so it
+    # refuses instead of publishing three floors nothing could have moved.
+    require_signal(
+        "golden-set retrieval scorecard",
+        denominators={"scoreable_rows": n, "wired_cards": len(cards)},
+    )
+    recall_at_1 = sum(1 for o in scoreable if o.gold_rank == 1) / n
     recall_at_3 = (
         sum(1 for o in scoreable if o.gold_rank is not None and o.gold_rank <= 3) / n
-        if n
-        else 0.0
     )
-    mrr = (
-        sum(1 / o.gold_rank for o in scoreable if o.gold_rank is not None) / n
-        if n
-        else 0.0
-    )
+    mrr = sum(1 / o.gold_rank for o in scoreable if o.gold_rank is not None) / n
 
     wrong_instruction_accepts, directional = count_wrong_instruction_accepts(
         rows, cards_by_gold

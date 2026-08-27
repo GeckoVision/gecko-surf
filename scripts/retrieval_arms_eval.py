@@ -23,7 +23,6 @@ leaves recall@3 < 0.8. This harness reports whether that condition fires per set
 
 from __future__ import annotations
 
-import hashlib
 import re
 import sys
 from pathlib import Path
@@ -36,27 +35,20 @@ from gecko.access import Session, public_session  # noqa: E402
 from gecko.catalog import BM25Index  # noqa: E402
 from gecko.client import AgentApiClient  # noqa: E402
 from gecko.evaluate import RECALL_KS, evaluate_golden, load_golden  # noqa: E402
+from gecko.evidence import (  # noqa: E402
+    Control,
+    Joined,
+    Signal,
+    corpus_rev,
+    require_signal,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "fixtures" / "golden"
 
-
-def _fixture_rev(path: Path) -> tuple[str, int]:
-    """`(short digest, task count)` for one golden file — the set's REVISION.
-
-    Every number in this report is measured against a specific partition of a specific
-    task list, and the partition MOVES: one comparison of two runs a fortnight apart
-    showed near_dup recall dropping 0.85 -> 0.67, which looked like a product regression
-    and was a re-bucketed fixture (near_dup 13 -> 9 tasks, keyword_echo 8 -> 14). Without
-    a stamp there is no way to tell those two causes apart after the fact.
-
-    So: two runs are comparable only when the digest matches. A changed digest means the
-    question changed, and the honest response is to re-baseline rather than to read a
-    trend.
-    """
-    raw = path.read_bytes()
-    lines = [ln for ln in raw.splitlines() if ln.strip()]
-    return hashlib.sha256(raw).hexdigest()[:12], len(lines)
+#: The known positive for the tokenizer arms: a camelCase identifier the shipped tokenizer
+#: splits and the pre-camelCase baseline glues. Chosen because it is a real Privy op id.
+CONTROL_CASE = "createTransferIntent"
 
 
 SCORE_DEPTH = max(RECALL_KS) + 10  # >= 20, uncensored above the deepest k
@@ -90,6 +82,63 @@ _SHIPPED_TOKENS = catalog._tokens
 def _baseline_tokens(text: str) -> set[str]:
     """Arm A tokenizer — pre-camelCase: lowercase then `[a-z0-9]+` (identifiers glued)."""
     return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _tokenizer_control() -> Control:
+    """The known positive for arms A and B, taken through the swap the arms actually use.
+
+    A and B are the SAME client and the same scorer; the only difference between them is
+    the `catalog._tokens` global the ranker reads at search time. So each control arm
+    performs that assignment and then reads the global back — if the swap stops taking
+    effect (a rename, a cached import, a monkeypatch that no longer bites) both arms
+    answer identically and `require_signal` refuses to let their difference be reported as
+    a null result.
+
+    What it proves: the two arms are genuinely different tokenizers. What it does not
+    prove: that the ranker re-reads the global on every search — for that, see the A vs B
+    recall rows themselves.
+    """
+
+    def through(fn: Callable[[str], set[str]]) -> Callable[[], object]:
+        def answer() -> object:
+            saved = catalog._tokens
+            catalog._tokens = fn
+            try:
+                return frozenset(catalog._tokens(CONTROL_CASE))
+            finally:
+                catalog._tokens = saved
+
+        return answer
+
+    return Control(
+        CONTROL_CASE,
+        {"A": through(_baseline_tokens), "B": through(_SHIPPED_TOKENS)},
+    )
+
+
+def _set_evidence(
+    name: str,
+    *,
+    usable: set[str],
+    gold: set[str],
+    positive_tasks: int,
+    task_file: Path,
+) -> Signal:
+    """Refuse to report this set unless its recall could have come out otherwise.
+
+    The join is the one that decides whether recall is even reachable: every gold op a
+    task points at must be a tool this session can actually surface. A gold name that
+    matches nothing usable (a renamed op, an auth-hidden one, a key with the spec prefix
+    still attached) drives recall toward zero for a wiring reason, and that zero is
+    indistinguishable in the table from a ranker that simply failed.
+    """
+    return require_signal(
+        f"{name} retrieval arms",
+        denominators={"usable_ops": len(usable), "positive_tasks": positive_tasks},
+        joined=Joined(f"{name} gold->usable", claimed=gold, matched=gold & usable),
+        control=_tokenizer_control(),
+        corpus=[corpus_rev(task_file, name=task_file.stem)],
+    )
 
 
 class _Retriever:
@@ -130,8 +179,16 @@ def run() -> dict[str, Any]:
         client = AgentApiClient(str(spec), session=session_factory())
         usable = {t["name"] for t in client.list_tools()}
         task_file = GOLDEN / f"{name}_tasks.jsonl"
-        fixture_digest, fixture_tasks = _fixture_rev(task_file)
         tasks = load_golden(task_file)
+        # Before any arm runs: the denominators, the gold->surface join, the corpus stamp
+        # and one known positive taken through the A/B swap itself.
+        signal = _set_evidence(
+            name,
+            usable=usable,
+            gold={op for t in tasks for op in t.expect_ops},
+            positive_tasks=sum(1 for t in tasks if t.expect_ops),
+            task_file=task_file,
+        )
         try:
             catalog._tokens = _baseline_tokens
             card_a = _card(_Retriever(client.search_scored), tasks)
@@ -145,7 +202,7 @@ def run() -> dict[str, Any]:
         # The AGGREGATE recall is a blend of archetypes, and the sets are not balanced, so a
         # set that is mostly keyword_echo reports a number no paraphrase ever has to earn.
         # The gate is decided on the aggregate; this is what the aggregate is hiding.
-        fixture = {"rev": fixture_digest, "tasks": fixture_tasks}
+        fixture = {"rev": signal.corpus[0].digest, "tasks": signal.corpus[0].items}
         by_arch: dict[str, dict[str, Any]] = {}
         for arch in sorted({t.archetype for t in tasks} - {"out_of_scope"}):
             slice_ = [t for t in tasks if t.archetype == arch]
@@ -157,19 +214,33 @@ def run() -> dict[str, Any]:
         out[name] = {
             "n": len(usable),
             "fixture": fixture,
+            "evidence": signal.sentence(),
             "arms": {"A": card_a, "B": card_b, "C": card_c},
             "by_archetype": by_arch,
         }
     return out
 
 
-def _recall(card: dict[str, Any], k: int) -> float:
-    return float(card["after_fix"]["recall_at"][k])
+def _ranker_recall(card: dict[str, Any], k: int) -> float:
+    """recall@k the RANKER earned — genuine hits only.
+
+    The other reading (``with_fallback``) credits the never-empty fallback's position, which
+    is not retrieval: it reads flat across k, and it inverts a real improvement into a
+    regression once the ranker starts finding what the fallback was covering for."""
+    return float(card["ranker"]["recall_at"][k])
+
+
+def _fallback_recall(card: dict[str, Any], k: int) -> float:
+    """recall@k if the fallback counted as a hit. Printed for contrast, never as a result."""
+    return float(card["with_fallback"]["recall_at"][k])
 
 
 def gate_fires(card_c: dict[str, Any], n_ops: int) -> bool:
-    """The dense/RRF (arm D) gate: usable_ops > 50 AND BM25 recall@3 < 0.8 (retrieval spec §2)."""
-    return n_ops > 50 and _recall(card_c, 3) < GATE_RECALL3
+    """The dense/RRF (arm D) gate: usable_ops > 50 AND BM25 recall@3 < 0.8 (retrieval spec §2).
+
+    Decided on the RANKER's recall — a gate cleared by the fallback would be buying (or not
+    buying) a dense arm on the strength of a candidate that matched nothing."""
+    return n_ops > 50 and _ranker_recall(card_c, 3) < GATE_RECALL3
 
 
 def format_report(results: dict[str, Any]) -> str:
@@ -178,19 +249,30 @@ def format_report(results: dict[str, Any]) -> str:
         "",
         "Arms: **A** overlap+baseline-tokenizer · **B** overlap+camelCase · **C** BM25F "
         "(OpenAPI-remapped weights) · **D** BM25+dense/RRF (SKIPPED offline — needs Atlas "
-        "autoEmbed). recall over positive tasks (after-fix), OOS by the confidence-floor guard.",
+        "autoEmbed). recall over positive tasks, OOS by the confidence-floor guard.",
+        "",
+        "**Every recall/MRR figure here is the RANKER's — genuine hits only.** The "
+        "never-empty fallback appends a score-0 candidate when nothing matched; crediting "
+        "those positions reads FLAT across k and turns a real gain into a fake regression "
+        "(an op finally clears the intent gate, the fallback stops firing, and the gold op "
+        "leaves the list). The last two columns of each aggregate table show what that "
+        "reading would have added — for contrast, not to quote.",
         "",
     ]
     for name, r in results.items():
         n = r["n"]
         fixture = r.get("fixture") or {}
         lines.append(f"## {name} ({n} usable ops)")
-        # THE STAMP. A figure without the fixture revision it was measured against is not
-        # comparable to any other run — see `_fixture_rev`.
+        # THE STAMP. A figure without the revision it was measured against is not
+        # comparable to any other run — see `gecko.evidence.CorpusRev`.
         lines.append(
             f"golden-set rev `{fixture.get('rev', '?')}` · "
             f"{fixture.get('tasks', '?')} task(s) in the fixture file"
         )
+        # Travels WITH the table, not in a preamble: the qualifications are what get left
+        # behind when a number is copied out of the document.
+        lines.append("")
+        lines.append(f"evidence: {r.get('evidence', 'UNSTAMPED')}")
         lines.append("")
         # The archetype buckets below sum to FEWER than the fixture count: they count
         # POSITIVE tasks only. Said here so a reader does not chase the difference as a
@@ -206,33 +288,44 @@ def format_report(results: dict[str, Any]) -> str:
         # list included — while `keyword_echo` is a ceiling. Averaging a floor, a ceiling
         # and a middle, over buckets of unequal and arbitrary size, produces a number that
         # moves when the MIX changes and is not comparable across surfaces.
-        lines.append(f"### {name} — recall@3 by archetype (read this one)")
+        lines.append(f"### {name} — ranker recall@3 by archetype (read this one)")
         lines.append("| archetype | tasks | B (overlap) | C (BM25) |")
         lines.append("|---|---|---|---|")
         for arch, cards in r["by_archetype"].items():
             lines.append(
-                f"| {arch} | {cards['n_tasks']} | {_recall(cards['B'], 3):.2f} "
-                f"| {_recall(cards['C'], 3):.2f} |"
+                f"| {arch} | {cards['n_tasks']} | {_ranker_recall(cards['B'], 3):.2f} "
+                f"| {_ranker_recall(cards['C'], 3):.2f} |"
             )
         lines.append("")
         lines.append(
             f"### {name} — aggregate (a blend of the above; do not compare across sets)"
         )
-        header = "| arm | " + " | ".join(f"r@{k}" for k in RECALL_KS) + " | MRR | OOS |"
+        header = (
+            "| arm | "
+            + " | ".join(f"ranker r@{k}" for k in RECALL_KS)
+            + " | ranker MRR | OOS | fallback-only tasks | r@20 if fallback counted |"
+        )
         lines.append(header)
-        lines.append("|" + "---|" * (len(RECALL_KS) + 3))
+        lines.append("|" + "---|" * (len(RECALL_KS) + 5))
         for arm in ("A", "B", "C"):
             card = r["arms"][arm]
-            cells = " | ".join(f"{_recall(card, k):.2f}" for k in RECALL_KS)
-            mrr = card["after_fix"]["mrr"]
-            oos = card["oos_pass_rate"]["after_fix"]
-            lines.append(f"| {arm} | {cells} | {mrr:.3f} | {oos:.2f} |")
-        lines.append("| D | — | — | — | — | (skipped: Atlas autoEmbed, not offline) |")
+            cells = " | ".join(f"{_ranker_recall(card, k):.2f}" for k in RECALL_KS)
+            mrr = card["ranker"]["mrr"]
+            oos = card["oos_pass_rate"]["ranker"]
+            lines.append(
+                f"| {arm} | {cells} | {mrr:.3f} | {oos:.2f} | {card['n_via_fallback']} | "
+                f"({_fallback_recall(card, max(RECALL_KS)):.2f}) |"
+            )
+        # 9 cells, matching the header exactly — a short row silently shifts every column
+        # after it when the table is rendered.
+        lines.append(
+            "| D | — | — | — | — | — | — | — | (skipped: Atlas autoEmbed, not offline) |"
+        )
         fires = gate_fires(r["arms"]["C"], n)
         lines.append(
-            f"- dense/RRF gate (ops>50 AND BM25 recall@3<{GATE_RECALL3}): "
+            f"- dense/RRF gate (ops>50 AND BM25 ranker recall@3<{GATE_RECALL3}): "
             f"**{'FIRES' if fires else 'does not fire'}** "
-            f"(ops={n}, BM25 recall@3={_recall(r['arms']['C'], 3):.2f})"
+            f"(ops={n}, BM25 ranker recall@3={_ranker_recall(r['arms']['C'], 3):.2f})"
         )
         lines.append("")
     return "\n".join(lines)

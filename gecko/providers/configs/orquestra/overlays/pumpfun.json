@@ -18,6 +18,22 @@
     "fee_config"
   ],
   "pdas": {
+    "bonding_curve": {
+      "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "bonding-curve",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "mint",
+          "source": "account",
+          "encoding": "pubkey"
+        }
+      ]
+    },
     "bonding_curve_v2": {
       "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
       "seeds": [
@@ -104,6 +120,7 @@
     }
   },
   "why": {
+    "bonding_curve": "the IDL declares it TWO derivable ways and nothing on the surface picks between them: 14 instructions (buy, sell, create, migrate, ...) seed it on their `mint` account, 4 v2 instructions (buy_v2, sell_v2, buy_exact_quote_in_v2, migrate_v2) on `base_mint`, and no instruction carries both names, so nothing says the two denote the same token. The extractor refuses a name-keyed recipe it cannot decide; `mint` is asserted here because that is the spelling cross-verified against real mainnet accounts. Per-instruction callers never needed this — each reads the recipe its own instruction declares.",
     "bonding_curve_v2": "hidden account: required post-Apr-2026 but the IDL never names it (it travels only as a remaining_accounts entry mentioned in doc text); seed verified against pump-public-docs + mainnet",
     "creator_vault": "the surface honestly flags the seed (bonding_curve.creator is runtime data); the @49 read recipe that RESOLVES it came from Anchor-decoding the BondingCurve layout, not from the surface",
     "associated_bonding_curve": "generic ATA parameterization: the IDL binds the owner seed to the literal bonding_curve account; re-parameterized on 'owner' so one recipe serves every ATA derivation",

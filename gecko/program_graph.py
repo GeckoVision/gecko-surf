@@ -77,6 +77,15 @@ class AccountRef:
     a derivation: a consumer that has it does not have to ask a caller for a value
     the program already fixed — and asking is how a flow ends up parameterising the
     token program. ``None`` means the IDL pinned nothing, never "unknown constant".
+
+    ``pda`` is the recipe THIS instruction declares for this slot — the node the join
+    below already computes and used to discard, keeping only ``resolvable`` and the
+    bindings derived from it. It has to be carried, because a recipe is a property of
+    the (instruction, account) pair and not of the account name: a caller that fell back
+    to the program-wide ``ProgramGraph.pdas[name]`` derived ORE's `miner` from `signer`
+    where `deploy` declares it from `authority`, which is a well-formed, off-curve,
+    wrong address on an instruction that stakes SOL. ``None`` on a slot this instruction
+    does not declare as a PDA — never "look it up somewhere else".
     """
 
     name: str
@@ -86,6 +95,7 @@ class AccountRef:
     resolvable: bool = True
     derive_from: tuple[SeedBinding, ...] = ()
     address: str | None = None
+    pda: PdaNode | None = None
 
     @property
     def satisfiable(self) -> bool:
@@ -456,6 +466,7 @@ def derivation_order_with_cycle(
             is_pda=True,
             resolvable=node.resolvable,
             derive_from=_bind_seeds(node, listed, set()),
+            pda=node,
         )
     ordered_pdas, cycle = _derivation_order(refs)
     # merge: PDA accounts in dependency order, non-PDA names in declared position
@@ -634,6 +645,9 @@ def build_program_graph(
                 resolvable=node.resolvable,
                 derive_from=bindings,
                 address=pinned,
+                # the recipe THIS instruction declares, kept rather than recomputed
+                # from a name-keyed map that cannot hold both sides of a divergence
+                pda=node,
             )
             accounts.append(ref)
             pda_accounts[name] = ref

@@ -57,7 +57,14 @@ CASES: dict[str, tuple[str, Path | None]] = {
 # regression in either the generator or our honesty.
 EXPECTED_MANUAL: dict[str, tuple[str, ...]] = {
     "meteora": ("user_token",),
+    # `bonding_curve` joined this list when the extractor stopped answering an account
+    # its IDL declares two derivable ways: 14 instructions seed it on `mint` and 4 v2
+    # instructions on `base_mint`, no instruction carries both names, and nothing on the
+    # surface says the two denote the same token. The surface has not got worse — it was
+    # always ambiguous and the answer used to come from IDL ORDER. The overlay asserts
+    # `mint`, the spelling cross-verified against mainnet.
     "pumpfun": (
+        "bonding_curve",
         "bonding_curve_v2",
         "creator_vault",
         "associated_bonding_curve",
@@ -154,8 +161,10 @@ def test_without_overlay_the_differential_fails_loudly_naming_the_gaps() -> None
     for gap in EXPECTED_MANUAL["pumpfun"]:
         assert gap in named, f"differential did not name hand-supplied gap {gap!r}"
     # and the surface-derivable recipes carry NO delta at all (delimiter-aware:
-    # `pdas.bonding_curve` must not match `pdas.bonding_curve_v2`)
-    for clean in ("global", "bonding_curve", "fee_config", "user_volume_accumulator"):
+    # `pdas.global` must not match a longer name that starts the same way).
+    # `bonding_curve` left this list on purpose — see EXPECTED_MANUAL above; the
+    # surface declares it two ways and no longer answers for the whole program.
+    for clean in ("global", "mint_authority", "fee_config", "user_volume_accumulator"):
         assert not any(
             f"pdas.{clean}." in line or f"pdas.{clean} " in line for line in deltas
         ), f"surface-derivable recipe {clean!r} unexpectedly differs"

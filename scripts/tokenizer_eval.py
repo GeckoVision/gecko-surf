@@ -9,7 +9,7 @@ unchanged — so the ranker's own scorecard, not a hand-rolled metric, judges th
     camelCase / digit / separator boundaries).
 
 Deterministic, $0, no network, no vectors. Reports genuine-hit recall@k (fallback
-candidates dropped — `evaluate_golden`'s `before_fix` block) because that is exactly the
+candidates dropped — `evaluate_golden`'s `ranker` block) because that is exactly the
 signal the tokenizer moves: a glued operationId scored 0 → fell to the never-empty
 fallback; splitting it recovers a GENUINE lexical hit. Adopt rule below.
 
@@ -53,9 +53,11 @@ def _baseline_tokens(text: str) -> set[str]:
 
 def _genuine_recall(client: AgentApiClient, tasks: list[Any]) -> dict[int, float]:
     """recall@k over GENUINE lexical hits (fallback candidates dropped) — the tokenizer's
-    own signal. `evaluate_golden`'s `before_fix` block is exactly that projection."""
+    own signal. `evaluate_golden`'s `ranker` block is exactly that reading: a glued
+    operationId that falls to the fallback is a MISS here, which is what makes the split
+    visible."""
     card = evaluate_golden(client, tasks, limit=SCORE_DEPTH)
-    return {k: card["before_fix"]["recall_at"][k] for k in RECALL_KS}
+    return {k: card["ranker"]["recall_at"][k] for k in RECALL_KS}
 
 
 def run() -> dict[str, Any]:
