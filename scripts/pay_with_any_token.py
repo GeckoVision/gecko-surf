@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gecko.idl_layout import field_offset  # noqa: E402
 from gecko.pda import b58_encode, derive_pda  # noqa: E402
 from gecko.peg_guard import PegVerdict, verdict_from  # noqa: E402
+from gecko.whirlpool_math import size_input_for_output  # noqa: E402
 from gecko.provider_config import load_packaged_provider  # noqa: E402
 from gecko.providers.catalog_surface import orquestra_seams  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
@@ -143,7 +144,8 @@ def _find_venue(url: str, held: str, needed: str) -> list[dict]:
     if not disc:
         raise SystemExit("STOP: the Whirlpool IDL declares no discriminator for its pool account.")
     off = {f: field_offset(idl, "Whirlpool", f)["offset"] for f in
-           ("whirlpools_config", "tick_spacing", "token_mint_a", "token_mint_b", "liquidity")}
+           ("whirlpools_config", "tick_spacing", "token_mint_a", "token_mint_b", "liquidity",
+            "fee_rate", "sqrt_price")}
     _, apis = load_packaged_provider("orquestra")
     recipe = dict(apis["whirlpool"].program.pdas)["whirlpool"]
 
@@ -173,6 +175,7 @@ def _find_venue(url: str, held: str, needed: str) -> list[dict]:
             found.append({
                 "pool": row["pubkey"], "tick_spacing": tick_spacing,
                 "liquidity": read("liquidity", "u128"), "a_to_b": a_to_b,
+                "fee_rate": read("fee_rate", "u16"), "sqrt_price": read("sqrt_price", "u128"),
             })
     return sorted(found, key=lambda p: -p["liquidity"])
 
@@ -249,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print("\nROUTE — derived from the mint pair, not chosen:")
+    blocked: list[PegVerdict] = []
     for held_mint, amount, _program in sorted(candidates, key=lambda c: -c[1]):
         # THE PEG GUARD, checked before the venue is even quoted. A conversion is where a
         # discount is REALISED — if the thing you hold is not holding its peg, the honest
@@ -258,16 +262,33 @@ def main(argv: list[str] | None = None) -> int:
         mark = {"ok": "holding", "refuse": "NOT HOLDING", "unknown": "not tracked"}[peg.outcome]
         print(f"  peg check    {peg.symbol or held_mint[:8]}: {mark} — {peg.reason}")
         if peg.blocks:
-            print("\n  STOPPING HERE. Converting now would realise that discount. This is a")
-            print("  refusal to act on a price we cannot vouch for, not a routing failure —")
-            print("  re-run when Pegana can speak for the peg.")
-            return 1
+            # SKIP THIS MINT, do not abandon the wallet. A peg verdict is a fact about ONE
+            # asset; returning here made a single stale reading answer "no route" for a
+            # wallet that may hold a perfectly healthy second token. The refusal still
+            # stands for this mint and is still printed — it just is not extrapolated.
+            print("    NOT CONVERTING this one — that discount would be realised on the swap.")
+            print("    Continuing to the next mint you hold; nothing here is a routing failure.")
+            blocked.append(peg)
+            continue
         venues = _find_venue(url, held_mint, priced_mint)
         if not venues:
             print(f"  {held_mint}  no pool trades this pair")
             continue
         best = venues[0]
-        need = int(price * (10_000 + args.slippage_bps) / 10_000) + 1
+        # SIZE THE INPUT IN THE MINT YOU ACTUALLY SPEND. This read `price * (1 + slippage)`,
+        # which is a quantity of the PRICED mint handed to --amount, which spends the HELD
+        # one. Those are only interchangeable when both mints share decimals AND trade at
+        # 1:1 — true for USDG/USDC and for nothing else. Convert through the pool's own live
+        # price instead, and round UP at every step so the floor is cleared, not grazed.
+        #
+        # sqrt_price is Q64.64: (sqrt_price / 2**64)**2 is base units of B per base unit of A.
+        # size_input_for_output is the EXACT INVERSE of the floor prepare_whirlpool_swap now
+        # puts on the swap, so the printed --amount clears that floor by construction rather
+        # than by luck. One module, one rounding convention, both halves of the same trade.
+        need = size_input_for_output(
+            price, best["sqrt_price"], best["fee_rate"],
+            a_to_b=best["a_to_b"], slippage_bps=args.slippage_bps,
+        )
         print(f"  swap {held_mint}")
         print(f"    venue        {best['pool']}  (tick_spacing {best['tick_spacing']}, "
               f"liquidity {best['liquidity']:,})")
@@ -284,6 +305,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"    uv run python scripts/prepare_purchase.py --signer {args.signer} \\")
         print(f"      --store {args.store} --product '{args.product}'")
         return 0
+
+    if blocked:
+        print("\nNO ROUTE, and the reason is a peg refusal rather than a missing pool:")
+        for v in blocked:
+            print(f"  {v.symbol or v.mint[:8]}  {v.reason}")
+        print("  Re-run when Pegana can speak for these. Nothing was signed.")
     return 1
 
 

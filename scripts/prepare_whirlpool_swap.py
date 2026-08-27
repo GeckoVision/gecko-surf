@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gecko.handoff import verify_handoff  # noqa: E402
 from gecko.idl_layout import field_offset  # noqa: E402
+from gecko.whirlpool_math import WhirlpoolMathError, quote_min_amount_out  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.pda import b58_encode, derive_pda  # noqa: E402
 from gecko.prepare_instruction import prepare_instruction_result  # noqa: E402
@@ -172,6 +173,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--amount", type=int, default=100_000, help="input amount in the INPUT mint's base units (default 0.1 of a 6-decimal stable)")
     parser.add_argument("--slippage-bps", type=int, default=100, help="how far the sqrt price may move before the program refuses (default 100)")
     parser.add_argument(
+        "--min-out",
+        type=int,
+        default=None,
+        help="EXACT output floor in the output mint's base units. Omit to derive it from the "
+             "pool's live spot price, its fee, and --slippage-bps.",
+    )
+    parser.add_argument(
         "--send",
         action="store_true",
         help="sign with --keypair and BROADCAST, in this one call. Without it nothing is signed.",
@@ -210,6 +218,34 @@ def main(argv: list[str] | None = None) -> int:
         if upward
         else live * (10_000 - args.slippage_bps) // 10_000
     )
+    # THE OUTPUT FLOOR, and it was 0 through five mainnet swaps: "accept any output". Only
+    # sqrt_price_limit stood between the caller and an arbitrarily bad fill. gecko's own
+    # prepare_instruction states the rule this violated — a minimum-amount argument is how you
+    # say what you will NOT accept, and omitting it is refused rather than defaulted.
+    #
+    # sqrt_price is Q64.64, so (sqrt_price / 2**64)**2 is base units of B per base unit of A.
+    # fee_rate is hundredths of a bip (100 == 0.01%). Spot IGNORES price impact, so a derived
+    # floor is OPTIMISTIC — and that fails CLOSED: the program reverts rather than filling
+    # below it. Pass --min-out when you want the floor to be exactly what you decided.
+    fee_rate = int(pool["fee_rate"])
+    if args.min_out is not None:
+        min_out, min_out_basis = args.min_out, "stated with --min-out"
+    else:
+        try:
+            spot, min_out = quote_min_amount_out(
+                args.amount, live, fee_rate, a_to_b=not upward, slippage_bps=args.slippage_bps
+            )
+        except WhirlpoolMathError as exc:
+            return _stop(str(exc))
+        min_out_basis = (
+            f"spot {spot:,} less the {fee_rate / 10_000:g}% fee less {args.slippage_bps} bps"
+        )
+    if min_out <= 0:
+        return _stop(
+            f"--min-out {min_out} is 'accept any output'. Refusing: a floor of zero is the "
+            "absence of a floor, which is exactly what this argument exists to prevent."
+        )
+
     ticks = _tick_arrays(args.pool, int(pool["tick_current_index"]), int(pool["tick_spacing"]), upward=upward)
 
     print(f"pool           {args.pool}")
@@ -220,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\ndirection      {args.direction}  ({'B->A, price rises' if upward else 'A->B, price falls'})")
     print(f"  amount in    {args.amount} base units of {'B' if upward else 'A'}")
     print(f"  sqrt_price   {live}  ->  limit {limit}  ({args.slippage_bps} bps)")
+    print(f"  min out      {min_out:,} base units of {'A' if upward else 'B'}  ({min_out_basis})")
     print(f"  tick arrays  {ticks}")
 
     ata_a = derive_ata(args.signer, mint_a, token_program=program_a)
@@ -263,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                 "tick_array_1": ticks[1],
                 "tick_array_2": ticks[2],
                 "amount": args.amount,
-                "other_amount_threshold": 0,
+                "other_amount_threshold": min_out,
                 "sqrt_price_limit": limit,
                 "amount_specified_is_input": True,
                 "a_to_b": not upward,
