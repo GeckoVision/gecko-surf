@@ -196,11 +196,20 @@ dev = [
     # The [solana] extra, in dev so the PDA-derivation tests (tests/test_pda.py)
     # run in the default `uv run pytest` lane against real mainnet ground truth.
     "solders>=0.21",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# The default loop is the OFFLINE one: every lane that needs a live dependency is
+# deselected here, not deleted. `surfpool`, a live RPC, a bun checkout and a
+# partner MCP are all real tests we want — they are just not what you run forty
+# times a day. Run them explicitly: `pytest -m fork`, `-m rpc`, and so on, or
+# `pytest -m ""` for everything. Measured 2026-08-27: the full sweep took 9m23s
+# and came back RED on a surfpool timeout; this default is 5m43s and green.
+# `-n auto` uses the cores the box already has (16 here) on a CPU-bound suite.
+addopts = "-n auto -m 'not fork and not bun and not rpc and not partner_mcp'"
 # Two lanes that need something the engine itself does not: `bun` + a local Orquestra
 # checkout (tests/test_orquestra_bridge.py runs HIS compiler/interpreter, never a
 # reimplementation of it), and a real Solana RPC. Both skip themselves when the
