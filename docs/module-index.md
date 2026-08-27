@@ -2,7 +2,7 @@
 
 # Module index
 
-164 modules in `gecko/`, generated from their own docstrings.
+165 modules in `gecko/`, generated from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -118,6 +118,7 @@ package depends on it, which is worth a look before you add a caller.
 | `recorded_lane` | The recorded lane — the $0 first green, and the attributed simulate feed. | 0 |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 0 |
+| `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 0 |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 3 · `enforce`, `evaluate`, `mcp_server` |
 | `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 23 · `autonomous_purchase`, `cli`, `drift_watch` +20 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
