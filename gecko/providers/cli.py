@@ -301,7 +301,8 @@ def comprehend_main(argv: list[str], *, client: Any = None) -> int:
 
     ``--list`` browses the catalog; ``--project <slug>`` generates the program's
     api-config JSON (stdout only — no file writes) with a per-PDA provenance
-    report on stderr. ``--source`` is the SOURCE-TRUST BOUNDARY: a local,
+    report and a PRE-INGEST GATE VERDICT on stderr. A refused config is not
+    emitted and the command exits 3 unless ``--force``. ``--source`` is the SOURCE-TRUST BOUNDARY: a local,
     founder-curated file path only — this command never fetches program source
     from GitHub or anywhere else. ``client`` is injectable for offline tests.
     """
@@ -334,6 +335,14 @@ def comprehend_main(argv: list[str], *, client: Any = None) -> int:
     )
     parser.add_argument(
         "--base-url", default=None, help="override the Orquestra API base URL"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "print the config even when the pre-ingest gate REFUSES it (the report "
+            "still goes to stderr; this only changes the exit code)"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -373,6 +382,29 @@ def comprehend_main(argv: list[str], *, client: Any = None) -> int:
     except (OrquestraClientError, ComprehendError, OSError, ValueError) as exc:
         print(f"gecko-orquestra comprehend: {exc}", file=sys.stderr)
         return 2
+
+    # THE PRE-INGEST GATE. A config generated here is a candidate, not a decision: it
+    # goes to stdout so a human can pipe it, and the verdict goes to stderr so the pipe
+    # cannot swallow it. A refusal changes the EXIT CODE (3), which is what a script
+    # branches on — whirlpool's regression shipped because a defect had no exit code.
+    from ..ingest_gate import precheck_config, render
+
+    report = precheck_config(
+        args.api_id or args.project,
+        result.config,
+        idl=surface.idl or None,
+        idl_source=f"the {args.project} project surface",
+    )
+    print(render(report), file=sys.stderr)
+
+    if report.blocks and not args.force:
+        print(
+            "gecko-orquestra comprehend: REFUSED — the config above was NOT emitted. "
+            "Fix the findings, or re-run with --force to emit it anyway (the verdict "
+            "is printed either way).",
+            file=sys.stderr,
+        )
+        return 3
 
     json.dump(result.config, sys.stdout, indent=2, ensure_ascii=False)
     print()

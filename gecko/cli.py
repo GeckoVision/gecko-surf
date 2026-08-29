@@ -53,6 +53,7 @@ _SUBCOMMANDS = (
     "serve",
     "test",
     "inspect",
+    "ingest-gate",
     "report",
     "verify-docs",
     "from-docs",
@@ -300,6 +301,68 @@ def _cmd_inspect(argv: list[str]) -> int:
             file=sys.stderr,
         )
     return 1 if (below or inspect_mod.has_blocking(report)) else 0
+
+
+def _cmd_ingest_gate(argv: list[str]) -> int:
+    """`gecko ingest-gate <program>` — refuse a program BEFORE it is ingested (offline, $0).
+
+    The mirror image of `gecko inspect`: inspect scores an API that is already in, this
+    refuses one that is about to be. Exit 1 on a refusal (a CI gate on ingestion);
+    `--strict` also exits 1 on a warn, and an unmeasured check never exits 0 quietly —
+    it prints `unknown`, which is not `ok`.
+    """
+    from . import ingest_gate
+
+    p = argparse.ArgumentParser(
+        prog="gecko ingest-gate",
+        description="Refuse a program before ingesting it (offline, $0): intent "
+        "reachability, registry consistency, framework fingerprint, cardinality, "
+        "cross-catalog discrimination.",
+    )
+    p.add_argument("program", help="A packaged api_id, e.g. whirlpool.")
+    p.add_argument(
+        "--provider",
+        default="orquestra",
+        help="Packaged provider (default: orquestra).",
+    )
+    p.add_argument(
+        "--idl",
+        default=None,
+        help="Path to the program's IDL. Without one the IDL-backed checks report "
+        "`unknown` — never `ok`.",
+    )
+    p.add_argument("-o", "--out", default=None, help="Also write the report as JSON.")
+    p.add_argument(
+        "--strict", action="store_true", help="Exit non-zero on a warn as well."
+    )
+    args = p.parse_args(argv)
+
+    idl = None
+    if args.idl:
+        try:
+            idl = ingest_gate.load_idl(args.idl)
+        except (OSError, ValueError) as exc:
+            print(f"  ✗ could not read --idl {args.idl}: {exc}", file=sys.stderr)
+            return 2
+    try:
+        report = ingest_gate.gate(
+            args.program,
+            provider=args.provider,
+            idl=idl,
+            idl_source=args.idl or "the supplied IDL",
+        )
+    except KeyError as exc:
+        print(f"  ✗ {exc.args[0]}", file=sys.stderr)
+        return 2
+    print(ingest_gate.render(report))
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(report.to_dict(), indent=2), encoding="utf-8"
+        )
+        print(f"  → wrote {args.out}")
+    if report.blocks:
+        return 1
+    return 1 if (args.strict and report.outcome != "ok") else 0
 
 
 def _cmd_report(argv: list[str]) -> int:
@@ -2044,6 +2107,7 @@ def _print_help() -> None:
     print("  serve <spec>       serve a comprehended spec to agents (MCP)")
     print("  from-docs <src>    recover a draft OpenAPI from a doc page")
     print("  test  <spec>       first-call-correctness checks")
+    print("  ingest-gate <prog> refuse a program BEFORE ingesting it (offline, $0)")
     print(
         "  scan-image <path>  scan an image for an image-borne injection (Skill Guard)"
     )
@@ -2426,6 +2490,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_test(rest)
     if cmd == "inspect":
         return _cmd_inspect(rest)
+    if cmd == "ingest-gate":
+        return _cmd_ingest_gate(rest)
     if cmd == "report":
         return _cmd_report(rest)
     if cmd == "verify-docs":
