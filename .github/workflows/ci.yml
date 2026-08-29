@@ -61,6 +61,11 @@ jobs:
       - name: mypy gecko
         run: uv run mypy gecko
 
+      # The index is generated FROM the docstrings, so it can only be stale, never
+      # wrong. Stale is enough to send the next reader back to grepping.
+      - name: module index is current
+        run: uv run python scripts/module_index.py --check
+
       - name: pytest
         run: uv run pytest -q
 
