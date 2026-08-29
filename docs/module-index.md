@@ -2,7 +2,7 @@
 
 # Module index
 
-165 modules in `gecko/`, generated from their own docstrings.
+166 modules in `gecko/`, generated from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -21,11 +21,11 @@ package depends on it, which is worth a look before you add a caller.
 | `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 11 · `authcheck`, `catalog_mcp`, `chain_eval` +8 |
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
-| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 5 · `client`, `find_start`, `planner` +2 |
+| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 6 · `client`, `find_start`, `ingest_gate` +3 |
 | `catalog_mcp` | Aggregated MCP surface over the whole pay.sh catalog — one MCP, 70 providers. | 1 · `serve_mcp` |
 | `catalogue_export` | The semantic catalogue, serialised so a non-Python consumer can DERIVE it. | 0 |
 | `chain_eval` | Chain-FCC harness — the chain analogue of ``fcc_eval`` (§6, §12 Phase 1). | 0 |
-| `cli` | ``gecko`` CLI — an argparse subcommand dispatcher. Thin by design. | 1 · `find_start` |
+| `cli` | ``gecko`` CLI — an argparse subcommand dispatcher. Thin by design. | 2 · `find_start`, `ingest_gate` |
 | `client` | AgentApiClient — the one object that makes an API agent-usable. | 26 · `agentnative`, `authcheck`, `binding` +23 |
 | `compose` | Cross-surface composition (§12 Phase 4, §13) — per-surface graphs composed at | 1 · `safechain` |
 | `comprehend_service` | Comprehend a submitted API — the shared core behind both 'submit your API' doors. | 3 · `http_server`, `mcp_server`, `preflight` |
@@ -49,7 +49,7 @@ package depends on it, which is worth a look before you add a caller.
 | `events` | Usage-event instrumentation — the honest adoption metric AND the first | 8 · `capture`, `client`, `enforce` +5 |
 | `evidence` | The control that has to light up before a measurement is allowed to be a result. | 2 · `retrieval_eval`, `score` |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 3 · `prove`, `retrieval_eval`, `start_view` |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 4 · `ingest_gate`, `prove`, `retrieval_eval` +1 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 1 · `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -60,9 +60,10 @@ package depends on it, which is worth a look before you add a caller.
 | `hosted_login` | ``gecko login`` client — talk ONLY to Gecko's server (Privy is a server detail). | 0 |
 | `http_server` | HTTP transport — serve the EXISTING ``McpSurface`` over MCP Streamable HTTP. | 6 · `mcp_server`, `program_mcp`, `serve` +3 |
 | `identity` | SessionIdentity — bind a session to its operator policy (shape-now-token-later). | 1 · `access` |
-| `idl_layout` | Where a field lives inside an Anchor account, computed from the IDL — or refused. | 2 · `pda_extract`, `read_accounts` |
+| `idl_layout` | Where a field lives inside an Anchor account, computed from the IDL — or refused. | 3 · `ingest_gate`, `pda_extract`, `read_accounts` |
 | `imagescan` | Skill Guard L2 + L3 — deterministic image metadata / trailing-byte / OCR scan. | 0 |
 | `ingest` | OpenAPI surface ingestor. | 16 · `catalog`, `chain_eval`, `cli` +13 |
+| `ingest_gate` | Should this program be ingested at all? A gate on ingesting, not a step in ingesting. | 0 |
 | `inspect` | ``gecko inspect`` — a provider-facing agent-readiness scorecard. | 2 · `http_server`, `report` |
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
@@ -110,11 +111,11 @@ package depends on it, which is worth a look before you add a caller.
 | `program_mcp` | Serve a program's instruction↔PDA graph as an agent-facing MCP surface. | 0 |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 1 · `cli` |
 | `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 8 · `correlate`, `find_start`, `graph` +5 |
-| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 4 · `find_start`, `orquestra_client`, `orquestra_comprehend` +1 |
+| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 5 · `find_start`, `ingest_gate`, `orquestra_client` +2 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 0 |
-| `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 0 |
+| `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 1 · `ingest_gate` |
 | `recorded_lane` | The recorded lane — the $0 first green, and the attributed simulate feed. | 0 |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 0 |
