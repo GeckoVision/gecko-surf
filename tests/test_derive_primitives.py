@@ -50,9 +50,7 @@ def test_token_2022_derives_a_different_account() -> None:
     legacy = derive_ata_result(
         {"owner": OWNER, "mint": USDC, "token_program": CLASSIC_TOKEN}
     )
-    t22 = derive_ata_result(
-        {"owner": OWNER, "mint": USDC, "token_program": TOKEN_2022}
-    )
+    t22 = derive_ata_result({"owner": OWNER, "mint": USDC, "token_program": TOKEN_2022})
 
     assert legacy["address"] != t22["address"]
 

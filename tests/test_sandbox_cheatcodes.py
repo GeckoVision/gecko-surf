@@ -359,7 +359,10 @@ def test_fund_token_writes_the_token_2022_ata_when_that_program_is_named(
     legacy = default_rpc_call(
         proof.rpc_url,
         "getAccountInfo",
-        [derive_ata(owner, mint, token_program=TOKEN_PROGRAM_ID), {"encoding": "base64"}],
+        [
+            derive_ata(owner, mint, token_program=TOKEN_PROGRAM_ID),
+            {"encoding": "base64"},
+        ],
     )["result"]["value"]
     assert legacy is None, "the legacy ATA must be untouched when 2022 was named"
 

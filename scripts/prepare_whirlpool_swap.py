@@ -122,13 +122,17 @@ def _pool_fields(idl: dict, raw: bytes, names: list[str]) -> dict:
 
 def _token_program(url: str, mint: str) -> str:
     """The token program is the mint account's OWNER. Read, never inferred from a label."""
-    value = (_rpc(url, "getAccountInfo", [mint, {"encoding": "base64"}]).get("result") or {}).get("value")
+    value = (
+        _rpc(url, "getAccountInfo", [mint, {"encoding": "base64"}]).get("result") or {}
+    ).get("value")
     if not value:
         raise SystemExit(f"STOP: mint {mint} does not exist on this node.")
     return value["owner"]
 
 
-def _tick_arrays(pool: str, tick_current: int, tick_spacing: int, *, upward: bool) -> list[str]:
+def _tick_arrays(
+    pool: str, tick_current: int, tick_spacing: int, *, upward: bool
+) -> list[str]:
     """The three arrays in the DIRECTION OF TRAVEL, from our own corrected recipe.
 
     The seed is the ASCII DECIMAL STRING of the start index, not its little-endian bytes —
@@ -138,7 +142,11 @@ def _tick_arrays(pool: str, tick_current: int, tick_spacing: int, *, upward: boo
     recipe = dict(apis["whirlpool"].program.pdas)["tick_array"]
     span = TICKS_PER_ARRAY * tick_spacing
     start = (tick_current // span) * span
-    steps = [start + span * i for i in range(3)] if upward else [start - span * i for i in range(3)]
+    steps = (
+        [start + span * i for i in range(3)]
+        if upward
+        else [start - span * i for i in range(3)]
+    )
     return [
         derive_pda(recipe, {"whirlpool": pool, "start_tick_index": str(s)}).address
         for s in steps
@@ -150,7 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         prog="prepare_whirlpool_swap",
         description="Derive, simulate and BIND an Orca Whirlpool swap. Never signs.",
     )
-    parser.add_argument("--signer", required=True, help="your base58 pubkey; pays fees AND is token_authority")
+    parser.add_argument(
+        "--signer",
+        required=True,
+        help="your base58 pubkey; pays fees AND is token_authority",
+    )
     parser.add_argument("--rpc-url", default="https://api.mainnet-beta.solana.com")
     parser.add_argument(
         "--network",
@@ -170,14 +182,24 @@ def main(argv: list[str] | None = None) -> int:
         default="b-to-a",
         help="b-to-a spends token B (USDC) for A (USDG); a-to-b is the reverse. Default b-to-a: it needs only USDC.",
     )
-    parser.add_argument("--amount", type=int, default=100_000, help="input amount in the INPUT mint's base units (default 0.1 of a 6-decimal stable)")
-    parser.add_argument("--slippage-bps", type=int, default=100, help="how far the sqrt price may move before the program refuses (default 100)")
+    parser.add_argument(
+        "--amount",
+        type=int,
+        default=100_000,
+        help="input amount in the INPUT mint's base units (default 0.1 of a 6-decimal stable)",
+    )
+    parser.add_argument(
+        "--slippage-bps",
+        type=int,
+        default=100,
+        help="how far the sqrt price may move before the program refuses (default 100)",
+    )
     parser.add_argument(
         "--min-out",
         type=int,
         default=None,
         help="EXACT output floor in the output mint's base units. Omit to derive it from the "
-             "pool's live spot price, its fee, and --slippage-bps.",
+        "pool's live spot price, its fee, and --slippage-bps.",
     )
     parser.add_argument(
         "--send",
@@ -196,17 +218,30 @@ def main(argv: list[str] | None = None) -> int:
     idl_fetch, build_call = orquestra_seams()
     idl = idl_fetch(WHIRLPOOL_PROGRAM)
 
-    value = (_rpc(url, "getAccountInfo", [args.pool, {"encoding": "base64"}]).get("result") or {}).get("value")
+    value = (
+        _rpc(url, "getAccountInfo", [args.pool, {"encoding": "base64"}]).get("result")
+        or {}
+    ).get("value")
     if not value:
         return _stop(f"pool {args.pool} does not exist on {url}")
     if value["owner"] != WHIRLPOOL_PROGRAM:
-        return _stop(f"{args.pool} is owned by {value['owner']}, not the Whirlpool program")
+        return _stop(
+            f"{args.pool} is owned by {value['owner']}, not the Whirlpool program"
+        )
 
     pool = _pool_fields(
         idl,
         base64.b64decode(value["data"][0]),
-        ["tick_spacing", "fee_rate", "sqrt_price", "tick_current_index",
-         "token_mint_a", "token_vault_a", "token_mint_b", "token_vault_b"],
+        [
+            "tick_spacing",
+            "fee_rate",
+            "sqrt_price",
+            "tick_current_index",
+            "token_mint_a",
+            "token_vault_a",
+            "token_mint_b",
+            "token_vault_b",
+        ],
     )
     mint_a, mint_b = str(pool["token_mint_a"]), str(pool["token_mint_b"])
     program_a, program_b = _token_program(url, mint_a), _token_program(url, mint_b)
@@ -233,30 +268,43 @@ def main(argv: list[str] | None = None) -> int:
     else:
         try:
             spot, min_out = quote_min_amount_out(
-                args.amount, live, fee_rate, a_to_b=not upward, slippage_bps=args.slippage_bps
+                args.amount,
+                live,
+                fee_rate,
+                a_to_b=not upward,
+                slippage_bps=args.slippage_bps,
             )
         except WhirlpoolMathError as exc:
             return _stop(str(exc))
-        min_out_basis = (
-            f"spot {spot:,} less the {fee_rate / 10_000:g}% fee less {args.slippage_bps} bps"
-        )
+        min_out_basis = f"spot {spot:,} less the {fee_rate / 10_000:g}% fee less {args.slippage_bps} bps"
     if min_out <= 0:
         return _stop(
             f"--min-out {min_out} is 'accept any output'. Refusing: a floor of zero is the "
             "absence of a floor, which is exactly what this argument exists to prevent."
         )
 
-    ticks = _tick_arrays(args.pool, int(pool["tick_current_index"]), int(pool["tick_spacing"]), upward=upward)
+    ticks = _tick_arrays(
+        args.pool,
+        int(pool["tick_current_index"]),
+        int(pool["tick_spacing"]),
+        upward=upward,
+    )
 
     print(f"pool           {args.pool}")
-    print(f"  tick_spacing {pool['tick_spacing']}   fee_rate {pool['fee_rate']}   tick_current {pool['tick_current_index']}")
+    print(
+        f"  tick_spacing {pool['tick_spacing']}   fee_rate {pool['fee_rate']}   tick_current {pool['tick_current_index']}"
+    )
     print(f"  mint A       {mint_a}  under {program_a}")
     print(f"  mint B       {mint_b}  under {program_b}")
     print(f"  vaults       {pool['token_vault_a']} / {pool['token_vault_b']}")
-    print(f"\ndirection      {args.direction}  ({'B->A, price rises' if upward else 'A->B, price falls'})")
+    print(
+        f"\ndirection      {args.direction}  ({'B->A, price rises' if upward else 'A->B, price falls'})"
+    )
     print(f"  amount in    {args.amount} base units of {'B' if upward else 'A'}")
     print(f"  sqrt_price   {live}  ->  limit {limit}  ({args.slippage_bps} bps)")
-    print(f"  min out      {min_out:,} base units of {'A' if upward else 'B'}  ({min_out_basis})")
+    print(
+        f"  min out      {min_out:,} base units of {'A' if upward else 'B'}  ({min_out_basis})"
+    )
     print(f"  tick arrays  {ticks}")
 
     ata_a = derive_ata(args.signer, mint_a, token_program=program_a)
@@ -271,7 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         ("B", ata_b, mint_b, program_b),
     ):
         exists = (
-            _rpc(url, "getAccountInfo", [ata, {"encoding": "base64"}]).get("result") or {}
+            _rpc(url, "getAccountInfo", [ata, {"encoding": "base64"}]).get("result")
+            or {}
         ).get("value") is not None
         state = "exists" if exists else "MISSING"
         print(f"  your ATA {label}   {ata}  ({state})")
@@ -326,13 +375,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     binding, strength = result.get("binding"), result.get("binding_strength")
-    print(f"  SIMULATED CLEAN   {(result.get('simulation') or {}).get('compute_units')} compute units")
+    print(
+        f"  SIMULATED CLEAN   {(result.get('simulation') or {}).get('compute_units')} compute units"
+    )
     print(f"  binding   {binding} [{strength}]")
     print(f"  network   {args.network}   (as you stated it, never inferred)")
     print("=" * 66)
 
     if not binding:
-        return _stop("no binding could be computed for these bytes; the handoff cannot be checked")
+        return _stop(
+            "no binding could be computed for these bytes; the handoff cannot be checked"
+        )
 
     if args.send:
         return _settle(args, result["transaction_base64"], binding)
@@ -341,7 +394,9 @@ def main(argv: list[str] | None = None) -> int:
     # computed over the decoded MESSAGE, so it is the same either way — the encoding trap
     # is only in the bytes.
     tx_b58 = b58_encode(base64.b64decode(result["transaction_base64"]))
-    print("\nThe blockhash expires in about a minute. Sign now or re-run — re-running is free.\n")
+    print(
+        "\nThe blockhash expires in about a minute. Sign now or re-run — re-running is free.\n"
+    )
     print("  uv run python scripts/sign_and_send.py \\")
     print(f"    --tx {tx_b58} \\")
     print(f"    --rpc-url {url} \\")
@@ -358,7 +413,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _settle(args: argparse.Namespace, transaction_base64: str, prepared_binding: str) -> int:
+def _settle(
+    args: argparse.Namespace, transaction_base64: str, prepared_binding: str
+) -> int:
     """Sign these exact bytes and broadcast, without letting them leave the process.
 
     WHY THIS EXISTS, AND WHAT IT TRADES. The two-terminal flow
@@ -431,7 +488,11 @@ def _settle(args: argparse.Namespace, transaction_base64: str, prepared_binding:
         print(f"  class           {receipt.revert_class}")
 
     handoff = verify_handoff(
-        transaction_base64, receipt, encoding="base64", require="exact", expected_network=network
+        transaction_base64,
+        receipt,
+        encoding="base64",
+        require="exact",
+        expected_network=network,
     )
     print(f"  binding         {handoff.binding}")
     print(f"  approved        {handoff.approved}: {handoff.reason}")

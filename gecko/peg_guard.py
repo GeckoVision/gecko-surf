@@ -73,7 +73,9 @@ class PegVerdict:
         return self.outcome == "refuse"
 
 
-def verdict_from(mint: str, body: dict[str, Any] | None, symbol: str | None = None) -> PegVerdict:
+def verdict_from(
+    mint: str, body: dict[str, Any] | None, symbol: str | None = None
+) -> PegVerdict:
     """Judge one asset from Pegana's own state reading. Pure; the fetch is the caller's.
 
     ``body`` is the `/v1/assets/{symbol}/state` payload, or ``None`` when Pegana does not
@@ -81,7 +83,11 @@ def verdict_from(mint: str, body: dict[str, Any] | None, symbol: str | None = No
     """
     if body is None:
         return PegVerdict(
-            mint=mint, symbol=symbol, outcome="unknown", state=None, stale=False,
+            mint=mint,
+            symbol=symbol,
+            outcome="unknown",
+            state=None,
+            stale=False,
             discount=None,
             reason="Pegana does not track this mint — no peg opinion exists for it",
         )
@@ -95,7 +101,11 @@ def verdict_from(mint: str, body: dict[str, Any] | None, symbol: str | None = No
     # is a statement about the past, and the whole point of a guard is the present.
     if stale:
         return PegVerdict(
-            mint=mint, symbol=sym, outcome="refuse", state=state, stale=True,
+            mint=mint,
+            symbol=sym,
+            outcome="refuse",
+            state=state,
+            stale=True,
             discount=discount,
             reason=(
                 f"Pegana's reading is STALE ({body.get('state_reason') or 'stale'}), last "
@@ -105,21 +115,33 @@ def verdict_from(mint: str, body: dict[str, Any] | None, symbol: str | None = No
 
     if state in HOLDING:
         return PegVerdict(
-            mint=mint, symbol=sym, outcome="ok", state=state, stale=False,
+            mint=mint,
+            symbol=sym,
+            outcome="ok",
+            state=state,
+            stale=False,
             discount=discount,
             reason=f"{sym} is {state} (discount {discount})",
         )
 
     if state == "UNKNOWN":
         return PegVerdict(
-            mint=mint, symbol=sym, outcome="refuse", state=state, stale=False,
+            mint=mint,
+            symbol=sym,
+            outcome="refuse",
+            state=state,
+            stale=False,
             discount=discount,
             reason=f"Pegana reports {sym} as UNKNOWN — it cannot say the peg holds",
         )
 
     if state in PEG_STATES:
         return PegVerdict(
-            mint=mint, symbol=sym, outcome="refuse", state=state, stale=False,
+            mint=mint,
+            symbol=sym,
+            outcome="refuse",
+            state=state,
+            stale=False,
             discount=discount,
             reason=(
                 f"{sym} is {state} (discount {discount}) — converting now realises that "
@@ -131,7 +153,12 @@ def verdict_from(mint: str, body: dict[str, Any] | None, symbol: str | None = No
     # An enum value we have never seen. Refuse rather than guess which side it falls on —
     # a new state is far more likely to be worse than PEGGED than better.
     return PegVerdict(
-        mint=mint, symbol=sym, outcome="refuse", state=state, stale=stale, discount=discount,
+        mint=mint,
+        symbol=sym,
+        outcome="refuse",
+        state=state,
+        stale=stale,
+        discount=discount,
         reason=(
             f"Pegana returned an unrecognised state {state!r}; this build knows "
             f"{sorted(PEG_STATES)}. Refusing rather than assuming it is benign"

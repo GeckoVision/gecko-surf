@@ -31,9 +31,9 @@ def test_a_zero_floor_is_refused_not_returned() -> None:
 
 def test_the_floor_is_below_spot_and_above_zero() -> None:
     spot, floor = quote_min_amount_out(101_001, ONE, FEE, a_to_b=True, slippage_bps=100)
-    assert spot == 101_001                      # 1:1 pool, so out == in before costs
+    assert spot == 101_001  # 1:1 pool, so out == in before costs
     assert 0 < floor < spot
-    assert floor == 99_980                      # less 0.01% fee, less 100 bps
+    assert floor == 99_980  # less 0.01% fee, less 100 bps
 
 
 def test_sizing_and_floor_are_exact_inverses() -> None:
@@ -44,7 +44,9 @@ def test_sizing_and_floor_are_exact_inverses() -> None:
     need = size_input_for_output(price, ONE, FEE, a_to_b=True, slippage_bps=100)
     assert need == 101_022
     _spot, floor = quote_min_amount_out(need, ONE, FEE, a_to_b=True, slippage_bps=100)
-    assert floor >= price, "the sized input must clear the floor it will be judged against"
+    assert floor >= price, (
+        "the sized input must clear the floor it will be judged against"
+    )
 
 
 @pytest.mark.parametrize("price", [1, 999, 100_000, 12_345_678, 5 * 10**9])
@@ -54,8 +56,12 @@ def test_the_inverse_holds_across_prices_and_directions(
     price: int, a_to_b: bool, sqrt_price: int
 ) -> None:
     """Not just at 1:1 with equal decimals. That coincidence is what hid the unit error."""
-    need = size_input_for_output(price, sqrt_price, FEE, a_to_b=a_to_b, slippage_bps=100)
-    _spot, floor = quote_min_amount_out(need, sqrt_price, FEE, a_to_b=a_to_b, slippage_bps=100)
+    need = size_input_for_output(
+        price, sqrt_price, FEE, a_to_b=a_to_b, slippage_bps=100
+    )
+    _spot, floor = quote_min_amount_out(
+        need, sqrt_price, FEE, a_to_b=a_to_b, slippage_bps=100
+    )
     assert floor >= price
 
 
@@ -99,6 +105,8 @@ def test_the_script_no_longer_carries_a_literal_zero_threshold() -> None:
     not through any function these tests could reach."""
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[1] / "scripts" / "prepare_whirlpool_swap.py").read_text()
+    src = (
+        Path(__file__).resolve().parents[1] / "scripts" / "prepare_whirlpool_swap.py"
+    ).read_text()
     assert '"other_amount_threshold": 0' not in src
     assert '"other_amount_threshold": min_out' in src

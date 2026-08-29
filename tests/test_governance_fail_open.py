@@ -31,10 +31,14 @@ GOV_POLICY = RiskPolicy(block_at=60, step_up_at=30)
 
 def _transfer_op(properties: dict[str, Any] | None = None) -> Operation:
     """A transfer-tier op. Body props drive the tier vote, so they must look monetary."""
-    props = properties if properties is not None else {
-        "amount": {"type": "string"},
-        "destination": {"type": "string"},
-    }
+    props = (
+        properties
+        if properties is not None
+        else {
+            "amount": {"type": "string"},
+            "destination": {"type": "string"},
+        }
+    )
     return Operation(
         method="post",
         path="/v1/wallets/{wallet_id}/transfer",
@@ -59,7 +63,9 @@ def _transfer_op(properties: dict[str, Any] | None = None) -> Operation:
     )
 
 
-def _score(args: dict[str, Any], policy: AgentPolicy | None, op: Operation | None = None):
+def _score(
+    args: dict[str, Any], policy: AgentPolicy | None, op: Operation | None = None
+):
     operation = op or _transfer_op()
     return score_call(
         tool_name=operation.operation_id,
@@ -119,7 +125,9 @@ def test_a_write_carrying_no_amount_at_all_is_not_flagged() -> None:
     """Most writes move nothing. Flagging every one of them would be noise, and noise is
     how a control gets switched off."""
     policy = AgentPolicy(spend_cap=Decimal("100"), recipient_allowlist={"0xGOOD"})
-    assessment = _score({"reason": "customer requested", "destination": "0xGOOD"}, policy)
+    assessment = _score(
+        {"reason": "customer requested", "destination": "0xGOOD"}, policy
+    )
     assert "cap.unevaluated" not in _signals(assessment)
 
 

@@ -57,7 +57,13 @@ def _args(**over) -> Namespace:
 
 
 def test_a_missing_keypair_refuses_before_anything_else(tmp_path):
-    code = swap._settle(_args(), _unsigned_tx_paying_from(__import__("solders.keypair", fromlist=["Keypair"]).Keypair().pubkey()), "abc")
+    code = swap._settle(
+        _args(),
+        _unsigned_tx_paying_from(
+            __import__("solders.keypair", fromlist=["Keypair"]).Keypair().pubkey()
+        ),
+        "abc",
+    )
     assert code == 1
 
 
