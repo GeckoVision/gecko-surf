@@ -70,7 +70,9 @@ def _rpc(url: str, method: str, params: list, *, tries: int = 4) -> dict:
 def _mint_owner(url: str, mint: str) -> str:
     """The token program IS the mint account's owner. Read; never inferred from a label —
     two mints can wear the same label and derive different ATAs."""
-    value = (_rpc(url, "getAccountInfo", [mint, {"encoding": "base64"}]).get("result") or {}).get("value")
+    value = (
+        _rpc(url, "getAccountInfo", [mint, {"encoding": "base64"}]).get("result") or {}
+    ).get("value")
     if not value:
         raise SystemExit(f"STOP: mint {mint} does not exist on this node.")
     return value["owner"]
@@ -86,12 +88,18 @@ def _holdings(url: str, owner: str) -> dict[str, tuple[int, str]]:
     out: dict[str, tuple[int, str]] = {}
     for program in (TOKEN_PROGRAM_ID, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"):
         rows = (
-            _rpc(url, "getTokenAccountsByOwner", [owner, {"programId": program}, {"encoding": "jsonParsed"}])
+            _rpc(
+                url,
+                "getTokenAccountsByOwner",
+                [owner, {"programId": program}, {"encoding": "jsonParsed"}],
+            )
             .get("result", {})
             .get("value", [])
         )
         for row in rows:
-            info = (((row.get("account") or {}).get("data") or {}).get("parsed") or {}).get("info") or {}
+            info = (
+                ((row.get("account") or {}).get("data") or {}).get("parsed") or {}
+            ).get("info") or {}
             amount = int((info.get("tokenAmount") or {}).get("amount") or 0)
             if amount > 0 and info.get("mint"):
                 out[info["mint"]] = (amount, program)
@@ -138,45 +146,96 @@ def _find_venue(url: str, held: str, needed: str) -> list[dict]:
     idl_fetch, _build = orquestra_seams()
     idl = idl_fetch(WHIRLPOOL_PROGRAM)
     disc = next(
-        (bytes(a.get("discriminator") or []) for a in idl.get("accounts") or [] if a.get("name") == "Whirlpool"),
+        (
+            bytes(a.get("discriminator") or [])
+            for a in idl.get("accounts") or []
+            if a.get("name") == "Whirlpool"
+        ),
         b"",
     )
     if not disc:
-        raise SystemExit("STOP: the Whirlpool IDL declares no discriminator for its pool account.")
-    off = {f: field_offset(idl, "Whirlpool", f)["offset"] for f in
-           ("whirlpools_config", "tick_spacing", "token_mint_a", "token_mint_b", "liquidity",
-            "fee_rate", "sqrt_price")}
+        raise SystemExit(
+            "STOP: the Whirlpool IDL declares no discriminator for its pool account."
+        )
+    off = {
+        f: field_offset(idl, "Whirlpool", f)["offset"]
+        for f in (
+            "whirlpools_config",
+            "tick_spacing",
+            "token_mint_a",
+            "token_mint_b",
+            "liquidity",
+            "fee_rate",
+            "sqrt_price",
+        )
+    }
     _, apis = load_packaged_provider("orquestra")
     recipe = dict(apis["whirlpool"].program.pdas)["whirlpool"]
 
     found: list[dict] = []
     for mint_a, mint_b, a_to_b in ((held, needed, True), (needed, held, False)):
-        rows = _rpc(url, "getProgramAccounts", [WHIRLPOOL_PROGRAM, {
-            "encoding": "base64",
-            "filters": [
-                {"memcmp": {"offset": 0, "bytes": b58_encode(disc)}},
-                {"memcmp": {"offset": off["token_mint_a"], "bytes": mint_a}},
-                {"memcmp": {"offset": off["token_mint_b"], "bytes": mint_b}},
-            ],
-        }]).get("result") or []
+        rows = (
+            _rpc(
+                url,
+                "getProgramAccounts",
+                [
+                    WHIRLPOOL_PROGRAM,
+                    {
+                        "encoding": "base64",
+                        "filters": [
+                            {"memcmp": {"offset": 0, "bytes": b58_encode(disc)}},
+                            {
+                                "memcmp": {
+                                    "offset": off["token_mint_a"],
+                                    "bytes": mint_a,
+                                }
+                            },
+                            {
+                                "memcmp": {
+                                    "offset": off["token_mint_b"],
+                                    "bytes": mint_b,
+                                }
+                            },
+                        ],
+                    },
+                ],
+            ).get("result")
+            or []
+        )
         for row in rows:
             data = base64.b64decode(row["account"]["data"][0])
+
             def read(field: str, kind: str = "pubkey"):
-                chunk = data[off[field]: off[field] + _SIZES[kind]]
-                return b58_encode(chunk) if kind == "pubkey" else int.from_bytes(chunk, "little")
+                chunk = data[off[field] : off[field] + _SIZES[kind]]
+                return (
+                    b58_encode(chunk)
+                    if kind == "pubkey"
+                    else int.from_bytes(chunk, "little")
+                )
+
             tick_spacing = read("tick_spacing", "u16")
             config = read("whirlpools_config")
-            derived = derive_pda(recipe, {
-                "whirlpools_config": config, "token_mint_a": mint_a,
-                "token_mint_b": mint_b, "tick_spacing": tick_spacing,
-            }).address
+            derived = derive_pda(
+                recipe,
+                {
+                    "whirlpools_config": config,
+                    "token_mint_a": mint_a,
+                    "token_mint_b": mint_b,
+                    "tick_spacing": tick_spacing,
+                },
+            ).address
             if derived != row["pubkey"]:
                 continue  # proposes but does not dispose — not our pool
-            found.append({
-                "pool": row["pubkey"], "tick_spacing": tick_spacing,
-                "liquidity": read("liquidity", "u128"), "a_to_b": a_to_b,
-                "fee_rate": read("fee_rate", "u16"), "sqrt_price": read("sqrt_price", "u128"),
-            })
+            found.append(
+                {
+                    "pool": row["pubkey"],
+                    "tick_spacing": tick_spacing,
+                    "liquidity": read("liquidity", "u128"),
+                    "a_to_b": a_to_b,
+                    "fee_rate": read("fee_rate", "u16"),
+                    "sqrt_price": read("sqrt_price", "u128"),
+                }
+            )
     return sorted(found, key=lambda p: -p["liquidity"])
 
 
@@ -193,7 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     url = args.rpc_url
 
-    store = resolve_store(args.store, rpc_url=url, rpc_call=default_rpc_call).accounts_for(args.product)
+    store = resolve_store(
+        args.store, rpc_url=url, rpc_call=default_rpc_call
+    ).accounts_for(args.product)
     priced_mint = store.product.mint
     priced_program = _mint_owner(url, priced_mint)
     price = store.product.price_raw
@@ -204,8 +265,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  under        {priced_program}")
     # let_me_buy PINS this in its IDL, so it is a structural fact about the program, not a
     # preference: a mint under any other token program cannot be spent here at all.
-    print(f"  make_purchase pins {TOKEN_PROGRAM_ID}"
-          f"  -> {'match' if priced_program == TOKEN_PROGRAM_ID else 'MISMATCH'}")
+    print(
+        f"  make_purchase pins {TOKEN_PROGRAM_ID}"
+        f"  -> {'match' if priced_program == TOKEN_PROGRAM_ID else 'MISMATCH'}"
+    )
 
     held = _holdings(url, args.signer)
     print(f"\nHAVE   {args.signer}")
@@ -225,25 +288,37 @@ def main(argv: list[str] | None = None) -> int:
     if buyer_ata == store.token_account:
         print(f"\nNOT PAYABLE — you ARE this store's authority ({store.authority}).")
         print(f"  your account and the store's are the same address: {buyer_ata}")
-        print("  The payment would credit the account it debits, so make_purchase refuses")
-        print("  it (PlanRefused). No amount of funding changes this — pick a store whose")
+        print(
+            "  The payment would credit the account it debits, so make_purchase refuses"
+        )
+        print(
+            "  it (PlanRefused). No amount of funding changes this — pick a store whose"
+        )
         print("  authority is someone else.")
         return 1
 
     have_raw = held.get(priced_mint, (0, ""))[0]
     if have_raw >= price:
-        print(f"\nPAYABLE NOW — you hold {have_raw:,} of the priced mint, price is {price:,}.")
+        print(
+            f"\nPAYABLE NOW — you hold {have_raw:,} of the priced mint, price is {price:,}."
+        )
         print(f"  uv run python scripts/prepare_purchase.py --signer {args.signer} \\")
         print(f"    --store {args.store} --product '{args.product}'")
         return 0
 
     # The refusal, stated as a fact rather than a failure.
-    print(f"\nNOT PAYABLE — you hold {have_raw:,} of the priced mint; the price is {price:,}.")
+    print(
+        f"\nNOT PAYABLE — you hold {have_raw:,} of the priced mint; the price is {price:,}."
+    )
     if priced_program == TOKEN_PROGRAM_ID and any(
         p != TOKEN_PROGRAM_ID for _a, p in held.values()
     ):
-        print("  Your balance is under a DIFFERENT token program than this store settles in.")
-        print("  make_purchase pins classic SPL Token, so that mint has no path here — the")
+        print(
+            "  Your balance is under a DIFFERENT token program than this store settles in."
+        )
+        print(
+            "  make_purchase pins classic SPL Token, so that mint has no path here — the"
+        )
         print("  two programs also derive different ATAs for the same owner and mint.")
 
     candidates = [(m, a, p) for m, (a, p) in held.items() if m != priced_mint and a > 0]
@@ -259,15 +334,21 @@ def main(argv: list[str] | None = None) -> int:
         # answer is "not right now", not a cheaper route. Pegana is keyed by mint, which is
         # the same value domain the store and the pool speak, so no vocabulary is invented.
         peg = _peg_verdict(url, held_mint)
-        mark = {"ok": "holding", "refuse": "NOT HOLDING", "unknown": "not tracked"}[peg.outcome]
+        mark = {"ok": "holding", "refuse": "NOT HOLDING", "unknown": "not tracked"}[
+            peg.outcome
+        ]
         print(f"  peg check    {peg.symbol or held_mint[:8]}: {mark} — {peg.reason}")
         if peg.blocks:
             # SKIP THIS MINT, do not abandon the wallet. A peg verdict is a fact about ONE
             # asset; returning here made a single stale reading answer "no route" for a
             # wallet that may hold a perfectly healthy second token. The refusal still
             # stands for this mint and is still printed — it just is not extrapolated.
-            print("    NOT CONVERTING this one — that discount would be realised on the swap.")
-            print("    Continuing to the next mint you hold; nothing here is a routing failure.")
+            print(
+                "    NOT CONVERTING this one — that discount would be realised on the swap."
+            )
+            print(
+                "    Continuing to the next mint you hold; nothing here is a routing failure."
+            )
             blocked.append(peg)
             continue
         venues = _find_venue(url, held_mint, priced_mint)
@@ -286,23 +367,38 @@ def main(argv: list[str] | None = None) -> int:
         # puts on the swap, so the printed --amount clears that floor by construction rather
         # than by luck. One module, one rounding convention, both halves of the same trade.
         need = size_input_for_output(
-            price, best["sqrt_price"], best["fee_rate"],
-            a_to_b=best["a_to_b"], slippage_bps=args.slippage_bps,
+            price,
+            best["sqrt_price"],
+            best["fee_rate"],
+            a_to_b=best["a_to_b"],
+            slippage_bps=args.slippage_bps,
         )
         print(f"  swap {held_mint}")
-        print(f"    venue        {best['pool']}  (tick_spacing {best['tick_spacing']}, "
-              f"liquidity {best['liquidity']:,})")
-        print(f"    proven by    re-deriving its own address from its config + mints + tick_spacing")
+        print(
+            f"    venue        {best['pool']}  (tick_spacing {best['tick_spacing']}, "
+            f"liquidity {best['liquidity']:,})"
+        )
+        print(
+            "    proven by    re-deriving its own address from its config + mints + tick_spacing"
+        )
         print(f"    direction    {'a-to-b' if best['a_to_b'] else 'b-to-a'}")
-        print(f"    spend        ~{need:,} raw to clear {price:,} plus {args.slippage_bps} bps")
+        print(
+            f"    spend        ~{need:,} raw to clear {price:,} plus {args.slippage_bps} bps"
+        )
         if amount < need:
             print(f"    SHORT        you hold {amount:,}")
             continue
         print("\n  Then, in order:")
-        print(f"    uv run python scripts/prepare_whirlpool_swap.py --signer {args.signer} \\")
-        print(f"      --direction {'a-to-b' if best['a_to_b'] else 'b-to-a'} "
-              f"--amount {need} --keypair <KEY> --send")
-        print(f"    uv run python scripts/prepare_purchase.py --signer {args.signer} \\")
+        print(
+            f"    uv run python scripts/prepare_whirlpool_swap.py --signer {args.signer} \\"
+        )
+        print(
+            f"      --direction {'a-to-b' if best['a_to_b'] else 'b-to-a'} "
+            f"--amount {need} --keypair <KEY> --send"
+        )
+        print(
+            f"    uv run python scripts/prepare_purchase.py --signer {args.signer} \\"
+        )
         print(f"      --store {args.store} --product '{args.product}'")
         return 0
 

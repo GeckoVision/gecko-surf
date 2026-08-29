@@ -200,9 +200,7 @@ class FakeFork:
         program = params[3] if len(params) > 3 else None
         # A cheatcode that named no program funded a CLASSIC account — say so rather
         # than leaning on a default, so this fake keys on the same ATA the code derives.
-        ata = derive_ata(
-            owner, mint, token_program=program or TOKEN_PROGRAM_ID
-        )
+        ata = derive_ata(owner, mint, token_program=program or TOKEN_PROGRAM_ID)
         self.accounts[ata] = {
             "lamports": 2_039_280,
             "data": [token_account_bytes(mint, owner, update["amount"]), "base64"],

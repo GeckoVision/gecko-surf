@@ -31,8 +31,13 @@ from __future__ import annotations
 
 from gecko.meteora_math import apply_min_out_slippage
 
-__all__ = ["WhirlpoolMathError", "FEE_RATE_DENOMINATOR", "spot_out", "quote_min_amount_out",
-           "size_input_for_output"]
+__all__ = [
+    "WhirlpoolMathError",
+    "FEE_RATE_DENOMINATOR",
+    "spot_out",
+    "quote_min_amount_out",
+    "size_input_for_output",
+]
 
 #: Orca states fee_rate in hundredths of a basis point: 100 == 0.01%.
 FEE_RATE_DENOMINATOR = 1_000_000
@@ -136,7 +141,9 @@ def size_input_for_output(
     if target_out <= 0:
         raise WhirlpoolMathError(f"target_out must be positive, got {target_out}")
     if not 0 <= slippage_bps < 10_000:
-        raise WhirlpoolMathError(f"slippage_bps must be in [0, 10000), got {slippage_bps}")
+        raise WhirlpoolMathError(
+            f"slippage_bps must be in [0, 10000), got {slippage_bps}"
+        )
 
     sq = sqrt_price * sqrt_price
     base = _ceil(target_out << 128, sq) if a_to_b else _ceil(target_out * sq, _Q128)
@@ -144,9 +151,12 @@ def size_input_for_output(
     lo = max(1, _ceil(after_fee * 10_000, 10_000 - slippage_bps))
 
     def clears(amount: int) -> bool:
-        return _floor_for(
-            amount, sqrt_price, fee_rate, a_to_b=a_to_b, slippage_bps=slippage_bps
-        ) >= target_out
+        return (
+            _floor_for(
+                amount, sqrt_price, fee_rate, a_to_b=a_to_b, slippage_bps=slippage_bps
+            )
+            >= target_out
+        )
 
     if clears(lo):
         # The estimate already suffices; walk DOWN to the minimum so the caller is never

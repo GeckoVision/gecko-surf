@@ -129,7 +129,10 @@ def test_jonasbars_derived_accounts_equal_the_constants_they_replace() -> None:
     replacement was plausible rather than faithful — and a plausible payee is a wrong one.
     """
     assert receipts_pda("jonasbar") == JONASBAR_RECEIPTS
-    assert derive_ata(JONASBAR_AUTHORITY, USDC, token_program=CLASSIC_TOKEN) == JONASBAR_TOKEN_ACCOUNT
+    assert (
+        derive_ata(JONASBAR_AUTHORITY, USDC, token_program=CLASSIC_TOKEN)
+        == JONASBAR_TOKEN_ACCOUNT
+    )
 
 
 def test_the_default_store_still_resolves_to_exactly_what_it_hardcoded() -> None:
@@ -167,7 +170,9 @@ def test_a_named_store_resolves_to_its_own_accounts_and_they_reach_the_plan() ->
     assert accounts["receipts"] == GECKOCOFFEE_RECEIPTS
     assert accounts["authority"] == GECKOCOFFEE_AUTHORITY
     assert accounts["recipient_token_account"] == GECKOCOFFEE_TOKEN_ACCOUNT
-    assert accounts["sender_token_account"] == derive_ata(BUYER, USDC, token_program=CLASSIC_TOKEN)
+    assert accounts["sender_token_account"] == derive_ata(
+        BUYER, USDC, token_program=CLASSIC_TOKEN
+    )
     # The instruction argument and the accounts come from ONE object, so they agree.
     assert purchase_args(store, table=3)["store_name"] == "geckocoffee"
     assert allowed_destinations(store, buyer_ata=accounts["sender_token_account"]) == {

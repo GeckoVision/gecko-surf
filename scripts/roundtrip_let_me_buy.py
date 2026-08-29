@@ -360,8 +360,12 @@ def expectations(
     """
     ours = {
         "receipts": receipts_pda(config["store"]),
-        "sender_token_account": derive_ata(config["buyer"], USDC, token_program=TOKEN_PROGRAM_ID),
-        "recipient_token_account": derive_ata(config["authority"], USDC, token_program=TOKEN_PROGRAM_ID),
+        "sender_token_account": derive_ata(
+            config["buyer"], USDC, token_program=TOKEN_PROGRAM_ID
+        ),
+        "recipient_token_account": derive_ata(
+            config["authority"], USDC, token_program=TOKEN_PROGRAM_ID
+        ),
     }
     if set(ours) != DERIVABLE_SLOTS:
         raise ExpectationError(
