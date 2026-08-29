@@ -1,0 +1,66 @@
+{
+ "superteamde": [
+  "Jägermeister"
+ ],
+ "skyline": [
+  "Shot"
+ ],
+ "longtail-1": [
+  "shot"
+ ],
+ "longtailtest": [
+  "Test Shot"
+ ],
+ "foolsgold": [
+  "Beer"
+ ],
+ "jacobstore": [
+  "Computers"
+ ],
+ "solanaspaces": [
+  "Drink",
+  "Store"
+ ],
+ "default": [
+  "product",
+  "product-usdc",
+  "product-usdc-2",
+  "product-3",
+  "default"
+ ],
+ "superteststore": [
+  "supertest",
+  "JägermeisterJägermeister",
+  "omgomgomgomgogmogmg",
+  "omgomgomgomgogmogmg2"
+ ],
+ "jonasbar": [
+  "Water",
+  "Jägermeister"
+ ],
+ "geckocoffee": [
+  "Espresso",
+  "Sparkling water",
+  "Cappuccino",
+  "Mochaccino",
+  "Brewed Coffee (drip)",
+  "Espresso (double)",
+  "Decaf Espresso",
+  "Oat Cappuccino",
+  "Espresso Macchiato",
+  "Latte Macchiato",
+  "Mocha",
+  "Dirty Chai",
+  "Chai Latte",
+  "Matcha Latte",
+  "Babyccino",
+  "Cold Brew",
+  "Still Water",
+  "Tonic Water",
+  "Coconut Water",
+  "Espresso Tonic"
+ ],
+ "alexsbar": [
+  "Wine"
+ ]
+}
