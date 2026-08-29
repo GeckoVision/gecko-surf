@@ -51,22 +51,38 @@ jobs:
       - name: Install (serve extra + dev group)
         run: uv sync --extra serve
 
-      # The four mandatory gates (.claude/rules/python.md). Any one red fails the PR.
+      # The mandatory gates (.claude/rules/python.md). Any one red fails the PR — but
+      # every one of them RUNS, which was not true before.
+      #
+      # Steps are sequential and stop at the first failure by default, and the first
+      # gate is the cheapest one: formatting. Main sat red on it for five merges, and
+      # because the run stopped there, `ruff check`, `mypy`, the index diff and the
+      # whole test suite never executed. Branch protection reads "CI failed" either
+      # way, so a stray blank line and a broken test were indistinguishable from
+      # outside — five merges landed on a signal that could not tell them apart.
+      #
+      # `!cancelled()` rather than `always()`: a cancelled run should stop, but a
+      # failed gate must not hide the ones behind it. The job still fails if any gate
+      # fails; what changes is that the report is complete.
       - name: ruff format --check
         run: uv run ruff format --check .
 
       - name: ruff check
+        if: ${{ !cancelled() }}
         run: uv run ruff check .
 
       - name: mypy gecko
+        if: ${{ !cancelled() }}
         run: uv run mypy gecko
 
       # The index is generated FROM the docstrings, so it can only be stale, never
       # wrong. Stale is enough to send the next reader back to grepping.
       - name: module index is current
+        if: ${{ !cancelled() }}
         run: uv run python scripts/module_index.py --check
 
       - name: pytest
+        if: ${{ !cancelled() }}
         run: uv run pytest -q
 
   # The BLINDING CANARY. Separate job because it needs the [ocr] extra, which the main
