@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "From intent to signature",
+    "subtitle": "Orquestra catalogs what programs do. Gecko reads the catalog and resolves the rest.",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "usuario", "type": "external", "label": "User",
+      "sublabel": "buy a coffee", "pos": [40, 250], "size": [140, 60] },
+    { "id": "agente", "type": "frontend", "label": "Agent",
+      "sublabel": "owns the loop", "pos": [250, 250], "size": [140, 60], "tag": "drives" },
+    { "id": "orquestra", "type": "external", "label": "Orquestra",
+      "sublabel": "programs → APIs", "pos": [250, 60], "size": [140, 60] },
+    { "id": "catalogo", "type": "database", "label": "Semantic catalog",
+      "sublabel": "intents", "pos": [470, 60], "size": [150, 60] },
+    { "id": "resolver", "type": "backend", "label": "Resolve the path",
+      "sublabel": "steps nobody asked for", "pos": [700, 60], "size": [150, 60] },
+    { "id": "verificar", "type": "security", "label": "Verify and refuse",
+      "sublabel": "before signing", "pos": [930, 60], "size": [150, 60], "tag": "the refusal" },
+    { "id": "paybox", "type": "security", "label": "PayBox / 1Claw",
+      "sublabel": "signs", "pos": [470, 440], "size": [150, 60] },
+    { "id": "chain", "type": "cloud", "label": "Solana mainnet",
+      "sublabel": "settles", "pos": [700, 440], "size": [150, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Gecko", "wraps": ["catalogo", "resolver", "verificar"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "usuario", "to": "agente", "label": "in words", "variant": "emphasis" },
+    { "id": "c2", "from": "orquestra", "to": "catalogo", "label": "we read" },
+    { "id": "c3", "from": "agente", "to": "catalogo", "label": "what they want" },
+    { "id": "c4", "from": "catalogo", "to": "resolver" },
+    { "id": "c5", "from": "resolver", "to": "verificar" },
+    { "id": "c6", "from": "verificar", "to": "agente", "label": "ready to sign", "variant": "emphasis" },
+    { "id": "c7", "from": "agente", "to": "paybox", "label": "asks for signature" },
+    { "id": "c8", "from": "paybox", "to": "chain", "label": "broadcasts" }
+  ]
+}
