@@ -2,129 +2,183 @@
 
 # Module index
 
-166 modules in `gecko/`, generated from their own docstrings.
+224 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
 | module | what it is | used by |
 | --- | --- | --- |
 | `_ca_bundle` | Frozen-binary CA bundle — point OpenSSL at the certifi store PyInstaller ships. | 0 |
-| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 16 · `authcheck`, `binding`, `cli` +13 |
+| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 21 · `authcheck`, `binding`, `cli` +18 |
 | `account_recipes` | IDL -> the seed recipe that lets an account PROVE which account it is. | 2 · `read_accounts`, `value_sources` |
 | `agentnative` | Emit an ingested API's own agent-native discovery surface. | 6 · `comprehend_service`, `docsearch`, `http_server` +3 |
 | `arazzo` | Arazzo export — the derived plan as a portable handoff artifact. | 2 · `cli`, `mcp_server` |
-| `artifact` | The per-program artifact — what a catalogue stores beside an IDL so agents can call it. | 1 · `cli` |
+| `artifact` | The per-program artifact — what a catalogue stores beside an IDL so agents can call it. | 2 · `cli`, `providers.catalog_surface` |
 | `authcheck` | Live credential check — "do these creds ACTUALLY authenticate?" | 0 |
 | `authlogin` | Hosted login service — email OTP → a minted Gecko key (SERVER-SIDE identity). | 1 · `http_server` |
 | `autonomous_purchase` | One call that prepares, verifies, authorises, signs and settles a purchase. | 1 · `prepare_purchase` |
 | `binding` | Per-customer binding — the join that makes the day-one model work. | 0 |
-| `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 11 · `authcheck`, `catalog_mcp`, `chain_eval` +8 |
+| `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 15 · `authcheck`, `catalog_mcp`, `chain_eval` +12 |
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
-| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 6 · `client`, `find_start`, `ingest_gate` +3 |
+| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 7 · `client`, `find_start`, `ingest_gate` +4 |
 | `catalog_mcp` | Aggregated MCP surface over the whole pay.sh catalog — one MCP, 70 providers. | 1 · `serve_mcp` |
 | `catalogue_export` | The semantic catalogue, serialised so a non-Python consumer can DERIVE it. | 0 |
 | `chain_eval` | Chain-FCC harness — the chain analogue of ``fcc_eval`` (§6, §12 Phase 1). | 0 |
-| `cli` | ``gecko`` CLI — an argparse subcommand dispatcher. Thin by design. | 2 · `find_start`, `ingest_gate` |
-| `client` | AgentApiClient — the one object that makes an API agent-usable. | 26 · `agentnative`, `authcheck`, `binding` +23 |
+| `cli` | ``gecko`` CLI — an argparse subcommand dispatcher. Thin by design. | 0 |
+| `client` | AgentApiClient — the one object that makes an API agent-usable. | 31 · `agentnative`, `authcheck`, `binding` +28 |
 | `compose` | Cross-surface composition (§12 Phase 4, §13) — per-surface graphs composed at | 1 · `safechain` |
 | `comprehend_service` | Comprehend a submitted API — the shared core behind both 'submit your API' doors. | 3 · `http_server`, `mcp_server`, `preflight` |
 | `connect` | ``gecko connect <surface>`` — reach a GATED hosted surface with the Gecko key held | 0 |
-| `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 6 · `cli`, `drift`, `drift_watch` +3 |
+| `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 12 · `cli`, `drift`, `drift_watch` +9 |
 | `corrections` | Args-side of the correctness corpus — captured corrections that raise first-call-correct | 1 · `fcc_eval` |
 | `correlate` | The correlation engine (§13 Phase 2) — the confidence, done honestly. | 5 · `catalog_mcp`, `metrics`, `provider_matrix` +2 |
-| `credentials` | Local credential resolver — fetch the user's provider key at call time. | 7 · `access`, `authcheck`, `connect` +4 |
-| `deeplinks` | One-click add strings for the hosted MCP surface. | 1 · `serve` |
+| `credentials` | Local credential resolver — fetch the user's provider key at call time. | 10 · `access`, `authcheck`, `connect` +7 |
+| `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
 | `dense` | The dense retrieval arm — MongoDB Atlas ``$vectorSearch`` over per-op ``SurfaceDoc``s. | 2 · `client`, `search` |
+| `docs_reader.core` | from-docs orchestration — human doc page -> draft OpenAPI, the whole $0 flow. | 0 |
+| `docs_reader.emit` | Candidate operations -> a *draft* OpenAPI 3.1 document. | 1 · `docs_reader.core` |
+| `docs_reader.html` | Stdlib HTML -> the parser's ordered node stream (the $0 rendering seam). | 1 · `docs_reader.core` |
+| `docs_reader.markdown` | Markdown → ``ParsedPage`` — the ``.md`` twin path for ``gecko from-docs``. | 1 · `docs_reader.core` |
+| `docs_reader.models` | Data contracts crossing the parser / html / emit boundary. | 5 · `docs_reader.core`, `docs_reader.emit`, `docs_reader.html` +2 |
+| `docs_reader.parser` | Pure, offline docs->surface extractor — the falsifiable core of docs_reader. | 2 · `docs_reader.core`, `docs_reader.html` |
+| `docs_reader.render` | Rendered fetch for JS-hydrated docs — the fallback behind ``gecko from-docs``. | 1 · `docs_reader.core` |
+| `docs_reader.scan` | Skill Guard comprehension seam — scan an untrusted doc page during ``from-docs``. | 2 · `cli`, `docs_reader.core` |
 | `docsearch` | Virtualized-docs search — the self-heal ``query_docs`` engine. | 2 · `mcp_server`, `selfheal_eval` |
 | `drift` | The drift series — the compounding, honest V2 asset (D2 §5). | 2 · `cli`, `drift_watch` |
 | `drift_watch` | The drift scheduler — re-simulate a known-good plan until it stops being good. | 1 · `cli` |
 | `encdetect` | Encoding-aware decode + rescan for Skill Guard — closes the base64/hex/rot13 residual. | 0 |
-| `enforce` | Inline enforcement gate — promote the semantic risk SCORE to an ENFORCED | 6 · `http_server`, `jito_surface`, `mcp_server` +3 |
+| `enforce` | Inline enforcement gate — promote the semantic risk SCORE to an ENFORCED | 7 · `http_server`, `jito_surface`, `mcp_server` +4 |
 | `enrich` | S0 enrich-before-embed — one situating blurb per Operation (the cheapest lever). | 3 · `catalog`, `corrections`, `surfacedoc` |
 | `entitlements` | Entitlements — which customer may access which surface, and how. | 2 · `binding`, `x402_pay` |
 | `error_overlay` | What to DO about a program error — Gecko's knowledge, and labelled as ours. | 1 · `prepare_instruction` |
 | `evaluate` | Task-based first-call-correct evaluation (generic, API-agnostic). | 1 · `fcc_eval` |
-| `events` | Usage-event instrumentation — the honest adoption metric AND the first | 8 · `capture`, `client`, `enforce` +5 |
+| `events` | Usage-event instrumentation — the honest adoption metric AND the first | 9 · `capture`, `client`, `enforce` +6 |
 | `evidence` | The control that has to light up before a measurement is allowed to be a result. | 2 · `retrieval_eval`, `score` |
+| `examples.colosseum` | Serve the Colosseum Copilot API to your agent — first-call-correct, BYOK. | 1 · `serve_mcp` |
+| `examples.jupiter` | Serve the Jupiter Swap API to your agent — first-call-correct, keyless by default. | 0 |
+| `examples.ore` | Serve the ORE program's instruction↔PDA graph — the seeds an IDL/llms.txt loses. | 1 · `serve_mcp` |
+| `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 4 · `ingest_gate`, `prove`, `retrieval_eval` +1 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 11 · `ingest_gate`, `prove`, `providers.catalog_surface` +8 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
-| `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 1 · `semantic_seed` |
+| `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
 | `graph` | Surface graph — correlations & multi-call planning (V2 §4/§5). | 17 · `arazzo`, `chain_eval`, `client` +14 |
 | `handoff` | The signer handoff — a Receipt, the bytes it attests, and a verdict over someone else's. | 3 · `autonomous_purchase`, `prepare_purchase`, `signer` |
 | `hints` | DECLARED entity hints — the top of the §13.2 trust ladder. | 3 · `cli`, `client`, `serve` |
 | `honeypot` | Honeypot tripwire — decoy tools a *comprehended* surface never emits. | 1 · `mcp_server` |
 | `hosted_login` | ``gecko login`` client — talk ONLY to Gecko's server (Privy is a server detail). | 0 |
-| `http_server` | HTTP transport — serve the EXISTING ``McpSurface`` over MCP Streamable HTTP. | 6 · `mcp_server`, `program_mcp`, `serve` +3 |
+| `http_server` | HTTP transport — serve the EXISTING ``McpSurface`` over MCP Streamable HTTP. | 11 · `examples.colosseum`, `examples.jupiter`, `examples.ore` +8 |
 | `identity` | SessionIdentity — bind a session to its operator policy (shape-now-token-later). | 1 · `access` |
 | `idl_layout` | Where a field lives inside an Anchor account, computed from the IDL — or refused. | 3 · `ingest_gate`, `pda_extract`, `read_accounts` |
-| `imagescan` | Skill Guard L2 + L3 — deterministic image metadata / trailing-byte / OCR scan. | 0 |
-| `ingest` | OpenAPI surface ingestor. | 16 · `catalog`, `chain_eval`, `cli` +13 |
-| `ingest_gate` | Should this program be ingested at all? A gate on ingesting, not a step in ingesting. | 0 |
+| `imagescan` | Skill Guard L2 + L3 — deterministic image metadata / trailing-byte / OCR scan. | 1 · `docs_reader.scan` |
+| `ingest` | OpenAPI surface ingestor. | 21 · `catalog`, `chain_eval`, `cli` +18 |
+| `ingest_gate` | Should this program be ingested at all? A gate on ingesting, not a step in ingesting. | 1 · `providers.cli` |
 | `inspect` | ``gecko inspect`` — a provider-facing agent-readiness scorecard. | 2 · `http_server`, `report` |
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
-| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 3 · `authlogin`, `cli`, `http_server` |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 4 · `autonomous_purchase`, `prepare_purchase`, `store_accounts` +1 |
+| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 16 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +13 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 2 · `catalog`, `find_start` |
-| `lifecycle` | The order a program's instructions must happen in — derived, not described. | 0 |
+| `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
-| `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 2 · `orquestra_build`, `partner_delta` |
-| `mcp_server` | MCP surface — what an agent actually installs. | 7 · `binding`, `catalog_mcp`, `http_server` +4 |
-| `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 0 |
-| `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 1 · `whirlpool_math` |
+| `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 3 · `orquestra_build`, `partner_delta`, `providers.catalog_surface` |
+| `mcp_server` | MCP surface — what an agent actually installs. | 14 · `binding`, `catalog_mcp`, `examples.colosseum` +11 |
+| `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 1 · `providers.metadao` |
+| `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 3 · `providers.meteora`, `providers.meteora_landing`, `whirlpool_math` |
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
-| `modes` | Canonical call-mode type — the single source of truth. | 11 · `binding`, `catalog_mcp`, `cli` +8 |
-| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 17 · `access`, `caller`, `cli` +14 |
-| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 10 · `autonomous_purchase`, `corpus`, `fork_preflight` +7 |
+| `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
+| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 23 · `access`, `caller`, `cli` +20 |
+| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 12 · `autonomous_purchase`, `corpus`, `fork_preflight` +9 |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
-| `ore_state` | Read + decode ORE V3 ``Miner`` / ``Treasury`` accounts — the state a claim needs. | 0 |
-| `orquestra_build` | The Orquestra-backed seams for :mod:`gecko.prepare_instruction`. | 0 |
-| `orquestra_client` | A thin, typed client for Orquestra's machine surface (the program catalog). | 3 · `cli`, `find_start`, `orquestra_comprehend` |
-| `orquestra_comprehend` | Auto-comprehend-on-pick — generate a program config from an Orquestra surface. | 0 |
+| `ore_state` | Read + decode ORE V3 ``Miner`` / ``Treasury`` accounts — the state a claim needs. | 1 · `providers.ore` |
+| `orquestra_build` | The Orquestra-backed seams for :mod:`gecko.prepare_instruction`. | 1 · `providers.catalog_surface` |
+| `orquestra_client` | A thin, typed client for Orquestra's machine surface (the program catalog). | 5 · `cli`, `find_start`, `orquestra_comprehend` +2 |
+| `orquestra_comprehend` | Auto-comprehend-on-pick — generate a program config from an Orquestra surface. | 2 · `providers.catalog_surface`, `providers.cli` |
 | `partner_delta` | What a partner's live surface says about a PDA, and what ours says — side by side. | 0 |
 | `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 3 · `catalog_mcp`, `paysh_watch`, `serve_mcp` |
 | `paysh_watch` | Hourly self-refresh + drift-watch for the aggregated pay.sh catalog surface. | 0 |
-| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 14 · `account_recipes`, `corpus`, `find_start` +11 |
+| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 24 · `account_recipes`, `corpus`, `find_start` +21 |
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
-| `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 0 |
-| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 0 |
+| `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 2 · `providers.meteora`, `providers.pumpfun` |
+| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 8 · `providers.metadao`, `providers.metadao_landing`, `providers.meteora` +5 |
 | `peg_guard` | Is this asset holding its peg? A guard on converting, not a step in converting. | 0 |
 | `plan_refusals` | Plan-time refusals: the account-distinctness facts no artifact states. | 2 · `autonomous_purchase`, `prepare_purchase` |
 | `planner` | Intent → plan wiring (§5, §12 Phase 1) — the seam that makes ``graph.plan()`` | 1 · `client` |
 | `plugin_export` | Package it — export a provider-branded Agent Plugin from a comprehended surface. | 1 · `cli` |
 | `policy` | Operator-authored agent governance — the ``AgentPolicy`` record. | 2 · `identity`, `risk` |
 | `preflight` | Preflight — the pre-prod agent-callability gate. | 0 |
-| `preflight_corpus` | Control-plane-safe Preflight corpus — the moat, made load-bearing from day one. | 1 · `preflight` |
-| `prepare_instruction` | Prepare ANY instruction of ANY comprehended program — unsigned, simulated, or refused. | 0 |
-| `prepare_purchase` | Plan and verify one ``let_me_buy make_purchase`` — and stop at the signature. | 2 · `store_accounts`, `store_directory` |
+| `preflight_corpus` | Control-plane-safe Preflight corpus — the moat, made load-bearing from day one. | 2 · `preflight`, `registry.api` |
+| `prepare_instruction` | Prepare ANY instruction of ANY comprehended program — unsigned, simulated, or refused. | 3 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.rehearse_instruction` |
+| `prepare_purchase` | Plan and verify one ``let_me_buy make_purchase`` — and stop at the signature. | 4 · `providers.catalog_surface`, `sandbox.rehearse`, `store_accounts` +1 |
 | `privy_auth` | PrivyAccountResolver — verify a Privy access-token "Gecko key" → stable account id. | 1 · `http_server` |
 | `privy_login` | Privy passwordless email-OTP provider for ``gecko login``. | 2 · `privy_auth`, `privy_server` |
 | `privy_server` | Server-side Privy email-OTP — identity for the hosted ``gecko login`` (SERVER-ONLY). | 1 · `authlogin` |
 | `program_errors` | Name a reverted call's error against the program's OWN table — or refuse to name it. | 1 · `prepare_instruction` |
-| `program_graph` | The instruction↔PDA derivation graph — the join, assembled and emitted. | 6 · `artifact`, `find_start`, `lifecycle` +3 |
-| `program_mcp` | Serve a program's instruction↔PDA graph as an agent-facing MCP surface. | 0 |
+| `program_graph` | The instruction↔PDA derivation graph — the join, assembled and emitted. | 11 · `artifact`, `find_start`, `lifecycle` +8 |
+| `program_mcp` | Serve a program's instruction↔PDA graph as an agent-facing MCP surface. | 1 · `examples.ore` |
+| `project.errors` | Every way a projection can refuse, as one typed hierarchy. | 4 · `project.fdl`, `project.graph_read`, `project.probes` +1 |
+| `project.fdl` | ProgramGraph -> one Orquestra FDL document (the Flow Definition Language). | 0 |
+| `project.graph_read` | The questions every projector asks a :class:`~gecko.program_graph.ProgramGraph`. | 2 · `project.fdl`, `project.probes` |
+| `project.probes` | ProgramGraph -> the probe cases a scorecard runs. The list nobody types by hand. | 0 |
+| `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 1 · `cli` |
-| `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 8 · `correlate`, `find_start`, `graph` +5 |
-| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 5 · `find_start`, `ingest_gate`, `orquestra_client` +2 |
+| `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
+| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 11 · `find_start`, `ingest_gate`, `orquestra_client` +8 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
-| `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 0 |
-| `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 1 · `ingest_gate` |
+| `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 2 · `providers.cli`, `serve_mcp` |
+| `providers.cli` | ``gecko-orquestra`` — serve an Orquestra program's front-door surface over MCP. | 9 · `cli`, `find_start`, `ingest_gate` +6 |
+| `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
+| `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
+| `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 6 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +3 |
+| `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 0 |
+| `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
+| `providers.metadao_landing` | The MetaDAO "fund-that-passes" orchestrator — the third program that RUNS. | 0 |
+| `providers.meteora` | Meteora DLMM — the first Orquestra provider instance (the touchable Berkay demo). | 2 · `providers.cli`, `providers.meteora_landing` |
+| `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 0 |
+| `providers.ore` | ORE V3 ``claimOre`` — the fourth Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.ore_landing` |
+| `providers.ore_landing` | The ORE "claim-that-passes" orchestrator — the fourth program that RUNS. | 0 |
+| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 6 · `providers.cli`, `providers.jupiter`, `providers.metadao` +3 |
+| `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
+| `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
+| `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
+| `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 2 · `ingest_gate`, `providers.catalog_surface` |
 | `recorded_lane` | The recorded lane — the $0 first green, and the attributed simulate feed. | 0 |
+| `redteam.__main__` | gecko-redteam — run the off-chain battle-test suite and gate on the scorecard. | 0 |
+| `redteam._naive` | The naive OpenAPI -> tool baseline, as a SHIPPED fixture of the engine's contrast. | 1 · `redteam.harness` |
+| `redteam.harness` | Harness — the decision seam + two defense arms + the per-scenario run loop. | 3 · `redteam.__main__`, `redteam.policies`, `redteam.scorer` |
+| `redteam.matrix` | Security-TDD adversarial vector matrix — the "TDD for APIs" made real for security. | 0 |
+| `redteam.policies` | The paired ScriptedPolicies — the $0 CI pass/fail day one. | 1 · `redteam.__main__` |
+| `redteam.report` | Report — present the battle-test scorecard and write the control-plane-safe audit. | 1 · `redteam.__main__` |
+| `redteam.scenarios` | The 12 v1 battle-test scenarios as immutable DATA (off-chain, $0, deterministic). | 5 · `redteam.__main__`, `redteam.harness`, `redteam.matrix` +2 |
+| `redteam.scorer` | Scorer — the harm oracle + verdict mapping + the 2x2 scorecard. | 2 · `redteam.__main__`, `redteam.report` |
+| `registry.api` | Registry HTTP surface — mounted into the existing multi-surface server. | 1 · `serve_mcp` |
+| `registry.client` | Runner-side registry fetch: TLS fetch -> local cache -> offline fallback. | 3 · `examples.colosseum`, `examples.jupiter`, `serve` |
+| `registry.keys` | Gecko key issuance: agent-native email OTP -> ``gk_live_`` key. | 2 · `registry.api`, `registry.wiring` |
+| `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |
+| `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 1 · `registry.wiring` |
+| `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
-| `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 0 |
+| `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 0 |
-| `risk` | Semantic risk-score — the comprehension-native security signal. | 3 · `enforce`, `evaluate`, `mcp_server` |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 23 · `autonomous_purchase`, `cli`, `drift_watch` +20 |
+| `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 39 · `autonomous_purchase`, `cli`, `drift_watch` +36 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
-| `sample` | Schema -> example generator for recorded mode. | 5 · `client`, `demo`, `report` +2 |
-| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 9 · `client`, `corpus`, `enrich` +6 |
+| `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
+| `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
+| `sandbox.cheatcodes` | Surfpool cheatcodes, with the parameter shapes MEASURED against a running fork. | 4 · `sandbox.deliver`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +1 |
+| `sandbox.deliver` | A delivery, rehearsed on a fork — and the transaction that SUCCEEDS while doing nothing. | 1 · `sandbox.agents` |
+| `sandbox.probe` | Probe sandbox — offline validation that answers with the API's OWN error shape. | 0 |
+| `sandbox.rehearse` | The whole purchase, rehearsed on a fork — and JUDGED by what actually moved. | 6 · `fork_lane`, `sandbox.agents`, `sandbox.deliver` +3 |
+| `sandbox.rehearse_instruction` | Rehearse ANY instruction on a proven local fork — and report what moved. | 0 |
+| `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 8 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +5 |
+| `sandbox.try_purchase` | ``try_purchase`` — the rehearsal, as a tool an agent can reach, beside the real one. | 1 · `providers.catalog_surface` |
+| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 11 · `client`, `corpus`, `enrich` +8 |
 | `scale` | Below-scale surface sizing — the "don't truncate when you don't have to" rule. | 1 · `client` |
 | `scope` | Retrieval returns a SCOPE, not a surface — the attention budget of one search. | 1 · `mcp_server` |
 | `score` | The provider report — one surface, before and after, and what changed. | 0 |
@@ -141,36 +195,40 @@ package depends on it, which is worth a look before you add a caller.
 | `serve` | ``python -m gecko.serve <openapi-url>`` — paste an API, serve it to agents. | 0 |
 | `serve_mcp` | Container entrypoint — serve the humanitarian MCP surfaces over Streamable HTTP. | 0 |
 | `serve_providers` | Provider-facing MCP host — a SEPARATE space from the humanitarian relief host. | 0 |
-| `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 0 |
+| `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 13 · `autonomous_purchase`, `corpus`, `drift_watch` +10 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 23 · `autonomous_purchase`, `corpus`, `drift_watch` +20 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 2 · `autonomous_purchase`, `signer` |
-| `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 0 |
-| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 2 · `prepare_purchase`, `semantic_seed` |
-| `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 3 · `semantic_fork_surface`, `semantic_seed`, `store_accounts` |
+| `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
+| `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
+| `store.collections` | A minimal duck-typed collection seam — in-memory for tests, Mongo in prod. | 5 · `fork_lane`, `recorded_lane`, `store.catalog_sync` +2 |
+| `store.projections` | The ONLY writer into the outcome collection — allowlist-first, fail-closed. | 2 · `fork_lane`, `recorded_lane` |
+| `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
+| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 8 · `prepare_purchase`, `providers.let_me_buy`, `sandbox.agents` +5 |
+| `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 8 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.agents` +5 |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |
 | `surfacereport` | The graph report for an API surface — what the graph says about the API. | 1 · `workflows` |
-| `surfaces` | Surface Registry — the internal control-plane store of comprehended API surfaces. | 10 · `binding`, `catalog_mcp`, `client` +7 |
+| `surfaces` | Surface Registry — the internal control-plane store of comprehended API surfaces. | 11 · `binding`, `catalog_mcp`, `client` +8 |
 | `surfaceviz` | Render the Agent Surface as an SVG call graph — "graphviz for APIs". | 3 · `mcp_server`, `report`, `surface` |
-| `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 4 · `events`, `http_server`, `onboard` +1 |
+| `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 5 · `events`, `http_server`, `onboard` +2 |
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 13 · `agentnative`, `catalog`, `chain_eval` +10 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 16 · `agentnative`, `catalog`, `chain_eval` +13 |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
 | `value_sources` | Where a missing seed value can be READ from — the hop between two of our own tools. | 1 · `prepare_instruction` |
 | `verify` | verify-docs — check a surface's operations against reality, attach verdicts (VAS-2). | 2 · `authcheck`, `report` |
-| `verify_signed` | Did the signer sign the transaction we checked? | 0 |
+| `verify_signed` | Did the signer sign the transaction we checked? | 1 · `providers.catalog_surface` |
 | `vindex` | The value-domain index (§13 Phase 3.3) — "what correlates with X across ALL | 4 · `catalog_mcp`, `cli`, `metrics` +1 |
 | `waf` | WAF / robot-block middleware for the hosted multi-surface MCP server. | 1 · `http_server` |
-| `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 1 · `prepare_purchase` |
+| `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 3 · `prepare_purchase`, `providers.catalog_surface`, `registry.wallets` |
 | `wellknown` | Host-level ``.well-known`` discovery manifests for the public multi-surface app. | 1 · `http_server` |
 | `whirlpool_math` | Orca Whirlpool price math — the OUTPUT FLOOR a landable swap needs, and its inverse. | 0 |
 | `workflows` | Derive the workflows an agent will actually want, ranked — no human authoring them. | 1 · `cli` |
-| `x402` | x402 402-challenge validation — the enforce point for the payment-swap scenario. | 1 · `x402_pay` |
+| `x402` | x402 402-challenge validation — the enforce point for the payment-swap scenario. | 3 · `redteam.scenarios`, `redteam.scorer`, `x402_pay` |
 | `x402_facilitator` | Live x402 facilitator adapter — the HTTP relay behind ``X402_MODE=live``. | 1 · `x402_pay` |
 | `x402_pay` | Flow-A x402 billing — Gecko collects its OWN flat per-surface subscription in USDC. | 1 · `x402_facilitator` |

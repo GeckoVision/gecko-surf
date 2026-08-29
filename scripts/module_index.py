@@ -1,6 +1,6 @@
 """Generate the module index — the thing this repo sells, pointed at itself.
 
-`gecko/` holds 165 modules and CLAUDE.md names 24 of them. The cost is not
+`gecko/` holds 233 modules and CLAUDE.md names 24 of them. The cost is not
 comprehension: the docstrings here are unusually good. The cost is DISCOVERY —
 three to five greps before every task, just to learn whether a thing already
 exists. That is the same failure we charge providers to fix on their surface.
@@ -8,6 +8,13 @@ exists. That is the same failure we charge providers to fix on their surface.
 Emits `docs/module-index.md`: one row per module, its first docstring line, and
 who imports it. Everything is read from the source, so it cannot drift into a
 lie the way a hand-maintained table does; CI regenerates and diffs it.
+
+WHY `rglob` AND NOT `glob`, because the first version got this wrong. Scanning
+only `gecko/*.py` left 67 files under `gecko/**/` out of the IMPORTER population,
+so a module used only from `providers/` or `sandbox/` printed `0 importers` and
+read as dead. The arithmetic was right and the population was wrong — the same
+failure the module index exists to make visible, committed by the index itself.
+A "0" here is a claim about every file in the package or it is noise.
 
     uv run python scripts/module_index.py            # write the file
     uv run python scripts/module_index.py --check    # CI: fail if stale
@@ -40,42 +47,75 @@ def _summary(path: Path) -> str:
     return first if len(first) <= 96 else first[:93].rstrip() + "…"
 
 
+def _module_name(path: Path) -> str:
+    """`gecko/providers/cli.py` -> `providers.cli`. The dotted name a reader greps for."""
+    return ".".join(path.relative_to(PKG).with_suffix("").parts)
+
+
+def _resolve(module: str | None, level: int, importer: str) -> str:
+    """The absolute in-package name a single import refers to.
+
+    `level` is the leading-dot count, so a relative import has to be resolved against
+    the importing module's own package or it silently lands on the wrong row: inside
+    `providers/cli.py`, `from .let_me_buy import X` is `providers.let_me_buy`, while
+    `from ..graph import Y` is `graph`.
+    """
+    if not level:
+        base = (module or "").removeprefix("gecko.")
+        return base if base != "gecko" else ""
+    parts = importer.split(".")[:-1]  # the importing module's package
+    up = parts[: len(parts) - (level - 1)] if level > 1 else parts
+    return ".".join([*up, *(module.split(".") if module else [])])
+
+
 def _local_imports(path: Path, names: set[str]) -> set[str]:
-    """Sibling modules this file imports — the edge that answers 'who uses this?'."""
+    """In-package modules this file imports — the edge that answers 'who uses this?'.
+
+    Resolves to the LONGEST known prefix, so `from .configs.orquestra import x` credits
+    `providers.configs` when that is the module that exists.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (SyntaxError, OSError):
         return set()
+    me = _module_name(path)
     found: set[str] = set()
+
+    def _credit(dotted: str) -> None:
+        parts = dotted.split(".")
+        for cut in range(len(parts), 0, -1):
+            candidate = ".".join(parts[:cut])
+            if candidate in names:
+                found.add(candidate)
+                return
+
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            head = node.module.split(".")[0] if node.level else node.module
-            tail = node.module.split(".")[-1]
-            for cand in (head, tail):
-                if cand in names:
-                    found.add(cand)
+        if isinstance(node, ast.ImportFrom):
+            _credit(_resolve(node.module, node.level, me))
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                tail = alias.name.split(".")[-1]
-                if tail in names:
-                    found.add(tail)
-    return found - {path.stem}
+                _credit(alias.name.removeprefix("gecko."))
+    return found - {me}
 
 
 def build() -> str:
-    modules = sorted(p for p in PKG.glob("*.py") if p.stem != "__init__")
-    names = {p.stem for p in modules}
+    modules = sorted(
+        p
+        for p in PKG.rglob("*.py")
+        if p.stem != "__init__" and "__pycache__" not in p.parts
+    )
+    names = {_module_name(p) for p in modules}
     importers: dict[str, set[str]] = defaultdict(set)
     for path in modules:
         for dep in _local_imports(path, names):
-            importers[dep].add(path.stem)
+            importers[dep].add(_module_name(path))
 
     lines = [
         HEADER,
         "",
         "# Module index",
         "",
-        f"{len(modules)} modules in `gecko/`, generated from their own docstrings.",
+        f"{len(modules)} modules in `gecko/` (subpackages included), from their own docstrings.",
         "`used by` counts sibling modules that import it — a 0 means nothing in the",
         "package depends on it, which is worth a look before you add a caller.",
         "",
@@ -83,13 +123,14 @@ def build() -> str:
         "| --- | --- | --- |",
     ]
     for path in modules:
-        who = sorted(importers.get(path.stem, ()))
+        who = sorted(importers.get(_module_name(path), ()))
         shown = ", ".join(f"`{w}`" for w in who[:3])
         if len(who) > 3:
             shown += f" +{len(who) - 3}"
         summary = _summary(path).replace("|", "\\|") or "_(no docstring)_"
         lines.append(
-            f"| `{path.stem}` | {summary} | {len(who)}{' · ' + shown if who else ''} |"
+            f"| `{_module_name(path)}` | {summary} | "
+            f"{len(who)}{' · ' + shown if who else ''} |"
         )
     lines.append("")
     return "\n".join(lines)
