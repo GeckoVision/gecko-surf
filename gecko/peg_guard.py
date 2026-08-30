@@ -72,6 +72,10 @@ _BLOCKING: frozenset[str] = frozenset({"refuse", "undetermined"})
 #: (symbol) -> the parsed `/v1/assets/{symbol}/state` body, or None when untracked.
 StateReader = Callable[[str], "dict[str, Any] | None"]
 
+#: (mint) -> what the oracle actually said. The injected seam for every caller that needs
+#: a peg opinion: `gecko.pegana.pegana_reader` live, `recorded_peg_reader` at $0.
+PegReader = Callable[[str], "PegReading"]
+
 
 @dataclass(frozen=True)
 class PegReading:
