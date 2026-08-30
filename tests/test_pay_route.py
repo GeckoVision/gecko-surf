@@ -5,6 +5,8 @@ pin, because each refusal is cheaper and more certain than the one after it, and
 that runs too late is a check that already spent something.
 """
 
+import pytest
+
 from gecko import pay_route
 from gecko.peg_guard import PegReading
 from gecko.pegana import recorded_peg_reader
@@ -282,3 +284,92 @@ def test_nothing_in_the_package_raises_system_exit() -> None:
     import inspect
 
     assert "SystemExit" not in inspect.getsource(pay_route)
+
+
+# --- the sizing bound must be ONE number, and it must travel -------------------------
+#
+# The mainnet bug, reproduced. `pay_route` sized with slippage_bps=50 while
+# scripts/prepare_whirlpool_swap.py builds with --slippage-bps defaulting to 100. The
+# sizing guarantees delivery under a 50 bps floor; executed under 100 the guaranteed
+# floor is strictly lower and can fall under the price. On mainnet that printed 101,001
+# against a 100,000 price where 101,022 was needed, and cleared with 1,011 to spare —
+# luck, not a guarantee. whirlpool_math's own docstring records the 21-unit shortfall.
+
+
+def test_the_swap_bound_is_one_shared_number_not_two() -> None:
+    """The defect was never 'a hardcoded 50'. It was that 50 and 100 were different."""
+    import re
+    from pathlib import Path
+
+    builder = Path("scripts/prepare_whirlpool_swap.py").read_text()
+    declared = re.search(r'"--slippage-bps".*?default=(\d+)', builder, re.S)
+    assert declared, "the builder no longer declares a slippage default"
+    assert int(declared.group(1)) == pay_route.SWAP_SLIPPAGE_BPS, (
+        "pay_route sizes against a different bound than the swap is built with — "
+        "the sizing guarantee is void whenever these disagree"
+    )
+
+
+def test_a_quote_carries_the_bound_its_guarantee_depends_on() -> None:
+    """A guarantee that does not carry its own precondition is how this shipped. A
+    builder using a different bound must be able to DETECT that, not silently void it."""
+    q = pay_route.Quote(
+        pool="p",
+        amount_in=1,
+        direction="a_to_b",
+        liquidity=1,
+        tick_spacing=1,
+        fee_rate=100,
+        slippage_bps=pay_route.SWAP_SLIPPAGE_BPS,
+    )
+    assert q.slippage_bps == pay_route.SWAP_SLIPPAGE_BPS
+    assert q.to_dict()["slippage_bps"] == pay_route.SWAP_SLIPPAGE_BPS
+
+
+def test_the_sized_input_clears_the_price_under_the_bound_it_will_be_built_with() -> (
+    None
+):
+    """End to end against the real math, at the mainnet numbers.
+
+    `quote_min_amount_out` returns `(expected_at_spot, min_amount_out)`; the FLOOR — the
+    only number a guarantee can rest on — is the second.
+    """
+    from gecko.whirlpool_math import quote_min_amount_out, size_input_for_output
+
+    price, sqrt_price, fee_rate = 100_000, 2**64, 100
+    bound = pay_route.SWAP_SLIPPAGE_BPS
+
+    amount_in = size_input_for_output(
+        price, sqrt_price, fee_rate, a_to_b=True, slippage_bps=bound
+    )
+    _expected, floor = quote_min_amount_out(
+        amount_in, sqrt_price, fee_rate, a_to_b=True, slippage_bps=bound
+    )
+    assert floor >= price, (
+        f"sized {amount_in} but its guaranteed floor {floor} is under the {price} price"
+    )
+
+    # And the defect itself: sizing at the OLD 50 bps does NOT clear the price once the
+    # swap is judged at the bound it is actually built with. If this ever stops holding,
+    # the test above is passing for a reason unrelated to the bug.
+    optimistic = size_input_for_output(
+        price, sqrt_price, fee_rate, a_to_b=True, slippage_bps=50
+    )
+    _e, optimistic_floor = quote_min_amount_out(
+        optimistic, sqrt_price, fee_rate, a_to_b=True, slippage_bps=bound
+    )
+    assert optimistic_floor < price, (
+        f"the old 50 bps sizing ({optimistic}) still cleared {price} at {bound} bps — "
+        "the shortfall is not reproduced and this test proves nothing"
+    )
+    assert amount_in > optimistic, "the correct sizing must ask for MORE, not less"
+
+
+def test_a_nonsense_bound_is_a_configuration_error_not_a_venue_outcome() -> None:
+    """Validated ONCE, up front. Swallowed by a per-venue handler it reports 'no route',
+    which tells a caller who misconfigured a floor that nobody trades their pair."""
+    with pytest.raises(pay_route.PayRouteError):
+        pay_route.validate_swap_bound(10_000)  # "accept anything" = no bound at all
+    with pytest.raises(pay_route.PayRouteError):
+        pay_route.validate_swap_bound(-1)
+    assert pay_route.validate_swap_bound(100) == 100
