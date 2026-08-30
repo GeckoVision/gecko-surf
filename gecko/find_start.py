@@ -569,9 +569,10 @@ _SELL_AND_DELIVER = ChainSpec(
             instruction="make_purchase",
             description=(
                 "Buy one listed product from a let_me_buy store and pay the merchant "
-                "in their SPL token — a beer or a coffee at the bar counter, ordered "
-                "by scanning the store's QR code. Writes a receipt into the store "
-                "account, which the merchant later marks delivered."
+                "in their SPL token — a beer, a coffee, an espresso or a cappuccino "
+                "at the bar counter, ordered by scanning the store's QR code. Writes "
+                "a receipt into the store account, which the merchant later marks "
+                "delivered."
             ),
             inputs=(
                 "store_name",
@@ -1451,7 +1452,19 @@ def _query_tokens(intent: str) -> set[str]:
     floored. If these two ever drift apart, the identity/corroboration gates below stop
     agreeing with the ranking they are gating (a card promoted on `depegs`~`depeg` could
     be demoted for "not naming the program")."""
-    return normalize_query(_tokens(intent[:MAX_INTENT_CHARS]))
+    # Bare numbers carry how MANY, never WHICH — no program or instruction is named by
+    # a digit string, so here (and only here) they are not evidence. Measured: "buy 2
+    # Espressos" routed to pumpfun/buy as a runnable START because the `2` matched the
+    # `2` that falls out of tokenizing `bonding_curve_v2` in that card's implementation
+    # notes. The API-operation side KEEPS digits ("kind 77" legitimately selects
+    # `getWidgetKind77`), which is why this filter lives in this query builder and not
+    # in the shared `content_tokens`. The scorer sees the same filtered set — the tokens
+    # below ARE the query it ranks with — so the gate and the ranking cannot drift.
+    return {
+        t
+        for t in normalize_query(_tokens(intent[:MAX_INTENT_CHARS]))
+        if not t.isdigit()
+    }
 
 
 def _card_terms(card: _Card) -> set[str]:

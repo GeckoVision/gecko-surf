@@ -584,3 +584,31 @@ def test_a_card_that_describes_its_implementation_cannot_be_reached_by_task_word
     assert meteora_swap, "meteora.swap should still be offered as a candidate"
     assert meteora_swap[0].kind == "guess"
     assert meteora_swap[0].why == ("swap",)
+
+
+def test_program_query_tokens_drop_bare_numbers() -> None:
+    """The scoped half of the digit rule: `_query_tokens` (program routing) drops pure
+    digits — a quantity names no program — while mixed identifiers stay identifiers."""
+    from gecko.find_start import _query_tokens
+
+    tokens = _query_tokens("buy 2 espressos")
+    assert "2" not in tokens
+    assert any("espresso" in t for t in tokens)
+
+
+def test_a_quantity_does_not_route_a_purchase_to_a_token_launchpad() -> None:
+    """The founder's Q5, pinned. "buy 2 Espressos … convert … USDC" must start at the
+    storefront purchase, not at pumpfun — whose only claim was the token `2` (from
+    `bonding_curve_v2`) plus generic `amount|buy`. The espresso vocabulary now reaches
+    the make_purchase card the same way `coffee` already did for Q1."""
+    from gecko.find_start import find_start
+
+    result = find_start(
+        "I'd like to buy 2 Espressos. I only have USDG and I need you to "
+        "convert the right amount to USDC"
+    )
+    assert not result.no_start
+    top = result.starts[0]
+    assert (top.program, top.instruction) == ("let_me_buy", "make_purchase"), (
+        f"routed to {top.program}/{top.instruction} [{top.kind}] via {top.why}"
+    )
