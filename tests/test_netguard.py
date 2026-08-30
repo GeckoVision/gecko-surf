@@ -406,7 +406,9 @@ def test_safe_get_status_does_not_soften_an_ssrf_refusal() -> None:
 def test_safe_get_is_unchanged_and_still_raises_on_404() -> None:
     # The refactor must not move the existing contract: every current caller of safe_get
     # keeps getting the ORIGINAL HTTPError object, not a re-wrapped one.
-    err = urllib.error.HTTPError("https://a.example.com/x", 404, "Not Found", None, None)
+    err = urllib.error.HTTPError(
+        "https://a.example.com/x", 404, "Not Found", None, None
+    )
 
     def factory(pinned_ip: str | None) -> object:
         return _FakeOpener([err])

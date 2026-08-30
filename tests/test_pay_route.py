@@ -5,7 +5,6 @@ pin, because each refusal is cheaper and more certain than the one after it, and
 that runs too late is a check that already spent something.
 """
 
-
 from gecko import pay_route
 from gecko.peg_guard import PegReading
 from gecko.pegana import recorded_peg_reader
