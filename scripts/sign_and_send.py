@@ -49,6 +49,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gecko.handoff import verify_handoff  # noqa: E402
+from gecko.mainnet_ledger import LedgerRow  # noqa: E402
+from gecko.mainnet_ledger import record as record_ledger  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
 from gecko.simulate import BuiltTx, simulate  # noqa: E402
@@ -204,7 +206,24 @@ def main(argv: list[str] | None = None) -> int:
     if "error" in reply:
         print(f"\n  send failed: {reply['error']}")
         return 1
-    print(f"\n  SENT  {reply.get('result')}")
+    signature = reply.get("result")
+    print(f"\n  SENT  {signature}")
+
+    # The prediction and the signature are both in hand for the first and only time.
+    # Eighteen mainnet transactions were predicted correctly and could not prove it
+    # because this line did not exist: the number scrolled past and the terminal closed.
+    # Recording cannot fail the send — the transaction is already irreversible.
+    if isinstance(signature, str):
+        written = record_ledger(
+            LedgerRow(
+                signature=signature,
+                predicted_cu=receipt.units_consumed,
+                predicted_source="scripts/sign_and_send.py (receipt, exact binding)",
+                network=str(network),
+            )
+        )
+        if written is not None:
+            print(f"  logged   {written}")
     return 0
 
 

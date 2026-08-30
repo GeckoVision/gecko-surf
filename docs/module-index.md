@@ -2,7 +2,7 @@
 
 # Module index
 
-224 modules in `gecko/` (subpackages included), from their own docstrings.
+225 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -85,6 +85,7 @@ package depends on it, which is worth a look before you add a caller.
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 2 · `catalog`, `find_start` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
+| `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
 | `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 3 · `orquestra_build`, `partner_delta`, `providers.catalog_surface` |
 | `mcp_server` | MCP surface — what an agent actually installs. | 14 · `binding`, `catalog_mcp`, `examples.colosseum` +11 |
 | `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 1 · `providers.metadao` |

@@ -43,6 +43,8 @@ from gecko.autonomous_purchase import (  # noqa: E402
     default_spend_policy,
     run_purchase,
 )
+from gecko.mainnet_ledger import LedgerRow  # noqa: E402
+from gecko.mainnet_ledger import record as record_ledger  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.signer import (  # noqa: E402
@@ -335,6 +337,20 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  blockhash  {outcome.blockhash} (valid to {outcome.last_valid_block_height})"
     )
+    # Both halves have been printed two lines apart for months and never written down
+    # together. Mainnet only; a fork signature in the mainnet ledger would be the
+    # fork-is-not-mainnet error inside the file whose job is being trustworthy.
+    written = record_ledger(
+        LedgerRow(
+            signature=str(outcome.signature),
+            predicted_cu=outcome.predicted_units,
+            predicted_source="scripts/autonomous_purchase.py (receipt, pre-signature)",
+            network=str(outcome.network),
+            program="let_me_buy",
+        )
+    )
+    if written is not None:
+        print(f"  logged     {written}")
     print("=" * 66)
     return 0
 
