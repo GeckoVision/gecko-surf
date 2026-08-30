@@ -66,9 +66,9 @@ from gecko.handoff import verify_handoff  # noqa: E402
 from gecko.idl_layout import field_offset  # noqa: E402
 from gecko.whirlpool_math import WhirlpoolMathError, quote_min_amount_out  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
-from gecko.pda import b58_encode, derive_pda  # noqa: E402
+from gecko.whirlpool_venue import tick_arrays  # noqa: E402
+from gecko.pda import b58_encode  # noqa: E402
 from gecko.prepare_instruction import prepare_instruction_result  # noqa: E402
-from gecko.provider_config import load_packaged_provider  # noqa: E402
 from gecko.providers.catalog_surface import orquestra_seams  # noqa: E402
 from gecko.rpc import default_rpc_call  # noqa: E402
 from gecko.simulate import BuiltTx, simulate  # noqa: E402
@@ -81,7 +81,6 @@ WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
 #: both real depth (~$25.68M) and an ingestible on-chain IDL.
 DEFAULT_POOL = "9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps"
 #: Whirlpool packs 88 ticks per array, whatever the spacing.
-TICKS_PER_ARRAY = 88
 _SIZES = {"pubkey": 32, "u128": 16, "u64": 8, "i32": 4, "u32": 4, "u16": 2, "u8": 1}
 
 
@@ -133,24 +132,17 @@ def _token_program(url: str, mint: str) -> str:
 def _tick_arrays(
     pool: str, tick_current: int, tick_spacing: int, *, upward: bool
 ) -> list[str]:
-    """The three arrays in the DIRECTION OF TRAVEL, from our own corrected recipe.
+    """Thin wrapper — the logic lives in `gecko.whirlpool_venue.tick_arrays`.
 
-    The seed is the ASCII DECIMAL STRING of the start index, not its little-endian bytes —
-    the IDL declares the arg as i32 and an arg's type does not determine its seed encoding.
+    Moved into the package because nothing could call it here: the tick_array PDA RECIPE
+    was covered by tests, but the arithmetic choosing WHICH three arrays, and in which
+    direction, sat inside a 260-line `main()` where no test could reach it. A wrong
+    direction or a wrong span derives three real, well-formed accounts for the wrong
+    region of the curve, and the swap then fails at the program rather than here.
     """
-    _, apis = load_packaged_provider("orquestra")
-    recipe = dict(apis["whirlpool"].program.pdas)["tick_array"]
-    span = TICKS_PER_ARRAY * tick_spacing
-    start = (tick_current // span) * span
-    steps = (
-        [start + span * i for i in range(3)]
-        if upward
-        else [start - span * i for i in range(3)]
+    return tick_arrays(
+        pool, tick_current=tick_current, tick_spacing=tick_spacing, upward=upward
     )
-    return [
-        derive_pda(recipe, {"whirlpool": pool, "start_tick_index": str(s)}).address
-        for s in steps
-    ]
 
 
 def main(argv: list[str] | None = None) -> int:

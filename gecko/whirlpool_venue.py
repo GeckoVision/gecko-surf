@@ -30,6 +30,7 @@ from .pda import b58_encode, derive_pda
 from .rpc import RpcCall
 
 __all__ = [
+    "TICKS_PER_ARRAY",
     "WHIRLPOOL_PROGRAM",
     "Direction",
     "Venue",
@@ -39,10 +40,17 @@ __all__ = [
     "WhirlpoolLayout",
     "decode_whirlpool",
     "find_venues",
+    "tick_array_start",
+    "tick_arrays",
     "whirlpool_layout",
 ]
 
 WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+
+#: Ticks per tick-array account. A count of TICKS, not of price steps — the range one
+#: array spans is this times the pool's own tick_spacing, so a fixed span is wrong for
+#: every pool but spacing=1.
+TICKS_PER_ARRAY = 88
 
 #: Which side of the pool the caller is selling. `swap_v2` needs it explicitly.
 Direction = Literal["a_to_b", "b_to_a"]
@@ -268,3 +276,57 @@ def _row_data(row: Mapping[str, Any]) -> bytes | None:
     if isinstance(data, list) and data:
         return base64.b64decode(data[0])
     return None
+
+
+def tick_array_start(tick_current: int, *, tick_spacing: int) -> int:
+    """The start index of the tick array CONTAINING ``tick_current``.
+
+    Floors toward negative infinity, which is what Python's ``//`` already does and what
+    this needs. Truncating toward zero — C semantics, or ``int(a / b)`` — puts a tick of
+    -1 into array 0 instead of array -88, and the result is a REAL, derivable, perfectly
+    well-formed account for the wrong region of the curve. The swap then fails at the
+    program rather than at the derivation, which is the expensive place to find out.
+    """
+    if tick_spacing <= 0:
+        raise WhirlpoolIdlIncomplete(
+            f"tick_spacing must be positive, got {tick_spacing}"
+        )
+    span = TICKS_PER_ARRAY * tick_spacing
+    return (tick_current // span) * span
+
+
+def tick_arrays(
+    pool: str, *, tick_current: int, tick_spacing: int, upward: bool, recipe: Any = None
+) -> list[str]:
+    """The three tick arrays a swap needs, IN THE DIRECTION OF TRAVEL.
+
+    Lifted out of ``scripts/prepare_whirlpool_swap.py``'s ``main()``, where nothing could
+    call it: the PDA recipe was covered (``tests/test_whirlpool_config.py`` derives the
+    accounts a real Jupiter swap passed) but the arithmetic choosing WHICH three was not.
+
+    The seed is the ASCII DECIMAL STRING of the start index, not its little-endian bytes.
+    The IDL declares the arg as ``i32`` and an argument's TYPE does not determine its seed
+    ENCODING — that distinction has cost us a wrong address before.
+    """
+    if recipe is None:
+        from .provider_config import load_packaged_provider
+
+        _, apis = load_packaged_provider("orquestra")
+        program = apis["whirlpool"].program
+        if program is None:  # pragma: no cover - the packaged config always carries it
+            raise WhirlpoolIdlIncomplete(
+                "the packaged whirlpool config declares no program"
+            )
+        recipe = dict(program.pdas)["tick_array"]
+
+    span = TICKS_PER_ARRAY * tick_spacing
+    start = tick_array_start(tick_current, tick_spacing=tick_spacing)
+    steps = (
+        [start + span * i for i in range(3)]
+        if upward
+        else [start - span * i for i in range(3)]
+    )
+    return [
+        derive_pda(recipe, {"whirlpool": pool, "start_tick_index": str(s)}).address
+        for s in steps
+    ]
