@@ -497,6 +497,7 @@ def plan_payment_result(
     rpc_call: Any = None,
     peg_reader: PegReader | None = None,
     idl_fetch: Callable[[str], Mapping[str, Any]] | None = None,
+    url_guard: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """The surface-facing entry: validate, resolve the RPC, answer. Never raises.
 
@@ -538,7 +539,11 @@ def plan_payment_result(
                 )
             }
         network = "mainnet"  # type: ignore[assignment]
-    rpc_url, refusal = _resolve_rpc_url(args.get("rpc_url"), network)
+    # ``url_guard`` mirrors `prepare_purchase_result`'s seam, and exists for the same
+    # reason: the DEFAULT refuses loopback because this is an unauthenticated door, but a
+    # rehearsal runs against the operator's own fork, which lives at 127.0.0.1 by
+    # definition. Without the seam the tool's fork rung was unreachable even in-process.
+    rpc_url, refusal = _resolve_rpc_url(args.get("rpc_url"), network, url_guard)
     if refusal or rpc_url is None:
         return {"error": refusal or "no RPC url"}
 
