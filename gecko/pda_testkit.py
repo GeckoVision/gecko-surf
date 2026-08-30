@@ -28,6 +28,7 @@ import base64
 
 import os
 import shutil
+import socket
 import signal
 import subprocess
 import time
@@ -75,6 +76,43 @@ class SurfpoolStatus:
     path: str | None
     #: One line, written to be printed verbatim.
     detail: str
+
+
+def free_port() -> int:
+    """A port the OS says is free — and whose NEIGHBOUR is free too.
+
+    Fork tests used to hardcode a port each, and two files picked 8937. Run together —
+    and ``-n auto`` makes that the default — the loser cannot bind, raises
+    :class:`SurfpoolError`, and every fork fixture here turns that into ``pytest.skip``.
+    The run then says SKIPPED, which reads as "this environment cannot fork" when the
+    truth is "another test took the port". A skip is a claim about the ENVIRONMENT; a
+    collision is a claim about US, and reporting one as the other is how a broken gate
+    passes for an absent one.
+
+    ``port + 1`` is checked because surfpool binds a websocket there as well. A helper
+    that checked only the first would hand back a port whose neighbour is taken, and that
+    surfaces as a websocket error nobody traces back to a port choice.
+
+    Inherently racy — nothing can reserve a port for a process that has not started — so
+    this narrows the window rather than closing it. That is the honest limit of the
+    approach, and it is still strictly better than a literal two files can share.
+    """
+    for _ in range(64):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        if port + 1 > 65535:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as neighbour:
+            try:
+                neighbour.bind(("127.0.0.1", port + 1))
+            except OSError:
+                continue  # websocket port taken — this one is no good
+        return port
+    raise SurfpoolError(
+        "could not find a free port pair for surfpool after 64 attempts — something is "
+        "holding a very large number of local ports"
+    )
 
 
 def surfpool_status(binary: str = "surfpool") -> SurfpoolStatus:
