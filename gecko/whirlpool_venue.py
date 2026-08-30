@@ -30,6 +30,7 @@ from .pda import b58_encode, derive_pda
 from .rpc import RpcCall
 
 __all__ = [
+    "TICKS_PER_ARRAY",
     "WHIRLPOOL_PROGRAM",
     "Direction",
     "Venue",
@@ -39,10 +40,17 @@ __all__ = [
     "WhirlpoolLayout",
     "decode_whirlpool",
     "find_venues",
+    "tick_array_start",
+    "tick_arrays",
     "whirlpool_layout",
 ]
 
 WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+
+#: Ticks per tick-array account. A count of TICKS, not of price steps — the range one
+#: array spans is this times the pool's own tick_spacing, so a fixed span is wrong for
+#: every pool but spacing=1.
+TICKS_PER_ARRAY = 88
 
 #: Which side of the pool the caller is selling. `swap_v2` needs it explicitly.
 Direction = Literal["a_to_b", "b_to_a"]
@@ -50,7 +58,8 @@ Direction = Literal["a_to_b", "b_to_a"]
 #: candidate that did not re-derive never becomes a Venue at all.
 VerifyStatus = Literal["rederived"]
 
-#: The fields this module reads. Every one is located through the IDL.
+#: What venue selection needs. Every one is located through the IDL, and a missing one is
+#: a refusal — you cannot rank pools you cannot read.
 _FIELDS = (
     "whirlpools_config",
     "tick_spacing",
@@ -60,7 +69,11 @@ _FIELDS = (
     "fee_rate",
     "sqrt_price",
 )
-_PUBKEYS = frozenset({"whirlpools_config", "token_mint_a", "token_mint_b"})
+
+#: What a SWAP additionally needs. Optional, because ranking venues does not require them
+#: and an IDL that omits one must not break the search. Exposed so a caller building a
+#: swap reads them from the package rather than reaching into a script's private helper.
+_SWAP_FIELDS = ("tick_current_index", "token_vault_a", "token_vault_b")
 
 
 class WhirlpoolIdlIncomplete(Exception):
@@ -77,7 +90,10 @@ class WhirlpoolLayout:
     """Where each field lives in a Whirlpool account, derived from the IDL."""
 
     discriminator: bytes
-    fields: Mapping[str, tuple[int, int]]  # name -> (offset, width)
+    #: name -> (offset, width, declared type). The TYPE is carried because signedness is
+    #: a property of it: `tick_current_index` is i32, and reading it unsigned turns every
+    #: negative tick into a huge positive one.
+    fields: Mapping[str, tuple[int, int, str]]
 
 
 @dataclass(frozen=True)
@@ -91,6 +107,11 @@ class WhirlpoolAccount:
     liquidity: int
     fee_rate: int
     sqrt_price: int
+    #: Present only when the IDL declared them. None is "this IDL did not say", never 0 —
+    #: a tick of 0 is a real position on the curve and must not be confused with absence.
+    tick_current_index: int | None = None
+    token_vault_a: str | None = None
+    token_vault_b: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,13 +152,19 @@ def whirlpool_layout(idl: Mapping[str, Any]) -> WhirlpoolLayout:
         raise WhirlpoolIdlIncomplete(
             "the Whirlpool IDL declares no discriminator for its pool account"
         )
-    located: dict[str, tuple[int, int]] = {}
+    located: dict[str, tuple[int, int, str]] = {}
     for name in _FIELDS:
         try:
             got = field_layout(idl, "Whirlpool", name)
         except LayoutError as exc:
             raise WhirlpoolIdlIncomplete(f"Whirlpool.{name}: {exc}") from exc
-        located[name] = (int(got["offset"]), int(got["width"]))
+        located[name] = (int(got["offset"]), int(got["width"]), str(got["type"]))
+    for name in _SWAP_FIELDS:
+        try:
+            got = field_layout(idl, "Whirlpool", name)
+        except LayoutError:
+            continue  # optional: venue selection does not need it
+        located[name] = (int(got["offset"]), int(got["width"]), str(got["type"]))
     return WhirlpoolLayout(discriminator=disc, fields=located)
 
 
@@ -145,15 +172,21 @@ def decode_whirlpool(data: bytes, layout: WhirlpoolLayout) -> WhirlpoolAccount:
     """Read one pool account. Pure: no network, no state."""
 
     def read(name: str) -> Any:
-        offset, width = layout.fields[name]
+        located = layout.fields.get(name)
+        if located is None:
+            return None  # an optional swap field this IDL does not declare
+        offset, width, declared = located
         chunk = data[offset : offset + width]
         if len(chunk) < width:
             raise WhirlpoolIdlIncomplete(
                 f"account data is shorter than the IDL says {name} needs"
             )
-        return (
-            b58_encode(chunk) if name in _PUBKEYS else int.from_bytes(chunk, "little")
-        )
+        if declared == "pubkey":
+            return b58_encode(chunk)
+        # Signedness comes from the DECLARED TYPE, never from a field name. i32 read as
+        # unsigned turns tick -1 into 4,294,967,295, and the tick arrays derived from it
+        # are real, well-formed accounts for a region of the curve that does not exist.
+        return int.from_bytes(chunk, "little", signed=declared.startswith("i"))
 
     return WhirlpoolAccount(
         whirlpools_config=read("whirlpools_config"),
@@ -163,6 +196,9 @@ def decode_whirlpool(data: bytes, layout: WhirlpoolLayout) -> WhirlpoolAccount:
         liquidity=read("liquidity"),
         fee_rate=read("fee_rate"),
         sqrt_price=read("sqrt_price"),
+        tick_current_index=read("tick_current_index"),
+        token_vault_a=read("token_vault_a"),
+        token_vault_b=read("token_vault_b"),
     )
 
 
@@ -268,3 +304,57 @@ def _row_data(row: Mapping[str, Any]) -> bytes | None:
     if isinstance(data, list) and data:
         return base64.b64decode(data[0])
     return None
+
+
+def tick_array_start(tick_current: int, *, tick_spacing: int) -> int:
+    """The start index of the tick array CONTAINING ``tick_current``.
+
+    Floors toward negative infinity, which is what Python's ``//`` already does and what
+    this needs. Truncating toward zero — C semantics, or ``int(a / b)`` — puts a tick of
+    -1 into array 0 instead of array -88, and the result is a REAL, derivable, perfectly
+    well-formed account for the wrong region of the curve. The swap then fails at the
+    program rather than at the derivation, which is the expensive place to find out.
+    """
+    if tick_spacing <= 0:
+        raise WhirlpoolIdlIncomplete(
+            f"tick_spacing must be positive, got {tick_spacing}"
+        )
+    span = TICKS_PER_ARRAY * tick_spacing
+    return (tick_current // span) * span
+
+
+def tick_arrays(
+    pool: str, *, tick_current: int, tick_spacing: int, upward: bool, recipe: Any = None
+) -> list[str]:
+    """The three tick arrays a swap needs, IN THE DIRECTION OF TRAVEL.
+
+    Lifted out of ``scripts/prepare_whirlpool_swap.py``'s ``main()``, where nothing could
+    call it: the PDA recipe was covered (``tests/test_whirlpool_config.py`` derives the
+    accounts a real Jupiter swap passed) but the arithmetic choosing WHICH three was not.
+
+    The seed is the ASCII DECIMAL STRING of the start index, not its little-endian bytes.
+    The IDL declares the arg as ``i32`` and an argument's TYPE does not determine its seed
+    ENCODING — that distinction has cost us a wrong address before.
+    """
+    if recipe is None:
+        from .provider_config import load_packaged_provider
+
+        _, apis = load_packaged_provider("orquestra")
+        program = apis["whirlpool"].program
+        if program is None:  # pragma: no cover - the packaged config always carries it
+            raise WhirlpoolIdlIncomplete(
+                "the packaged whirlpool config declares no program"
+            )
+        recipe = dict(program.pdas)["tick_array"]
+
+    span = TICKS_PER_ARRAY * tick_spacing
+    start = tick_array_start(tick_current, tick_spacing=tick_spacing)
+    steps = (
+        [start + span * i for i in range(3)]
+        if upward
+        else [start - span * i for i in range(3)]
+    )
+    return [
+        derive_pda(recipe, {"whirlpool": pool, "start_tick_index": str(s)}).address
+        for s in steps
+    ]

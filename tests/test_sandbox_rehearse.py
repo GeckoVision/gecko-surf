@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork, surfpool_status
+from gecko.pda_testkit import free_port, SurfpoolError, SurfpoolFork, surfpool_status
 from gecko.sandbox import SurfnetProof, ephemeral_signer, prove_surfnet
 from gecko.sandbox.rehearse import (
     LamportDelta,
@@ -42,7 +42,10 @@ from gecko.sandbox.rehearse import (
 )
 from gecko.store_directory import LET_ME_BUY_PROGRAM_ID
 
-FORK_PORT = 8937
+#: Allocated per run rather than written down. Two files here both hardcoded 8937,
+#: and under `-n auto` the loser could not bind, raised SurfpoolError, and the fixture
+#: reported SKIPPED — a collision wearing the costume of an absent environment.
+FORK_PORT = free_port()
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 #: The measured surfnet-info body, so an offline proof can be built without a validator.

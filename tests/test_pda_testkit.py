@@ -136,3 +136,55 @@ def test_recovered_recipes_hold_real_ore_state_on_fork() -> None:
             check = verify_derivation(nodes[name], rpc_url=fork.rpc_url)
             assert check.exists, f"{name} PDA not found on fork"
             assert check.owner_matches, f"{name} not owned by ORE ({check.owner})"
+
+
+# --- fork ports: a collision must not wear the costume of coverage --------------------
+#
+# Two test files both hardcoded FORK_PORT = 8937. Run in one session — and `-n auto` makes
+# that the default — the loser's surfpool cannot bind, raises SurfpoolError, and every
+# fork fixture in this repo turns that into `pytest.skip`. The run then reports SKIPPED,
+# which reads as "this environment cannot do forks" when the truth is "this gate was
+# broken by another test". A skip is a claim about the environment; a port collision is
+# a claim about us, and the two must not look the same.
+
+
+def test_no_two_test_files_hardcode_the_same_fork_port() -> None:
+    import re
+    from collections import defaultdict
+    from pathlib import Path
+
+    tests_dir = Path(__file__).parent
+    by_port: dict[int, list[str]] = defaultdict(list)
+    for path in sorted(tests_dir.glob("test_*.py")):
+        for match in re.finditer(r"^FORK_PORT\s*=\s*(\d+)", path.read_text(), re.M):
+            by_port[int(match.group(1))].append(path.name)
+
+    clashes = {port: files for port, files in by_port.items() if len(files) > 1}
+    assert not clashes, (
+        "these files would fight over one port, and the loser reports SKIPPED rather "
+        f"than failing: {clashes}. Use `free_port()` instead of a literal."
+    )
+
+
+def test_free_port_returns_something_bindable_and_does_not_repeat() -> None:
+    from gecko.pda_testkit import free_port
+
+    ports = {free_port() for _ in range(8)}
+    assert len(ports) >= 2, "free_port handed out one port eight times"
+    for port in ports:
+        assert 1024 < port < 65535
+
+
+def test_free_port_leaves_the_next_port_free_too() -> None:
+    """surfpool binds an RPC port AND a websocket port at ``port + 1``. A helper that only
+    checks the first hands back a port whose neighbour is taken, and the failure surfaces
+    as a websocket error nobody connects to a port choice."""
+    import socket
+
+    from gecko.pda_testkit import free_port
+
+    port = free_port()
+    for candidate in (port, port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", candidate))  # must not raise

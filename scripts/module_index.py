@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -98,11 +99,50 @@ def _local_imports(path: Path, names: set[str]) -> set[str]:
     return found - {me}
 
 
+def _tracked() -> set[Path] | None:
+    """Absolute paths of the .py files git TRACKS under ``gecko/``, or None outside a repo.
+
+    The index documents what a READER OF THE REPO can open. An untracked module is in the
+    author's tree and nowhere else, so listing it publishes a promise the repo cannot
+    keep — and this already reached main once: `gecko/vocab_gap.py` is deliberately held
+    back, sat untracked locally, and the index generated from that tree documented it.
+    Regenerating from an in-progress checkout is the NORMAL case, not a mistake, so the
+    generator has to be the thing that refuses rather than the human remembering.
+
+    Returns None (index everything) outside a git checkout — a source tarball is a
+    legitimate place to run this and has no tracking information to consult.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "ls-files",
+                "--cached",
+                "gecko/*.py",
+                "gecko/**/*.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return {ROOT / line for line in out.stdout.splitlines() if line.strip()}
+
+
 def build() -> str:
+    tracked = _tracked()
     modules = sorted(
         p
         for p in PKG.rglob("*.py")
-        if p.stem != "__init__" and "__pycache__" not in p.parts
+        if p.stem != "__init__"
+        and "__pycache__" not in p.parts
+        and (tracked is None or p in tracked)
     )
     names = {_module_name(p) for p in modules}
     importers: dict[str, set[str]] = defaultdict(set)

@@ -52,12 +52,12 @@ def _b58_decode(value: str) -> bytes:
 
 
 def _blob(layout, *, config=CONFIG, a=MINT_A, b=MINT_B, tick=64, liq=10**9) -> bytes:
-    size = max(o + w for o, w in layout.fields.values())
+    size = max(o + w for o, w, _ in layout.fields.values())
     buf = bytearray(size)
     buf[0:8] = DISC
 
     def put(name, value, *, pub=False):
-        off, width = layout.fields[name]
+        off, width, _kind = layout.fields[name]
         buf[off : off + width] = (
             _b58_decode(value) if pub else int(value).to_bytes(width, "little")
         )
@@ -308,3 +308,123 @@ def test_venues_come_back_richest_first() -> None:
         rpc_call=_rpc_serving(rows, layout),
     )
     assert [v.liquidity for v in venues] == [500, 5]
+
+
+# --- tick arrays: WHICH three, and in which direction ---------------------------------
+#
+# tests/test_whirlpool_config.py already pins that the tick_array PDA RECIPE is right —
+# it derives the three accounts Jupiter's router passes for a real pool. What it does not
+# cover is the function that decides WHICH three: the arithmetic on tick_current and
+# tick_spacing, and the direction of travel. That lived in a 260-line `main()` inside
+# scripts/prepare_whirlpool_swap.py, where nothing could call it, so a wrong direction or
+# a wrong span would produce three real, derivable, well-formed accounts for the wrong
+# region of the curve — the swap fails at the program, not at the derivation.
+
+POOL = "9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps"  # the pool test_whirlpool_config pins
+
+
+def test_the_three_arrays_match_the_ones_a_real_swap_passed() -> None:
+    """Anchored to the same mainnet accounts test_whirlpool_config pins: Jupiter's router
+    at tick_current=2, tick_spacing=1, travelling DOWN."""
+    got = wv.tick_arrays(POOL, tick_current=2, tick_spacing=1, upward=False)
+    assert got == [
+        "2QRj3Ug2RZ9ffSCP3pp7U6ex45adrnMW7u5HAihfH2mE",  # start 0
+        "6o9yaeyc8rHKKbdRxN8M3F9Qii5zpBC33gH2L1GUNBPj",  # start -88
+        "94cnSkfZfnpkS8yBs1XuqugRUJWruTkMhMPPPfiBdapm",  # start -176
+    ]
+
+
+def test_direction_of_travel_changes_which_arrays_are_selected() -> None:
+    up = wv.tick_arrays(POOL, tick_current=2, tick_spacing=1, upward=True)
+    down = wv.tick_arrays(POOL, tick_current=2, tick_spacing=1, upward=False)
+    assert up[0] == down[0], "both directions start from the array containing the tick"
+    assert up[1:] != down[1:], "but they must then travel opposite ways"
+
+
+def test_the_start_index_floors_toward_negative_infinity() -> None:
+    """The trap. A tick BELOW zero must land in the array that CONTAINS it, and Python's
+    `//` floors toward -inf, which is the behaviour this needs. Truncating toward zero (C
+    semantics, or int(a/b)) puts a tick of -1 in array 0 instead of array -88, deriving a
+    real account for the wrong region."""
+    assert wv.tick_array_start(-1, tick_spacing=1) == -88
+    assert wv.tick_array_start(0, tick_spacing=1) == 0
+    assert wv.tick_array_start(-88, tick_spacing=1) == -88
+    assert wv.tick_array_start(-89, tick_spacing=1) == -176
+    assert wv.tick_array_start(87, tick_spacing=1) == 0
+    assert wv.tick_array_start(88, tick_spacing=1) == 88
+
+
+def test_the_span_scales_with_tick_spacing() -> None:
+    """88 ticks per array is a count of TICKS, not of price steps — the byte span depends
+    on the pool's spacing, so a fixed 88 would be wrong for every pool but spacing=1."""
+    assert wv.tick_array_start(0, tick_spacing=64) == 0
+    assert wv.tick_array_start(5631, tick_spacing=64) == 0  # 88*64 = 5632
+    assert wv.tick_array_start(5632, tick_spacing=64) == 5632
+    assert wv.tick_array_start(-1, tick_spacing=64) == -5632
+
+
+def test_it_always_returns_exactly_three_distinct_arrays() -> None:
+    for spacing in (1, 8, 64, 128):
+        for tick in (-100_000, -1, 0, 1, 100_000):
+            got = wv.tick_arrays(
+                POOL, tick_current=tick, tick_spacing=spacing, upward=True
+            )
+            assert len(got) == 3
+            assert len(set(got)) == 3, (
+                f"duplicate arrays at spacing={spacing} tick={tick}"
+            )
+
+
+# --- signed fields, and the vaults a swap actually needs -------------------------------
+#
+# `tick_current_index` is declared i32. Read unsigned, a tick of -1 decodes as 4294967295,
+# `tick_array_start` then computes a start index in a region of the curve that does not
+# exist, and the three derived arrays are real, well-formed accounts for nowhere. The swap
+# fails at the program. Pools sit at negative ticks routinely — it is not an edge case,
+# it is half the number line.
+
+
+def _idl_with_signed() -> dict:
+    idl = _idl()
+    idl["types"][0]["type"]["fields"] += [
+        {"name": "tick_current_index", "type": "i32"},
+        {"name": "token_vault_a", "type": "pubkey"},
+        {"name": "token_vault_b", "type": "pubkey"},
+    ]
+    return idl
+
+
+def test_a_negative_tick_decodes_as_negative() -> None:
+    layout = wv.whirlpool_layout(_idl_with_signed())
+    size = max(o + w for o, w, _ in layout.fields.values())
+    buf = bytearray(size)
+    buf[0:8] = DISC
+    off, width, _ = layout.fields["tick_current_index"]
+    buf[off : off + width] = (-176).to_bytes(4, "little", signed=True)
+    acct = wv.decode_whirlpool(bytes(buf), layout)
+    assert acct.tick_current_index == -176, (
+        f"decoded {acct.tick_current_index} — an unsigned read makes every negative tick "
+        "a huge positive one, and the derived tick arrays point at nothing"
+    )
+
+
+def test_the_vaults_are_exposed_so_a_caller_need_not_reach_into_a_script() -> None:
+    layout = wv.whirlpool_layout(_idl_with_signed())
+    size = max(o + w for o, w, _ in layout.fields.values())
+    buf = bytearray(size)
+    buf[0:8] = DISC
+    for name, value in (("token_vault_a", MINT_A), ("token_vault_b", MINT_B)):
+        off, width, _ = layout.fields[name]
+        buf[off : off + width] = _b58_decode(value)
+    acct = wv.decode_whirlpool(bytes(buf), layout)
+    assert acct.token_vault_a == MINT_A
+    assert acct.token_vault_b == MINT_B
+
+
+def test_an_idl_without_the_optional_fields_still_decodes() -> None:
+    """The venue search only needs seven fields. A caller that wants the swap fields asks
+    for an IDL that declares them; one that does not must not break."""
+    layout = wv.whirlpool_layout(_idl())
+    acct = wv.decode_whirlpool(_blob(layout), layout)
+    assert acct.tick_current_index is None
+    assert acct.token_vault_a is None

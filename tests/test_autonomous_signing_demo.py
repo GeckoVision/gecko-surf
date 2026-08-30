@@ -44,12 +44,15 @@ from examples.autonomous_signing_demo import (
     run_scenarios,
     scenarios,
 )
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork, surfpool_status
+from gecko.pda_testkit import free_port, SurfpoolError, SurfpoolFork, surfpool_status
 
 #: A port the demo's fork leg owns, deliberately NOT 8899. A test that would accept
 #: whatever answers on the default port inherits an ambient validator's state, which is
 #: the same bug as passing because surfpool happened to be running.
-FORK_PORT = 8937
+#: Allocated per run rather than written down. Two files here both hardcoded 8937,
+#: and under `-n auto` the loser could not bind, raised SurfpoolError, and the fixture
+#: reported SKIPPED — a collision wearing the costume of an absent environment.
+FORK_PORT = free_port()
 
 
 def _offline(spec: AttemptSpec) -> ScenarioResult:

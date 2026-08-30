@@ -131,7 +131,7 @@ package depends on it, which is worth a look before you add a caller.
 | `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 1 · `cli` |
 | `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
-| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 12 · `find_start`, `ingest_gate`, `orquestra_client` +9 |
+| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 13 · `find_start`, `ingest_gate`, `orquestra_client` +10 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
 | `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 3 · `pay_route`, `providers.cli`, `serve_mcp` |
