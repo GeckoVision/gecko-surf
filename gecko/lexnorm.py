@@ -143,7 +143,14 @@ _FOLDED_STOPWORDS = STOPWORDS | frozenset(fold_token(w) for w in STOPWORDS)
 
 def content_tokens(tokens: set[str]) -> set[str]:
     """Drop function words. Returns EMPTY when the query was nothing but function words —
-    "please do it for me" carries no intent and must not be answered as if it did."""
+    "please do it for me" carries no intent and must not be answered as if it did.
+
+    Digit-only tokens are KEPT here on purpose. In API-operation search a bare number can
+    be the selector itself — "widget metadata for kind 77" finds `getWidgetKind77` by the
+    77 — so the shared layer must not decide it is noise. Program routing, where a bare
+    number is a quantity and never names a program, drops them in its OWN query builder
+    (`find_start._query_tokens`), which is the one place that claim is true.
+    """
     return (tokens - STOPWORDS) - _FOLDED_STOPWORDS
 
 
