@@ -878,11 +878,21 @@ def build_http_app(
             tools = (
                 surface.list_tools()
             )  # duck-typed meta surface: no correlation kwargs
+        from .cards import UI_TOOL_RESOURCES
+
         return [
             mcp_types.Tool(
                 name=t["name"],
                 description=t["description"],
                 inputSchema=t["inputSchema"],
+                # MCP Apps: a tool with a card names its ui:// template here, and the
+                # client fetches + sandboxes it. Clients without Apps support ignore
+                # `_meta` entirely, so the JSON-only behaviour is untouched.
+                _meta=(
+                    {"ui": {"resourceUri": UI_TOOL_RESOURCES[t["name"]]}}
+                    if t["name"] in UI_TOOL_RESOURCES
+                    else None
+                ),
             )
             for t in tools
         ]
@@ -924,10 +934,50 @@ def build_http_app(
         # via isError so the agent cannot read it as a successful empty result — the
         # decision lives in the package (gecko.toolerror), shared with the stdio wire.
         text, is_error = tool_result_payload(result)
+        from .cards import UI_TOOL_RESOURCES
+
+        # A card tool ALSO returns structuredContent — the same dict the JSON text
+        # carries, in the field the MCP Apps view reads. Scoped to card tools so every
+        # other tool's wire shape stays byte-identical; the card renders only what the
+        # tool already returned, so nothing new crosses the control-plane boundary.
+        structured = (
+            result if name in UI_TOOL_RESOURCES and isinstance(result, dict) else None
+        )
         return mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text=text)],
+            structuredContent=structured,
             isError=is_error,
         )
+
+    # -- MCP Apps card resources -------------------------------------------------
+    # The ui:// templates the card tools reference. Registered as ordinary MCP
+    # resources; the SDK derives the `resources` capability from these handlers.
+    from .cards import card_resources
+
+    _cards = card_resources()
+
+    @server.list_resources()
+    async def _list_resources() -> list[Any]:
+        from pydantic import AnyUrl
+
+        return [
+            mcp_types.Resource(
+                uri=AnyUrl(uri),
+                name=uri.removeprefix("ui://").replace("/", "-"),
+                mimeType=mime,
+            )
+            for uri, (mime, _html) in _cards.items()
+        ]
+
+    @server.read_resource()
+    async def _read_resource(uri: Any) -> Any:
+        from mcp.server.lowlevel.helper_types import ReadResourceContents
+
+        entry = _cards.get(str(uri))
+        if entry is None:
+            raise ValueError(f"unknown resource {str(uri)!r}")
+        mime, html = entry
+        return [ReadResourceContents(content=html, mime_type=mime)]
 
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
