@@ -40,6 +40,7 @@ from gecko.autonomous_purchase import (  # noqa: E402
     PurchaseRefused,
     PurchaseSettled,
     PurchasePlan,
+    PurchaseTransportError,
     default_spend_policy,
     run_purchase,
 )
@@ -304,15 +305,37 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  network      {network}   (as you stated it, never inferred)")
     print(f"  USDC cap     {args.max_usdc_raw} raw (6 decimals)")
 
-    outcome = run_purchase(
-        network=network,
-        rpc_url=args.rpc_url,
-        plan=plan,
-        signer=signer,
-        spend_gate=gate,
-        build_call=http_build_call,
-        rpc_call=default_rpc_call,
-    )
+    try:
+        outcome = run_purchase(
+            network=network,
+            rpc_url=args.rpc_url,
+            plan=plan,
+            signer=signer,
+            spend_gate=gate,
+            build_call=http_build_call,
+            rpc_call=default_rpc_call,
+        )
+    except PurchaseTransportError as exc:
+        # The package attaches the SIGNATURE to this error precisely so a broadcast
+        # whose confirmation timed out can be looked up. Letting it surface as a raw
+        # traceback throws that away and turns "look it up rather than assuming either
+        # outcome" into advice the reader cannot follow — a refusal you cannot act on
+        # is a shrug. Print it, and say what to do with it.
+        print("\n" + "=" * 66)
+        print("  UNCONFIRMED — the transaction was broadcast; its outcome is UNKNOWN")
+        print(f"  reason     {exc}")
+        signature = getattr(exc, "signature", None)
+        if signature:
+            print(f"  signature  {signature}")
+            print(f"  look it up  https://solscan.io/tx/{signature}")
+            print(
+                "  Do NOT re-run until you have: a broadcast that lands late still "
+                "spends, and a second run would pay twice."
+            )
+        else:
+            print("  no signature was attached — check the payer's recent signatures")
+        print("=" * 66)
+        return 2
 
     print("\n" + "=" * 66)
     if isinstance(outcome, PurchaseRefused):

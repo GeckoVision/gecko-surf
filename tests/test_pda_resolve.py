@@ -29,7 +29,11 @@ from gecko.pda_resolve import (
     read_account_owner,
     resolve_pda,
 )
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    SurfpoolError,
+    SurfpoolFork,
+)
 from gecko.provider_config import load_packaged_provider
 
 MINT = "8zN8yA21ZGyKRWoxeYqyb2XquHPjVa31Bpxj1bC5pump"
@@ -159,6 +163,13 @@ def test_resolve_against_surfpool_fork() -> None:
             owner = read_account_owner(MINT, rpc_url=fork.rpc_url)
             vault_owner = read_account_owner(vault.address, rpc_url=fork.rpc_url)
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
     # (a) read the real creator, derive the real creator_vault SOL vault (System-owned)

@@ -38,6 +38,8 @@ from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
+from gecko.mainnet_ledger import LedgerRow
+from gecko.mainnet_ledger import record as record_ledger
 from gecko.orquestra_build import orquestra_seams  # noqa: E402
 from gecko.prepare_instruction import prepare_instruction_result  # noqa: E402
 from gecko.rpc import RpcError, default_rpc_call  # noqa: E402
@@ -230,6 +232,21 @@ def main() -> int:
             "sendTransaction",
             [signed, {"encoding": "base64", "skipPreflight": False}],
         )
+        # Recorded at the moment of BROADCAST, before confirmation is known — a
+        # transaction that lands after this script gives up is still one we sent, and a
+        # ledger that only hears about confirmed ones under-counts exactly the rows
+        # somebody would otherwise have to remember by hand.
+        written = record_ledger(
+            LedgerRow(
+                signature=str(signature),
+                predicted_cu=None,
+                predicted_source="scripts/seed_store_showcase.py (no receipt before signing)",
+                network="mainnet" if "mainnet" in args.rpc_url else "unknown",
+                program="let_me_buy",
+            )
+        )
+        if written is not None:
+            print(f"{label}  logged {written}")
         meta = _confirm(args.rpc_url, signature)
         if meta is None:
             print(f"{label}  SENT, NOT CONFIRMED  {signature}")

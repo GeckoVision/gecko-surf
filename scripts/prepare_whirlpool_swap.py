@@ -65,6 +65,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from gecko.handoff import verify_handoff  # noqa: E402
 from gecko.idl_layout import field_offset  # noqa: E402
 from gecko.whirlpool_math import WhirlpoolMathError, quote_min_amount_out  # noqa: E402
+from gecko.mainnet_ledger import LedgerRow  # noqa: E402
+from gecko.mainnet_ledger import record as record_ledger  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.whirlpool_venue import tick_arrays  # noqa: E402
 from gecko.pda import b58_encode  # noqa: E402
@@ -518,8 +520,26 @@ def _settle(
     if "error" in reply:
         print(f"\n  SEND FAILED  {reply['error']}")
         return 1
-    print(f"\n  SENT  {reply.get('result')}")
+    signature = reply.get("result")
+    print(f"\n  SENT  {signature}")
     print(f"  {network} — verify it on chain before believing this line.")
+
+    # The prediction and the signature have been printed four lines apart and never
+    # written down together. A swap landed on mainnet predicting 44,828 CU against a
+    # charge of exactly 44,828, and the ledger never heard about it — because this was
+    # the one sender that did not record. `record` is mainnet-only and never fatal, so
+    # a fork run passes straight through it.
+    written = record_ledger(
+        LedgerRow(
+            signature=str(signature),
+            predicted_cu=receipt.units_consumed,
+            predicted_source="scripts/prepare_whirlpool_swap.py (receipt, pre-signature)",
+            network=str(network),
+            program="whirlpool",
+        )
+    )
+    if written is not None:
+        print(f"  logged  {written}")
     return 0
 
 

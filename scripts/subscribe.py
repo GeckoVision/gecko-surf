@@ -23,6 +23,9 @@ from solders.hash import Hash
 from solders.instruction import AccountMeta, Instruction
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
+
+from gecko.mainnet_ledger import LedgerRow
+from gecko.mainnet_ledger import record as record_ledger
 from solders.transaction import Transaction
 
 RPC = os.environ.get("RPC", "https://api.mainnet-beta.solana.com")
@@ -166,6 +169,20 @@ def main() -> int:
         print(json.dumps(res, indent=2))
         return 1
     print("txSig:", txsig)
+    # Recorded so the ledger's "one line per transaction WE sent" stays true. No
+    # prediction is captured here — this script takes no receipt before signing — and
+    # `predicted_cu=None` says exactly that, which keeps `with_prediction` honest rather
+    # than inflating it with a row nothing was predicted for.
+    written = record_ledger(
+        LedgerRow(
+            signature=str(txsig),
+            predicted_cu=None,
+            predicted_source="scripts/subscribe.py (no receipt taken before signing)",
+            network="mainnet" if "mainnet" in RPC else "unknown",
+        )
+    )
+    if written is not None:
+        print("logged:", written)
     for _ in range(40):
         st = (
             rpc("getSignatureStatuses", [[txsig]])

@@ -25,7 +25,11 @@ import os
 import pytest
 
 from gecko.pda_resolve import read_account_field_pubkey
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    SurfpoolError,
+    SurfpoolFork,
+)
 from gecko.providers.pumpfun import plan_buy
 from gecko.simulate import Receipt, SimulateError, simulate
 
@@ -68,6 +72,13 @@ def test_simulate_real_pump_buy_returns_a_receipt() -> None:
 
             receipt = simulate(merged, rpc_url=rpc_url, track=[USER])
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"surfpool unavailable: {exc}")
     except SimulateError as exc:
         # A build-transport failure (e.g. the live Orquestra /build needs auth) is an

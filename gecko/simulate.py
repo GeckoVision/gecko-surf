@@ -725,6 +725,20 @@ def parse_token_deltas(
     #   so on a fork this refusal darkens every token-capable transaction. That cost is
     #   real and accepted: the safe direction still refuses, and the instruction-trace
     #   fallback deliberately triggers only on ABSENT keys so it cannot reopen this.
+    #
+    #   MEASURED 2026-08-30, and it closes the obvious escape route. The tempting fix is
+    #   to stop reading the node's token-balance arrays and instead snapshot the token
+    #   ACCOUNT through simulateTransaction's `accounts` parameter — still a measurement,
+    #   just a different channel. It does not work: on surfpool 1.1.1, a simulation that
+    #   SUCCEEDS (`err: None`) returns `postTokenBalances: null` AND `accounts: [null]`.
+    #   The fork offers no channel at all, so there is nothing here to route around and
+    #   no version of this that measures a token leg on a fork.
+    #
+    #   The consequence is worth stating plainly rather than discovering twice: the spend
+    #   gate cannot be exercised on a fork, so it is only ever exercised on mainnet. The
+    #   rehearsal path for a token-moving call is `gecko.sandbox.rehearse`, which LANDS
+    #   the transaction and reads what moved from the accounts afterwards. That is not a
+    #   workaround for this refusal — it is the only measurement a fork supports.
     if (has_pre and value.get("preTokenBalances") is None) or (
         has_post and value.get("postTokenBalances") is None
     ):

@@ -38,7 +38,12 @@ from gecko.ore_state import (
     decode_treasury_state,
 )
 from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode, derive_pda
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork, verify_derivation
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    SurfpoolError,
+    SurfpoolFork,
+    verify_derivation,
+)
 from gecko.provider_config import load_packaged_provider
 
 ORE = "oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv"
@@ -376,6 +381,13 @@ def test_ore_derivation_against_surfpool_fork() -> None:
                 pdas["stake"], {"signer": SIGNER}, rpc_url=fork.rpc_url
             )
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
     # singletons always exist and are owned by ORE

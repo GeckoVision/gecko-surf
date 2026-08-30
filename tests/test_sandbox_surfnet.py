@@ -24,7 +24,12 @@ from typing import Any
 
 import pytest
 
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork, surfpool_status
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    SurfpoolError,
+    SurfpoolFork,
+    surfpool_status,
+)
 from gecko.rpc import RpcError
 from gecko.sandbox import (
     SURFNET_INFO_METHOD,
@@ -326,6 +331,13 @@ def test_a_real_surfpool_fork_proves_itself_in_the_documented_shape() -> None:
             signer = ephemeral_signer(proof)
             signature = signer.sign(b"proved surfnet, local key, nothing broadcast")
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"THE FORK LEG DID NOT RUN — surfpool never became ready: {exc}")
 
     assert proof.rpc_url == f"http://127.0.0.1:{FORK_PORT}"
@@ -363,6 +375,13 @@ def test_the_fork_rejects_params_and_answers_32601_for_an_unknown_method() -> No
             with pytest.raises(RpcError) as unknown_exc:
                 default_rpc_call(fork.rpc_url, "surfnet_thisDoesNotExist", [])
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"THE FORK LEG DID NOT RUN — surfpool never became ready: {exc}")
 
     assert "-32602" in str(params_exc.value)
