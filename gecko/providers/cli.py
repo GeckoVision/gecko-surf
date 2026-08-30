@@ -81,6 +81,7 @@ def intent_registries() -> dict[str, dict[str, Intent]]:
     from .meteora import METEORA_INTENTS
     from .ore import ORE_INTENTS
     from .pumpfun import PUMPFUN_INTENTS
+    from .whirlpool import WHIRLPOOL_INTENTS
 
     return {
         "meteora": METEORA_INTENTS,
@@ -88,6 +89,10 @@ def intent_registries() -> dict[str, dict[str, Intent]]:
         "ore": ORE_INTENTS,
         "metadao_ico": METADAO_INTENTS,
         "jupiter": JUPITER_INTENTS,
+        # The packaged config declared whirlpool.intents=('plan_swap',) all along; the
+        # registry never had the key, so find_start skipped the card at `if intent is
+        # None: continue` and a hosted agent could get a ROUTE it could not execute.
+        "whirlpool": WHIRLPOOL_INTENTS,
     }
 
 
@@ -98,6 +103,7 @@ def start_specs() -> dict[str, dict[str, "StartSpec"]]:
     from .meteora import METEORA_STARTS
     from .ore import ORE_STARTS
     from .pumpfun import PUMPFUN_STARTS
+    from .whirlpool import WHIRLPOOL_STARTS
 
     return {
         "meteora": METEORA_STARTS,
@@ -105,6 +111,7 @@ def start_specs() -> dict[str, dict[str, "StartSpec"]]:
         "ore": ORE_STARTS,
         "metadao_ico": METADAO_STARTS,
         "jupiter": JUPITER_STARTS,
+        "whirlpool": WHIRLPOOL_STARTS,
     }
 
 
