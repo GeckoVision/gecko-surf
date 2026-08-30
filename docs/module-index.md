@@ -2,7 +2,7 @@
 
 # Module index
 
-230 modules in `gecko/` (subpackages included), from their own docstrings.
+229 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -61,7 +61,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.ore` | Serve the ORE program's instruction↔PDA graph — the seeds an IDL/llms.txt loses. | 1 · `serve_mcp` |
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 12 · `ingest_gate`, `prove`, `providers.catalog_surface` +9 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 11 · `ingest_gate`, `prove`, `providers.catalog_surface` +8 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -228,7 +228,6 @@ package depends on it, which is worth a look before you add a caller.
 | `verify` | verify-docs — check a surface's operations against reality, attach verdicts (VAS-2). | 2 · `authcheck`, `report` |
 | `verify_signed` | Did the signer sign the transaction we checked? | 1 · `providers.catalog_surface` |
 | `vindex` | The value-domain index (§13 Phase 3.3) — "what correlates with X across ALL | 4 · `catalog_mcp`, `cli`, `metrics` +1 |
-| `vocab_gap` | Which words a user said that reach NO card — the input the blurb lever needs. | 0 |
 | `waf` | WAF / robot-block middleware for the hosted multi-surface MCP server. | 1 · `http_server` |
 | `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 3 · `prepare_purchase`, `providers.catalog_surface`, `registry.wallets` |
 | `wellknown` | Host-level ``.well-known`` discovery manifests for the public multi-surface app. | 1 · `http_server` |
