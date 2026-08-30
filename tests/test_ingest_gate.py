@@ -446,12 +446,28 @@ def test_discrimination_runs_across_the_whole_catalog(reports):
 
 def test_discrimination_reports_the_margin_distribution_not_only_the_count(reports):
     """The binary steal count is 0 for every program today, so on its own it says
-    nothing. The margins are what carry the information."""
+    nothing. The margins are what carry the information.
+
+    MEDIAN 36 -> 35 on 2026-08-29, and it is a COST we chose, not drift. Enriching
+    meteora/swap's card with the words a person actually says (swap/exchange/convert/
+    trade/rate) bought +1 recall@1 and +1 recall@3 on the golden set — and narrowed
+    pumpfun's median discrimination margin by one, because a card that matches more
+    queries also competes with more cards. Causation verified by reverting the card
+    text alone and watching the median return to 36.
+
+    That is the whole tension in one number: card enrichment BUYS RECALL AND SPENDS
+    DISCRIMINATION. At 8 wired programs a one-unit median move against a p25 of 14 is
+    noise. It will not stay noise — `withdraw` names an instruction in 831 catalogue
+    programs and `claim` in 717, so discrimination is the axis that decays with N while
+    recall is the one that improves. Anyone enriching the next card should read this
+    number, not just the recall it buys: a floor on margins is the guard that has to
+    exist before enrichment is applied at catalogue scale.
+    """
     measured = reports["pumpfun"].check("discrimination").measured
     assert measured["margin_quantiles"] == {
         "min": 5,
         "p25": 14,
-        "median": 36,
+        "median": 35,
         "p75": 86,
         "max": 332,
     }

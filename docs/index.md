@@ -17,7 +17,7 @@ $0**, before you spend a token or a cent.
 
 ![Gecko comprehends an API and serves it to your agent over MCP](assets/hero.gif)
 
-▶ **[Watch the 70-second launch demo](assets/launch.gif)** — comprehend a paywalled API (TxODDS) into 8/8 first-call-correct tools + live odds, block a poisoned spec (8/8→0/8), and `gecko test` writes 32/32 checks.
+▶ **[Watch the 70-second launch demo](assets/launch.gif)** — comprehend a paywalled API (TxODDS) into 18 first-call-correct tools + live odds, block a poisoned spec (8/8→0/8), and `gecko test` writes 32/32 checks.
 
 ## Start here
 - **[Quickstart](quickstart.md)** — serve any API over MCP, or embed the SDK, in minutes.
