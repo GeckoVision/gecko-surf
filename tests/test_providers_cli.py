@@ -53,6 +53,20 @@ _SERVABLE = {
         "bindings": {"base_mint": "Hszh6zhqhfR6vv27dQi5rARjvdXyaobGcVhj3t73meta"},
         "address": "1AEZZsShFCnC8UUetqk9hGby66Q5mgyszDHdXjAmdYe",
     },
+    "whirlpool": {
+        "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        "slug": "4tj9k6117wn4xla89szsj",
+        "account": "whirlpool",
+        # The USDG/USDC ts=1 pool four Gecko-built swap_v2 transactions landed on —
+        # config + both mints + tick_spacing derive the account holding $25M of TVL.
+        "bindings": {
+            "whirlpools_config": "2LecshUwdy9xi7meFgHtFJQNSKk4KdTrcpvaB56dP2NQ",
+            "token_mint_a": "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",
+            "token_mint_b": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "tick_spacing": 1,
+        },
+        "address": "9RqDTfwCx2SgxsvKpspQHc38HUo3B6hRd3oR9JR966Ps",
+    },
 }
 
 

@@ -409,7 +409,15 @@ def _snapshot() -> dict[str, list[dict]]:
 # `==`, not `in`: a fourth entry has to turn ``test_the_post_snapshot_cards_are_exactly_
 # these`` red before it can be skipped. whirlpool was the fourth, and it did.
 _POST_SNAPSHOT_CARDS = frozenset(
-    {"let_me_buy/SURFACE", "jurassic_fi/SURFACE", "whirlpool/SURFACE"}
+    {
+        "let_me_buy/SURFACE",
+        "jurassic_fi/SURFACE",
+        "whirlpool/SURFACE",
+        # The fifth entry, red-first as required: plan_swap was wired 2026-08-31 (the
+        # ingest gate's founding refusal, paid). No pre-R7 plan can exist for a card
+        # younger than the snapshot; the snapshot-free cap test covers it instead.
+        "whirlpool/plan_swap",
+    }
 )
 
 #: (card, account) pairs whose INPUT changed after the pin was taken, so the pin no
@@ -440,7 +448,12 @@ def test_the_post_snapshot_cards_are_exactly_these() -> None:
     is asserted, and every name in it must really be missing from the fixture."""
     snapshot = _snapshot()
     assert _POST_SNAPSHOT_CARDS == frozenset(
-        {"let_me_buy/SURFACE", "jurassic_fi/SURFACE", "whirlpool/SURFACE"}
+        {
+            "let_me_buy/SURFACE",
+            "jurassic_fi/SURFACE",
+            "whirlpool/SURFACE",
+            "whirlpool/plan_swap",
+        }
     )
     assert _POST_SNAPSHOT_CARDS.isdisjoint(snapshot)
     keys = {f"{c.api_id}/{c.intent_name or 'SURFACE'}" for c in _wired_cards()}

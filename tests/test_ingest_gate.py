@@ -2,16 +2,18 @@
 
 Every number in this file was MEASURED against the packaged configs and the packaged
 IDL fixtures — nothing here is invented, and no fixture is written to make a check pass.
-The load-bearing row is whirlpool: its config declares ``intents: ["plan_swap"]``,
-:func:`gecko.providers.cli.intent_registries` supplies no such thing, and the program
-shipped anyway with no start card, no ``list_programs`` row and no drift target. If
-whirlpool ever stops FAILING this gate without someone wiring ``plan_swap``, the gate has
-stopped working.
+The load-bearing row WAS whirlpool: its config declared ``intents: ["plan_swap"]`` with
+no registry supplying it, and the program shipped anyway — no start card, no
+``list_programs`` row, no drift target. The gate's refusal tracked that debt from its
+first commit until 2026-08-31, when ``providers/whirlpool.py`` supplied the intent (the
+exact fix the refusal named). The refusal-QUALITY properties survive below as a direct
+call against the counterfactual unwired state, so the gate's teeth are still proven
+without keeping a live defect around to bite.
 
-The other seven are here so the gate is falsifiable in the other direction: a check that
-refuses everything is not a gate either. Their outcomes span all four values, which is the
-point — ``ok`` (pumpfun), ``warn`` (let_me_buy, meteora, metadao_ico, jurassic_fi, jupiter),
-``refuse`` (ore, whirlpool) and ``unknown`` (the three programs with no offline IDL).
+The other seven keep the gate falsifiable in the other direction: a check that refuses
+everything is not a gate either. Outcomes still span all four values — ``ok`` (pumpfun),
+``warn`` (let_me_buy, meteora, metadao_ico, jurassic_fi, jupiter, whirlpool), ``refuse``
+(ore) and ``unknown`` (the programs with no offline IDL).
 """
 
 from __future__ import annotations
@@ -69,22 +71,32 @@ def reports():
 # --------------------------------------------------------------------------- #
 # intent-reachability — the check that would have caught whirlpool
 # --------------------------------------------------------------------------- #
-def test_whirlpool_fails_intent_reachability_today(reports):
-    """THE regression that shipped. whirlpool.json:12 declares plan_swap; nothing
-    supplies it; both consumers drop it in silence."""
+def test_whirlpool_intent_reachability_is_supplied_now(reports):
+    """THE regression that shipped, now paid. The refusal tracked "plan_swap declared,
+    nothing supplies it" from the gate's first commit until providers/whirlpool.py
+    supplied the intent (2026-08-31). If this ever regresses to missing, the gate goes
+    back to refusing — the counterfactual is pinned separately below."""
     check = reports["whirlpool"].check("intent-reachability")
-    assert check.outcome == "refuse"
-    assert check.blocks is True
+    assert check.outcome == "ok"
+    assert check.blocks is False
     assert check.measured["declared"] == ["plan_swap"]
-    assert check.measured["supplied"] == []
-    assert check.measured["missing"] == ["plan_swap"]
-    assert reports["whirlpool"].blocks is True
+    assert check.measured["supplied"] == ["plan_swap"]
+    assert check.measured["missing"] == []
+    assert reports["whirlpool"].blocks is False
 
 
-def test_whirlpool_refusal_names_the_file_the_missing_thing_and_the_fix(reports):
+def test_whirlpool_refusal_names_the_file_the_missing_thing_and_the_fix():
     """A refusal that says only 'failed' is a bug. This one has to name the registry
-    that is missing the entry, the config that declares it, and the single edit."""
-    (finding,) = reports["whirlpool"].check("intent-reachability").findings
+    that is missing the entry, the config that declares it, and the single edit.
+
+    Since 2026-08-31 the live registry SUPPLIES plan_swap, so the refusal is produced
+    against the counterfactual unwired state — same check function, empty supply — and
+    the quality bar is asserted unchanged. The property must hold whenever the next
+    program regresses this way, not only while whirlpool happened to."""
+    check = ingest_gate.check_intent_reachability(
+        "whirlpool", (), {}, {}, overlay_declared=("plan_swap",)
+    )
+    (finding,) = check.findings
     assert "gecko/providers/cli.py" in finding.location
     assert "intent_registries()" in finding.location
     assert "whirlpool.plan_swap" in finding.missing
@@ -150,7 +162,8 @@ REGISTRY_SCORES = {
     "metadao_ico": (5, ["R5"]),
     "let_me_buy": (4, ["R4", "R5"]),
     "jurassic_fi": (3, ["R4", "R5", "R6"]),
-    "whirlpool": (2, ["R3", "R4", "R5", "R6"]),
+    # 2 -> 4 on 2026-08-31: wiring plan_swap satisfied R3 (intent registry) and R4.
+    "whirlpool": (4, ["R5", "R6"]),
 }
 
 
@@ -169,7 +182,10 @@ def test_registry_consistency_discriminates(reports):
         reports[api].check("registry-consistency").measured["score"]
         for api in ALL_PROGRAMS
     }
-    assert scores == {2, 3, 4, 5, 6}
+    # {2,3,4,5,6} until 2026-08-31; wiring whirlpool's plan_swap moved it 2 -> 4. Four
+    # distinct scores across eight programs still discriminates — what this test forbids
+    # is the collapse to one.
+    assert scores == {3, 4, 5, 6}
 
 
 def test_golden_row_counts_are_read_from_the_packaged_golden_set(reports):
@@ -438,7 +454,7 @@ def test_discrimination_runs_across_the_whole_catalog(reports):
     candidate stealing an incumbent and an incumbent stealing the candidate are the same
     measurement. Measured today: 20 cards over 8 programs, 0 stolen."""
     check = reports["whirlpool"].check("discrimination")
-    assert check.measured["cards"] == 20
+    assert check.measured["cards"] == 21  # +1 on 2026-08-31: whirlpool.swap_v2
     assert check.measured["programs"] == 8
     assert check.measured["stolen"] == 0
     assert check.outcome == "ok"
@@ -468,10 +484,13 @@ def test_discrimination_reports_the_margin_distribution_not_only_the_count(repor
         "min": 5,
         "p25": 14,
         "median": 35,
-        "p75": 86,
+        # p75 86 -> 83 and n 20 -> 21 on 2026-08-31: the whirlpool plan_swap card joined
+        # the candidate pool, and one more competitor thins the upper quartile. Same
+        # trade as every enrichment: a new card buys reach and spends margin.
+        "p75": 83,
         "max": 332,
     }
-    assert len(measured["margins"]) == 20
+    assert len(measured["margins"]) == 21
     assert measured["margins"] == sorted(measured["margins"])
     for key in ("min", "p25", "median", "p75", "max"):
         assert (
@@ -490,11 +509,17 @@ def test_discrimination_states_what_it_does_not_measure(reports):
 
 
 def test_whirlpool_is_still_ranked_by_its_surface_card(reports):
-    """Honesty about the shape of the whirlpool failure: it has NO start card, but it
-    does have a surface card, and that card wins its own text by 154. 'Unreachable' is a
-    statement about starts, not about the router."""
+    """Both whirlpool cards win their own text — the surface card as before, and the
+    plan_swap start card wired 2026-08-31."""
     rows = reports["whirlpool"].check("discrimination").measured["candidate_cards"]
-    assert rows == [{"card": "whirlpool.surface", "rank": 1, "own": 215, "margin": 154}]
+    # Two cards since 2026-08-31: the surface card AND the plan_swap start card, each
+    # ranked #1 for its own text. The instruction card's margin (37) is the thinnest on
+    # the board — expected for a young card, and the number the next enrichment pass
+    # should watch.
+    assert rows == [
+        {"card": "whirlpool.surface", "rank": 1, "own": 243, "margin": 175},
+        {"card": "whirlpool.swap_v2", "rank": 1, "own": 73, "margin": 37},
+    ]
 
 
 def test_a_stolen_card_refuses():
@@ -556,7 +581,7 @@ def test_a_one_card_catalog_is_unknown():
         ("metadao_ico", "warn"),
         ("jurassic_fi", "warn"),
         ("ore", "refuse"),
-        ("whirlpool", "refuse"),
+        ("whirlpool", "warn"),
     ],
 )
 def test_gate_outcomes_span_all_four_values(reports, api_id, outcome):
@@ -614,7 +639,7 @@ def test_the_gate_opens_no_socket(monkeypatch):
     with pytest.raises(AssertionError):
         socket.socket()
     report = run("whirlpool")
-    assert report.outcome == "refuse"
+    assert report.outcome == "warn"
 
 
 def test_an_unlisted_program_raises_rather_than_scoring_zero():
@@ -624,9 +649,10 @@ def test_an_unlisted_program_raises_rather_than_scoring_zero():
 
 
 def test_render_prints_every_findings_three_parts(reports):
-    text = ingest_gate.render(reports["whirlpool"])
+    # ore is the refuse exemplar now that whirlpool's debt is paid.
+    text = ingest_gate.render(reports["ore"])
     assert "REFUSE — do not ingest" in text
-    for check in reports["whirlpool"].checks:
+    for check in reports["ore"].checks:
         for finding in check.findings:
             assert finding.location in text
             assert finding.missing in text
@@ -639,9 +665,11 @@ def test_render_prints_every_findings_three_parts(reports):
 def test_cli_exits_nonzero_on_a_refusal(capsys):
     from gecko.cli import main
 
-    assert main(["ingest-gate", "whirlpool"]) == 1
+    # ore with its packaged IDL is the refuse exemplar (1-byte steel discriminators
+    # against idl_layout's 8-byte assumption); bare `ore` has no IDL and exits 0.
+    assert main(["ingest-gate", "ore", "--idl", str(PACKAGED_IDLS["ore"])]) == 1
     out = capsys.readouterr().out
-    assert "whirlpool: declared={plan_swap} supplied={} missing={plan_swap}" in out
+    assert "REFUSE" in out
     assert "DISCRIMINATION, not COMPREHENSION" in out
 
 

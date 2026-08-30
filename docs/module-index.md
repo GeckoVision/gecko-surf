@@ -2,7 +2,7 @@
 
 # Module index
 
-229 modules in `gecko/` (subpackages included), from their own docstrings.
+230 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -61,7 +61,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.ore` | Serve the ORE program's instruction↔PDA graph — the seeds an IDL/llms.txt loses. | 1 · `serve_mcp` |
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 11 · `ingest_gate`, `prove`, `providers.catalog_surface` +8 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 12 · `ingest_gate`, `prove`, `providers.catalog_surface` +9 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -101,12 +101,12 @@ package depends on it, which is worth a look before you add a caller.
 | `orquestra_client` | A thin, typed client for Orquestra's machine surface (the program catalog). | 5 · `cli`, `find_start`, `orquestra_comprehend` +2 |
 | `orquestra_comprehend` | Auto-comprehend-on-pick — generate a program config from an Orquestra surface. | 2 · `providers.catalog_surface`, `providers.cli` |
 | `partner_delta` | What a partner's live surface says about a PDA, and what ours says — side by side. | 0 |
-| `pay_route` | Can this wallet buy this product — and if not, what is the shortest CHECKED route? | 1 · `providers.catalog_surface` |
+| `pay_route` | Can this wallet buy this product — and if not, what is the shortest CHECKED route? | 2 · `providers.catalog_surface`, `providers.whirlpool` |
 | `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 3 · `catalog_mcp`, `paysh_watch`, `serve_mcp` |
 | `paysh_watch` | Hourly self-refresh + drift-watch for the aggregated pay.sh catalog surface. | 0 |
 | `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 25 · `account_recipes`, `corpus`, `find_start` +22 |
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
-| `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 2 · `providers.meteora`, `providers.pumpfun` |
+| `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 3 · `providers.meteora`, `providers.pumpfun`, `providers.whirlpool` |
 | `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 8 · `providers.metadao`, `providers.metadao_landing`, `providers.meteora` +5 |
 | `peg_guard` | Is this asset holding its peg? A guard on converting, not a step in converting. | 2 · `pay_route`, `pegana` |
 | `pegana` | Ask Pegana about one mint, and report WHAT CAME BACK rather than what it implies. | 1 · `pay_route` |
@@ -131,10 +131,10 @@ package depends on it, which is worth a look before you add a caller.
 | `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 1 · `cli` |
 | `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
-| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 13 · `find_start`, `ingest_gate`, `orquestra_client` +10 |
+| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 14 · `find_start`, `ingest_gate`, `orquestra_client` +11 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
-| `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 3 · `pay_route`, `providers.cli`, `serve_mcp` |
+| `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 4 · `pay_route`, `providers.cli`, `providers.whirlpool` +1 |
 | `providers.cli` | ``gecko-orquestra`` — serve an Orquestra program's front-door surface over MCP. | 9 · `cli`, `find_start`, `ingest_gate` +6 |
 | `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
 | `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
@@ -146,9 +146,10 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 0 |
 | `providers.ore` | ORE V3 ``claimOre`` — the fourth Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.ore_landing` |
 | `providers.ore_landing` | The ORE "claim-that-passes" orchestrator — the fourth program that RUNS. | 0 |
-| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 6 · `providers.cli`, `providers.jupiter`, `providers.metadao` +3 |
+| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 7 · `providers.cli`, `providers.jupiter`, `providers.metadao` +4 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
+| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 1 · `providers.cli` |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
 | `purchase_intent_eval` | Score intent -> (store, product) against the frozen purchase-intent set. | 0 |
 | `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 2 · `ingest_gate`, `providers.catalog_surface` |
@@ -171,7 +172,7 @@ package depends on it, which is worth a look before you add a caller.
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 41 · `autonomous_purchase`, `cli`, `drift_watch` +38 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 42 · `autonomous_purchase`, `cli`, `drift_watch` +39 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
@@ -209,7 +210,7 @@ package depends on it, which is worth a look before you add a caller.
 | `store.collections` | A minimal duck-typed collection seam — in-memory for tests, Mongo in prod. | 5 · `fork_lane`, `recorded_lane`, `store.catalog_sync` +2 |
 | `store.projections` | The ONLY writer into the outcome collection — allowlist-first, fail-closed. | 2 · `fork_lane`, `recorded_lane` |
 | `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
-| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 9 · `pay_route`, `prepare_purchase`, `providers.let_me_buy` +6 |
+| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 10 · `pay_route`, `prepare_purchase`, `providers.let_me_buy` +7 |
 | `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 8 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.agents` +5 |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |
@@ -231,8 +232,8 @@ package depends on it, which is worth a look before you add a caller.
 | `waf` | WAF / robot-block middleware for the hosted multi-surface MCP server. | 1 · `http_server` |
 | `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 3 · `prepare_purchase`, `providers.catalog_surface`, `registry.wallets` |
 | `wellknown` | Host-level ``.well-known`` discovery manifests for the public multi-surface app. | 1 · `http_server` |
-| `whirlpool_math` | Orca Whirlpool price math — the OUTPUT FLOOR a landable swap needs, and its inverse. | 1 · `pay_route` |
-| `whirlpool_venue` | Find the pool that converts one mint into another — and make each candidate prove it. | 1 · `pay_route` |
+| `whirlpool_math` | Orca Whirlpool price math — the OUTPUT FLOOR a landable swap needs, and its inverse. | 2 · `pay_route`, `providers.whirlpool` |
+| `whirlpool_venue` | Find the pool that converts one mint into another — and make each candidate prove it. | 2 · `pay_route`, `providers.whirlpool` |
 | `workflows` | Derive the workflows an agent will actually want, ranked — no human authoring them. | 1 · `cli` |
 | `x402` | x402 402-challenge validation — the enforce point for the payment-swap scenario. | 3 · `redteam.scenarios`, `redteam.scorer`, `x402_pay` |
 | `x402_facilitator` | Live x402 facilitator adapter — the HTTP relay behind ``X402_MODE=live``. | 1 · `x402_pay` |

@@ -1339,15 +1339,10 @@ RECORDED_REFUSALS: dict[str, tuple[str, str]] = {
         "only while that stays true; wire ore into any idl_layout path and this must "
         "become an open bug.",
     ),
-    "whirlpool": (
-        "open",
-        "whirlpool.json:12 declares the intent plan_swap and no registry supplies it, "
-        "so both consumers drop it in silence — the regression that shipped. NO "
-        "CONTAINMENT: an agent asking to swap on Orca is routed nowhere. The fix is a "
-        "providers/whirlpool.py supplying plan_swap to intent_registries() and "
-        "start_specs(); until it exists this entry is a bug being tracked, not a "
-        "refusal being accepted.",
-    ),
+    # whirlpool's entry lived here from the gate's first commit to 2026-08-31, tracking
+    # "plan_swap declared, nothing supplies it". providers/whirlpool.py now supplies it —
+    # the exact fix the entry named — and the disposition test's own rule applies: an
+    # entry must not outlive the refusal it describes.
 }
 
 
