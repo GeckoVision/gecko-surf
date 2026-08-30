@@ -188,3 +188,41 @@ def test_free_port_leaves_the_next_port_free_too() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(("127.0.0.1", candidate))  # must not raise
+
+
+def test_every_fork_handler_distinguishes_a_broken_gate_from_an_absent_one() -> None:
+    """A `SurfpoolError` means the fork did not start. WHY decides how to report it.
+
+    Not installed -> skip: nothing was measured, and that is expected.
+    Installed and would not start -> fail: nothing was measured, and it should have been.
+
+    Sixteen files collapsed both into `pytest.skip`, so a port collision, a stale process
+    on the RPC port, or a validator that crashed on boot all read as "no surfpool on this
+    machine" — the one thing they are not.
+    """
+    from pathlib import Path
+
+    tests_dir = Path(__file__).parent
+    offenders = []
+    for path in sorted(tests_dir.glob("test_*.py")):
+        text = path.read_text()
+        if "except SurfpoolError" not in text:
+            continue
+        for block in text.split("except SurfpoolError")[1:]:
+            head = block[:600]
+            if "pytest.skip" in head and "start_failure_is_a_broken_gate" not in head:
+                offenders.append(path.name)
+                break
+    assert not offenders, (
+        "these files report a failed-to-start surfpool as a SKIP, which claims the "
+        f"environment cannot do what it demonstrably can: {sorted(set(offenders))}"
+    )
+
+
+def test_the_broken_gate_helper_answers_from_the_binary_not_from_a_guess() -> None:
+    import shutil
+
+    from gecko.pda_testkit import start_failure_is_a_broken_gate
+
+    assert start_failure_is_a_broken_gate() is (shutil.which("surfpool") is not None)
+    assert start_failure_is_a_broken_gate("definitely-not-a-real-binary-xyz") is False

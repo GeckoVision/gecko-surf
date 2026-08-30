@@ -44,7 +44,13 @@ from examples.autonomous_signing_demo import (
     run_scenarios,
     scenarios,
 )
-from gecko.pda_testkit import free_port, SurfpoolError, SurfpoolFork, surfpool_status
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    free_port,
+    SurfpoolError,
+    SurfpoolFork,
+    surfpool_status,
+)
 
 #: A port the demo's fork leg owns, deliberately NOT 8899. A test that would accept
 #: whatever answers on the default port inherits an ambient validator's state, which is
@@ -477,6 +483,13 @@ def test_the_same_five_scenarios_hold_against_a_real_surfpool_mainnet_fork() -> 
             leg = fork_leg(fork)
             results = [run_attempt(leg, spec) for spec in scenarios()]
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"THE FORK LEG DID NOT RUN — surfpool never became ready: {exc}")
 
     assert leg.network == "fork", "a fork leg may never assert mainnet"

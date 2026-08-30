@@ -31,7 +31,12 @@ from gecko.metadao_state import (
     decode_launch_state,
 )
 from gecko.pda import PdaNode, derive_pda
-from gecko.pda_testkit import SurfpoolError, SurfpoolFork, verify_derivation
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    SurfpoolError,
+    SurfpoolFork,
+    verify_derivation,
+)
 from gecko.provider_config import load_packaged_provider
 from gecko.providers.metadao import plan_fund
 
@@ -349,6 +354,13 @@ def test_metadao_derivation_against_surfpool_fork() -> None:
                 rpc_url=fork.rpc_url,
             )
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
     # real data accounts: exist and are owned by launchpad_v7

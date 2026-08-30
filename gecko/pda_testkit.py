@@ -78,6 +78,26 @@ class SurfpoolStatus:
     detail: str
 
 
+def start_failure_is_a_broken_gate(binary: str = "surfpool") -> bool:
+    """Given that a fork FAILED to start — was that our bug, or the environment's?
+
+    True when ``binary`` is on PATH. The tool is installed and it still would not start,
+    so the gate is BROKEN, not absent, and a caller that reports it as a skip is claiming
+    the environment cannot do something it demonstrably can.
+
+    The distinction is the whole point. A skip says "nothing here was measured, and that is
+    expected." A broken gate says "nothing here was measured, and it should have been."
+    Sixteen fork tests in this repo collapsed both into ``pytest.skip``, so a port
+    collision, a stale process holding the RPC port, or a validator that crashed on boot
+    all read as "no surfpool on this machine" — which is the one thing they are not.
+
+    Deliberately does NOT import pytest: this is package code, and the skip/fail decision
+    belongs to the test that owns the assertion. This answers the question; the caller
+    acts on it.
+    """
+    return surfpool_status(binary).available
+
+
 def free_port() -> int:
     """A port the OS says is free — and whose NEIGHBOUR is free too.
 

@@ -362,7 +362,11 @@ def test_buy_that_passes_e2e_side_by_side() -> None:
     """Real Orquestra /build → assemble the landing bundle → simulate on a surfpool fork.
     The derive-only path (no ATA prelude) reverts 3012; the Gecko-complete landing bundle
     passes. Prints the verbatim side-by-side — this is the deliverable."""
-    from gecko.pda_testkit import SurfpoolError, SurfpoolFork
+    from gecko.pda_testkit import (
+        start_failure_is_a_broken_gate,
+        SurfpoolError,
+        SurfpoolFork,
+    )
 
     from gecko.pda_resolve import read_account_field_pubkey
 
@@ -389,6 +393,13 @@ def test_buy_that_passes_e2e_side_by_side() -> None:
                 network_label="surfpool fork (mainnet-backed — NOT mainnet)",
             )
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"surfpool fork unavailable: {exc}")
 
     derive = result.derive_only_receipt

@@ -24,7 +24,13 @@ from typing import Any
 
 import pytest
 
-from gecko.pda_testkit import free_port, SurfpoolError, SurfpoolFork, surfpool_status
+from gecko.pda_testkit import (
+    start_failure_is_a_broken_gate,
+    free_port,
+    SurfpoolError,
+    SurfpoolFork,
+    surfpool_status,
+)
 from gecko.sandbox import SurfnetProof, ephemeral_signer, prove_surfnet
 from gecko.sandbox.rehearse import (
     LamportDelta,
@@ -624,6 +630,13 @@ def fork() -> Any:
         with SurfpoolFork(mainnet, port=FORK_PORT, ready_timeout=180) as running:
             yield running
     except SurfpoolError as exc:
+        # Installed and would not start = a BROKEN gate, not an absent one.
+        if start_failure_is_a_broken_gate():
+            pytest.fail(
+                "surfpool IS installed and the fork did not start, so this "
+                "gate is broken rather than absent — a skip here would claim "
+                f"the environment cannot do what it demonstrably can: {exc}"
+            )
         pytest.skip(f"THE FORK LEG DID NOT RUN — surfpool never became ready: {exc}")
 
 
