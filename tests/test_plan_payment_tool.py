@@ -83,3 +83,37 @@ def test_a_malformed_buyer_never_reaches_the_network() -> None:
     )
     assert "error" in out
     assert calls == []
+
+
+def test_a_loopback_rpc_url_is_refused_by_default_and_admitted_by_an_injected_guard() -> (
+    None
+):
+    """The default guard refuses loopback — this is an unauthenticated door, and a
+    caller-supplied URL would otherwise make it a proxy into RFC1918/metadata space.
+
+    But a REHEARSAL runs against the operator's own fork, which lives at 127.0.0.1 by
+    definition. `prepare_purchase_result` already carries the injected `url_guard` seam
+    for exactly this; `plan_payment` lacked it, which made the tool's fork rung
+    unreachable even in-process — found when the five-query rehearsal hit the refusal.
+    """
+    from gecko.pay_route import plan_payment_result
+
+    args = {
+        "store": "geckocoffee",
+        "product": "Espresso",
+        "buyer": "5cjBs5VE8WVVctG2EoUkYiRkW92sXkoT4YsNxszWC9CE",
+        "network": "fork",
+        "rpc_url": "http://127.0.0.1:8899",
+    }
+    refused = plan_payment_result(args)
+    assert "rpc_url refused" in refused.get("error", "")
+
+    class _Probe(Exception):
+        pass
+
+    def exploding_rpc(url, method, params):
+        raise _Probe("the guard admitted the fork url and the call proceeded")
+
+    out = plan_payment_result(args, rpc_call=exploding_rpc, url_guard=lambda url: None)
+    assert "rpc_url refused" not in out.get("error", "")
+    assert "_Probe" in out.get("error", "")
