@@ -2,7 +2,7 @@
 
 # Module index
 
-230 modules in `gecko/` (subpackages included), from their own docstrings.
+231 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -21,6 +21,7 @@ package depends on it, which is worth a look before you add a caller.
 | `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 15 · `authcheck`, `catalog_mcp`, `chain_eval` +12 |
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
+| `cards` | In-chat cards for Gecko tools — MCP Apps resources, PayBox-style. | 1 · `http_server` |
 | `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 8 · `client`, `find_start`, `ingest_gate` +5 |
 | `catalog_mcp` | Aggregated MCP surface over the whole pay.sh catalog — one MCP, 70 providers. | 1 · `serve_mcp` |
 | `catalogue_export` | The semantic catalogue, serialised so a non-Python consumer can DERIVE it. | 0 |
@@ -93,7 +94,7 @@ package depends on it, which is worth a look before you add a caller.
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
 | `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
 | `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 24 · `access`, `caller`, `cli` +21 |
-| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 13 · `autonomous_purchase`, `corpus`, `fork_preflight` +10 |
+| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 14 · `autonomous_purchase`, `corpus`, `fork_preflight` +11 |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
 | `ore_state` | Read + decode ORE V3 ``Miner`` / ``Treasury`` accounts — the state a claim needs. | 1 · `providers.ore` |
@@ -117,7 +118,7 @@ package depends on it, which is worth a look before you add a caller.
 | `preflight` | Preflight — the pre-prod agent-callability gate. | 0 |
 | `preflight_corpus` | Control-plane-safe Preflight corpus — the moat, made load-bearing from day one. | 2 · `preflight`, `registry.api` |
 | `prepare_instruction` | Prepare ANY instruction of ANY comprehended program — unsigned, simulated, or refused. | 3 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.rehearse_instruction` |
-| `prepare_purchase` | Plan and verify one ``let_me_buy make_purchase`` — and stop at the signature. | 5 · `pay_route`, `providers.catalog_surface`, `sandbox.rehearse` +2 |
+| `prepare_purchase` | Plan and verify one ``let_me_buy make_purchase`` — and stop at the signature. | 6 · `pay_route`, `providers.catalog_surface`, `providers.whirlpool` +3 |
 | `privy_auth` | PrivyAccountResolver — verify a Privy access-token "Gecko key" → stable account id. | 1 · `http_server` |
 | `privy_login` | Privy passwordless email-OTP provider for ``gecko login``. | 2 · `privy_auth`, `privy_server` |
 | `privy_server` | Server-side Privy email-OTP — identity for the hosted ``gecko login`` (SERVER-ONLY). | 1 · `authlogin` |
@@ -149,7 +150,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 7 · `providers.cli`, `providers.jupiter`, `providers.metadao` +4 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
-| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 1 · `providers.cli` |
+| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 2 · `providers.catalog_surface`, `providers.cli` |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
 | `purchase_intent_eval` | Score intent -> (store, product) against the frozen purchase-intent set. | 0 |
 | `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 2 · `ingest_gate`, `providers.catalog_surface` |
