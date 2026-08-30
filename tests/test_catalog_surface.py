@@ -70,6 +70,13 @@ def test_surface_lists_the_catalog_tools() -> None:
         # and it refuses BEFORE spending anything, which is why it sits here and not
         # beside prepare_purchase. Pinned in tests/test_plan_payment_tool.py.
         "plan_payment",
+        # The conversion plan_payment's route names, executable: the exact swap_v2
+        # values for prepare_instruction, from the venue that must re-derive its own
+        # address. Directly after the decision tool it executes for — and its
+        # description says plainly that IT does not consult the peg; plan_payment
+        # decides, this one does what the operator explicitly asked.
+        # Pinned in tests/test_providers_whirlpool.py.
+        "plan_swap",
         # The OTHER half of the handoff: prepare_purchase hands out bytes and a binding,
         # somebody else signs, and this proves the signed bytes are the checked ones
         # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.

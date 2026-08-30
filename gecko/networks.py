@@ -36,6 +36,8 @@ older name for the same one; neither can ever be approvable, and
 
 from __future__ import annotations
 
+from typing import Any
+
 from types import MappingProxyType
 from typing import Literal, Mapping, cast, get_args
 
@@ -60,6 +62,9 @@ NETWORKS: frozenset[str] = frozenset(get_args(Network))
 
 #: The member that claims nothing. Any default, anywhere, must be this one.
 UNKNOWN_NETWORK: Network = "unknown"
+
+#: The browse default `network_for_browse` documents — named so no call site holds the literal.
+MAINNET_NETWORK: Network = "mainnet"
 
 #: Every spelling that means "we could not tell" — this module's ``unknown`` and the
 #: corpus's older ``other``. Nothing in here may ever be approvable.
@@ -138,3 +143,31 @@ def network_from_label(label: str | None) -> Network:
     if "mainnet" in text:
         return "mainnet"
     return UNKNOWN_NETWORK
+
+
+def network_for_browse(
+    args: "Mapping[str, Any]",
+) -> "tuple[Network | None, str | None]":
+    """Resolve the ``network`` argument for a browse/plan-shaped tool: ``(network, error)``.
+
+    The convention `list_stores` ratified, in one place instead of one copy per tool: a
+    NODE without a chain is unguessable (a fork proxy answers at any hostname), so an
+    ``rpc_url`` with no ``network`` is refused — but naming NEITHER can only mean
+    mainnet, and requiring the word to read a menu was the more absurd half of the old
+    guard. This lives here rather than in any provider module because a provider
+    asserting a network it was not told is the fabrication
+    ``test_no_call_site_asserts_a_network_it_was_not_told`` exists to forbid; a shared
+    resolver stating a DOCUMENTED default is a different thing from a call site making
+    one up.
+    """
+    network = coerce_network(args.get("network"))
+    if network != UNKNOWN_NETWORK:
+        return network, None
+    supplied = args.get("rpc_url")
+    if isinstance(supplied, str) and supplied.strip():
+        return None, (
+            "you named an `rpc_url` but not a `network`. Which chain that node answers "
+            "for cannot be read from its hostname, so say mainnet, devnet, testnet or "
+            "fork."
+        )
+    return MAINNET_NETWORK, None

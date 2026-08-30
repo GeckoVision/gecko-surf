@@ -217,3 +217,100 @@ def test_the_intent_is_registered_so_a_hosted_agent_can_reach_it() -> None:
     assert intent_registries()["whirlpool"] is WHIRLPOOL_INTENTS
     assert "plan_swap" in start_specs()["whirlpool"]
     assert "plan_swap" in WHIRLPOOL_STARTS
+
+
+# --- the hosted tool ------------------------------------------------------------------
+
+
+def _result(args, **kw):
+    from gecko.providers.whirlpool import plan_swap_result
+    from gecko.whirlpool_venue import whirlpool_layout
+
+    layout_idl = _idl()
+    layout = whirlpool_layout(layout_idl)
+    pool = _real_pool_address(layout)
+    kw.setdefault("rpc_call", _fake_rpc(layout, pool))
+    kw.setdefault("idl_fetch", lambda _p: layout_idl)
+    kw.setdefault("url_guard", lambda _u: None)
+    base = {
+        "input_mint": USDG,
+        "output_mint": USDC,
+        "user": USER,
+        "amount_in": 150_000,
+        "network": "fork",
+        "rpc_url": "http://127.0.0.1:1",
+    }
+    base.update(args)
+    return plan_swap_result(base, **kw)
+
+
+def test_the_hosted_tool_is_listed_after_plan_payment() -> None:
+    """plan_swap sits beside the decision tool it executes for, and the free-browse
+    ordering invariant survives the insertion."""
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    names = [t["name"] for t in OrquestraCatalogSurface().list_tools()]
+    assert "plan_swap" in names
+    assert names.index("plan_swap") == names.index("plan_payment") + 1
+    assert names.index("try_purchase") == names.index("prepare_purchase") + 1
+
+
+def test_the_hosted_tool_plans_end_to_end_offline() -> None:
+    out = _result({})
+    assert "error" not in out
+    assert out["instruction"] == "swap_v2"
+    assert out["values"]["token_program_a"] == TOKEN_2022
+    assert out["network"] == "fork"
+    assert out["next_tool"] == "prepare_instruction"
+
+
+def test_a_malformed_wallet_never_reaches_the_network() -> None:
+    calls = []
+
+    def rpc(url, method, params):
+        calls.append(method)
+        return {}
+
+    out = _result({"user": "not a pubkey"}, rpc_call=rpc)
+    assert "error" in out
+    assert calls == []
+
+
+def test_a_loopback_rpc_url_is_refused_without_the_injected_guard() -> None:
+    from gecko.providers.whirlpool import plan_swap_result
+
+    out = plan_swap_result(
+        {
+            "input_mint": USDG,
+            "output_mint": USDC,
+            "user": USER,
+            "amount_in": 1000,
+            "network": "fork",
+            "rpc_url": "http://127.0.0.1:8899",
+        }
+    )
+    assert "rpc_url refused" in out.get("error", "")
+
+
+def test_a_plan_refusal_is_marked_refused_with_its_reason() -> None:
+    """WhirlpoolPlanError is an honest refusal, not a transport failure — the caller
+    must be able to tell 'no pool survived re-derivation' from 'the node was down'."""
+    def no_pools(url, method, params):
+        if method == "getProgramAccounts":
+            return {"result": []}
+        raise AssertionError(method)
+
+    out = _result({}, rpc_call=no_pools)
+    assert out.get("refused") is True
+    assert "re-derivation" in out["error"]
+
+
+def test_the_description_says_it_does_not_consult_the_peg() -> None:
+    """The honesty line: this tool executes an explicitly-requested conversion;
+    plan_payment is the one that DECIDES, and its gate can refuse. Hiding that split
+    would let a card read as peg-checked when nothing checked it."""
+    from gecko.providers.whirlpool import PLAN_SWAP_TOOL
+
+    text = PLAN_SWAP_TOOL["description"]
+    assert "NOT" in text and "peg" in text
+    assert "plan_payment" in text

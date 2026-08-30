@@ -54,6 +54,7 @@ from ..prepare_purchase import prepare_purchase_result, prepare_purchase_tool
 from ..read_accounts import READ_ACCOUNTS_TOOL, read_accounts_result
 from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..pay_route import PLAN_PAYMENT_TOOL, plan_payment_result
+from .whirlpool import PLAN_SWAP_TOOL, plan_swap_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
 from ..rpc import RpcCall, default_rpc_call
@@ -216,6 +217,7 @@ class OrquestraCatalogSurface:
             TRY_PURCHASE_TOOL,
             LIST_STORES_TOOL,
             PLAN_PAYMENT_TOOL,
+            PLAN_SWAP_TOOL,
             # The other half of the handoff. `prepare_purchase` hands out bytes and a
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
@@ -289,6 +291,8 @@ class OrquestraCatalogSurface:
             return list_stores_result(args, rpc_call=self.purchase_rpc_call)
         if name == "plan_payment":
             return plan_payment_result(args, rpc_call=self.purchase_rpc_call)
+        if name == "plan_swap":
+            return plan_swap_result(args, rpc_call=self.purchase_rpc_call)
         if name == "verify_signed_transaction":
             return verify_signed_result(args)
         return {"error": f"unknown tool {name!r}"}

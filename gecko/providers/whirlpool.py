@@ -43,9 +43,11 @@ from ..whirlpool_venue import (
 from .orquestra import Intent, OrquestraProgramSurface
 
 __all__ = [
+    "PLAN_SWAP_TOOL",
     "WHIRLPOOL_INTENTS",
     "WHIRLPOOL_STARTS",
     "plan_swap",
+    "plan_swap_result",
 ]
 
 #: The sizing/build bound. ONE number on purpose — sizing at 50 while building at 100 is
@@ -309,3 +311,133 @@ WHIRLPOOL_STARTS: dict[str, StartSpec] = {
         },
     )
 }
+
+
+# --- the MCP tool ---------------------------------------------------------------------
+
+PLAN_SWAP_TOOL: dict[str, Any] = {
+    "name": "plan_swap",
+    "description": (
+        "Plan a token conversion on Orca Whirlpool and hand back the exact values "
+        "`prepare_instruction` needs to build it — Gecko's CHECKED venue, from the "
+        "wallet you name, without signing anything or starting any clock. The pool is "
+        "derived, never looked up: every candidate must reproduce its own address from "
+        "its own on-chain configuration, and one that cannot is DROPPED — the "
+        "second-best answer is a real, funded pool that would take the money. Each "
+        "mint's token program is read from the mint itself, the three tick arrays are "
+        "selected in the direction of travel, and min_amount_out + sqrt_price_limit "
+        "are sized under ONE shared slippage bound, so the floor you are guaranteed is "
+        "the floor the swap is built with. Uses swap_v2 — v1 cannot carry a Token-2022 "
+        "mint. `missing_atas` names any token account the wallet lacks WITH the command "
+        "that creates it: swap_v2 creates no accounts, and finding that out as a 3012 "
+        "mid-swap is the expensive way. "
+        "WHAT THIS DELIBERATELY DOES NOT DO: consult the peg oracle. This tool plans "
+        "the conversion a caller explicitly asked for; `plan_payment` is the tool that "
+        "DECIDES whether converting is wise, and its peg gate can refuse. Calling this "
+        "directly is the operator saying 'I want this swap' — the quote's own floor and "
+        "price-limit are the protection that remains. "
+        "NEXT STEP: pass `values` to prepare_instruction (program_id, "
+        "instruction=swap_v2, payer=your wallet), sign the returned bytes, verify the "
+        "binding, submit. Read-only; nothing here holds a key."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "input_mint": {"type": "string", "description": "the mint being SOLD"},
+            "output_mint": {"type": "string", "description": "the mint being BOUGHT"},
+            "user": {
+                "type": "string",
+                "description": "the wallet that signs and pays — its ATAs are derived and checked",
+            },
+            "amount_in": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "base units of input_mint to sell",
+            },
+            "slippage_bps": {
+                "type": "integer",
+                "description": "optional; defaults to the ONE shared bound the swap is built with",
+            },
+            "network": {
+                "type": "string",
+                "description": "mainnet (default) or a fork you name with rpc_url",
+            },
+            "rpc_url": {
+                "type": "string",
+                "description": "your own node; requires `network` so the two cannot disagree",
+            },
+        },
+        "required": ["input_mint", "output_mint", "user", "amount_in"],
+    },
+}
+
+_B58_CHARS = frozenset("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+
+def _is_pubkey(value: Any) -> bool:
+    return (
+        isinstance(value, str) and 32 <= len(value) <= 44 and set(value) <= _B58_CHARS
+    )
+
+
+def plan_swap_result(
+    arguments: Any,
+    *,
+    rpc_call: RpcCall | None = None,
+    idl_fetch: Any = None,
+    url_guard: Any = None,
+) -> dict[str, Any]:
+    """The surface-facing entry: validate, resolve the RPC, plan. Never raises.
+
+    Same rules as every sibling on this unauthenticated door: the NETWORK is asserted by
+    the caller and never inferred from a URL, a caller-supplied ``rpc_url`` goes through
+    the SSRF guard (``url_guard`` is the injected rehearsal seam, exactly as on
+    ``plan_payment``), and a transport failure comes back redacted to its class.
+    """
+    from ..networks import network_for_browse
+    from ..prepare_purchase import _resolve_rpc_url
+
+    args = arguments or {}
+    for name in ("input_mint", "output_mint", "user"):
+        if not _is_pubkey(args.get(name)):
+            return {
+                "error": f"`{name}` must be a base58 account address — got something else."
+            }
+    raw_amount = args.get("amount_in")
+    if raw_amount is None:
+        return {"error": "`amount_in` is required — base units of the input mint."}
+    try:
+        amount_in = int(raw_amount)
+    except (TypeError, ValueError):
+        return {"error": "`amount_in` must be an integer count of base units."}
+    if amount_in <= 0:
+        return {"error": f"`amount_in` must be positive, got {amount_in}."}
+
+    network, net_error = network_for_browse(args)
+    if net_error or network is None:
+        return {"error": net_error or "no network"}
+    rpc_url, refusal = _resolve_rpc_url(args.get("rpc_url"), network, url_guard)
+    if refusal or rpc_url is None:
+        return {"error": refusal or "no RPC url"}
+
+    plan_args: dict[str, Any] = {
+        "input_mint": args["input_mint"],
+        "output_mint": args["output_mint"],
+        "user": args["user"],
+        "amount_in": amount_in,
+    }
+    if args.get("slippage_bps") is not None:
+        plan_args["slippage_bps"] = args["slippage_bps"]
+    if args.get("pool"):
+        plan_args["pool"] = args["pool"]
+    try:
+        plan = plan_swap(
+            plan_args, rpc_url=rpc_url, rpc_call=rpc_call, idl_fetch=idl_fetch
+        )
+    except WhirlpoolPlanError as exc:
+        # A refusal with its reason — the plan could not be assembled honestly.
+        return {"error": str(exc), "refused": True}
+    except Exception as exc:  # noqa: BLE001 - redacted to a class at the transport edge
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    plan["network"] = network
+    return plan

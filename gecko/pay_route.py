@@ -506,7 +506,7 @@ def plan_payment_result(
     ``rpc_url`` goes through the SSRF guard before anything is fetched. Every transport
     failure comes back redacted to its exception class.
     """
-    from .networks import UNKNOWN_NETWORK, coerce_network
+    from .networks import network_for_browse
     from .prepare_purchase import _resolve_rpc_url
     from .rpc import default_rpc_call
     from .store_accounts import resolve_store
@@ -527,18 +527,9 @@ def plan_payment_result(
             )
         }
 
-    network = coerce_network(args.get("network"))
-    if network == UNKNOWN_NETWORK:
-        supplied = args.get("rpc_url")
-        if isinstance(supplied, str) and supplied.strip():
-            return {
-                "error": (
-                    "you named an `rpc_url` but not a `network`. Which chain that node "
-                    "answers for cannot be read from its hostname, so say mainnet, "
-                    "devnet, testnet or fork."
-                )
-            }
-        network = "mainnet"  # type: ignore[assignment]
+    network, net_error = network_for_browse(args)
+    if net_error or network is None:
+        return {"error": net_error or "no network"}
     # ``url_guard`` mirrors `prepare_purchase_result`'s seam, and exists for the same
     # reason: the DEFAULT refuses loopback because this is an unauthenticated door, but a
     # rehearsal runs against the operator's own fork, which lives at 127.0.0.1 by
