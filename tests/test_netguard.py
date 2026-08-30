@@ -324,3 +324,97 @@ def test_safe_get_drops_caller_headers_on_scheme_change_redirect(monkeypatch) ->
     # second hop downgrades to http: caller header must be dropped, UA kept
     assert "x-gecko-key" not in diff_scheme_lower
     assert "user-agent" in diff_scheme_lower
+
+
+# --- safe_get_status: the status a peg oracle answers with is itself the fact ----------
+#
+# `safe_get` raises HTTPError on 404 and swallows only 3xx (see the comment at the
+# HTTPError handler). That is right for fetching a spec — a 404 there IS a failure. It is
+# wrong for asking an oracle whether it tracks an asset, where 404 is a real ANSWER
+# ("I do not track this") and every other non-2xx is "I could not answer". Collapsing
+# those two into one exception is what forces a caller to guess from the body, and a
+# degraded 200 then forges "no opinion". `safe_get_status` returns the status instead.
+
+
+def test_safe_get_status_returns_404_as_an_answer_not_an_exception() -> None:
+    err = urllib.error.HTTPError(
+        "https://peg.example.com/v1/assets/by-mint/M", 404, "Not Found", None, None
+    )
+
+    def factory(pinned_ip: str | None) -> object:
+        return _FakeOpener([err])
+
+    status, body = netguard.safe_get_status(
+        "https://peg.example.com/v1/assets/by-mint/M",
+        resolver=_resolver({"peg.example.com": ["93.184.216.34"]}),
+        opener_factory=factory,
+    )
+    assert (status, body) == (404, "")
+
+
+def test_safe_get_status_returns_429_and_500_rather_than_raising() -> None:
+    for code in (429, 500, 503):
+        err = urllib.error.HTTPError(
+            "https://peg.example.com/x", code, "nope", None, None
+        )
+
+        def factory(pinned_ip: str | None, _e: object = err) -> object:
+            return _FakeOpener([_e])
+
+        status, body = netguard.safe_get_status(
+            "https://peg.example.com/x",
+            resolver=_resolver({"peg.example.com": ["93.184.216.34"]}),
+            opener_factory=factory,
+        )
+        assert (status, body) == (code, "")
+
+
+def test_safe_get_status_still_follows_and_revalidates_redirects() -> None:
+    err = urllib.error.HTTPError(
+        "https://a.example.com/x",
+        307,
+        "Temporary Redirect",
+        {"Location": "https://b.example.com/final"},  # type: ignore[arg-type]
+        None,
+    )
+    fake = _FakeOpener([err, _Resp("card-json")])
+
+    def factory(pinned_ip: str | None) -> object:
+        return fake
+
+    status, body = netguard.safe_get_status(
+        "https://a.example.com/x",
+        resolver=_resolver(
+            {"a.example.com": ["93.184.216.34"], "b.example.com": ["93.184.216.34"]}
+        ),
+        opener_factory=factory,
+    )
+    assert (status, body) == (200, "card-json")
+    assert fake.calls == ["https://a.example.com/x", "https://b.example.com/final"]
+
+
+def test_safe_get_status_does_not_soften_an_ssrf_refusal() -> None:
+    # A status is only ever returned for a hop that already PASSED validation. A private
+    # address must still raise, never come back as a readable (status, body).
+    with pytest.raises(netguard.UnsafeUrlError):
+        netguard.safe_get_status(
+            "https://internal.example.com/x",
+            resolver=_resolver({"internal.example.com": ["169.254.169.254"]}),
+        )
+
+
+def test_safe_get_is_unchanged_and_still_raises_on_404() -> None:
+    # The refactor must not move the existing contract: every current caller of safe_get
+    # keeps getting the ORIGINAL HTTPError object, not a re-wrapped one.
+    err = urllib.error.HTTPError("https://a.example.com/x", 404, "Not Found", None, None)
+
+    def factory(pinned_ip: str | None) -> object:
+        return _FakeOpener([err])
+
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        netguard.safe_get(
+            "https://a.example.com/x",
+            resolver=_resolver({"a.example.com": ["93.184.216.34"]}),
+            opener_factory=factory,
+        )
+    assert caught.value is err
