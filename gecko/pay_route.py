@@ -85,14 +85,23 @@ class PayRouteError(Exception):
 
 
 class _StoreLike(Protocol):
-    """The slice of ``StoreAccounts`` this module consumes."""
+    """The slice of ``StoreAccounts`` this module consumes.
 
-    store_name: str
-    authority: str
-    token_account: str
+    Every member is read-only: the concrete type is a FROZEN dataclass whose
+    ``__post_init__`` is the guard that its accounts belong together, and a protocol
+    declaring settable attributes would refuse it.
+    """
 
     @property
+    def store_name(self) -> str: ...
+    @property
+    def authority(self) -> str: ...
+    @property
+    def token_account(self) -> str: ...
+    @property
     def mint(self) -> str: ...
+    @property
+    def product(self) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -330,7 +339,12 @@ def assess_payment(
             rejected.append(Leg(held_mint, held_raw, None, verdict.reason))
             continue
 
-        venues = find_venues(held_mint=held_mint, needed_mint=priced_mint, idl=idl)
+        venues = find_venues(
+            held_mint=held_mint,
+            needed_mint=priced_mint,
+            idl=idl,
+            target_out=price_raw - held_priced,
+        )
         if not venues:
             no_pool.append(held_mint)
             continue
@@ -374,3 +388,246 @@ def assess_payment(
         rejected_legs=tuple(rejected),
         no_pool_for=tuple(no_pool),
     )
+
+
+# --- the MCP tool ---------------------------------------------------------------------
+
+PLAN_PAYMENT_TOOL: dict[str, Any] = {
+    "name": "plan_payment",
+    "description": (
+        "Answer 'can this wallet buy this product, and if not what is the shortest "
+        "CHECKED route' — in one call, without signing anything or building any bytes. "
+        "Reads the store's price and mint from its own on-chain account, reads the "
+        "buyer's holdings under BOTH token programs, and if the two do not match derives "
+        "the venue that converts one into the other, making each candidate pool "
+        "re-derive its own address before it is offered. A pool that cannot is DROPPED, "
+        "not ranked lower — the second-best answer here is a real funded pool that would "
+        "take the money and report success. "
+        "IT CAN REFUSE, AND A REFUSAL IS THE ANSWER. `blocked: true` means do not "
+        "proceed: the product may be priced in a mint let_me_buy structurally cannot "
+        "debit (its IDL pins classic SPL Token, so a Token-2022 price has no path and no "
+        "swap fixes it), the buyer's token account may BE the store's own, or a peg "
+        "verdict may block. Read `reason` and tell the buyer; do not retry around it. "
+        "PEG EVIDENCE IS POINT-IN-TIME. It costs nothing and starts no blockhash clock, "
+        "but the verdicts are as of `peg_evidence_as_of` and the conversion happens later "
+        "in the caller's own wallet — re-run before converting. A mint whose oracle could "
+        "not be REACHED blocks: silence is not consent. A mint the oracle provably does "
+        "not track does not block, and is reported as unknown. "
+        "`peg_checks` covers every mint evaluated INCLUDING the destination. "
+        "LIMITS, stated rather than discovered: a route is a pointer, not an executed "
+        "swap; sizing uses the pool's spot price and models no price impact; `no_route` "
+        "means no PROVEN venue was affordable, not that none exists. Read-only; nothing "
+        "here holds a key."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "store": {"type": "string", "description": "the storefront name"},
+            "product": {"type": "string", "description": "the product as listed"},
+            "buyer": {
+                "type": "string",
+                "description": "the wallet that would pay — its holdings are what is checked",
+            },
+            "network": {
+                "type": "string",
+                "description": "mainnet (default) or a fork you name with rpc_url",
+            },
+            "rpc_url": {
+                "type": "string",
+                "description": "your own node; requires `network` so the two cannot disagree",
+            },
+        },
+        "required": ["store", "product", "buyer"],
+    },
+}
+
+#: Base58 has no 0, O, I or l.
+_B58_CHARS = frozenset("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+
+def _is_pubkey(value: Any) -> bool:
+    return (
+        isinstance(value, str) and 32 <= len(value) <= 44 and set(value) <= _B58_CHARS
+    )
+
+
+def plan_payment_result(
+    arguments: Any,
+    *,
+    rpc_call: Any = None,
+    peg_reader: PegReader | None = None,
+    idl_fetch: Callable[[str], Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The surface-facing entry: validate, resolve the RPC, answer. Never raises.
+
+    The same two rules the sibling tools on this unauthenticated door enforce: the NETWORK
+    is asserted by the caller and never inferred from a URL, and a caller-supplied
+    ``rpc_url`` goes through the SSRF guard before anything is fetched. Every transport
+    failure comes back redacted to its exception class.
+    """
+    from .networks import UNKNOWN_NETWORK, coerce_network
+    from .prepare_purchase import _resolve_rpc_url
+    from .rpc import default_rpc_call
+    from .store_accounts import resolve_store
+
+    args = arguments or {}
+    store_name = args.get("store")
+    product = args.get("product")
+    buyer = args.get("buyer")
+    if not isinstance(store_name, str) or not store_name.strip():
+        return {"error": "`store` is required — the storefront name to read."}
+    if not isinstance(product, str) or not product.strip():
+        return {"error": "`product` is required — the product as the store lists it."}
+    if not _is_pubkey(buyer):
+        return {
+            "error": (
+                "`buyer` must be a base58 account address — its holdings are the whole "
+                "question, so there is nothing to answer without one."
+            )
+        }
+
+    network = coerce_network(args.get("network"))
+    if network == UNKNOWN_NETWORK:
+        supplied = args.get("rpc_url")
+        if isinstance(supplied, str) and supplied.strip():
+            return {
+                "error": (
+                    "you named an `rpc_url` but not a `network`. Which chain that node "
+                    "answers for cannot be read from its hostname, so say mainnet, "
+                    "devnet, testnet or fork."
+                )
+            }
+        network = "mainnet"  # type: ignore[assignment]
+    rpc_url, refusal = _resolve_rpc_url(args.get("rpc_url"), network)
+    if refusal or rpc_url is None:
+        return {"error": refusal or "no RPC url"}
+
+    call = rpc_call or default_rpc_call
+    try:
+        resolved = resolve_store(store_name.strip(), rpc_url=rpc_url, rpc_call=call)
+        accounts = resolved.accounts_for(product.strip())
+        report = assess_payment(
+            store=accounts,
+            buyer=str(buyer),
+            holdings=read_holdings(rpc_url, str(buyer), rpc_call=call),
+            mint_owner=lambda mint: read_mint_owner(rpc_url, mint, rpc_call=call),
+            peg_reader=peg_reader or _default_peg_reader(),
+            idl_fetch=idl_fetch or _default_idl_fetch(),
+            find_venues=_venue_finder(rpc_url, call),
+        )
+    except Exception as exc:  # noqa: BLE001 - redacted to a class at the transport edge
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+    out = report.to_dict()
+    out["network"] = network
+    return out
+
+
+def read_holdings(
+    rpc_url: str, owner: str, *, rpc_call: Any
+) -> dict[str, tuple[int, str]]:
+    """Every token this wallet holds: mint -> (raw amount, token program).
+
+    Asked of BOTH token programs, because ``getTokenAccountsByOwner`` filters by one and
+    a Token-2022 balance is invisible to a classic-SPL query. That asymmetry is the whole
+    reason this module exists.
+    """
+    out: dict[str, tuple[int, str]] = {}
+    for program in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
+        rows = (
+            rpc_call(
+                rpc_url,
+                "getTokenAccountsByOwner",
+                [owner, {"programId": program}, {"encoding": "jsonParsed"}],
+            ).get("result")
+            or {}
+        ).get("value") or []
+        for row in rows:
+            info = (
+                ((row.get("account") or {}).get("data") or {}).get("parsed") or {}
+            ).get("info") or {}
+            amount = int((info.get("tokenAmount") or {}).get("amount") or 0)
+            mint = info.get("mint")
+            if amount > 0 and mint:
+                out[mint] = (amount, program)
+    return out
+
+
+def read_mint_owner(rpc_url: str, mint: str, *, rpc_call: Any) -> str:
+    """The program that owns a mint, read from the mint account — never inferred."""
+    value = (
+        rpc_call(rpc_url, "getAccountInfo", [mint, {"encoding": "base64"}]).get(
+            "result"
+        )
+        or {}
+    ).get("value")
+    if not value or not value.get("owner"):
+        raise PayRouteError(f"mint {mint} does not exist on this network")
+    return str(value["owner"])
+
+
+def _default_peg_reader() -> PegReader:
+    from .pegana import pegana_reader
+
+    return pegana_reader()
+
+
+def _default_idl_fetch() -> Callable[[str], Mapping[str, Any]]:
+    from .providers.catalog_surface import orquestra_seams
+    from .whirlpool_venue import WHIRLPOOL_PROGRAM
+
+    idl_fetch, _build = orquestra_seams()
+    return lambda _name: idl_fetch(WHIRLPOOL_PROGRAM)
+
+
+def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
+    """Bind the venue search to this call's transport, and size each pool's input.
+
+    The layout is built ONCE from the IDL the caller already fetched, and the seed recipe
+    comes from the packaged provider config — so a pool's re-derivation is checked against
+    a recipe that shipped with the wheel rather than one the chain proposed.
+    """
+    from .provider_config import load_packaged_provider
+    from .whirlpool_math import size_input_for_output
+    from .whirlpool_venue import (
+        find_venues as _find,
+        whirlpool_layout,
+    )
+
+    _, apis = load_packaged_provider("orquestra")
+    program = apis["whirlpool"].program
+    if program is None:  # pragma: no cover - the packaged config always carries it
+        raise PayRouteError("the packaged whirlpool config declares no program")
+    recipe = dict(program.pdas)["whirlpool"]
+
+    def finder(
+        *, held_mint: str, needed_mint: str, idl: Mapping[str, Any], target_out: int
+    ) -> list[Quote]:
+        layout = whirlpool_layout(idl)
+        venues = _find(
+            rpc_url,
+            held_mint,
+            needed_mint,
+            layout=layout,
+            recipe=recipe,
+            rpc_call=rpc_call,
+        )
+        return [
+            Quote(
+                pool=v.pool,
+                amount_in=size_input_for_output(
+                    target_out,
+                    v.sqrt_price,
+                    v.fee_rate,
+                    a_to_b=v.direction == "a_to_b",
+                    slippage_bps=50,
+                ),
+                direction=v.direction,
+                liquidity=v.liquidity,
+                tick_spacing=v.tick_spacing,
+                fee_rate=v.fee_rate,
+            )
+            for v in venues
+        ]
+
+    return finder

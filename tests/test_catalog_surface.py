@@ -64,6 +64,12 @@ def test_surface_lists_the_catalog_tools() -> None:
         # The MENU: store names and prices read from each store's own account — never an
         # authorization. Its own boundary is pinned in tests/test_store_directory.py.
         "list_stores",
+        # Immediately after the menu, because it answers the question the menu creates:
+        # a store prices in ONE mint under ONE token program, and a buyer holds whatever
+        # they hold. It reports payable, or a checked conversion route, or a refusal —
+        # and it refuses BEFORE spending anything, which is why it sits here and not
+        # beside prepare_purchase. Pinned in tests/test_plan_payment_tool.py.
+        "plan_payment",
         # The OTHER half of the handoff: prepare_purchase hands out bytes and a binding,
         # somebody else signs, and this proves the signed bytes are the checked ones
         # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.
