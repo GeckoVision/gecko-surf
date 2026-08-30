@@ -47,10 +47,58 @@ PEG_STATES: frozenset[str] = frozenset(
 #: that asymmetry is deliberate: this is a guard.
 HOLDING: frozenset[str] = frozenset({"PEGGED"})
 
-Outcome = Literal["ok", "refuse", "unknown"]
+#: Four answers, and the fourth is the one that makes this a guard.
+#:
+#:   ok           — Pegana was asked, and says the peg is holding.
+#:   refuse       — Pegana was asked, and says it is not (or cannot vouch for it now).
+#:   unknown      — Pegana was asked and PROVABLY has no opinion: it does not track this
+#:                  mint. Reported, never enforced.
+#:   undetermined — Pegana could not be asked, or tracks the asset and could not be read.
+#:
+#: `unknown` and `undetermined` are the distinction the old three-value vocabulary could
+#: not make, and collapsing them is what let an unreachable oracle read as permission.
+#: Named `PegOutcome` rather than `Outcome` because `ingest_gate.Outcome` is a different
+#: vocabulary and one of them had to say which it was.
+PegOutcome = Literal["ok", "refuse", "unknown", "undetermined"]
+
+#: Backwards-compatible alias for the pure judge's original three-value vocabulary.
+Outcome = PegOutcome
+
+#: A reading is BLOCKING when it is a refusal or when there is no reading at all. Silence
+#: from an oracle is not consent: the money is about to move on the strength of an
+#: opinion nobody actually obtained.
+_BLOCKING: frozenset[str] = frozenset({"refuse", "undetermined"})
 
 #: (symbol) -> the parsed `/v1/assets/{symbol}/state` body, or None when untracked.
 StateReader = Callable[[str], "dict[str, Any] | None"]
+
+
+@dataclass(frozen=True)
+class PegReading:
+    """What actually came back from the oracle, BEFORE any judgement of the peg.
+
+    The split matters. `verdict_from` judges a peg from a state body and cannot express
+    "I never got one" — its `body is None` means "Pegana does not track this mint", which
+    is a claim about Pegana, not about our network. A reading carries the difference.
+
+    ``tracked`` is deliberately tri-state and is established from the HTTP STATUS, never
+    from the shape of a 200 body:
+
+      True  — Pegana tracks this asset (a card came back and validated).
+      False — Pegana answered 404. The ONLY proof that no opinion exists.
+      None  — we could not ask, or could not understand the answer.
+
+    Reading `tracked=False` off a body shape is what turns every degraded 200 — `{}`, a
+    WAF envelope, a rate-limit served as 200, a schema change that wraps the card — into
+    a forged "no opinion", which is a fail-open wearing a fix's clothes.
+    """
+
+    tracked: bool | None
+    status: int | None = None
+    symbol: str | None = None
+    state_body: "dict[str, Any] | None" = None
+    #: Exception CLASS name only. Never a URL, a body, or a token.
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,10 +115,18 @@ class PegVerdict:
 
     @property
     def blocks(self) -> bool:
-        """Only ``refuse`` stops a conversion. ``unknown`` is reported, never enforced —
-        Pegana tracks 67 assets, so treating every other mint as suspect would make this
-        guard a blanket denial rather than a signal."""
-        return self.outcome == "refuse"
+        """``refuse`` and ``undetermined`` stop a conversion; ``ok`` and ``unknown`` do not.
+
+        ``unknown`` stays non-blocking on purpose — Pegana tracks a minority of mints, so
+        refusing every other one would be a blanket denial rather than a signal. But that
+        leniency is only defensible when "no opinion" has been PROVEN (a 404). An oracle
+        we could not reach has not told us anything, and the old vocabulary reported that
+        silence as ``unknown`` — which is why an unreachable Pegana read as permission.
+
+        A property, not a method: a bound method is truthy in both directions, so
+        ``if verdict.blocks:`` would fire for every verdict ever built and the guard would
+        stop guarding without failing a single test."""
+        return self.outcome in _BLOCKING
 
 
 def verdict_from(
@@ -164,3 +220,54 @@ def verdict_from(
             f"{sorted(PEG_STATES)}. Refusing rather than assuming it is benign"
         ),
     )
+
+
+def verdict_from_reading(mint: str, reading: PegReading) -> PegVerdict:
+    """Judge one asset from a `PegReading` — the fetch-aware wrapper around `verdict_from`.
+
+    Four branches, and the first two are the whole point of the type:
+
+      tracked is None                     -> undetermined (BLOCKS). We could not ask.
+      tracked is True, state_body is None -> undetermined (BLOCKS). Pegana tracks it and
+                                             we could not read its state. The reason names
+                                             the symbol and must NOT claim it is untracked.
+      tracked is False                    -> delegate to `verdict_from(mint, None)`, which
+                                             is `unknown` and does not block.
+      tracked is True, state_body present -> delegate to the pure judge, unchanged.
+    """
+    if reading.tracked is None:
+        detail = f" ({reading.error})" if reading.error else ""
+        status = f" [HTTP {reading.status}]" if reading.status is not None else ""
+        return PegVerdict(
+            mint=mint,
+            symbol=reading.symbol,
+            outcome="undetermined",
+            state=None,
+            stale=False,
+            discount=None,
+            reason=(
+                f"could not obtain a peg reading{detail}{status} — silence is not consent, "
+                "so this conversion is refused rather than assumed safe"
+            ),
+        )
+
+    if reading.tracked and reading.state_body is None:
+        detail = f" ({reading.error})" if reading.error else ""
+        name = reading.symbol or mint
+        return PegVerdict(
+            mint=mint,
+            symbol=reading.symbol,
+            outcome="undetermined",
+            state=None,
+            stale=False,
+            discount=None,
+            reason=(
+                f"Pegana tracks {name} but its peg state could not be read{detail} — "
+                "refused rather than assumed safe"
+            ),
+        )
+
+    if not reading.tracked:
+        return verdict_from(mint, None, reading.symbol)
+
+    return verdict_from(mint, reading.state_body, reading.symbol)

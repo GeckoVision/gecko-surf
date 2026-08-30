@@ -80,3 +80,76 @@ def test_we_do_not_apply_our_own_discount_cut() -> None:
 
     fiat_like = {**LIVE_STALE, "state": "DRIFT", "stale": False, "discount": "-0.0009"}
     assert verdict_from(MINT, fiat_like).outcome == "refuse"
+
+
+# --- fail CLOSED on "could not ask", fail open only on a PROVEN "no opinion" ----------
+#
+# The defect this closes is live, not hypothetical. scripts/pay_with_any_token.py:119
+# catches bare Exception and returns verdict_from(mint, None) -> "unknown" -> blocks is
+# False. Its own docstring says "Unreachable is `unknown`, never `ok`", which is true and
+# operationally meaningless: `unknown` does not stop anything, so an unreachable Pegana
+# reads as permission to convert. The gate is decorative exactly when it matters.
+#
+# `unknown` must stay non-blocking — Pegana tracks a minority of mints and refusing every
+# other one would be a blanket denial, not a signal. So the fix is not to make `unknown`
+# block; it is to stop "could not ask" from being reported AS `unknown`.
+
+
+def _reading(**kw):
+    from gecko.peg_guard import PegReading
+
+    base = dict(tracked=None, status=None, symbol=None, state_body=None, error=None)
+    base.update(kw)
+    return PegReading(**base)
+
+
+def test_an_unreachable_oracle_blocks() -> None:
+    from gecko.peg_guard import verdict_from_reading
+
+    v = verdict_from_reading("Mint111", _reading(tracked=None, error="URLError"))
+    assert v.outcome == "undetermined"
+    assert v.blocks is True
+
+
+def test_a_tracked_mint_whose_state_read_fails_blocks_and_does_not_lie() -> None:
+    from gecko.peg_guard import verdict_from_reading
+
+    v = verdict_from_reading(
+        "Mint111",
+        _reading(tracked=True, symbol="USDG", state_body=None, error="HTTPError"),
+    )
+    assert v.outcome == "undetermined"
+    assert v.blocks is True
+    assert "USDG" in v.reason
+    # It must NOT claim the asset is untracked — Pegana tracks it; we failed to read it.
+    assert "does not track" not in v.reason
+
+
+def test_a_genuinely_untracked_mint_still_does_not_block() -> None:
+    from gecko.peg_guard import verdict_from_reading
+
+    v = verdict_from_reading("Mint111", _reading(tracked=False, status=404))
+    assert v.outcome == "unknown"
+    assert v.blocks is False
+
+
+def test_a_depegged_reading_still_refuses() -> None:
+    from gecko.peg_guard import verdict_from_reading
+
+    v = verdict_from_reading(
+        "Mint111",
+        _reading(tracked=True, symbol="USDG", state_body={"state": "DEPEG"}),
+    )
+    assert v.outcome == "refuse"
+    assert v.blocks is True
+
+
+def test_blocks_is_a_property_not_a_method() -> None:
+    # A bound method is truthy in BOTH directions, so `if v.blocks:` would pass for every
+    # verdict ever built and the guard would silently stop guarding.
+    from gecko.peg_guard import PegVerdict, verdict_from_reading
+
+    assert isinstance(PegVerdict.__dict__["blocks"], property)
+    v = verdict_from_reading("Mint111", _reading(tracked=False, status=404))
+    assert isinstance(v.blocks, bool)
+    assert callable(v.blocks) is False
