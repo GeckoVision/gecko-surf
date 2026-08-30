@@ -85,9 +85,10 @@ def test_a_non_404_error_status_is_could_not_ask(code: int) -> None:
 
 def test_a_resolved_card_with_a_failing_state_read_stays_tracked() -> None:
     read, _ = _reader(
-        {"by-mint": (200, CARD), "/state": urllib.error.HTTPError(
-            "u", 500, "boom", None, None
-        )}
+        {
+            "by-mint": (200, CARD),
+            "/state": urllib.error.HTTPError("u", 500, "boom", None, None),
+        }
     )
     r = read(MINT)
     assert r.tracked is True
@@ -103,7 +104,11 @@ def test_a_resolved_card_with_a_failing_state_read_stays_tracked() -> None:
 def test_a_healthy_pair_of_reads_is_a_normal_verdict() -> None:
     read, seen = _reader({"by-mint": (200, CARD), "/state": (200, STATE)})
     r = read(MINT)
-    assert (r.tracked, r.symbol, r.state_body) == (True, "USDG", {"state": "PEGGED", "stale": False})
+    assert (r.tracked, r.symbol, r.state_body) == (
+        True,
+        "USDG",
+        {"state": "PEGGED", "stale": False},
+    )
     assert verdict_from_reading(MINT, r).outcome == "ok"
     assert len(seen) == 2
 
@@ -157,7 +162,11 @@ def test_the_recorded_reader_has_no_way_to_weaken_the_default() -> None:
 
 def test_the_recorded_reader_serves_what_it_was_given() -> None:
     read = pegana.recorded_peg_reader(
-        {MINT: pegana.PegReading(tracked=True, symbol="USDG", state_body={"state": "DEPEG"})}
+        {
+            MINT: pegana.PegReading(
+                tracked=True, symbol="USDG", state_body={"state": "DEPEG"}
+            )
+        }
     )
     assert verdict_from_reading(MINT, read(MINT)).outcome == "refuse"
 

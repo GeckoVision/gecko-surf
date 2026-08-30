@@ -48,14 +48,31 @@ __all__ = [
     "Leg",
     "PayOutcome",
     "PayRouteError",
+    "SWAP_SLIPPAGE_BPS",
     "PayabilityReport",
     "PegCheck",
     "Quote",
     "assess_payment",
+    "validate_swap_bound",
 ]
 
 #: Token-2022. Held balances live under it; a let_me_buy PRICE never can.
 TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+#: The slippage bound the swap is SIZED against, and it must equal the one the swap is
+#: BUILT with (``scripts/prepare_whirlpool_swap.py --slippage-bps``, default 100).
+#:
+#: This was two numbers and that was the bug. `size_input_for_output(target, ..., B)`
+#: returns the smallest input whose guaranteed floor AT B clears the target; sizing at 50
+#: and building at 100 means the floor actually enforced is strictly lower than the one
+#: the size was chosen for, so the guarantee is void. On mainnet it printed 101,001
+#: against a 100,000 price where 101,022 was needed and cleared with 1,011 to spare —
+#: the FILL rescued it, which is precisely the failure mode a guarantee is supposed to
+#: remove. `whirlpool_math` records the same 21-unit shortfall in its own docstring.
+#:
+#: A test pins this against the builder's declared default, so the two cannot drift apart
+#: again silently.
+SWAP_SLIPPAGE_BPS = 100
 
 PayOutcome = Literal[
     "payable_now",
@@ -82,6 +99,24 @@ BLOCKING: frozenset[str] = frozenset(
 
 class PayRouteError(Exception):
     """A payability question we cannot answer at all — never a refusal."""
+
+
+def validate_swap_bound(bps: int) -> int:
+    """Refuse a nonsense slippage bound, ONCE, before any venue is looked up.
+
+    Deliberately not inside the per-venue loop. Swallowed there it degrades into
+    ``no_route``, which tells a caller who misconfigured a floor that nobody trades their
+    pair — a configuration error wearing a market answer's clothes. ``>= 10_000`` is
+    "accept any price", which is the ABSENCE of a bound rather than a loose one.
+    """
+    if not isinstance(bps, int) or isinstance(bps, bool):
+        raise PayRouteError(f"slippage bound must be an int, got {type(bps).__name__}")
+    if not 0 <= bps < 10_000:
+        raise PayRouteError(
+            f"slippage bound {bps} is not in [0, 10000) — 10000 or more accepts any "
+            "price at all, which is no bound"
+        )
+    return bps
 
 
 class _StoreLike(Protocol):
@@ -114,6 +149,10 @@ class Quote:
     liquidity: int
     tick_spacing: int
     fee_rate: int
+    #: The bound ``amount_in`` was sized against. It travels with the number because a
+    #: guarantee without its precondition is not a guarantee — a builder that applies a
+    #: DIFFERENT bound can now detect the mismatch instead of silently voiding this.
+    slippage_bps: int = SWAP_SLIPPAGE_BPS
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +162,7 @@ class Quote:
             "liquidity": str(self.liquidity),
             "tick_spacing": self.tick_spacing,
             "fee_rate": self.fee_rate,
+            "slippage_bps": self.slippage_bps,
         }
 
 
@@ -589,6 +629,8 @@ def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
     """
     from .provider_config import load_packaged_provider
     from .whirlpool_math import size_input_for_output
+
+    bound = validate_swap_bound(SWAP_SLIPPAGE_BPS)
     from .whirlpool_venue import (
         find_venues as _find,
         whirlpool_layout,
@@ -620,12 +662,13 @@ def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
                     v.sqrt_price,
                     v.fee_rate,
                     a_to_b=v.direction == "a_to_b",
-                    slippage_bps=50,
+                    slippage_bps=bound,
                 ),
                 direction=v.direction,
                 liquidity=v.liquidity,
                 tick_spacing=v.tick_spacing,
                 fee_rate=v.fee_rate,
+                slippage_bps=bound,
             )
             for v in venues
         ]
