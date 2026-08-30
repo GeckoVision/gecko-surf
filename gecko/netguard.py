@@ -147,17 +147,20 @@ def validate_public_url(url: str, *, resolver: Resolver | None = None) -> None:
 OpenerFactory = Callable[[str | None], Any]
 
 
-def safe_get(
+def _get_status(
     url: str,
     *,
+    raise_on_error: bool,
     max_bytes: int = DEFAULT_MAX_BYTES,
     timeout: int = DEFAULT_TIMEOUT,
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
     resolver: Resolver | None = None,
     opener_factory: OpenerFactory | None = None,
     headers: dict[str, str] | None = None,
-) -> str:
-    """SSRF-safe GET for a spec document. Validates every redirect hop, caps size.
+) -> tuple[int, str]:
+    """Shared SSRF-safe GET. Returns ``(status, body)``; see `safe_get`/`safe_get_status`.
+
+    Validates every redirect hop, caps size.
 
     Each hop resolves the host EXACTLY ONCE and PINS the socket to that validated IP, so
     urllib cannot independently re-resolve onto a private/metadata address in the window
@@ -202,16 +205,75 @@ def safe_get(
                     raise UnsafeUrlError(
                         f"document exceeds size cap of {max_bytes} bytes; refusing to load"
                     )
-                return chunk.decode("utf-8")
+                return status, chunk.decode("utf-8")
         except urllib.error.HTTPError as exc:
             # With auto-follow disabled, urllib RAISES on a 3xx instead of returning it.
-            # Follow it ourselves (re-validated at the top of the loop); other statuses
-            # (404, 5xx) propagate to the caller as the OSError subclass they are.
+            # Follow it ourselves (re-validated at the top of the loop).
             if exc.code in _REDIRECT_CODES:
                 current = _redirect_target(current, exc.headers)
                 continue
-            raise
+            # Every other status is a real answer from a host that already PASSED
+            # validation. `safe_get` re-raises the ORIGINAL exception object so its
+            # callers are unchanged; `safe_get_status` reports the code instead,
+            # because a 404 from an oracle is an answer and not a failure.
+            if raise_on_error:
+                raise
+            return exc.code, ""
     raise UnsafeUrlError(f"too many redirects (>{max_redirects})")
+
+
+def safe_get(
+    url: str,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_redirects: int = DEFAULT_MAX_REDIRECTS,
+    resolver: Resolver | None = None,
+    opener_factory: OpenerFactory | None = None,
+    headers: dict[str, str] | None = None,
+) -> str:
+    """SSRF-safe GET returning the body. Unchanged: a non-redirect 4xx/5xx raises."""
+    return _get_status(
+        url,
+        raise_on_error=True,
+        max_bytes=max_bytes,
+        timeout=timeout,
+        max_redirects=max_redirects,
+        resolver=resolver,
+        opener_factory=opener_factory,
+        headers=headers,
+    )[1]
+
+
+def safe_get_status(
+    url: str,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_redirects: int = DEFAULT_MAX_REDIRECTS,
+    resolver: Resolver | None = None,
+    opener_factory: OpenerFactory | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    """SSRF-safe GET returning ``(status, body)``; a non-redirect 4xx/5xx comes back as
+    ``(code, "")`` rather than raising.
+
+    For callers where the STATUS is itself the fact being read. A peg oracle answering
+    404 is saying "I do not track this asset" — a real answer — while a 429 or a 502 is
+    saying nothing at all, and the two must not collapse into one exception. Every SSRF
+    protection is identical: the refusals (`UnsafeUrlError`, private/link-local
+    addresses, redirect hops, the size cap) still raise, because those are not answers.
+    """
+    return _get_status(
+        url,
+        raise_on_error=False,
+        max_bytes=max_bytes,
+        timeout=timeout,
+        max_redirects=max_redirects,
+        resolver=resolver,
+        opener_factory=opener_factory,
+        headers=headers,
+    )
 
 
 def safe_post_json(
