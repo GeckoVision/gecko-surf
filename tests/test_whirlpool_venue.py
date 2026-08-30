@@ -52,12 +52,12 @@ def _b58_decode(value: str) -> bytes:
 
 
 def _blob(layout, *, config=CONFIG, a=MINT_A, b=MINT_B, tick=64, liq=10**9) -> bytes:
-    size = max(o + w for o, w in layout.fields.values())
+    size = max(o + w for o, w, _ in layout.fields.values())
     buf = bytearray(size)
     buf[0:8] = DISC
 
     def put(name, value, *, pub=False):
-        off, width = layout.fields[name]
+        off, width, _kind = layout.fields[name]
         buf[off : off + width] = (
             _b58_decode(value) if pub else int(value).to_bytes(width, "little")
         )
@@ -373,3 +373,58 @@ def test_it_always_returns_exactly_three_distinct_arrays() -> None:
             assert len(set(got)) == 3, (
                 f"duplicate arrays at spacing={spacing} tick={tick}"
             )
+
+
+# --- signed fields, and the vaults a swap actually needs -------------------------------
+#
+# `tick_current_index` is declared i32. Read unsigned, a tick of -1 decodes as 4294967295,
+# `tick_array_start` then computes a start index in a region of the curve that does not
+# exist, and the three derived arrays are real, well-formed accounts for nowhere. The swap
+# fails at the program. Pools sit at negative ticks routinely — it is not an edge case,
+# it is half the number line.
+
+
+def _idl_with_signed() -> dict:
+    idl = _idl()
+    idl["types"][0]["type"]["fields"] += [
+        {"name": "tick_current_index", "type": "i32"},
+        {"name": "token_vault_a", "type": "pubkey"},
+        {"name": "token_vault_b", "type": "pubkey"},
+    ]
+    return idl
+
+
+def test_a_negative_tick_decodes_as_negative() -> None:
+    layout = wv.whirlpool_layout(_idl_with_signed())
+    size = max(o + w for o, w, _ in layout.fields.values())
+    buf = bytearray(size)
+    buf[0:8] = DISC
+    off, width, _ = layout.fields["tick_current_index"]
+    buf[off : off + width] = (-176).to_bytes(4, "little", signed=True)
+    acct = wv.decode_whirlpool(bytes(buf), layout)
+    assert acct.tick_current_index == -176, (
+        f"decoded {acct.tick_current_index} — an unsigned read makes every negative tick "
+        "a huge positive one, and the derived tick arrays point at nothing"
+    )
+
+
+def test_the_vaults_are_exposed_so_a_caller_need_not_reach_into_a_script() -> None:
+    layout = wv.whirlpool_layout(_idl_with_signed())
+    size = max(o + w for o, w, _ in layout.fields.values())
+    buf = bytearray(size)
+    buf[0:8] = DISC
+    for name, value in (("token_vault_a", MINT_A), ("token_vault_b", MINT_B)):
+        off, width, _ = layout.fields[name]
+        buf[off : off + width] = _b58_decode(value)
+    acct = wv.decode_whirlpool(bytes(buf), layout)
+    assert acct.token_vault_a == MINT_A
+    assert acct.token_vault_b == MINT_B
+
+
+def test_an_idl_without_the_optional_fields_still_decodes() -> None:
+    """The venue search only needs seven fields. A caller that wants the swap fields asks
+    for an IDL that declares them; one that does not must not break."""
+    layout = wv.whirlpool_layout(_idl())
+    acct = wv.decode_whirlpool(_blob(layout), layout)
+    assert acct.tick_current_index is None
+    assert acct.token_vault_a is None

@@ -58,7 +58,8 @@ Direction = Literal["a_to_b", "b_to_a"]
 #: candidate that did not re-derive never becomes a Venue at all.
 VerifyStatus = Literal["rederived"]
 
-#: The fields this module reads. Every one is located through the IDL.
+#: What venue selection needs. Every one is located through the IDL, and a missing one is
+#: a refusal — you cannot rank pools you cannot read.
 _FIELDS = (
     "whirlpools_config",
     "tick_spacing",
@@ -68,7 +69,11 @@ _FIELDS = (
     "fee_rate",
     "sqrt_price",
 )
-_PUBKEYS = frozenset({"whirlpools_config", "token_mint_a", "token_mint_b"})
+
+#: What a SWAP additionally needs. Optional, because ranking venues does not require them
+#: and an IDL that omits one must not break the search. Exposed so a caller building a
+#: swap reads them from the package rather than reaching into a script's private helper.
+_SWAP_FIELDS = ("tick_current_index", "token_vault_a", "token_vault_b")
 
 
 class WhirlpoolIdlIncomplete(Exception):
@@ -85,7 +90,10 @@ class WhirlpoolLayout:
     """Where each field lives in a Whirlpool account, derived from the IDL."""
 
     discriminator: bytes
-    fields: Mapping[str, tuple[int, int]]  # name -> (offset, width)
+    #: name -> (offset, width, declared type). The TYPE is carried because signedness is
+    #: a property of it: `tick_current_index` is i32, and reading it unsigned turns every
+    #: negative tick into a huge positive one.
+    fields: Mapping[str, tuple[int, int, str]]
 
 
 @dataclass(frozen=True)
@@ -99,6 +107,11 @@ class WhirlpoolAccount:
     liquidity: int
     fee_rate: int
     sqrt_price: int
+    #: Present only when the IDL declared them. None is "this IDL did not say", never 0 —
+    #: a tick of 0 is a real position on the curve and must not be confused with absence.
+    tick_current_index: int | None = None
+    token_vault_a: str | None = None
+    token_vault_b: str | None = None
 
 
 @dataclass(frozen=True)
@@ -139,13 +152,19 @@ def whirlpool_layout(idl: Mapping[str, Any]) -> WhirlpoolLayout:
         raise WhirlpoolIdlIncomplete(
             "the Whirlpool IDL declares no discriminator for its pool account"
         )
-    located: dict[str, tuple[int, int]] = {}
+    located: dict[str, tuple[int, int, str]] = {}
     for name in _FIELDS:
         try:
             got = field_layout(idl, "Whirlpool", name)
         except LayoutError as exc:
             raise WhirlpoolIdlIncomplete(f"Whirlpool.{name}: {exc}") from exc
-        located[name] = (int(got["offset"]), int(got["width"]))
+        located[name] = (int(got["offset"]), int(got["width"]), str(got["type"]))
+    for name in _SWAP_FIELDS:
+        try:
+            got = field_layout(idl, "Whirlpool", name)
+        except LayoutError:
+            continue  # optional: venue selection does not need it
+        located[name] = (int(got["offset"]), int(got["width"]), str(got["type"]))
     return WhirlpoolLayout(discriminator=disc, fields=located)
 
 
@@ -153,15 +172,21 @@ def decode_whirlpool(data: bytes, layout: WhirlpoolLayout) -> WhirlpoolAccount:
     """Read one pool account. Pure: no network, no state."""
 
     def read(name: str) -> Any:
-        offset, width = layout.fields[name]
+        located = layout.fields.get(name)
+        if located is None:
+            return None  # an optional swap field this IDL does not declare
+        offset, width, declared = located
         chunk = data[offset : offset + width]
         if len(chunk) < width:
             raise WhirlpoolIdlIncomplete(
                 f"account data is shorter than the IDL says {name} needs"
             )
-        return (
-            b58_encode(chunk) if name in _PUBKEYS else int.from_bytes(chunk, "little")
-        )
+        if declared == "pubkey":
+            return b58_encode(chunk)
+        # Signedness comes from the DECLARED TYPE, never from a field name. i32 read as
+        # unsigned turns tick -1 into 4,294,967,295, and the tick arrays derived from it
+        # are real, well-formed accounts for a region of the curve that does not exist.
+        return int.from_bytes(chunk, "little", signed=declared.startswith("i"))
 
     return WhirlpoolAccount(
         whirlpools_config=read("whirlpools_config"),
@@ -171,6 +196,9 @@ def decode_whirlpool(data: bytes, layout: WhirlpoolLayout) -> WhirlpoolAccount:
         liquidity=read("liquidity"),
         fee_rate=read("fee_rate"),
         sqrt_price=read("sqrt_price"),
+        tick_current_index=read("tick_current_index"),
+        token_vault_a=read("token_vault_a"),
+        token_vault_b=read("token_vault_b"),
     )
 
 
