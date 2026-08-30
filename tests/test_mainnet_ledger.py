@@ -71,3 +71,38 @@ def test_env_override(tmp_path, monkeypatch) -> None:
 
 def test_date_is_stamped_when_absent() -> None:
     assert _row().to_json()["date"]
+
+
+# --- every mainnet sender must reach the ledger ---------------------------------------
+#
+# A swap landed on mainnet with a prediction that matched the chain exactly (44,828) and
+# the ledger never heard about it, because `prepare_whirlpool_swap.py` was the one sender
+# that did not call `record`. The ledger's docstring says it is "one line per transaction
+# WE sent"; a sender that skips it makes that sentence false, and the count it exists to
+# settle goes back to being whatever each file remembers.
+
+
+def test_every_script_that_broadcasts_also_records() -> None:
+    """Find the senders by what they DO — a `sendTransaction` call — not by a list some
+    author has to remember to extend. A new sender is caught the day it is written."""
+    import re
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    offenders = []
+    for path in sorted(scripts.glob("*.py")):
+        text = path.read_text()
+        if not re.search(r'["\']sendTransaction["\']', text):
+            continue
+        # A devnet-only sender has nothing to say to a MAINNET ledger. The rule is what
+        # the script can reach, not a name on a list: gecko_compass_e2e pins
+        # api.devnet.solana.com and never mentions mainnet, so it drops out here rather
+        # than needing an exception someone has to remember.
+        if "mainnet" not in text:
+            continue
+        if "record_ledger" not in text and "mainnet_ledger" not in text:
+            offenders.append(path.name)
+    assert not offenders, (
+        "these scripts broadcast a transaction but never record it, so a mainnet "
+        f"signature they send is invisible to the ledger: {offenders}"
+    )

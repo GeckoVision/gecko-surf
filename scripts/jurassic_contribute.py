@@ -30,6 +30,8 @@ import os
 import struct
 import sys
 
+from gecko.mainnet_ledger import LedgerRow
+from gecko.mainnet_ledger import record as record_ledger
 from gecko.pda import ConstantPdaSeedNode, PdaNode, VariablePdaSeedNode, derive_pda
 from gecko.rpc import default_rpc_call
 
@@ -195,6 +197,19 @@ def main() -> int:
     )["result"]
     print(f"\nBROADCAST     {signature}")
     print(f"              https://solscan.io/tx/{signature}")
+    # One line per transaction WE sent. `record` is mainnet-only and never fatal, so a
+    # devnet or fork run passes straight through.
+    written = record_ledger(
+        LedgerRow(
+            signature=str(signature),
+            predicted_cu=None,
+            predicted_source="scripts/jurassic_contribute.py (no receipt before signing)",
+            network="mainnet" if "mainnet" in args.rpc else "unknown",
+            program="jurassic_fi",
+        )
+    )
+    if written is not None:
+        print(f"              logged {written}")
     return 0
 
 
