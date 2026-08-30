@@ -351,11 +351,14 @@ _SWAP = Intent(
     name="plan_swap",
     instruction="swap",
     description=(
-        "Plan a Meteora DLMM swap. Give input_mint, output_mint, bin_step, base_factor, "
-        "user and amount_in; Gecko derives the pool (lb_pair) and every account the "
+        "Swap one token for another on a Meteora DLMM liquidity pool — exchange, "
+        "convert or trade a token pair at the pool's current rate. Give input_mint, "
+        "output_mint, bin_step, base_factor, user and amount_in; Gecko derives the pool "
+        "(lb_pair) and every account the "
         "swap instruction needs — including the bin_array remaining accounts the IDL "
         "never names (selected from the pool's LIVE liquidity bitmap) — and quotes "
-        "min_amount_out from the pool's active-bin price. base_factor is the pool's fee "
+        "min_amount_out (the rate/price you get) from the pool's active-bin price. "
+        "base_factor is the pool's fee "
         "tier: multiple pools share the same (mint-pair, bin_step) at different "
         "base_factors, so it is NOT inferable from the mints — you must pick the fee "
         "tier (read it off the target pool's on-chain parameters, or the Meteora pair "

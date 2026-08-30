@@ -336,8 +336,23 @@ def test_evaluate_golden_pins_the_showcase_rows() -> None:
     # action is not evidence, so the floor now demotes it to a guess. The vocabulary gap
     # is unchanged and still countable — what changed is that we no longer hand back a
     # wrong runnable start while we have it.
+    # MOVED 2026-08-29, vocabulary_gap -> misrank, and the move is the point. The
+    # meteora/swap card used to describe only its implementation ("Plan a Meteora DLMM
+    # swap. Give input_mint, output_mint, bin_step..."), so this row shared ZERO terms
+    # with it and classified as a pure vocabulary gap. The card now says what a person
+    # says — swap, exchange, convert, trade, rate — so "convert" reaches it and the
+    # cause is no longer "shares nothing". The row STILL FAILS: `usdc` and `bonk` are
+    # token SYMBOLS, and no amount of prose in a card that serves every pair should
+    # name them. What closes this row is value-domain recognition (a query term that is
+    # a member of `solana-token-mint`, which meteora/swap consumes as input_mint) —
+    # NOT more words. Pinning it as misrank keeps that debt visible and correctly
+    # attributed; pinning it as a vocabulary gap would now overstate the card's thinness.
+    #
+    # The two properties this row was authored to protect are UNCHANGED and still
+    # asserted: we refuse (floor == "guess") rather than hand back a wrong runnable
+    # start, and the gold is not served as top1 while we cannot reach it honestly.
     paraphrase = by_intent["convert usdc to bonk"]
-    assert paraphrase.cause == "vocabulary_gap"
+    assert paraphrase.cause == "misrank"
     assert paraphrase.floor == "guess"
     assert paraphrase.top1_name != "meteora/swap"
 
