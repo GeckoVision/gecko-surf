@@ -30,6 +30,7 @@ against a surfpool fork, where a purchase costs nothing.
 from __future__ import annotations
 
 import argparse
+import time
 import json
 import sys
 from pathlib import Path
@@ -46,6 +47,7 @@ from gecko.autonomous_purchase import (  # noqa: E402
 )
 from gecko.mainnet_ledger import LedgerRow  # noqa: E402
 from gecko.mainnet_ledger import record as record_ledger  # noqa: E402
+from gecko.landing import priority_fee_microlamports  # noqa: E402
 from gecko.networks import NETWORKS, coerce_network  # noqa: E402
 from gecko.rpc import default_rpc_call, user_agent  # noqa: E402
 from gecko.signer import (  # noqa: E402
@@ -211,6 +213,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--table", type=int, default=11)
     parser.add_argument(
+        "--priority-fee",
+        type=int,
+        default=None,
+        help=(
+            "Priority fee in MICROLAMPORTS per CU, injected as a compute-budget "
+            "instruction via a verified rebuild (gecko/feebump.py). Default: ask the "
+            "node's fee estimator and bid at least the mainnet floor. Pass 0 to bid "
+            "nothing (the pre-2026-08-31 behaviour that lost 7 of 12 broadcasts)."
+        ),
+    )
+    parser.add_argument(
+        "--confirm-timeout",
+        type=float,
+        default=90.0,
+        help="Seconds to wait for confirmation before reporting UNCONFIRMED (was 60).",
+    )
+    parser.add_argument(
         "--max-usdc-raw",
         type=int,
         default=1_000_000,
@@ -305,7 +324,29 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  network      {network}   (as you stated it, never inferred)")
     print(f"  USDC cap     {args.max_usdc_raw} raw (6 decimals)")
 
+    # The fee bid, decided HERE so it is printed before anything is signed. Auto mode
+    # asks the node's estimator and refuses to bid below the mainnet floor — bidding 0
+    # into a paying market is how 7 of 12 broadcasts expired unspent on 2026-08-31.
+    if args.priority_fee is not None:
+        fee_bid = max(0, args.priority_fee)
+    else:
+        fee_bid = priority_fee_microlamports(
+            [buyer],
+            rpc_url=args.rpc_url,
+            rpc_call=default_rpc_call,
+            floor_microlamports=1_000 if str(network) == "mainnet" else 0,
+        )
+    print(
+        f"  fee bid      {fee_bid} microlamports/CU"
+        + (
+            "   (explicit)"
+            if args.priority_fee is not None
+            else "   (estimated, floored)"
+        )
+    )
+
     try:
+        run_started = time.monotonic()
         outcome = run_purchase(
             network=network,
             rpc_url=args.rpc_url,
@@ -314,7 +355,10 @@ def main(argv: list[str] | None = None) -> int:
             spend_gate=gate,
             build_call=http_build_call,
             rpc_call=default_rpc_call,
+            priority_fee_microlamports=fee_bid,
+            confirm_timeout_seconds=args.confirm_timeout,
         )
+        run_seconds = time.monotonic() - run_started
     except PurchaseTransportError as exc:
         # The package attaches the SIGNATURE to this error precisely so a broadcast
         # whose confirmation timed out can be looked up. Letting it surface as a raw
@@ -357,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  verdict    authorized — {outcome.verdict.reason}")
     print(f"  predicted  {outcome.predicted_units} CU (simulation)")
     print(f"  consumed   {outcome.consumed_units} CU (chain)")
+    print(f"  elapsed    {run_seconds:.1f}s build-to-confirmed")
     print(
         f"  blockhash  {outcome.blockhash} (valid to {outcome.last_valid_block_height})"
     )

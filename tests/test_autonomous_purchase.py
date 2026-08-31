@@ -219,6 +219,8 @@ class FakeBackend:
 
     pubkey_value: str = BUYER
     asked: int = 0
+    #: The exact unsigned bytes the loop asked to have signed — what the tests inspect.
+    signed_bytes: bytes = b""
 
     @property
     def pubkey(self) -> str:
@@ -228,6 +230,7 @@ class FakeBackend:
         self, unsigned_transaction: bytes, attestation: SigningAttestation
     ) -> bytes:
         self.asked += 1
+        self.signed_bytes = unsigned_transaction
         from solders.keypair import Keypair
         from solders.transaction import Transaction
 
@@ -493,3 +496,47 @@ def test_the_gate_is_consulted_exactly_once_per_purchase() -> None:
         "the signer's verdict must be reused, not recomputed"
     )
     assert outcome.verdict is not None and outcome.verdict.authorized is True
+
+
+def test_a_supplied_priority_fee_is_injected_and_the_receipt_covers_it() -> None:
+    """The signed bytes must carry the compute-budget bid, and the simulation must have
+    covered exactly those bytes — injection after the receipt would be unverified."""
+
+    from solders.transaction import Transaction as _Tx
+
+    from gecko.feebump import COMPUTE_BUDGET_PROGRAM_ID
+
+    rpc = FakeRpc()
+    backend = FakeBackend()
+    outcome, backend, _rpc, _builds = _run(
+        rpc=rpc, backend=backend, priority_fee_microlamports=3_327
+    )
+    assert outcome.settled
+    assert outcome.priority_fee_microlamports == 3_327
+    signed = _Tx.from_bytes(backend.signed_bytes)
+    keys = list(signed.message.account_keys)
+    first = signed.message.instructions[0]
+    assert keys[first.program_id_index] == COMPUTE_BUDGET_PROGRAM_ID
+    # tag 3 = SetComputeUnitPrice, little-endian u64 follows
+    assert bytes(first.data)[0] == 3
+    assert int.from_bytes(bytes(first.data)[1:9], "little") == 3_327
+
+
+def test_an_explicit_zero_fee_leaves_the_builders_bytes_untouched() -> None:
+    from solders.transaction import Transaction as _Tx
+
+    from gecko.feebump import COMPUTE_BUDGET_PROGRAM_ID
+
+    rpc = FakeRpc()
+    backend = FakeBackend()
+    outcome, backend, _rpc, _builds = _run(
+        rpc=rpc, backend=backend, priority_fee_microlamports=0
+    )
+    assert outcome.settled
+    assert outcome.priority_fee_microlamports == 0
+    signed = _Tx.from_bytes(backend.signed_bytes)
+    keys = list(signed.message.account_keys)
+    assert all(
+        keys[ix.program_id_index] != COMPUTE_BUDGET_PROGRAM_ID
+        for ix in signed.message.instructions
+    )

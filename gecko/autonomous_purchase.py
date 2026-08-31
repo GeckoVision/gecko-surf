@@ -60,7 +60,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .handoff import verify_handoff
-from .landing import RPC_COMMITMENT, latest_blockhash, priority_fee_microlamports
+from .feebump import FeebumpError, with_priority_fee
+from .landing import RPC_COMMITMENT, latest_blockhash
+from .landing import priority_fee_microlamports as estimate_priority_fee
 from .networks import Network
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .rpc import RpcCall, default_rpc_call
@@ -107,6 +109,8 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDC_DECIMALS = 6
 
 LET_ME_BUY_PROGRAM = "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya"
+#: The runtime's fee program. Allowlisted ONLY for SetComputeUnitPrice (tag 3, below).
+COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111"
 #: Anchor's eight-byte selector for ``make_purchase`` — ``sha256("global:make_purchase")``
 #: truncated to 8. Pinned as a literal and cross-checked against a real built transaction,
 #: so a rename upstream refuses here instead of quietly matching nothing.
@@ -168,7 +172,16 @@ def default_spend_policy(
                 AllowedInstruction(
                     program_id=LET_ME_BUY_PROGRAM,
                     discriminator=MAKE_PURCHASE_DISCRIMINATOR,
-                )
+                ),
+                # SetComputeUnitPrice (tag 3): the priority-fee bid gecko/feebump.py
+                # prepends. It moves no funds and touches no accounts — the narrowest
+                # entry that lets a priced purchase through the gate. Added 2026-08-31
+                # when the gate (correctly) refused the first fee-injected transaction
+                # as program-not-allowlisted.
+                AllowedInstruction(
+                    program_id=COMPUTE_BUDGET_PROGRAM,
+                    discriminator=b"\x03",
+                ),
             }
         ),
         allowed_destinations=frozenset(allowed_destinations),
@@ -326,6 +339,7 @@ def run_purchase(
     rpc_call: RpcCall | None = None,
     mint_extensions: Mapping[str, Sequence[str]] | None = None,
     now: float | None = None,
+    priority_fee_microlamports: int | None = None,
     confirm_timeout_seconds: float = 60.0,
     poll_interval_seconds: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
@@ -376,13 +390,37 @@ def run_purchase(
             network=network,
         )
 
-    # 3. A FRESH BLOCKHASH from the node we are about to submit to, plus the priority fee
-    #    the same node reports. The fee is RECORDED, not injected: adding a compute-budget
-    #    instruction here would change the message the builder produced, and this loop is
-    #    not the authority on that surface's instruction list.
+    # 3. A FRESH BLOCKHASH from the node we are about to submit to, plus a priority fee.
+    #    When the caller supplies one (``priority_fee_microlamports``), it is INJECTED as
+    #    a prepended compute-budget instruction via a verified rebuild (gecko/feebump.py)
+    #    — the builder's program must survive byte-for-byte semantically or the rebuild is
+    #    refused and the untouched bytes proceed at fee 0. When the caller supplies None,
+    #    the fee is estimated and RECORDED only, the pre-2026-08-31 behaviour (which lost
+    #    7 of 12 broadcasts to a market this loop was bidding 0 into). Either way the
+    #    simulation below covers the exact bytes that will be signed, injection included.
     blockhash, last_valid_block_height = latest_blockhash(rpc_url, call)
-    fee = priority_fee_microlamports([plan.fee_payer], rpc_url=rpc_url, rpc_call=call)
-    subject = _with_fresh_blockhash(built, blockhash)
+    if priority_fee_microlamports is None:
+        fee = estimate_priority_fee([plan.fee_payer], rpc_url=rpc_url, rpc_call=call)
+        priced = (
+            built.tx
+            if built.encoding == "base64"
+            else base64.b64encode(_decode(built)).decode()
+        )
+    else:
+        fee = max(0, priority_fee_microlamports)
+        base64_tx = (
+            built.tx
+            if built.encoding == "base64"
+            else base64.b64encode(_decode(built)).decode()
+        )
+        try:
+            priced = with_priority_fee(base64_tx, fee)
+        except FeebumpError:
+            # The fee is an enrichment; a rebuild this module cannot PROVE intact must
+            # never be signed, so the untouched builder bytes proceed unpriced.
+            priced = base64_tx
+            fee = 0
+    subject = _with_fresh_blockhash(BuiltTx(tx=priced, encoding="base64"), blockhash)
 
     # 4. SIMULATE THE SUBJECT — the exact bytes that will be signed, nothing re-assembled.
     receipt = simulate(
@@ -601,7 +639,11 @@ def _send(call: RpcCall, rpc_url: str, signed_transaction_base64: str) -> str:
             {
                 "encoding": "base64",
                 "skipPreflight": False,
-                "maxRetries": 3,
+                # The node re-forwards until the blockhash expires. This was 3, and at 3
+                # a zero-priority-fee transaction is leader-luck: 5 of 12 broadcasts on
+                # 2026-08-31 expired unspent. The blockhash window (~60s) is the real
+                # bound; a retry budget below it just drops transactions early.
+                "maxRetries": 40,
                 # WITHOUT THIS THE PREFLIGHT RUNS AT `finalized`, which is the RPC default
                 # and is STRICTER than the commitment the blockhash was issued at. That
                 # combination fails 100% of the time with `BlockhashNotFound` — the
