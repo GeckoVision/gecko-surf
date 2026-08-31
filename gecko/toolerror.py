@@ -53,6 +53,37 @@ def is_upstream_failure(result: Any) -> bool:
     return result.get("blocked") is True
 
 
+def ensure_known_tool(surface: Any, name: str) -> None:
+    """Raise the JSON-RPC unknown-tool error when ``name`` is not a tool of ``surface``.
+
+    MCP makes this a PROTOCOL error (-32602 Invalid params), not a tool result: a
+    client library maps it to its own exception type, and an auditor probing error
+    handling looks for the structured ``error.code`` + ``error.message`` envelope.
+    Before this, an unknown name fell through to the Skill Guard and came back as a
+    blocked tool RESULT — structured, but on the wrong layer. The message names the
+    valid tools so the agent's next call can be right.
+
+    Lives here (with the error decision both transports share) so the HTTP and stdio
+    wires cannot diverge. Conservative on purpose: a surface whose ``list_tools``
+    itself fails must not turn every call into "unknown tool".
+    """
+    try:
+        names = sorted(str(t["name"]) for t in surface.list_tools())
+    except Exception:  # noqa: BLE001 - enumeration failure is not the caller's error
+        return
+    if name in names:
+        return
+    from mcp.shared.exceptions import McpError
+    from mcp.types import INVALID_PARAMS, ErrorData
+
+    raise McpError(
+        ErrorData(
+            code=INVALID_PARAMS,
+            message=f"Unknown tool: {name!r}. This surface serves: {', '.join(names)}",
+        )
+    )
+
+
 def tool_result_payload(result: Any) -> tuple[str, bool]:
     """``(json text, is_error)`` for one MCP ``CallToolResult``.
 
@@ -62,4 +93,9 @@ def tool_result_payload(result: Any) -> tuple[str, bool]:
     return json.dumps(result, default=str), is_upstream_failure(result)
 
 
-__all__ = ["HTTP_ERROR_FLOOR", "is_upstream_failure", "tool_result_payload"]
+__all__ = [
+    "HTTP_ERROR_FLOOR",
+    "ensure_known_tool",
+    "is_upstream_failure",
+    "tool_result_payload",
+]
