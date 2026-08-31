@@ -116,7 +116,7 @@ def test_gated_discovery_artifacts_deny_without_a_key(artifact):
     registry, _key = _registry_with_key()
     with TestClient(_app(key_registry=registry)) as client:
         resp = client.get(f"/{PAID}/{artifact}")
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "missing_token"
 
 
@@ -144,7 +144,7 @@ def test_gated_mcp_still_denies_and_still_allows_the_minted_key():
         allowed = client.post(
             f"/{PAID}/mcp", json=_INIT, headers={**_MCP_HEADERS, **_auth(key)}
         )
-    assert denied.status_code == 403
+    assert denied.status_code == 401
     assert allowed.status_code == 200
 
 

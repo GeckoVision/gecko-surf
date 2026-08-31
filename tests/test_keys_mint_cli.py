@@ -140,5 +140,5 @@ def test_cli_minted_key_opens_the_gated_surface_end_to_end(registry, capsys):
         denied = client.post("/birdeye/mcp", json=init, headers=headers)
         public = client.post("/jupiter/mcp", json=init, headers=headers)
     assert allowed.status_code == 200
-    assert denied.status_code == 403
+    assert denied.status_code == 401
     assert public.status_code == 200  # the funnel is untouched
