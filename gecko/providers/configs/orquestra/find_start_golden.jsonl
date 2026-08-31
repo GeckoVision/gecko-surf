@@ -44,3 +44,9 @@
 {"intent": "swap my shift with a coworker", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'swap' names meteora's instruction. A work rota is not a DLMM pool"}
 {"intent": "buy groceries for the week", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'buy'. Groceries are not tokens and no wired program serves them"}
 {"intent": "sell my old laptop to a coworker", "gold_program": null, "gold_instruction": null, "note": "OUT OF SCOPE, carries an identity term: 'sell'. A second-hand laptop sale is not a bonding-curve exit"}
+{"intent": "swap usdg for usdc on orca", "gold_program": "whirlpool", "gold_instruction": "swap_v2", "note": "the mainnet-landed pair (5 sigs, CU exact); 'orca' is the venue name an agent actually types"}
+{"intent": "exchange usdc for usdg through an orca pool", "gold_program": "whirlpool", "gold_instruction": "swap_v2", "note": "paraphrase: 'exchange … through a pool', direction reversed"}
+{"intent": "trade one token for another on a concentrated liquidity pool", "gold_program": "whirlpool", "gold_instruction": "swap_v2", "note": "paraphrase with NO venue name — 'concentrated liquidity' is the mechanism term; meteora ties it, rank 2 is honest"}
+{"intent": "contribute usdc to the jurassic finance token sale", "gold_program": "jurassic_fi", "gold_instruction": "contribute", "note": "the direct phrasing of the live RWA sale"}
+{"intent": "claim my trch1 from the settled token sale", "gold_program": "jurassic_fi", "gold_instruction": "claim", "note": "the chain's second step, addressed by the token ticker"}
+{"intent": "back the triceratops skull sale with usdc", "gold_program": "jurassic_fi", "gold_instruction": "contribute", "note": "paraphrase by the ASSET, not the program — the surface card outranks the step, rank 2"}

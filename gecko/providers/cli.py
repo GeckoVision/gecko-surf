@@ -77,6 +77,8 @@ def build_surface_from_config(
 def intent_registries() -> dict[str, dict[str, Intent]]:
     """api_id → the intent registry supplying that program's plan callables."""
     from .jupiter import JUPITER_INTENTS
+    from .jurassic_fi import JURASSIC_FI_INTENTS
+    from .let_me_buy import LET_ME_BUY_INTENTS
     from .metadao import METADAO_INTENTS
     from .meteora import METEORA_INTENTS
     from .ore import ORE_INTENTS
@@ -93,12 +95,16 @@ def intent_registries() -> dict[str, dict[str, Intent]]:
         # registry never had the key, so find_start skipped the card at `if intent is
         # None: continue` and a hosted agent could get a ROUTE it could not execute.
         "whirlpool": WHIRLPOOL_INTENTS,
+        "let_me_buy": LET_ME_BUY_INTENTS,
+        "jurassic_fi": JURASSIC_FI_INTENTS,
     }
 
 
 def start_specs() -> dict[str, dict[str, "StartSpec"]]:
     """api_id → intent name → its declarative StartSpec (what find_start routes to)."""
     from .jupiter import JUPITER_STARTS
+    from .jurassic_fi import JURASSIC_FI_STARTS
+    from .let_me_buy import LET_ME_BUY_STARTS
     from .metadao import METADAO_STARTS
     from .meteora import METEORA_STARTS
     from .ore import ORE_STARTS
@@ -112,6 +118,8 @@ def start_specs() -> dict[str, dict[str, "StartSpec"]]:
         "metadao_ico": METADAO_STARTS,
         "jupiter": JUPITER_STARTS,
         "whirlpool": WHIRLPOOL_STARTS,
+        "let_me_buy": LET_ME_BUY_STARTS,
+        "jurassic_fi": JURASSIC_FI_STARTS,
     }
 
 

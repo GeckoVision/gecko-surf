@@ -53,6 +53,28 @@ _SERVABLE = {
         "bindings": {"base_mint": "Hszh6zhqhfR6vv27dQi5rARjvdXyaobGcVhj3t73meta"},
         "address": "1AEZZsShFCnC8UUetqk9hGby66Q5mgyszDHdXjAmdYe",
     },
+    "let_me_buy": {
+        "program_id": "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",
+        "slug": "p7o7nf4pucllzadrmiqhf",
+        "account": "receipts",
+        # The REAL geckocoffee storefront the landed mainnet purchases paid — the name
+        # is an instruction ARGUMENT (utf8 seed), so the store account is entailed by it.
+        "bindings": {"store_name": "geckocoffee"},
+        "address": "HVkbYf9PBF49WVViFf7eM1VescsgRHNeu4XJv1XveC8x",
+    },
+    "jurassic_fi": {
+        "program_id": "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm",
+        "slug": "d2decec3-acdf-4946-bbb7-252a3c14ce2c",
+        "account": "payment_vault",
+        # The LIVE sale's own USDC vault — the launch's ATA, derived from the launch
+        # address scripts/jurassic_contribute.py simulates against.
+        "bindings": {
+            "launch": "9nFKKFBEVW4njBtyJkcvngEkmT3qVXm4fgGGRBLbqH65",
+            "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "payment_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        },
+        "address": "Apz65kudrgZ2DxnPczbpFJnt6zS1XWuTQAXsqj38bYaq",
+    },
     "whirlpool": {
         "program_id": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
         "slug": "4tj9k6117wn4xla89szsj",

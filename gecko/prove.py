@@ -91,7 +91,6 @@ def _default_simulator(
         ("pumpfun", "sell"): pumpfun_landing.simulate_sell_landing,
         ("meteora", "swap"): meteora_landing.simulate_swap_landing,
         ("ore", "claim"): ore_landing.simulate_claim_landing,
-        ("metadao", "fund"): metadao_landing.simulate_fund_landing,
         ("metadao_ico", "fund"): metadao_landing.simulate_fund_landing,
         ("jupiter", "route"): jupiter_landing.simulate_route_landing,
     }

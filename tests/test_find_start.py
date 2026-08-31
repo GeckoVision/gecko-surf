@@ -343,17 +343,17 @@ def test_miss_record_counts_are_sane() -> None:
     assert record.intent_term_count == 3  # 'the' is a stopword
     assert record.matched_score == 0
     # The field counts the api_ids that produced CARDS — i.e. every packaged program
-    # config — not the intent registry. Those two were the same number until
-    # `let_me_buy` landed: it is comprehended for DERIVATION and wires no plan intent,
-    # so PROGRAMS is now a STRICT subset. Asserting against the card source is what the
-    # field actually means; the subset check keeps the old relationship visible.
+    # config — not the intent registry. The two sets diverged while let_me_buy and
+    # jurassic_fi were comprehended for DERIVATION only; since 2026-08-31 every
+    # packaged program wires an intent again, so the sets coincide — asserting
+    # equality keeps the next divergence visible either way.
     packaged = {
         api_id
         for api_id, api in load_packaged_provider("orquestra")[1].items()
         if api.program is not None
     }
     assert record.wired_program_count == len(packaged)
-    assert set(PROGRAMS) < packaged
+    assert set(PROGRAMS) == packaged
     assert record.margin == 0  # all fallback guesses score 0
 
 

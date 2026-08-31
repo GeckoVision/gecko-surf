@@ -961,10 +961,19 @@ def _wired_cards() -> list[_Card]:
                         chain=chain.name,
                     )
                 )
-        # one card per wired plan intent
+        # one card per wired plan intent — unless a declared chain step already
+        # carries the same instruction. The chain card is the richer one (edges,
+        # gaps, basis), and two cards for one instruction would double its
+        # vocabulary in ranking; servability is unaffected (the surface's tools
+        # come from the intent registry, not from cards).
+        chain_instructions = {
+            step.instruction for chain in chains for step in chain.steps
+        }
         for name in program.intents:
             intent = intents.get(api_id, {}).get(name)
             if intent is None:
+                continue
+            if intent.instruction in chain_instructions:
                 continue
             start_spec = specs.get(api_id, {}).get(name)
             accounts = start_spec.accounts if start_spec else tuple(program.pdas)

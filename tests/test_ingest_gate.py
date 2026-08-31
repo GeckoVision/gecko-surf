@@ -126,15 +126,22 @@ def test_wired_programs_pass_intent_reachability(reports, api_id, declared):
     assert check.measured["missing"] == []
 
 
-@pytest.mark.parametrize("api_id", ["let_me_buy", "jurassic_fi"])
-def test_derivation_only_programs_pass_vacuously(reports, api_id):
-    """`"intents": []` is a deliberate declaration (comprehended for derivation only), so
-    there is no orphan to find — but the vacuity is recorded, not hidden."""
+@pytest.mark.parametrize(
+    "api_id, intent",
+    [("let_me_buy", "plan_purchase"), ("jurassic_fi", "plan_contribute")],
+)
+def test_formerly_derivation_only_programs_now_wire_their_intent(
+    reports, api_id, intent
+):
+    """Until 2026-08-31 these two declared `"intents": []` (derivation only) and this
+    test pinned the vacuous pass. They are wired now — declared, supplied, no orphan —
+    and the vacuity flag must be gone with the emptiness, not linger as stale state."""
     check = reports[api_id].check("intent-reachability")
     assert check.outcome == "ok"
-    assert check.measured["vacuous"] is True
-    assert check.measured["declared"] == []
-    assert 'declares "intents": [] explicitly' in check.headline
+    assert check.measured["vacuous"] is False
+    assert check.measured["declared"] == [intent]
+    assert check.measured["supplied"] == [intent]
+    assert check.measured["missing"] == []
 
 
 def test_intent_reachability_reads_the_overlay_declaration_too():
@@ -159,11 +166,15 @@ REGISTRY_SCORES = {
     "meteora": (6, []),
     "ore": (6, []),
     "jupiter": (5, ["R6"]),
-    "metadao_ico": (5, ["R5"]),
-    "let_me_buy": (4, ["R4", "R5"]),
-    "jurassic_fi": (3, ["R4", "R5", "R6"]),
-    # 2 -> 4 on 2026-08-31: wiring plan_swap satisfied R3 (intent registry) and R4.
-    "whirlpool": (4, ["R5", "R6"]),
+    # 5 -> 6 on 2026-08-31: the drift dispatch now keys the api_id (R5).
+    "metadao_ico": (6, []),
+    # let_me_buy 4 -> 5 and jurassic_fi 3 -> 4 on 2026-08-31: wiring plan_purchase /
+    # plan_contribute satisfied R3+R4. R5 (drift key) still missing for both; jurassic
+    # also has no golden rows yet (R6).
+    "let_me_buy": (5, ["R5"]),
+    "jurassic_fi": (5, ["R5"]),
+    # 2 -> 5 on 2026-08-31: wiring plan_swap satisfied R3+R4; the D3 golden rows, R6.
+    "whirlpool": (5, ["R5"]),
 }
 
 
@@ -182,10 +193,11 @@ def test_registry_consistency_discriminates(reports):
         reports[api].check("registry-consistency").measured["score"]
         for api in ALL_PROGRAMS
     }
-    # {2,3,4,5,6} until 2026-08-31; wiring whirlpool's plan_swap moved it 2 -> 4. Four
-    # distinct scores across eight programs still discriminates — what this test forbids
-    # is the collapse to one.
-    assert scores == {3, 4, 5, 6}
+    # {2,3,4,5,6} until 2026-08-31; the whirlpool/let_me_buy/jurassic_fi wiring, the
+    # metadao_ico drift-key fix and the D3 golden rows compressed the spread to two
+    # scores split ONLY by R5 (a drift orchestrator). What this test forbids is the
+    # collapse to one — and R5 keeps discriminating until every program has one.
+    assert scores == {5, 6}
 
 
 def test_golden_row_counts_are_read_from_the_packaged_golden_set(reports):
@@ -201,21 +213,20 @@ def test_golden_row_counts_are_read_from_the_packaged_golden_set(reports):
         "let_me_buy": 6,
         "metadao_ico": 4,
         "jupiter": 0,
-        "jurassic_fi": 0,
-        "whirlpool": 0,
+        # 0 -> 3 each on 2026-08-31: the D3 eval-coverage rows (all six hit at k=3).
+        "jurassic_fi": 3,
+        "whirlpool": 3,
     }
 
 
-def test_metadao_drift_key_near_miss_is_named(reports):
-    """drift_watch keys ('metadao','fund') while the api_id is 'metadao_ico', so a target
-    named metadao_ico raises WatchError. prove.py already carries BOTH spellings — the
-    same bug, fixed in one dispatch and not the other. The finding has to say so."""
+def test_metadao_drift_key_matches_the_api_id(reports):
+    """Fixed 2026-08-31: drift_watch keyed ('metadao','fund') while the api_id is
+    'metadao_ico', so a target named by api_id raised WatchError. The dispatch now
+    keys the api_id and the near-miss finding is gone — this test pins the fix."""
     check = reports["metadao_ico"].check("registry-consistency")
-    assert check.measured["drift_keys"] == []
-    assert check.measured["near_miss_drift_keys"] == [("metadao", "fund")]
-    (finding,) = [f for f in check.findings if "drift_watch" in f.location]
-    assert "gecko/prove.py" in finding.missing
-    assert "metadao_ico" in finding.missing
+    assert check.measured["drift_keys"] == [("metadao_ico", "fund")]
+    assert check.measured["near_miss_drift_keys"] == []
+    assert [f for f in check.findings if "drift_watch" in f.location] == []
 
 
 def test_drift_dispatch_keys_are_parsed_from_source_not_called():
@@ -229,7 +240,7 @@ def test_drift_dispatch_keys_are_parsed_from_source_not_called():
         ("pumpfun", "sell"),
         ("meteora", "swap"),
         ("ore", "claim"),
-        ("metadao", "fund"),
+        ("metadao_ico", "fund"),
         ("jupiter", "route"),
     }
 
