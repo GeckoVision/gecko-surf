@@ -186,22 +186,36 @@ class Leg:
 
 @dataclass(frozen=True)
 class PegCheck:
-    """One mint's peg verdict, and which side of the conversion it sits on."""
+    """One mint's peg verdict, and which side of the conversion it sits on.
+
+    ``blocks`` is the VERDICT (would this reading stop a conversion); ``binds`` is the
+    SCOPE (is there a conversion in this request for it to stop). The first Claude web
+    session hit the gap between them: ``payable_now, blocked: false`` beside a
+    destination check with ``blocks: true`` — both correct, since the block scopes to a
+    conversion and none was needed, but a caller skimming either field alone read a
+    contradiction. The pair says it outright: ``blocks=true, binds=false`` is "this
+    reading WOULD stop a conversion, and this request does not convert".
+    """
 
     mint: str
     side: Literal["destination", "candidate"]
     outcome: str
     blocks: bool
     reason: str
+    #: Whether this check can stop THIS request. False exactly when the verdict has
+    #: nothing to bind to (no conversion happens). Defaults True: every check is
+    #: binding unless the decision that made it non-binding says so.
+    binds: bool = True
 
     @classmethod
-    def of(cls, verdict: PegVerdict, side: str) -> "PegCheck":
+    def of(cls, verdict: PegVerdict, side: str, *, binds: bool = True) -> "PegCheck":
         return cls(
             mint=verdict.mint,
             side=side,  # type: ignore[arg-type]
             outcome=verdict.outcome,
             blocks=verdict.blocks,
             reason=verdict.reason,
+            binds=binds,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -210,6 +224,7 @@ class PegCheck:
             "side": self.side,
             "outcome": self.outcome,
             "blocks": self.blocks,
+            "binds": self.binds,
             "reason": self.reason,
         }
 
@@ -229,6 +244,11 @@ class PayabilityReport:
     buyer: str
     peg_evidence_as_of: str
     route: Leg | None = None
+    #: Whether PAYING requires a conversion at all — stated outright rather than left
+    #: to be inferred from ``route is None``, because the first web session watched an
+    #: agent steamroll exactly that inference and swap anyway. None when the question
+    #: never arose (refused before holdings were compared).
+    conversion_required: bool | None = None
     peg_checks: tuple[PegCheck, ...] = ()
     rejected_legs: tuple[Leg, ...] = ()
     no_pool_for: tuple[str, ...] = ()
@@ -251,6 +271,12 @@ class PayabilityReport:
             "priced_program": self.priced_program,
             "buyer": self.buyer,
             "peg_evidence_as_of": self.peg_evidence_as_of,
+            "conversion_required": self.conversion_required,
+            # The execution pointer the first web session lacked: with no breadcrumb at
+            # the moment of "how do I run this route", the only swap path carrying
+            # instructions was the wallet's own aggregator — which consults no venue
+            # check and no peg gate. route_found now names the tool.
+            "next_tool": "plan_swap" if self.outcome == "route_found" else None,
             "route": self.route.to_dict() if self.route else None,
             "peg_checks": [c.to_dict() for c in self.peg_checks],
             "rejected_legs": [leg.to_dict() for leg in self.rejected_legs],
@@ -283,10 +309,13 @@ def assess_payment(
     checked_at = datetime.now(UTC).isoformat()
     priced_program = mint_owner(priced_mint)
 
+    conversion_known: bool | None = None
+
     def report(outcome: PayOutcome, reason: str, **kw: Any) -> PayabilityReport:
         return PayabilityReport(
             outcome=outcome,
             reason=reason,
+            conversion_required=kw.pop("conversion_required", conversion_known),
             store_name=store.store_name,
             product=product_name,
             priced_mint=priced_mint,
@@ -327,16 +356,21 @@ def assess_payment(
         )
 
     # 3. The DESTINATION's peg, always recorded.
-    checks: list[PegCheck] = [
-        PegCheck.of(
-            verdict_from_reading(priced_mint, peg_reader(priced_mint)), "destination"
-        )
-    ]
+    destination_verdict = verdict_from_reading(priced_mint, peg_reader(priced_mint))
     held_priced = holdings.get(priced_mint, (0, TOKEN_PROGRAM_ID))[0]
+    conversion_required = held_priced < price_raw
+    conversion_known = conversion_required  # noqa: F841 - read by report() via closure
+    checks: list[PegCheck] = [
+        # `binds` scopes the verdict to THIS request: with no conversion, a blocking
+        # destination reading is information, not a refusal — and saying so in the
+        # check itself is what stops `payable_now` + `blocks: true` reading as a
+        # contradiction to anyone skimming one field.
+        PegCheck.of(destination_verdict, "destination", binds=conversion_required)
+    ]
 
     # 4. Holding enough means NO conversion happens, so the destination peg is
     #    information rather than a refusal — nobody is being asked to acquire the asset.
-    if held_priced >= price_raw:
+    if not conversion_required:
         return report(
             "payable_now",
             f"the wallet holds {held_priced} of {priced_mint}; the price is {price_raw}.",

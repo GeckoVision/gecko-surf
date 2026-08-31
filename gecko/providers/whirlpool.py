@@ -440,4 +440,41 @@ def plan_swap_result(
     except Exception as exc:  # noqa: BLE001 - redacted to a class at the transport edge
         return {"error": f"{type(exc).__name__}: {exc}"}
     plan["network"] = network
+    # The execution breadcrumb. The first Claude web session had the plan and still
+    # routed execution through the wallet's own aggregator, because at the moment of
+    # "how do I run this" the only path carrying instructions was that one.
+    # `prepare_purchase` embeds its signer sequence and the web agent followed it
+    # exactly; a swap deserves the same rail.
+    plan["next_steps"] = [
+        {
+            "step": "build",
+            "tool": "prepare_instruction",
+            "arguments": {
+                "program_id": plan["program_id"],
+                "instruction": "swap_v2",
+                "payer": str(args["user"]),
+                "values": "<the `values` object above, verbatim>",
+            },
+            "note": "returns the UNSIGNED transaction and its binding",
+        },
+        {
+            "step": "sign",
+            "note": (
+                "hand the unsigned base64 to your wallet connector — PayBox: "
+                "request_wallet_sign {op: 'solanaTransaction', address, "
+                "transactionBase64}, then poll get_request for the signed artifact. "
+                "Load the signer's tools BEFORE calling prepare_instruction: the "
+                "blockhash budget is ~60s and cold tool-loading is what spends it."
+            ),
+        },
+        {
+            "step": "verify",
+            "tool": "verify_signed_transaction",
+            "note": "prove the signed bytes are the built bytes BEFORE submitting",
+        },
+        {
+            "step": "submit",
+            "note": "sendTransaction with preflightCommitment: confirmed",
+        },
+    ]
     return plan

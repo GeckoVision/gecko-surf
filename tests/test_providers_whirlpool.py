@@ -295,6 +295,7 @@ def test_a_loopback_rpc_url_is_refused_without_the_injected_guard() -> None:
 def test_a_plan_refusal_is_marked_refused_with_its_reason() -> None:
     """WhirlpoolPlanError is an honest refusal, not a transport failure — the caller
     must be able to tell 'no pool survived re-derivation' from 'the node was down'."""
+
     def no_pools(url, method, params):
         if method == "getProgramAccounts":
             return {"result": []}
@@ -314,3 +315,18 @@ def test_the_description_says_it_does_not_consult_the_peg() -> None:
     text = PLAN_SWAP_TOOL["description"]
     assert "NOT" in text and "peg" in text
     assert "plan_payment" in text
+
+
+def test_the_plan_carries_the_execution_breadcrumb() -> None:
+    """The first web session had the plan and still executed through the wallet's
+    aggregator — the only swap path carrying instructions. Now this one carries them:
+    build -> sign -> verify -> submit, with the signer named and the cold-client
+    warning attached where the budget actually burns."""
+    out = _result({})
+    steps = [s["step"] for s in out["next_steps"]]
+    assert steps == ["build", "sign", "verify", "submit"]
+    sign = out["next_steps"][1]["note"]
+    assert "request_wallet_sign" in sign
+    assert "BEFORE" in sign
+    verify = out["next_steps"][2]
+    assert verify["tool"] == "verify_signed_transaction"
