@@ -4,7 +4,8 @@ Two things matter here:
 1. **Gate OFF is byte-identical to today** — the critical regression. With no gate
    wired, the ``/mcp`` route object is the SAME app instance as before, and a real MCP
    handshake + call still round-trips first-call-correct.
-2. **Gate ON** — an unauthorized/invalid/absent key gets a clean 403 (no token echoed);
+2. **Gate ON** — an unauthorized/invalid/absent key gets a clean 401 with a
+   WWW-Authenticate challenge and the self-serve mint path (no token echoed);
    an enabled Gecko key passes straight through to the existing handler (200).
 """
 
@@ -115,7 +116,7 @@ def test_gate_off_full_handshake_still_first_call_correct():
     assert result["request"].endswith("/v1/assets/USDC/state")
 
 
-# --- gate ON: 403 unauthorized, 200 passthrough ------------------------------
+# --- gate ON: 401 unauthorized (challenge + mint path), 200 passthrough ------
 
 
 def _post_mcp(app: Any, headers: dict[str, str]) -> httpx.Response:
@@ -146,23 +147,36 @@ def _post_mcp(app: Any, headers: dict[str, str]) -> httpx.Response:
     return anyio.run(go)
 
 
-def test_gate_on_missing_key_is_403():
+def test_a_denial_carries_the_challenge_and_the_mint_path():
+    """A 401 an agent can ACT on: the WWW-Authenticate challenge (the header
+    MCP clients react to) plus the self-serve key path in the body. The old
+    403 was a dead end — correct, and useless."""
     resp = _post_mcp(_app(_gate({ACCOUNT})), headers={})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
+    challenge = resp.headers.get("www-authenticate", "")
+    assert challenge.startswith("Bearer ")
+    body = resp.json()
+    assert "/auth/login/start" in body["how"]
+    assert "Bearer" in body["how"]
+
+
+def test_gate_on_missing_key_is_401():
+    resp = _post_mcp(_app(_gate({ACCOUNT})), headers={})
+    assert resp.status_code == 401
     body = resp.json()
     assert body["reason"] == "missing_token"
     assert TOKEN not in resp.text  # token never echoed
 
 
-def test_gate_on_invalid_key_is_403():
+def test_gate_on_invalid_key_is_401():
     resp = _post_mcp(_app(_gate({ACCOUNT})), {"Authorization": "Bearer not-a-real-key"})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "invalid_token"
 
 
-def test_gate_on_valid_but_not_enabled_is_403():
+def test_gate_on_valid_but_not_enabled_is_401():
     resp = _post_mcp(_app(_gate(set())), {"Authorization": f"Bearer {TOKEN}"})
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "not_enabled"
     assert TOKEN not in resp.text
 
@@ -241,26 +255,26 @@ def test_privy_resolver_enabled_subject_passes_through_first_call_correct():
     assert result["request"].endswith("/v1/assets/USDC/state")
 
 
-def test_privy_resolver_valid_but_not_enabled_is_403():
+def test_privy_resolver_valid_but_not_enabled_is_401():
     key = ec.generate_private_key(ec.SECP256R1())
     token = _privy_jwt(key)
     resp = _post_mcp(
         _app(_privy_gate(set(), key.public_key())),
         {"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "not_enabled"
     assert token not in resp.text  # the JWT is never echoed
 
 
-def test_privy_resolver_wrong_audience_is_403_invalid():
+def test_privy_resolver_wrong_audience_is_401_invalid():
     key = ec.generate_private_key(ec.SECP256R1())
     token = _privy_jwt(key, aud="some-other-app")  # audience mismatch -> unverifiable
     resp = _post_mcp(
         _app(_privy_gate({PRIVY_SUBJECT}, key.public_key())),
         {"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "invalid_token"
 
 
@@ -299,5 +313,5 @@ def test_multi_surface_gate_on_without_privy_config_denies_everyone(monkeypatch)
                 "Authorization": "Bearer any-well-formed-looking-token",
             },
         )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "invalid_token"

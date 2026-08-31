@@ -358,3 +358,22 @@ def test_a_surface_without_instructions_still_serves() -> None:
             return {}
 
     assert build_http_app(_Bare(), server_name="bare") is not None
+
+
+def test_query_is_accepted_as_an_intent_alias() -> None:
+    """Sibling Gecko mounts teach `query`; the two-spellings wall is a shipped
+    failure this surface must not reintroduce."""
+    surface = _surface()
+    by_intent = surface.call_tool("find_start", {"intent": "buy a coffee"})
+    by_query = surface.call_tool("find_start", {"query": "buy a coffee"})
+    assert "error" not in by_query or "intent" not in str(by_query.get("error", ""))
+    assert type(by_intent) is type(by_query)
+
+
+def test_the_unknown_tool_error_names_the_real_tools() -> None:
+    surface = _surface()
+    result = surface.call_tool("search_capabilities", {"query": "anything"})
+    message = result["error"]
+    assert "unknown tool" in message
+    for name in ("start", "plan_payment", "plan_swap"):
+        assert name in message, f"{name} missing from the recovery list"

@@ -258,6 +258,60 @@ class PayabilityReport:
     def blocks(self) -> bool:
         return self.outcome in BLOCKING
 
+    def _next_steps(self) -> list[dict[str, Any]] | None:
+        """The ordered tool rail out of this report, with the argument JOINS spelled.
+
+        The joins are non-obvious across tools (``buyer``→``user``,
+        ``route.quote.pool``→``pool``) and a cold agent that has to guess them is a
+        cold agent that routes around the checked path. ``None`` for a blocked
+        report: a refusal's next step is in its reason, never a tool to try anyway.
+        """
+        if self.outcome == "payable_now":
+            return [
+                {
+                    "tool": "prepare_purchase",
+                    "arguments": {
+                        "store": self.store_name,
+                        "product": self.product,
+                        "buyer": self.buyer,
+                    },
+                    "note": (
+                        "no conversion needed — the buyer already holds the priced "
+                        "mint. Prepare LATE: preparing starts the ~60-second "
+                        "blockhash clock, so have the signer warmed up first."
+                    ),
+                }
+            ]
+        if self.outcome == "route_found" and self.route and self.route.quote:
+            quote = self.route.quote
+            return [
+                {
+                    "tool": "plan_swap",
+                    "arguments": {
+                        "user": self.buyer,
+                        "input_mint": self.route.held_mint,
+                        "output_mint": self.priced_mint,
+                        "amount_in": str(quote.amount_in),
+                        "pool": quote.pool,
+                    },
+                    "note": (
+                        "the checked conversion this report priced. plan_swap calls "
+                        "the buyer `user`; pin `pool` to the one named here so the "
+                        "venue that was verified is the venue that executes."
+                    ),
+                },
+                {
+                    "tool": "prepare_purchase",
+                    "arguments": {
+                        "store": self.store_name,
+                        "product": self.product,
+                        "buyer": self.buyer,
+                    },
+                    "note": "after the swap settles; same buyer, same store and product.",
+                },
+            ]
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "outcome": self.outcome,
@@ -277,6 +331,12 @@ class PayabilityReport:
             # instructions was the wallet's own aggregator — which consults no venue
             # check and no peg gate. route_found now names the tool.
             "next_tool": "plan_swap" if self.outcome == "route_found" else None,
+            # The FULL rail, for BOTH good outcomes. next_tool above only ever named
+            # plan_swap, so payable_now — the most common good outcome — left the agent
+            # pointerless one step from success (the exact failure class again, one
+            # outcome over). Structured like plan_swap's own next_steps because that is
+            # the one format a live web session demonstrably followed to the letter.
+            "next_steps": self._next_steps(),
             "route": self.route.to_dict() if self.route else None,
             "peg_checks": [c.to_dict() for c in self.peg_checks],
             "rejected_legs": [leg.to_dict() for leg in self.rejected_legs],

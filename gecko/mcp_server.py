@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .client import AgentApiClient
@@ -269,6 +269,54 @@ class McpSurface:
             honeypots if honeypots is not None else honeypots_from_env()
         )
         self.recorded_ops = recorded_ops
+
+    @property
+    def instructions(self) -> str:
+        """What the client shows the model BEFORE any tool is chosen.
+
+        Twelve of thirteen hosted mounts sent ``instructions: null`` (measured
+        2026-08-31) — the only text a cold agent gets before tool choice, absent
+        on nearly every surface. Generated here from the comprehension so it can
+        never drift from what the surface actually serves. The template teaches
+        the ORDER (search → get → call, query_docs on failure), the auth rule
+        (server-side, never ask the user for a key), the mode honestly (recorded
+        responses are synthesized, $0, not live data), and that a refusal is an
+        answer, not a malfunction.
+        """
+        try:
+            tool_count = len(self.client.list_tools())
+        except Exception:  # noqa: BLE001 - instructions must never break connect
+            tool_count = 0
+        name = self.client.surface_id
+        if self.mode == "recorded" and not self.recorded_ops:
+            mode_clause = (
+                "Responses on this surface are RECORDED: synthesized from the "
+                "API's own schema, $0, shape-correct but not live data — say so "
+                "if the user asks for current values."
+            )
+        elif self.recorded_ops:
+            mode_clause = (
+                "Calls are LIVE against the real API, except the operations the "
+                "catalog serves RECORDED (money-moving writes are synthesized "
+                "from schema and never relayed to the wire)."
+            )
+        else:
+            mode_clause = "Calls are LIVE against the real API."
+        return (
+            f"This server is {name}, comprehended by Gecko into {tool_count} "
+            "first-call-correct tools. THE ORDER: (1) call `search_capabilities` "
+            "with your goal in plain language (`query`); it returns full schemas "
+            "for exactly the operations that answer it, and when a `plan` is "
+            "present it is the order to call them in — follow it rather than "
+            "guessing a tool from its name. (2) Already know the tool name? "
+            "`get_capability` is cheaper than searching. (3) A call failed? Call "
+            "`query_docs` with the error — it answers why and how to rewrite; do "
+            "not retry unchanged. Auth is handled server-side: never ask the "
+            "user for an API key and never put credentials in arguments. "
+            f"{mode_clause} A result with `isError` or a blocked/refused verdict "
+            "is an ANSWER, not a malfunction: read the reason, tell the user, do "
+            "not route around it."
+        )
 
     def list_tools(
         self,
@@ -698,12 +746,44 @@ class MetaComprehendSurface:
 
     surface_id = "gecko-meta"
 
+    #: Set by the multi-surface builder AFTER the mount list is known (late
+    #: binding beats reordering the builder): a zero-arg callable returning the
+    #: PUBLIC surface entries — the same gated-mount withholding the index uses,
+    #: so this tool can never leak a surface the index would not.
+    surface_index: Callable[[], list[dict[str, str]]] | None = None
+
+    @property
+    def instructions(self) -> str:
+        """The bare-host landing was a one-tool cul-de-sac with no signage —
+        the most likely cold-agent entry (someone pasted the hostname) landed
+        here with no way to learn that the real surfaces exist one path over."""
+        return (
+            "You have connected to Gecko's host root, not to a specific API. "
+            "Two tools: `list_surfaces` shows every API served on this host "
+            "with its MCP URL — reconnect to the one you need. "
+            "`comprehend_api` turns any public OpenAPI URL (or docs page, with "
+            "from_docs=true) into agent tools, returned to you only — nothing "
+            "is hosted or listed."
+        )
+
     def list_tools(self) -> list[dict[str, Any]]:
-        return [_COMPREHEND_TOOL]
+        return [_COMPREHEND_TOOL, _LIST_SURFACES_TOOL]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name == "list_surfaces":
+            entries = self.surface_index() if self.surface_index else []
+            return {
+                "surfaces": entries,
+                "note": (
+                    "reconnect your MCP client to a surface's own `mcp` URL to "
+                    "use it; this root surface only comprehends and lists"
+                ),
+            }
         if name != "comprehend_api":
-            raise ComprehendError(f"unknown tool: {name}")
+            raise ComprehendError(
+                f"unknown tool: {name} — this surface has exactly two tools: "
+                "comprehend_api and list_surfaces"
+            )
         url = arguments.get("url", "")
         if not isinstance(url, str) or not url:
             raise ComprehendError("comprehend_api requires a 'url' argument")
@@ -712,6 +792,17 @@ class MetaComprehendSurface:
             url, from_docs=bool(arguments.get("from_docs", False))
         )
         return asdict(result)
+
+
+_LIST_SURFACES_TOOL: dict[str, Any] = {
+    "name": "list_surfaces",
+    "description": (
+        "Every API surface served on this host, with the MCP URL to reconnect "
+        "to. Use it when you landed on the host root and need a specific API. "
+        "Free, instant, and it lists only what the public index lists."
+    ),
+    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+}
 
 
 _STDIO_INSTALL_HINT = (
@@ -760,7 +851,11 @@ def serve_stdio(
     from .http_server import _surface_from
 
     surface = _surface_from(spec_or_client, base_url, mode, enforce)
-    server: Any = Server(server_name)
+    # Same instructions as the HTTP transport — stdio used to drop them, so the
+    # two transports disagreed on the one text a client shows before tool choice.
+    server: Any = Server(
+        server_name, instructions=getattr(surface, "instructions", None)
+    )
 
     @server.list_tools()
     async def _list_tools() -> list[Any]:

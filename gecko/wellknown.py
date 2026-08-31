@@ -60,6 +60,40 @@ def build_x402_manifest(
     }
 
 
+def build_server_card(
+    surface_names: list[str], public_url: str | None
+) -> dict[str, Any]:
+    """The MCP server card at /.well-known/mcp/server-card.json — the path
+    agent-readiness scanners and indexers actually probe (~70% of this host's
+    connects are indexers, and until this existed they indexed nothing).
+
+    One card for the host, remotes per PUBLIC surface. The caller passes the
+    already-gate-filtered name list, so this can never leak a gated mount the
+    index would withhold. Branding fields (title/iconUrl) because a name+icon+
+    description trio is what registries render as a complete listing.
+    """
+    base = public_url.rstrip("/") if public_url else ""
+    return {
+        "name": "tech.geckovision/gecko-host",
+        "title": "Gecko",
+        "description": (
+            "Comprehended API surfaces served agent-native over Streamable "
+            "HTTP: first-call-correct tools, auth injected server-side, "
+            "refusals that say why."
+        ),
+        "iconUrl": "https://geckovision.tech/gecko-icon.svg",
+        "websiteUrl": "https://geckovision.tech",
+        "remotes": [
+            {
+                "transport_type": "streamable-http",
+                "url": f"{base}/{name}/mcp" if base else f"/{name}/mcp",
+                "name": name,
+            }
+            for name in surface_names
+        ],
+    }
+
+
 # Canonical docs live in Mintlify — the breadcrumb POINTS at them, never duplicates
 # the five-move depth (which drifts). One source of truth for onboarding content.
 _DOCS_QUICKSTART = "https://docs.geckovision.tech/quickstart"
