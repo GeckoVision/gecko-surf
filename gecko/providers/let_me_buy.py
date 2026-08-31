@@ -36,13 +36,17 @@ import base64
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Mapping, Sequence
 
+from ..find_start import StartSpec
 from ..prepare_instruction import prepare_instruction_result
 from ..rpc import RpcCall, default_rpc_call
 from ..showcase import MAX_PRODUCTS
-from ..store_accounts import receipts_pda
+from ..store_accounts import purchase_accounts, receipts_pda, resolve_store
 from ..store_directory import LET_ME_BUY_PROGRAM_ID, decode_store
+from .orquestra import Intent, OrquestraProgramSurface
 
 __all__ = [
+    "LET_ME_BUY_INTENTS",
+    "LET_ME_BUY_STARTS",
     "PlanStep",
     "PlanVerdict",
     "StorePlan",
@@ -318,3 +322,81 @@ def plan_store_change_result(plan: StorePlan) -> dict[str, Any]:
             for s in plan.steps
         ],
     }
+
+
+# --------------------------------------------------------------------------- #
+# The servable plan intent — the buyer-side start, wired for the MCP surface.
+# --------------------------------------------------------------------------- #
+
+
+def _purchase_plan(
+    surface: OrquestraProgramSurface, args: Mapping[str, Any]
+) -> dict[str, str]:
+    """Intent adapter: resolve the named store off the chain, then hand back the
+    ``make_purchase`` account map. Every store-side address comes from ONE
+    :func:`gecko.store_accounts.resolve_store` read, so the accounts cannot mix two
+    stores — the exact fault the program refuses with ConstraintSeeds (2006)."""
+    import os
+
+    from ..pda import PdaDerivationError
+    from ..pda_testkit import LOCAL_RPC
+    from ..store_accounts import StoreResolutionError
+
+    rpc_url = os.environ.get("GECKO_MAINNET_RPC", LOCAL_RPC)
+    try:
+        resolved = resolve_store(str(args["store"]), rpc_url=rpc_url)
+        accounts = resolved.accounts_for(str(args["product"]))
+    except StoreResolutionError as exc:
+        # A refusal the caller can act on (what IS listed, the registered spelling) —
+        # surfaced as the plan's error, never a raw traceback through the MCP surface.
+        raise PdaDerivationError(str(exc)) from exc
+    return purchase_accounts(accounts, buyer=str(args["buyer"]))
+
+
+_PLAN_PURCHASE = Intent(
+    name="plan_purchase",
+    instruction="make_purchase",
+    description=(
+        "Plan a let_me_buy storefront purchase: resolve the store NAME to the one "
+        "account that carries its menu, receipts and payout authority, and derive "
+        "every account make_purchase must name — the receipts PDA, the buyer's "
+        "token account and the merchant's, all for the product's own mint. Give "
+        "store (the registered store name), product (as listed on the menu) and "
+        "buyer (the paying wallet). The store account is READ, not assumed: an "
+        "unlisted product or an unregistered spelling is refused at plan time with "
+        "what IS listed, never discovered as an on-chain revert."
+    ),
+    inputs=("store", "product", "buyer"),
+    plan=_purchase_plan,
+)
+
+
+LET_ME_BUY_INTENTS: dict[str, Intent] = {_PLAN_PURCHASE.name: _PLAN_PURCHASE}
+
+LET_ME_BUY_STARTS: dict[str, StartSpec] = {
+    "plan_purchase": StartSpec(
+        accounts=(
+            "receipts",
+            "sender_token_account",
+            "recipient_token_account",
+        ),
+        recovered={
+            "receipts": (
+                "PDA ['receipts', store_name] — store_name is an instruction "
+                "ARGUMENT (utf8), so the account a purchase writes is entailed by "
+                "the name the buyer types; a re-spelled name derives a different, "
+                "real store"
+            ),
+            "sender_token_account": (
+                "ATA [buyer, token_program, mint] — the token program is the "
+                "SECOND seed and the IDL pins classic SPL Token, so a Token-2022 "
+                "mint has no path through make_purchase at all"
+            ),
+            "recipient_token_account": (
+                "ATA [authority, token_program, mint] — authority and mint are "
+                "READ from the store account, never supplied; the credited account "
+                "must belong to the store the receipts PDA names"
+            ),
+        },
+    )
+}

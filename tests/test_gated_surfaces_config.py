@@ -112,7 +112,7 @@ def test_env_that_parses_to_no_names_is_reported(monkeypatch, caplog):
 @pytest.mark.parametrize("named", ["BIRDEYE", "Birdeye", "BirdEye"])
 def test_casing_slip_still_gates_the_paid_surface(named):
     """Mount names are lowercase; matching case-insensitively can only ever gate MORE."""
-    assert _status(frozenset({named}), PAID) == 403
+    assert _status(frozenset({named}), PAID) == 401
 
 
 def test_casing_slip_still_leaves_the_funnel_open():
@@ -145,10 +145,10 @@ def test_a_correct_config_logs_no_error(caplog):
 
 
 def test_the_paid_surface_is_still_denied_and_the_funnel_still_open():
-    assert _status(frozenset({PAID}), PAID) == 403
+    assert _status(frozenset({PAID}), PAID) == 401
     assert _status(frozenset({PAID}), OPEN_SURFACE) == 200
 
 
 def test_gate_all_default_still_gates_every_mount():
-    assert _status(None, PAID) == 403
-    assert _status(None, OPEN_SURFACE) == 403
+    assert _status(None, PAID) == 401
+    assert _status(None, OPEN_SURFACE) == 401

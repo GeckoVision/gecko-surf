@@ -135,7 +135,8 @@ def test_meta_mcp_endpoint_initializes_under_mount() -> None:
 
 def test_meta_surface_lists_only_comprehend_api() -> None:
     tools = MetaComprehendSurface().list_tools()
-    assert [t["name"] for t in tools] == ["comprehend_api"]
+    # list_surfaces joined in #496 — the bare root must offer discovery as well.
+    assert [t["name"] for t in tools] == ["comprehend_api", "list_surfaces"]
     props = tools[0]["inputSchema"]["properties"]
     assert set(props) == {"url", "from_docs"}
 

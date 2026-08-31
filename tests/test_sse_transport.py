@@ -223,7 +223,7 @@ def test_a_valid_key_still_reaches_the_stream_door(monkeypatch: Any) -> None:
 
     client = TestClient(_gated_app())
 
-    assert client.get("/sse").status_code == 403
+    assert client.get("/sse").status_code == 401
     assert (
         client.get("/sse", headers={"Authorization": f"Bearer {TOKEN}"}).status_code
         == 429

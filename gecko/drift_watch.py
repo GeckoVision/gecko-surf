@@ -250,7 +250,7 @@ def _default_simulator(
         return ore_landing.simulate_claim_landing(
             target.bindings, **common
         ).landing_receipt
-    if key == ("metadao", "fund"):
+    if key == ("metadao_ico", "fund"):
         return metadao_landing.simulate_fund_landing(
             target.bindings, **common
         ).landing_receipt

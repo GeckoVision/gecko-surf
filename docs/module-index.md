@@ -63,7 +63,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
 | `feebump` | Priority-fee injection for a builder's unsigned transaction — a VERIFIED rebuild. | 1 · `autonomous_purchase` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 13 · `ingest_gate`, `prove`, `providers.catalog_surface` +10 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 14 · `ingest_gate`, `prove`, `providers.catalog_surface` +11 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -106,10 +106,10 @@ package depends on it, which is worth a look before you add a caller.
 | `pay_route` | Can this wallet buy this product — and if not, what is the shortest CHECKED route? | 2 · `providers.catalog_surface`, `providers.whirlpool` |
 | `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 3 · `catalog_mcp`, `paysh_watch`, `serve_mcp` |
 | `paysh_watch` | Hourly self-refresh + drift-watch for the aggregated pay.sh catalog surface. | 0 |
-| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 25 · `account_recipes`, `corpus`, `find_start` +22 |
+| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 26 · `account_recipes`, `corpus`, `find_start` +23 |
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
 | `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 3 · `providers.meteora`, `providers.pumpfun`, `providers.whirlpool` |
-| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 8 · `providers.metadao`, `providers.metadao_landing`, `providers.meteora` +5 |
+| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 9 · `providers.let_me_buy`, `providers.metadao`, `providers.metadao_landing` +6 |
 | `peg_guard` | Is this asset holding its peg? A guard on converting, not a step in converting. | 2 · `pay_route`, `pegana` |
 | `pegana` | Ask Pegana about one mint, and report WHAT CAME BACK rather than what it implies. | 1 · `pay_route` |
 | `plan_refusals` | Plan-time refusals: the account-distinctness facts no artifact states. | 2 · `autonomous_purchase`, `prepare_purchase` |
@@ -141,14 +141,14 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
 | `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
 | `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 6 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +3 |
-| `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 0 |
+| `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 1 · `providers.cli` |
 | `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
 | `providers.metadao_landing` | The MetaDAO "fund-that-passes" orchestrator — the third program that RUNS. | 0 |
 | `providers.meteora` | Meteora DLMM — the first Orquestra provider instance (the touchable Berkay demo). | 2 · `providers.cli`, `providers.meteora_landing` |
 | `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 0 |
 | `providers.ore` | ORE V3 ``claimOre`` — the fourth Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.ore_landing` |
 | `providers.ore_landing` | The ORE "claim-that-passes" orchestrator — the fourth program that RUNS. | 0 |
-| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 7 · `providers.cli`, `providers.jupiter`, `providers.metadao` +4 |
+| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 8 · `providers.cli`, `providers.jupiter`, `providers.let_me_buy` +5 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
 | `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 2 · `providers.catalog_surface`, `providers.cli` |

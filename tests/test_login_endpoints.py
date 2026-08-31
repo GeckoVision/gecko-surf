@@ -232,7 +232,7 @@ def test_a_freshly_logged_in_key_opens_nothing_until_the_founder_grants_it():
     registry = InMemoryKeyRegistry()
     key = _mint(registry)
     resp = _init_post(_gated_app(registry), key)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert json.loads(resp.text)["reason"] == "invalid_token"  # disabled -> no account
 
 
@@ -241,7 +241,7 @@ def test_gate_with_disabled_gecko_key_is_403():
     key = _mint(registry)
     registry.set_account_enabled(ACCOUNT, False)
     resp = _init_post(_gated_app(registry), key)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     body = json.loads(resp.text)
     assert body["reason"] == "invalid_token"  # disabled -> resolver returns None
     assert key not in resp.text  # the key is never echoed

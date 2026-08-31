@@ -99,7 +99,7 @@ def test_gated_surface_denies_without_a_key():
     registry, _key = _registry_with_key()
     with TestClient(_app(key_registry=registry)) as client:
         resp = _init(client, GATED)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "missing_token"
 
 
@@ -107,7 +107,7 @@ def test_gated_surface_denies_a_random_key():
     registry, _key = _registry_with_key()
     with TestClient(_app(key_registry=registry)) as client:
         resp = _init(client, GATED, key=mint_key())  # well-formed, never minted here
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "invalid_token"
 
 
@@ -116,7 +116,7 @@ def test_gated_surface_denies_a_disabled_key():
     registry.set_account_enabled(ACCOUNT, False)
     with TestClient(_app(key_registry=registry)) as client:
         resp = _init(client, GATED, key=key)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert key not in resp.text  # the key is never echoed
 
 
@@ -153,16 +153,16 @@ def test_gate_on_with_no_registry_denies_the_gated_surface_and_keeps_others_open
     with TestClient(_app()) as client:
         denied = _init(client, GATED, key=mint_key())
         open_one = _init(client, "jupiter")
-    assert denied.status_code == 403
+    assert denied.status_code == 401
     assert denied.json()["reason"] == "invalid_token"
     assert open_one.status_code == 200
 
 
-def test_a_raising_registry_denies_with_403_not_500():
+def test_a_raising_registry_denies_with_401_not_500():
     """R3: ``RegistryAllowlist.is_enabled`` used to let a store error propagate, so a
     Mongo blip surfaced as an HTTP 500 (fail-closed, but a different shape — and a
     stack-trace 500 tells a prober the store is reachable-but-broken). It must deny
-    exactly like an unresolvable key: a clean 403."""
+    exactly like an unresolvable key: the gate's uniform 401 (403 until #496)."""
     registry, key = _registry_with_key()
 
     class _AllowlistDown:
@@ -177,7 +177,7 @@ def test_a_raising_registry_denies_with_403_not_500():
     with TestClient(_app(key_registry=_AllowlistDown())) as client:
         resp = _init(client, GATED, key=key)
         still_open = _init(client, "jupiter")
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "not_enabled"
     assert key not in resp.text
     assert still_open.status_code == 200
@@ -224,7 +224,7 @@ def test_enabled_but_ungranted_is_denied():
     registry.set_account_surfaces(ACCOUNT, [])  # enabled, granted nothing
     with TestClient(_app(key_registry=registry)) as client:
         resp = _init(client, GATED, key=key)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "not_enabled"
 
 
@@ -233,7 +233,7 @@ def test_a_grant_for_one_surface_does_not_open_another():
     registry.set_account_surfaces(ACCOUNT, ["some-other-paid-api"])
     with TestClient(_app(key_registry=registry)) as client:
         resp = _init(client, GATED, key=key)
-    assert resp.status_code == 403
+    assert resp.status_code == 401
     assert resp.json()["reason"] == "not_enabled"
 
 

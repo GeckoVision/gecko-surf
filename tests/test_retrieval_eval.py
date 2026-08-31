@@ -440,9 +440,12 @@ def test_surface_gold_rows_keep_their_ranks() -> None:
 # value-domain recognition — knowing sol and usdc are members of `solana-token-mint` and
 # crediting the card that consumes that domain. What must NOT repay it is pasting this
 # fixture's vocabulary into the config, which would make the eval score itself.
-RECALL_AT_1_FLOOR = 23 / 33
-RECALL_AT_3_FLOOR = 27 / 33
-MRR_FLOOR = 25 / 33
+# Re-derived 2026-08-31 when the D3 whirlpool/jurassic_fi rows moved the denominator
+# 33 -> 39 (measured: 28/39, 34/39, mrr 0.795 — every new row a hit at k=3). Same
+# one-row slack below the measurement as the original derivation.
+RECALL_AT_1_FLOOR = 27 / 39
+RECALL_AT_3_FLOOR = 33 / 39
+MRR_FLOOR = 30 / 39
 
 # The precision side. These 8 are AUTHORED, not accidental: e6a6b20 ("out-of-scope rows
 # that carry an identity term — 8/8 false-accept") committed them to measure what the
@@ -458,7 +461,7 @@ def test_the_measured_retrieval_floors_hold() -> None:
     """The tripwire main did not have. Exact fractions, so parity passes."""
     report = evaluate_golden()
 
-    assert report.scoreable == 33, "the recall denominator moved — re-derive the floors"
+    assert report.scoreable == 39, "the recall denominator moved — re-derive the floors"
     assert report.recall_at_1 >= RECALL_AT_1_FLOOR, (
         f"recall@1 regressed: {report.recall_at_1} < {RECALL_AT_1_FLOOR}"
     )
@@ -478,9 +481,9 @@ def test_the_floors_are_exact_fractions_not_rounded_literals() -> None:
     A rounded-up decimal (0.7576 > 25/33) passes a human read and then fails `>=` against
     its own source measurement. This catches that at the point of authorship.
     """
-    assert RECALL_AT_1_FLOOR == 23 / 33
-    assert RECALL_AT_3_FLOOR == 27 / 33
-    assert MRR_FLOOR == 25 / 33
+    assert RECALL_AT_1_FLOOR == 27 / 39
+    assert RECALL_AT_3_FLOOR == 33 / 39
+    assert MRR_FLOOR == 30 / 39
 
     # The specific literals that were drafted, and why they could not work.
     assert 0.7576 > 25 / 33, (
@@ -498,7 +501,7 @@ def test_wrong_instruction_accepts_is_zero_at_the_limit_production_serves() -> N
     """R-2. A metric that had to be BUILT — it was a name in a plan, not a symbol.
 
     A ceiling of 0 is meaningful here rather than aspirational: the router currently never
-    offers the wrong instruction FIRST on the right program, for any of the 30
+    offers the wrong instruction FIRST on the right program, for any of the 36
     instruction-level golden rows, at either limit. So any change that starts doing so
     fires this immediately.
 
@@ -508,7 +511,7 @@ def test_wrong_instruction_accepts_is_zero_at_the_limit_production_serves() -> N
     following "first-call-correct" would make.
     """
     report = evaluate_golden()
-    assert report.directional == 30, "the denominator moved — re-derive the ceiling"
+    assert report.directional == 36, "the denominator moved — re-derive the ceiling"
     assert report.wrong_instruction_accepts == 0, (
         "the first actionable offer on the right program is the wrong action for "
         f"{report.wrong_instruction_accepts} row(s)"
