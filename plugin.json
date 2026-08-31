@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gecko-surf",
+  "version": "0.10.3",
+  "description": "Comprehend any API or Solana program into first-call-correct agent tools, and check the call before it counts: simulate the exact bytes, predict compute, refuse on stale evidence.",
+  "author": { "name": "GeckoVision" },
+  "homepage": "https://geckovision.tech",
+  "repository": "https://github.com/GeckoVision/gecko-surf",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "agents",
+    "api-comprehension",
+    "openapi",
+    "solana",
+    "first-call-correct",
+    "verification",
+    "simulation"
+  ]
+}
