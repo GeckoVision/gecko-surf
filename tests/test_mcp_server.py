@@ -117,3 +117,44 @@ def test_query_docs_refuses_the_same_way() -> None:
 
     assert isinstance(result, dict)
     assert "topic" in result["error"]
+
+
+# --- pre-connection P0s: instructions everywhere, a navigable host root ---------------
+
+
+def test_every_mcp_surface_generates_instructions() -> None:
+    """12 of 13 hosted mounts sent instructions: null — the only text a client
+    shows the model before tool choice, absent almost everywhere. Now generated
+    from the comprehension, with the mode stated honestly."""
+    from gecko.client import AgentApiClient, load_spec
+    from gecko.mcp_server import McpSurface
+
+    surface = McpSurface(
+        AgentApiClient(load_spec("gecko/examples/jupiter_swap_openapi.json")),
+        mode="recorded",
+    )
+    text = surface.instructions
+    assert "search_capabilities" in text
+    assert "RECORDED" in text
+    assert (
+        "never ask the user for an API key" in text.lower() or "never ask the" in text
+    )
+
+
+def test_the_host_root_is_navigable() -> None:
+    """The bare-host landing was a one-tool cul-de-sac; list_surfaces gives the
+    'pasted the hostname' cohort a way to the real surfaces."""
+    from gecko.mcp_server import MetaComprehendSurface
+
+    meta = MetaComprehendSurface()
+    names = [t["name"] for t in meta.list_tools()]
+    assert names == ["comprehend_api", "list_surfaces"]
+    assert "list_surfaces" in meta.instructions
+
+    # unbound: honest empty
+    empty = meta.call_tool("list_surfaces", {})
+    assert empty["surfaces"] == []
+
+    meta.surface_index = lambda: [{"name": "jupiter", "mcp": "/jupiter/mcp"}]
+    bound = meta.call_tool("list_surfaces", {})
+    assert bound["surfaces"][0]["name"] == "jupiter"

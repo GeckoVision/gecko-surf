@@ -591,14 +591,32 @@ class _GeckoKeyGateASGI:
             scope[ACCOUNT_SCOPE_KEY] = decision.account
             await self._inner(scope, receive, send)
             return
-        # Denied: a clean 403 with the REASON only. The account/token never appears in
-        # the body, and the log line names the reason (never the key).
+        # Denied: 401 (credential missing/invalid — the semantics MCP clients
+        # react to; this was a 403 dead end) with a WWW-Authenticate challenge
+        # and a body that names the SELF-SERVE path to a key. The account/token
+        # never appears anywhere; the log line names the reason (never the key).
         logger.info("gecko-key gate denied (reason=%s)", decision.reason)
         from starlette.responses import JSONResponse
 
         response = JSONResponse(
-            {"error": "gecko key required", "reason": decision.reason},
-            status_code=403,
+            {
+                "error": "gecko key required",
+                "reason": decision.reason,
+                "how": (
+                    "mint a key self-serve: POST /auth/login/start with "
+                    '{"email": "you@example.com"}, then POST /auth/login/verify '
+                    "with the emailed code; connect with "
+                    "Authorization: Bearer <your key>"
+                ),
+                "docs": "https://docs.geckovision.tech",
+            },
+            status_code=401,
+            headers={
+                "WWW-Authenticate": (
+                    'Bearer realm="gecko", error="invalid_token", '
+                    f'error_description="{decision.reason}"'
+                )
+            },
         )
         await response(scope, receive, send)
 
@@ -1247,7 +1265,11 @@ def build_multi_surface_app(
     )
     from .mcp_server import MetaComprehendSurface
     from .waf import WafMiddleware
-    from .wellknown import build_onboard_breadcrumb, build_x402_manifest
+    from .wellknown import (
+        build_onboard_breadcrumb,
+        build_server_card,
+        build_x402_manifest,
+    )
 
     # Hosted default resolved in ONE place (enforce.resolve_hosted_enforce): explicit wins,
     # else GECKO_ENFORCE, else block. Same call the single-surface serve_http makes.
@@ -1365,8 +1387,9 @@ def build_multi_surface_app(
     # (one engine, two front doors). Comprehend-and-return only: it never hosts or
     # publicly lists a submission (no public catalog — a hard invariant).
     meta_site = f"{public_url.rstrip('/')}/{META_SURFACE_NAME}" if public_url else None
+    meta_surface = MetaComprehendSurface()
     meta_sub = build_http_app(
-        MetaComprehendSurface(),
+        meta_surface,
         mode=mode,
         server_name=META_SURFACE_NAME,
         allowed_hosts=allowed_hosts,
@@ -1388,6 +1411,12 @@ def build_multi_surface_app(
             "llms_txt": f"/{name}/llms.txt",
         }
         for name, _ in subs
+    ]
+
+    # Late-bind the meta surface's list_surfaces to the PUBLIC entry view —
+    # the same gated-mount withholding the index route applies (one rule).
+    meta_surface.surface_index = lambda: [
+        e for e in surface_entries if e["name"] not in gated_mounts
     ]
 
     index = {
@@ -1478,6 +1507,12 @@ def build_multi_surface_app(
         # emits carries an ABSOLUTE path (/gecko/messages/?session_id=...), so the
         # client's POST half lands on the mount directly and needs no alias of its own.
         return RedirectResponse(url=f"/{META_SURFACE_NAME}{SSE_PATH}", status_code=307)
+
+    async def _well_known_server_card(request: Request) -> Any:
+        # Public entries only — the same withholding as the index and
+        # list_surfaces (one rule, three doors).
+        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        return JSONResponse(build_server_card(names, public_url))
 
     async def _well_known_gecko(request: Request) -> Any:
         # Host-level discovery — the SAME content _index returns (surfaces + submit door).
@@ -1686,6 +1721,7 @@ def build_multi_surface_app(
         # Host-level discovery the public app serves at the root (per-surface artifacts
         # live inside each mount; these are the WHOLE-HOST manifests a root probe hits).
         Route("/.well-known/gecko.json", endpoint=_well_known_gecko),
+        Route("/.well-known/mcp/server-card.json", endpoint=_well_known_server_card),
         Route("/.well-known/x402.json", endpoint=_well_known_x402),
         Route("/.well-known/x402", endpoint=_well_known_x402),
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
