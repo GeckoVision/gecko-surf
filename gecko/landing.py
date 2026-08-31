@@ -440,31 +440,54 @@ def priority_fee_microlamports(
     rpc_url: str,
     rpc_call: RpcCall | None = None,
     percentile: float = 0.75,
+    floor_microlamports: int = 0,
 ) -> int:
-    """A priority fee derived from what recently landed for these accounts.
+    """A priority fee derived from what the market actually clears at, floored.
 
     Our default of zero is correct for simulation and wrong for mainnet: under contention a
     zero-priority transaction may simply never land, and "the simulation passed" says
     nothing about whether a validator will pick it up. Best-effort — an RPC that does not
-    answer yields 0 rather than blocking the caller, since a missing fee estimate must not
-    look like a failed plan.
+    answer yields the floor rather than blocking the caller, since a missing fee estimate
+    must not look like a failed plan.
+
+    MEASURED 2026-08-31 (7 of 12 broadcasts expired unspent before this changed):
+    ``getRecentPrioritizationFees`` reports per-slot MINIMUM fees — 0 on 150 of 150 recent
+    slots for every account set we asked about — while the same node's
+    ``getPriorityFeeEstimate`` put the market's "medium" at ~3,300 μlam/CU. So this asks
+    the richer estimator first (a provider extension: a node that lacks it just errors and
+    we fall through), then the per-slot minimums, and finally applies ``floor_microlamports``
+    so a mainnet caller can refuse to bid zero into a market that is not free.
     """
     call = rpc_call or default_rpc_call
+    estimate = 0
     try:
-        response = call(rpc_url, "getRecentPrioritizationFees", [list(accounts)])
-        fees = [
-            entry["prioritizationFee"]
-            for entry in (response.get("result") or [])
-            if isinstance(entry, dict)
-            and isinstance(entry.get("prioritizationFee"), int)
-        ]
-    except Exception:  # noqa: BLE001 - an estimate is an enrichment, never a gate
-        return 0
-    paying = sorted(fee for fee in fees if fee > 0)
-    if not paying:
-        return 0
-    index = min(len(paying) - 1, int(len(paying) * percentile))
-    return int(paying[index])
+        response = call(
+            rpc_url,
+            "getPriorityFeeEstimate",
+            [{"accountKeys": list(accounts), "options": {"recommended": True}}],
+        )
+        result = response.get("result") or {}
+        fee = result.get("priorityFeeEstimate")
+        if isinstance(fee, (int, float)) and fee > 0:
+            estimate = int(fee)
+    except Exception:  # noqa: BLE001 - a provider extension; absence is normal
+        estimate = 0
+    if estimate <= 0:
+        try:
+            response = call(rpc_url, "getRecentPrioritizationFees", [list(accounts)])
+            fees = [
+                entry["prioritizationFee"]
+                for entry in (response.get("result") or [])
+                if isinstance(entry, dict)
+                and isinstance(entry.get("prioritizationFee"), int)
+            ]
+            paying = sorted(fee for fee in fees if fee > 0)
+            if paying:
+                index = min(len(paying) - 1, int(len(paying) * percentile))
+                estimate = int(paying[index])
+        except Exception:  # noqa: BLE001 - an estimate is an enrichment, never a gate
+            estimate = 0
+    return max(estimate, floor_microlamports)
 
 
 def simulate_landing_bundle(
