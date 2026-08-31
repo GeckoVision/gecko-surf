@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from .networks import UNKNOWN_NETWORK, coerce_network
-from .prepare_purchase import USDC_MINT, _resolve_rpc_url
+from .prepare_purchase import USDC_MINT, _resolve_rpc_url, BLOCKHASH_CLOCK_PROSE
 from .rpc import RpcCall, RpcError, default_rpc_call
 from .token_program import (
     MintTokenProgram,
@@ -541,7 +541,7 @@ LIST_STORES_TOOL: dict[str, Any] = {
         "promise it resolves — that cannot be checked from the chain. "
         "BROWSE HERE, NOT WITH `prepare_purchase`. This costs nothing and expires never, "
         "so show these prices, let the buyer choose, and only then call "
-        "`prepare_purchase` — which starts a ~40-second clock on a live blockhash. Each "
+        f"`prepare_purchase` — which starts a {BLOCKHASH_CLOCK_PROSE} clock on a live blockhash. Each "
         "product carries `price_ui` for display and `price_raw` + `decimals` + `mint` for "
         "anything else; a store may price in a mint that is not USDC, so read the mint "
         "rather than assuming one. "

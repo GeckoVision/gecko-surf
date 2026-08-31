@@ -93,6 +93,13 @@ __all__ = [
     "prepare_purchase_tool",
 ]
 
+#: The blockhash validity window, in prose, used by EVERY tool text that names the
+#: clock. One constant because the surface shipped two figures for one event
+#: (~40s in list_stores, ~60s here) and an agent that read both had no way to
+#: know which was real. ~60s matches `expires.seconds_remaining_estimate`'s basis.
+BLOCKHASH_CLOCK_PROSE = "~60-second"
+
+
 #: How a caller-supplied ``rpc_url`` is judged before anything is POSTed to it: a
 #: callable that returns for an acceptable URL and raises
 #: :class:`~gecko.netguard.UnsafeUrlError` for one it refuses.

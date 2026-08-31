@@ -330,3 +330,13 @@ def test_the_plan_carries_the_execution_breadcrumb() -> None:
     assert "BEFORE" in sign
     verify = out["next_steps"][2]
     assert verify["tool"] == "verify_signed_transaction"
+
+
+def test_plan_swap_schema_declares_the_pool_pin() -> None:
+    """The plan_payment→plan_swap rail hands the agent a checked pool; a schema
+    that hides the parameter leaves the venue re-derivation to chance."""
+    from gecko.providers.whirlpool import PLAN_SWAP_TOOL
+
+    properties = PLAN_SWAP_TOOL["inputSchema"]["properties"]
+    assert "pool" in properties
+    assert "route.quote.pool" in properties["pool"]["description"]

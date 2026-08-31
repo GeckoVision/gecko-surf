@@ -466,3 +466,65 @@ def test_a_binding_block_still_binds() -> None:
     assert report.outcome == "peg_blocked"
     dest = [c for c in report.peg_checks if c.side == "destination"][0]
     assert dest.blocks is True and dest.binds is True
+
+
+# --- the next_steps rail (both good outcomes; the payable_now half was missing) --------
+
+
+def test_payable_now_carries_the_prepare_rail() -> None:
+    """The most common good outcome used to return next_tool: null — an agent one step
+    from success with no pointer, which is how the first web session ended up on the
+    wallet's own aggregator. The rail names the tool AND the argument joins."""
+    store = _Store(mint=USDC, price_raw=100_000)
+    report, *_ = _assess(
+        store=store,
+        holdings={USDC: (100_000, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED}),
+    )
+    rendered = report.to_dict()
+    assert rendered["outcome"] == "payable_now"
+    steps = rendered["next_steps"]
+    assert [s["tool"] for s in steps] == ["prepare_purchase"]
+    assert steps[0]["arguments"]["buyer"] == report.buyer
+    assert steps[0]["arguments"]["store"] == report.store_name
+    assert steps[0]["arguments"]["product"] == report.product
+
+
+def test_route_found_carries_the_two_step_rail_with_the_argument_joins() -> None:
+    """buyer→user and route.quote.pool→pool are the non-obvious joins; a rail that
+    names the tool but not the joins still leaves the venue re-derivation to chance."""
+    store = _Store(mint=USDC)
+    venue = pay_route.Quote(
+        pool="pool111",
+        amount_in=200_000,
+        direction="a_to_b",
+        liquidity=10**9,
+        tick_spacing=64,
+        fee_rate=300,
+    )
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
+        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
+    )
+    assert report.outcome == "route_found"
+    steps = report.to_dict()["next_steps"]
+    assert [s["tool"] for s in steps] == ["plan_swap", "prepare_purchase"]
+    swap = steps[0]["arguments"]
+    assert swap["user"] == report.buyer
+    assert swap["input_mint"] == report.route.held_mint
+    assert swap["output_mint"] == report.priced_mint
+    assert swap["pool"] == report.route.quote.pool
+    assert swap["amount_in"] == str(report.route.quote.amount_in)
+
+
+def test_a_blocked_report_has_no_next_steps() -> None:
+    """A refusal's next step lives in its reason; a tool rail on a refusal would be an
+    invitation to route around it."""
+    store = _Store(mint=USDC)
+    report, *_ = _assess(
+        store=store, holdings={}, peg=recorded_peg_reader({USDC: PEGGED})
+    )
+    assert report.blocks is True
+    assert report.to_dict()["next_steps"] is None

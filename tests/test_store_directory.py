@@ -561,3 +561,12 @@ def test_the_menu_says_a_label_is_not_an_asset() -> None:
     assert "token-2022" in out["mint_note_caveat"]
     assert "cannot pay" in out["mint_note_caveat"].lower()
     assert "token_program" in LIST_STORES_TOOL["description"]
+
+
+def test_the_surface_quotes_one_blockhash_clock() -> None:
+    """The clock was ~40s in list_stores and ~60s in prepare_purchase — one event,
+    two figures. One constant now; no tool text may carry its own number."""
+    from gecko.prepare_purchase import BLOCKHASH_CLOCK_PROSE
+
+    assert BLOCKHASH_CLOCK_PROSE in LIST_STORES_TOOL["description"]
+    assert "~40-second" not in LIST_STORES_TOOL["description"]

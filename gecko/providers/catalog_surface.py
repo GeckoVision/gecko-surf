@@ -295,7 +295,18 @@ class OrquestraCatalogSurface:
             return plan_swap_result(args, rpc_call=self.purchase_rpc_call)
         if name == "verify_signed_transaction":
             return verify_signed_result(args)
-        return {"error": f"unknown tool {name!r}"}
+        # The weakest text on the surface was `unknown tool 'x'` with no
+        # recovery — what an agent got for calling `search_capabilities`
+        # here, a name Gecko itself taught it one mount over. Name the real
+        # tools, from list_tools() so the list cannot drift.
+        available = ", ".join(tool["name"] for tool in self.list_tools())
+        return {
+            "error": (
+                f"unknown tool {name!r} — this surface has no tool of that "
+                f"name. Its tools: {available}. Start with `start` for any "
+                "intent in plain words."
+            )
+        }
 
     # -- tools --------------------------------------------------------------
 
@@ -314,9 +325,17 @@ class OrquestraCatalogSurface:
     def _find_start(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..find_start import find_start
 
-        intent = args.get("intent")
+        # `query` is accepted as an alias: sibling Gecko mounts teach that
+        # spelling, and the two-spellings-one-surface wall is a failure we
+        # have shipped once already (see mcp_server._question_of).
+        intent = args.get("intent") or args.get("query")
         if not isinstance(intent, str) or not intent.strip():
-            return {"error": "find_start needs an `intent` (plain words)"}
+            return {
+                "error": (
+                    "find_start needs an `intent` (plain words) — `query` is "
+                    "accepted as an alias"
+                )
+            }
         program = args.get("program")
         program = program if isinstance(program, str) and program else None
 
@@ -686,10 +705,22 @@ _FIND_START_TOOL = {
     "inputSchema": {
         "type": "object",
         "properties": {
-            "intent": {"type": "string"},
+            "intent": {
+                "type": "string",
+                "description": (
+                    "What you want to do, in plain words — e.g. 'buy the DEATON "
+                    "sale token' or 'claim my mining rewards'."
+                ),
+            },
+            "query": {
+                "type": "string",
+                "description": (
+                    "alias for `intent` — sibling Gecko mounts teach `query`, and "
+                    "an agent that learned it there must not hit a wall here."
+                ),
+            },
             "program": {"type": "string", "description": "optional program hint"},
         },
-        "required": ["intent"],
         "additionalProperties": False,
     },
 }
@@ -712,10 +743,22 @@ _START_TOOL = {
     "inputSchema": {
         "type": "object",
         "properties": {
-            "intent": {"type": "string"},
+            "intent": {
+                "type": "string",
+                "description": (
+                    "What you want to do, in plain words — e.g. 'buy the DEATON "
+                    "sale token' or 'claim my mining rewards'."
+                ),
+            },
+            "query": {
+                "type": "string",
+                "description": (
+                    "alias for `intent` — sibling Gecko mounts teach `query`, and "
+                    "an agent that learned it there must not hit a wall here."
+                ),
+            },
             "program": {"type": "string", "description": "optional program hint"},
         },
-        "required": ["intent"],
         "additionalProperties": False,
     },
 }

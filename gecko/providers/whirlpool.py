@@ -354,6 +354,15 @@ PLAN_SWAP_TOOL: dict[str, Any] = {
                 "minimum": 1,
                 "description": "base units of input_mint to sell",
             },
+            "pool": {
+                "type": "string",
+                "description": (
+                    "optional: pin the pool a prior plan_payment route named "
+                    "(route.quote.pool), so the venue that was checked is the venue "
+                    "that executes. Still re-derived, and DROPPED if it cannot "
+                    "reproduce its own address. Omit to derive fresh."
+                ),
+            },
             "slippage_bps": {
                 "type": "integer",
                 "description": "optional; defaults to the ONE shared bound the swap is built with",
