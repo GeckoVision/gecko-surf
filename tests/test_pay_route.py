@@ -373,3 +373,96 @@ def test_a_nonsense_bound_is_a_configuration_error_not_a_venue_outcome() -> None
     with pytest.raises(pay_route.PayRouteError):
         pay_route.validate_swap_bound(-1)
     assert pay_route.validate_swap_bound(100) == 100
+
+
+# --- the breadcrumbs the first Claude web session went without ------------------------
+
+
+def test_conversion_required_is_stated_not_inferred() -> None:
+    """The web agent was told `route: null` and swapped anyway — the field says it
+    outright, so steamrolling it takes an explicit act rather than a missed inference."""
+    store = _Store(mint=USDC)
+    payable, *_ = _assess(
+        store=store,
+        holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED}),
+    )
+    assert payable.conversion_required is False
+    assert payable.to_dict()["conversion_required"] is False
+
+    routed, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
+        venues=lambda **k: [
+            pay_route.Quote(
+                pool="p",
+                amount_in=200_000,
+                direction="a_to_b",
+                liquidity=10**9,
+                tick_spacing=64,
+                fee_rate=300,
+            )
+        ],
+    )
+    assert routed.conversion_required is True
+
+    refused_early, *_ = _assess(
+        store=_Store(mint=USDG),
+        holdings={USDG: (10**9, TOKEN_2022)},
+        mint_owner=lambda m: TOKEN_2022,
+    )
+    # refused before holdings were compared — the question never arose
+    assert refused_early.conversion_required is None
+
+
+def test_route_found_names_its_execution_tool() -> None:
+    routed, *_ = _assess(
+        store=_Store(mint=USDC),
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
+        venues=lambda **k: [
+            pay_route.Quote(
+                pool="p",
+                amount_in=200_000,
+                direction="a_to_b",
+                liquidity=10**9,
+                tick_spacing=64,
+                fee_rate=300,
+            )
+        ],
+    )
+    assert routed.to_dict()["next_tool"] == "plan_swap"
+    payable, *_ = _assess(
+        store=_Store(mint=USDC),
+        holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED}),
+    )
+    assert payable.to_dict()["next_tool"] is None
+
+
+def test_a_non_binding_block_says_so_in_the_check_itself() -> None:
+    """payable_now beside a blocking destination reading is CORRECT and read as a
+    contradiction — `binds: false` is the check saying 'I would stop a conversion, and
+    this request does not convert'."""
+    report, *_ = _assess(
+        store=_Store(mint=USDC),
+        holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: DEPEGGED}),
+    )
+    assert report.outcome == "payable_now"
+    (check,) = report.peg_checks
+    assert check.blocks is True
+    assert check.binds is False
+    assert report.to_dict()["peg_checks"][0]["binds"] is False
+
+
+def test_a_binding_block_still_binds() -> None:
+    report, *_ = _assess(
+        store=_Store(mint=USDC),
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: DEPEGGED, USDG: PEGGED}),
+    )
+    assert report.outcome == "peg_blocked"
+    dest = [c for c in report.peg_checks if c.side == "destination"][0]
+    assert dest.blocks is True and dest.binds is True
