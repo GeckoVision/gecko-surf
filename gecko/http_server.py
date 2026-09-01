@@ -962,14 +962,16 @@ def build_http_app(
         # via isError so the agent cannot read it as a successful empty result — the
         # decision lives in the package (gecko.toolerror), shared with the stdio wire.
         text, is_error = tool_result_payload(result)
-        from .cards import UI_TOOL_RESOURCES
+        from .cards import STRUCTURED_RESULT_TOOLS
 
         # A card tool ALSO returns structuredContent — the same dict the JSON text
         # carries, in the field the MCP Apps view reads. Scoped to card tools so every
         # other tool's wire shape stays byte-identical; the card renders only what the
         # tool already returned, so nothing new crosses the control-plane boundary.
         structured = (
-            result if name in UI_TOOL_RESOURCES and isinstance(result, dict) else None
+            result
+            if name in STRUCTURED_RESULT_TOOLS and isinstance(result, dict)
+            else None
         )
         return mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text=text)],

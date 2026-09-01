@@ -81,6 +81,7 @@ def test_surface_lists_the_catalog_tools() -> None:
         # somebody else signs, and this proves the signed bytes are the checked ones
         # before broadcast. Keyless like the rest — pinned in tests/test_verify_signed.py.
         "verify_signed_transaction",
+        "submit_transaction",
         # The step BEFORE building: which LIVE instance of a declared account type is
         # the one the user named, with every answer re-derived back to its own address.
         # Pinned in tests/test_read_accounts.py.

@@ -894,12 +894,18 @@ SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
             "address, transactionBase64}} -> returns a request_id, NOT a signature",
             "poll get_request(request_id) until `output.signedTransactionBase64` — never "
             "re-call request_wallet_sign to finish one, that starts a second operation",
-            "verify_signed_transaction (Gecko) -> then submit WITH REBROADCAST: "
-            "sendTransaction {maxRetries: 0}, then resubmit the SAME signed bytes "
-            "every ~2s (skipPreflight after the first) until getSignatureStatuses "
-            "says confirmed or the block height passes expires.last_valid_block_height "
-            "— a one-shot send on a public RPC routinely expires unlanded (measured; "
-            "the resubmit is idempotent, same signature)",
+            "submit_transaction (Gecko) with the signed bytes + the `binding` and "
+            "`expires.last_valid_block_height` from the prepare result — it verifies "
+            "the binding (non-droppable), sends, and rebroadcasts the same bytes "
+            "until confirmed or the budget is spent. No shell needed. Only if you "
+            "cannot call it: sendTransaction {maxRetries: 0} and resubmit the SAME "
+            "bytes every ~2s until confirmed or the height passes the budget",
+            "IF A SIGNER TOOL RETURNS AN ERROR, RECONCILE BEFORE ANY RETRY: an "
+            "error response is a claim, not a fact — a signer has returned 'no "
+            "approval' for an operation that then SUCCEEDED (measured). Check the "
+            "request's state (get_request / list_requests) AND the chain "
+            "(getSignatureStatuses) before creating a second operation; a blind "
+            "retry of a money call is how one purchase becomes two",
         ],
         # The CHAT connector's signing window renders only in clients with embedded
         # views (Claude web, ChatGPT). A CODE agent / headless runtime signs

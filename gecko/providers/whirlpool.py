@@ -504,15 +504,16 @@ def plan_swap_result(
         },
         {
             "step": "submit",
+            "tool": "submit_transaction",
             "note": (
-                "sendTransaction {encoding: base64, preflightCommitment: confirmed, "
-                "maxRetries: 0}, then REBROADCAST the same signed bytes every ~2s "
-                "(skipPreflight: true) until getSignatureStatuses reports confirmed "
-                "or the chain's block height passes expires.last_valid_block_height. "
-                "One-shot sends on public RPC routinely expire unlanded — measured "
-                "on the first attempt of the 2026-09-01 purchase; the resubmit is "
-                "idempotent (same signature), so the loop is free of double-spend "
-                "risk by construction"
+                "pass the signed bytes + the `binding` and "
+                "`expires.last_valid_block_height` from prepare_instruction — the "
+                "tool verifies the binding (non-droppable), sends with maxRetries "
+                "0, and rebroadcasts the same bytes until confirmed or the budget "
+                "is spent; a one-shot send on public RPC routinely expires "
+                "unlanded (measured). No shell needed. If a SIGNER errored before "
+                "this step, reconcile (get_request + getSignatureStatuses) before "
+                "any retry — an error response is a claim, not a fact"
             ),
         },
     ]
