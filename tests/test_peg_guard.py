@@ -84,11 +84,16 @@ def test_we_do_not_apply_our_own_discount_cut() -> None:
 
 # --- fail CLOSED on "could not ask", fail open only on a PROVEN "no opinion" ----------
 #
-# The defect this closes is live, not hypothetical. scripts/pay_with_any_token.py:119
-# catches bare Exception and returns verdict_from(mint, None) -> "unknown" -> blocks is
-# False. Its own docstring says "Unreachable is `unknown`, never `ok`", which is true and
+# The defect this closes was live, not hypothetical. `scripts/pay_with_any_token.py` used
+# to catch bare Exception and return verdict_from(mint, None) -> "unknown" -> blocks is
+# False. Its own docstring said "Unreachable is `unknown`, never `ok`", which was true and
 # operationally meaningless: `unknown` does not stop anything, so an unreachable Pegana
-# reads as permission to convert. The gate is decorative exactly when it matters.
+# read as permission to convert. The gate is decorative exactly when it matters.
+#
+# That script no longer decides anything — it renders `gecko.pay_route` — so the defect
+# now has exactly one place it could return, which is what this test guards. The line
+# reference that used to sit here is deliberately gone: a comment pinned to a line number
+# in another file is wrong the moment either file moves, and it was.
 #
 # `unknown` must stay non-blocking — Pegana tracks a minority of mints and refusing every
 # other one would be a blanket denial, not a signal. So the fix is not to make `unknown`
