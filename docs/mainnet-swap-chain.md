@@ -74,10 +74,12 @@ wallet itself did not exist at all (`getAccountInfo` → `null`).
 - **Multi-array traversal is untested.** The pool holds roughly $25M at tick spacing 1, so a
   test-sized swap never leaves its starting tick array. That belongs on a fork, where it is
   free at any size.
-- **The swap is not reachable by an agent.** Every one of these was settled by a script the
-  founder ran. `getTokenAccountsByOwner` appears nowhere in the `gecko/` package, so nothing
-  we ship can see what a buyer holds; the decision path lives in
-  `scripts/pay_with_any_token.py` and cannot be imported or called by a tool.
+- **The swap was not reachable by an agent when these five settled.** Every one was run by
+  hand: `getTokenAccountsByOwner` appeared nowhere in the `gecko/` package, so nothing we
+  shipped could see what a buyer held, and the decision path lived in `scripts/` where no
+  tool could import it. **CLOSED 2026-08-30** — `gecko/pay_route.py` owns that decision, the
+  `plan_payment` tool exposes it, and the script is a rendering of the same call. The five
+  transactions above still predate it.
 - **The router does not know a swap is needed** — and the reason is subtler than it looks.
   Asked *"buy an espresso at the coffee store but I only have USDG, not USDC"*, `find_start`
   returns `let_me_buy` five times. The mint names are **not** ignored: measured against the
