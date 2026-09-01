@@ -72,7 +72,20 @@ def build_server_card(
     index would withhold. Branding fields (title/iconUrl) because a name+icon+
     description trio is what registries render as a complete listing.
     """
+    from . import __version__
+    from .mcp_server import MetaComprehendSurface
+
     base = public_url.rstrip("/") if public_url else ""
+    # The host root's own tools (comprehend + surface discovery) — real, callable at
+    # serverUrl. Per-surface tools live behind each remote and are not flattened here.
+    root_tools = [
+        {
+            "name": t["name"],
+            "description": t["description"],
+            "annotations": t.get("annotations"),
+        }
+        for t in MetaComprehendSurface().list_tools()
+    ]
     return {
         "name": "tech.geckovision/gecko-host",
         "title": "Gecko",
@@ -81,8 +94,27 @@ def build_server_card(
             "HTTP: first-call-correct tools, auth injected server-side, "
             "refusals that say why."
         ),
+        "version": __version__,
+        "serverUrl": f"{base}/mcp" if base else "/mcp",
+        # What an agent can actually DO here, stated up front — a blind-agent test
+        # (2026-09-01) showed the words "store"/"purchase" first appeared only inside
+        # the initialize response, so an agent tasked with buying had to gamble that
+        # this endpoint was relevant.
+        "instructions": (
+            "Each remote serves one comprehended surface. The orquestra surface "
+            "covers Solana commerce and programs: browse storefronts and menus "
+            "(list_stores), route a plain intent to the right instruction "
+            "(find_start), and prepare a simulation-checked unsigned purchase "
+            "(prepare_purchase) that you sign with your own wallet. The root "
+            "serverUrl comprehends any OpenAPI URL (comprehend_api) and lists "
+            "the mounted surfaces (list_surfaces). No key is needed for the "
+            "open surfaces; gated ones answer 401 with the self-serve mint path."
+        ),
+        "transport": "streamable-http",
+        "icon": "https://geckovision.tech/gecko-icon.svg",
         "iconUrl": "https://geckovision.tech/gecko-icon.svg",
         "websiteUrl": "https://geckovision.tech",
+        "tools": root_tools,
         "remotes": [
             {
                 "transport_type": "streamable-http",
@@ -91,6 +123,38 @@ def build_server_card(
             }
             for name in surface_names
         ],
+    }
+
+
+def build_protected_resource_metadata(
+    public_url: str | None, gated_surfaces: list[str]
+) -> dict[str, Any]:
+    """RFC 9728 protected-resource metadata for THIS host, kept honest.
+
+    ``scopes_supported`` are the REAL permission scopes: per-surface grants,
+    deny-by-default — a Gecko key opens exactly the surfaces its account was granted,
+    spelled ``surface:<name>``. No ``authorization_servers`` member: no OAuth
+    authorization server exists, and RFC 9728 makes the member optional — fabricating
+    one is the wrong-but-well-formed breadcrumb this repo scores other surfaces down
+    for. The WorkOS ``agent_auth`` block carries the self-serve mint path instead
+    (identity = start the email login, claim = verify the code into a key)."""
+    base = public_url.rstrip("/") if public_url else ""
+    return {
+        "resource": base or "/",
+        "resource_name": "Gecko hosted MCP",
+        "resource_documentation": "https://geckovision.tech/auth.md",
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": sorted(f"surface:{name}" for name in gated_surfaces),
+        "agent_auth": {
+            "skill": "https://geckovision.tech/auth.md",
+            "identity_types_supported": ["anonymous"],
+            "identity_endpoint": f"{base}/auth/login/start"
+            if base
+            else "/auth/login/start",
+            "claim_endpoint": f"{base}/auth/login/verify"
+            if base
+            else "/auth/login/verify",
+        },
     }
 
 

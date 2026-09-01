@@ -34,6 +34,8 @@ oracle state. Nothing is persisted, and no exception message carries a URL or a 
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -528,6 +530,9 @@ def assess_payment(
 
 PLAN_PAYMENT_TOOL: dict[str, Any] = {
     "name": "plan_payment",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Plan a payment route"
+    ),
     "description": (
         "Answer 'can this wallet buy this product, and if not what is the shortest "
         "CHECKED route' — in one call, without signing anything or building any bytes. "

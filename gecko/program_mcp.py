@@ -20,6 +20,8 @@ Tools:
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 from typing import Any
 
 from .pda import PdaDerivationError, derive_pda
@@ -30,6 +32,7 @@ __all__ = ["ProgramGraphSurface", "build_program_surface", "main"]
 
 _GET_GRAPH_TOOL = {
     "name": "get_program_graph",
+    "annotations": tool_annotations(read_only=True, title="Get the program graph"),
     "description": (
         "Return the full instruction↔PDA derivation graph for this Solana program: "
         "every instruction, which of its accounts are program-derived (PDAs), and how "
@@ -68,6 +71,7 @@ _PLAN_TOOL = {
 
 _DERIVE_TOOL = {
     "name": "derive_pda",
+    "annotations": tool_annotations(read_only=True, title="Derive a program address"),
     "description": (
         "Derive a program-derived address (PDA) for this program. Give the account name "
         "(e.g. 'miner') and any seed bindings it needs — accounts as base58 pubkeys, "

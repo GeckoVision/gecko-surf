@@ -26,6 +26,8 @@ exist, including the receiving one. And the output floor is never defaulted to z
 
 from __future__ import annotations
 
+from ..tools import tool_annotations
+
 from typing import Any, Mapping
 
 from ..find_start import StartSpec
@@ -317,6 +319,9 @@ WHIRLPOOL_STARTS: dict[str, StartSpec] = {
 
 PLAN_SWAP_TOOL: dict[str, Any] = {
     "name": "plan_swap",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Plan a Whirlpool swap"
+    ),
     "description": (
         "Plan a token conversion on Orca Whirlpool and hand back the exact values "
         "`prepare_instruction` needs to build it — Gecko's CHECKED venue, from the "

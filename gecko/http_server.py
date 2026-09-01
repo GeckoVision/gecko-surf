@@ -574,9 +574,17 @@ class _GeckoKeyGateASGI:
     body carries the reason only. Non-HTTP scopes pass through unchanged.
     """
 
-    def __init__(self, inner: Any, gate: KeyGate) -> None:
+    def __init__(
+        self, inner: Any, gate: KeyGate, resource_metadata_url: str | None = None
+    ) -> None:
         self._inner = inner
         self._gate = gate
+        # RFC 9728 §5.1: the 401 names where the resource's metadata lives, so an
+        # agent learns the auth requirements from one request. Relative when the
+        # public URL is unknown (tests) — still a truthful pointer on this host.
+        self._resource_metadata_url = (
+            resource_metadata_url or "/.well-known/oauth-protected-resource"
+        )
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
@@ -614,7 +622,8 @@ class _GeckoKeyGateASGI:
             headers={
                 "WWW-Authenticate": (
                     'Bearer realm="gecko", error="invalid_token", '
-                    f'error_description="{decision.reason}"'
+                    f'error_description="{decision.reason}", '
+                    f'resource_metadata="{self._resource_metadata_url}"'
                 )
             },
         )
@@ -903,6 +912,7 @@ def build_http_app(
                 name=t["name"],
                 description=t["description"],
                 inputSchema=t["inputSchema"],
+                annotations=t.get("annotations"),
                 # MCP Apps: a tool with a card names its ui:// template here, and the
                 # client fetches + sandboxes it. Clients without Apps support ignore
                 # `_meta` entirely, so the JSON-only behaviour is untouched.
@@ -1011,7 +1021,16 @@ def build_http_app(
     # Layer 1 access control (opt-in): when a gate is wired, front the mount with the
     # Gecko-key edge so unauthorized keys 403 before reaching the transport/funnel. When
     # `gate is None` (default) `mcp_app is asgi_app`, so the route below is byte-identical.
-    mcp_app = asgi_app if gate is None else _GeckoKeyGateASGI(asgi_app, gate)
+    _prm_url = (
+        f"{public_url.rstrip('/')}/.well-known/oauth-protected-resource"
+        if public_url
+        else None
+    )
+    mcp_app = (
+        asgi_app
+        if gate is None
+        else _GeckoKeyGateASGI(asgi_app, gate, resource_metadata_url=_prm_url)
+    )
 
     async def _healthz(_request: Any) -> Any:
         # Plain Starlette route — it never enters StreamableHTTPASGIApp, so the
@@ -1067,7 +1086,7 @@ def build_http_app(
             }
         )
 
-    sse_routes = _sse_routes(server, gate)
+    sse_routes = _sse_routes(server, gate, resource_metadata_url=_prm_url)
 
     return Starlette(
         routes=[
@@ -1081,7 +1100,9 @@ def build_http_app(
     )
 
 
-def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
+def _sse_routes(
+    server: Any, gate: Any = None, resource_metadata_url: str | None = None
+) -> list[Any]:
     """The legacy HTTP+SSE transport, as two routes onto the same MCP server.
 
     `GET /sse` opens the event stream; the client POSTs its own messages to the session
@@ -1157,11 +1178,17 @@ def _sse_routes(server: Any, gate: Any = None) -> list[Any]:
     endpoint = (
         _handle_sse
         if gate is None
-        else _GeckoKeyGateASGI(_request_response(_handle_sse), gate)
+        else _GeckoKeyGateASGI(
+            _request_response(_handle_sse),
+            gate,
+            resource_metadata_url=resource_metadata_url,
+        )
     )
     messages = transport.handle_post_message  # already an ASGI app; no adapter needed
     if gate is not None:
-        messages = _GeckoKeyGateASGI(messages, gate)
+        messages = _GeckoKeyGateASGI(
+            messages, gate, resource_metadata_url=resource_metadata_url
+        )
     return [
         # `methods` is stated rather than inferred: Starlette derives ["GET"] from a
         # function endpoint and NOTHING from an ASGI one, so leaving it implicit gave the
@@ -1267,6 +1294,7 @@ def build_multi_surface_app(
     from .waf import WafMiddleware
     from .wellknown import (
         build_onboard_breadcrumb,
+        build_protected_resource_metadata,
         build_server_card,
         build_x402_manifest,
     )
@@ -1514,6 +1542,13 @@ def build_multi_surface_app(
         names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
         return JSONResponse(build_server_card(names, public_url))
 
+    async def _well_known_prm(request: Request) -> Any:
+        # RFC 9728 with the REAL per-surface grant scopes (deny-by-default), the
+        # self-serve mint path in agent_auth, and NO fabricated authorization server.
+        return JSONResponse(
+            build_protected_resource_metadata(public_url, sorted(gated_mounts))
+        )
+
     async def _well_known_gecko(request: Request) -> Any:
         # Host-level discovery — the SAME content _index returns (surfaces + submit door).
         return JSONResponse(index if _sees_gated(request.scope) else _public_index)
@@ -1722,6 +1757,7 @@ def build_multi_surface_app(
         # live inside each mount; these are the WHOLE-HOST manifests a root probe hits).
         Route("/.well-known/gecko.json", endpoint=_well_known_gecko),
         Route("/.well-known/mcp/server-card.json", endpoint=_well_known_server_card),
+        Route("/.well-known/oauth-protected-resource", endpoint=_well_known_prm),
         Route("/.well-known/x402.json", endpoint=_well_known_x402),
         Route("/.well-known/x402", endpoint=_well_known_x402),
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
@@ -1744,7 +1780,17 @@ def build_multi_surface_app(
                 # Scoped PER MOUNT: holding a valid enabled key is not enough, the
                 # account must also be granted THIS surface. Without the scoping a
                 # single key opened every gated surface at once.
-                else _GeckoKeyGateASGI(sub, keyauth.scope_gate(surface_gate, name)),
+                else _GeckoKeyGateASGI(
+                    sub,
+                    keyauth.scope_gate(surface_gate, name),
+                    # HOST-level PRM (the well-known lives at the root, not under
+                    # the surface mount), so every gated 401 names one document.
+                    resource_metadata_url=(
+                        f"{public_url.rstrip('/')}/.well-known/oauth-protected-resource"
+                        if public_url
+                        else None
+                    ),
+                ),
             )
         )
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))

@@ -310,11 +310,12 @@ def test_discovery_probe_emits_no_block(monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.mark.parametrize(
     "path",
     [
-        # RFC 9728 protected-resource metadata + its path-based fallback chain, and
-        # RFC 8414 authorization-server metadata — the exact URLs the official MCP
-        # SDK builds in mcp/client/auth/utils.py (build_protected_resource_urls /
-        # build_authorization_server_urls).
-        "/.well-known/oauth-protected-resource",
+        # The RFC 9728 path-based FALLBACK chain and RFC 8414 authorization-server
+        # metadata — the exact URLs the official MCP SDK builds in
+        # mcp/client/auth/utils.py. The BARE protected-resource path is no longer
+        # here: since 2026-09-01 it is SERVED (real per-surface grant scopes + the
+        # self-serve mint path) — see test_served_prm_passes_the_waf below. The AS
+        # metadata stays 404: no authorization server exists.
         "/.well-known/oauth-protected-resource/mcp",
         "/.well-known/oauth-protected-resource/gecko/mcp",
         "/.well-known/oauth-authorization-server",
@@ -334,6 +335,18 @@ def test_oauth_discovery_is_404_not_403(path: str) -> None:
         assert c.get(path).status_code == 404, path
 
 
+def test_served_prm_passes_the_waf() -> None:
+    """The one OAuth well-known we now SERVE: RFC 9728 metadata with the real scopes.
+    A valid 200 is spec-conformant (the SDK hazard is about ERROR statuses); the waf
+    must classify it "pass" so the real route answers."""
+    assert classify_path("/.well-known/oauth-protected-resource") == "pass"
+    with TestClient(_app()) as c:
+        r = c.get("/.well-known/oauth-protected-resource")
+    assert r.status_code == 200
+    body = r.json()
+    assert "resource" in body and "authorization_servers" not in body
+
+
 def test_oauth_discovery_probe_is_not_counted_as_an_attack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -347,7 +360,7 @@ def test_oauth_discovery_probe_is_not_counted_as_an_attack(
             r = c.get("/.well-known/oauth-protected-resource")
     finally:
         events.set_surf_sink_override(None)
-    assert r.status_code == 404
+    assert r.status_code == 200  # served since 2026-09-01 (was a soft 404)
     assert not any(d["event"] == "surf.blocked" for d in docs)
 
 

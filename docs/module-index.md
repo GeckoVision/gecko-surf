@@ -2,7 +2,7 @@
 
 # Module index
 
-233 modules in `gecko/` (subpackages included), from their own docstrings.
+234 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -63,7 +63,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
 | `feebump` | Priority-fee injection for a builder's unsigned transaction — a VERIFIED rebuild. | 1 · `autonomous_purchase` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 14 · `ingest_gate`, `prove`, `providers.catalog_surface` +11 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 15 · `ingest_gate`, `prove`, `providers.catalog_surface` +12 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -83,13 +83,13 @@ package depends on it, which is worth a look before you add a caller.
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 16 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +13 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 17 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +14 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `catalog`, `find_start`, `purchase_intent_eval` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
 | `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
 | `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 3 · `orquestra_build`, `partner_delta`, `providers.catalog_surface` |
-| `mcp_server` | MCP surface — what an agent actually installs. | 14 · `binding`, `catalog_mcp`, `examples.colosseum` +11 |
+| `mcp_server` | MCP surface — what an agent actually installs. | 15 · `binding`, `catalog_mcp`, `examples.colosseum` +12 |
 | `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 1 · `providers.metadao` |
 | `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 3 · `providers.meteora`, `providers.meteora_landing`, `whirlpool_math` |
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
@@ -140,6 +140,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.cli` | ``gecko-orquestra`` — serve an Orquestra program's front-door surface over MCP. | 9 · `cli`, `find_start`, `ingest_gate` +6 |
 | `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
 | `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
+| `providers.jurassic_fi` | jurassic_fi (Jurassic Finance token sale) — the servable plan intent. | 1 · `providers.cli` |
 | `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 6 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +3 |
 | `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 1 · `providers.cli` |
 | `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
@@ -148,7 +149,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 0 |
 | `providers.ore` | ORE V3 ``claimOre`` — the fourth Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.ore_landing` |
 | `providers.ore_landing` | The ORE "claim-that-passes" orchestrator — the fourth program that RUNS. | 0 |
-| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 8 · `providers.cli`, `providers.jupiter`, `providers.let_me_buy` +5 |
+| `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 9 · `providers.cli`, `providers.jupiter`, `providers.jurassic_fi` +6 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
 | `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 2 · `providers.catalog_surface`, `providers.cli` |
@@ -212,7 +213,7 @@ package depends on it, which is worth a look before you add a caller.
 | `store.collections` | A minimal duck-typed collection seam — in-memory for tests, Mongo in prod. | 5 · `fork_lane`, `recorded_lane`, `store.catalog_sync` +2 |
 | `store.projections` | The ONLY writer into the outcome collection — allowlist-first, fail-closed. | 2 · `fork_lane`, `recorded_lane` |
 | `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
-| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 10 · `pay_route`, `prepare_purchase`, `providers.let_me_buy` +7 |
+| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 11 · `pay_route`, `prepare_purchase`, `providers.jurassic_fi` +8 |
 | `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 8 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.agents` +5 |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |
@@ -223,7 +224,7 @@ package depends on it, which is worth a look before you add a caller.
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 16 · `agentnative`, `catalog`, `chain_eval` +13 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 28 · `agentnative`, `catalog`, `chain_eval` +25 |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |

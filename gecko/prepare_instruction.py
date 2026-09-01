@@ -24,6 +24,8 @@ Every response is returned to the caller and never persisted (invariant #1).
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 from typing import Any, Callable, Literal, Mapping
 
 from .error_overlay import remediation_for
@@ -596,6 +598,9 @@ def prepare_instruction_result(
 #: an instruction's SECOND argument is as load-bearing as its first.
 PREPARE_INSTRUCTION_TOOL = {
     "name": "prepare_instruction",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Prepare an unsigned instruction"
+    ),
     "description": (
         "Build ANY instruction of ANY program in the catalog, with every PDA derived "
         "for you, and get back UNSIGNED bytes plus a mainnet simulation. Nothing here "
@@ -656,6 +661,9 @@ PREPARE_INSTRUCTION_TOOL = {
 
 DERIVE_ATA_TOOL = {
     "name": "derive_ata",
+    "annotations": tool_annotations(
+        read_only=True, title="Derive an associated token account"
+    ),
     "description": (
         "The associated token account for an owner + mint. Use this instead of computing "
         "it yourself.\n"
@@ -694,6 +702,7 @@ DERIVE_ATA_TOOL = {
 
 DERIVE_PDA_TOOL = {
     "name": "derive_pda",
+    "annotations": tool_annotations(read_only=True, title="Derive a program address"),
     "description": (
         "Derive a program address from explicit seeds, with the bump found the way the "
         "runtime finds it — descending from 255 until the result is OFF the ed25519 "

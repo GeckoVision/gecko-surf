@@ -56,8 +56,9 @@ def test_card_leads_with_measured_compression_hero() -> None:
     m = _metrics()
     # the hero: the measured % reduction (e.g. "78.4%")
     assert f"{m.compression.reduction_pct}%" in html
-    # the concrete before/after the founder wants ("108KB → 23KB")
-    assert "108KB" in html and "23KB" in html
+    # the concrete before/after the founder wants — 23KB became 28KB on 2026-09-01
+    # when behavioral annotations joined every tool def (same trade as reduction_pct).
+    assert "108KB" in html and "28KB" in html
     # honesty: bytes MEASURED, tokens ESTIMATED (chars/4) — never overclaimed
     assert "measured" in html
     assert "estimate" in html.lower()
@@ -182,7 +183,10 @@ def test_card_numbers_match_compute_metrics() -> None:
     # the single source of truth: the rendered numbers are exactly compute_metrics'.
     html = _html()
     m = _metrics()
-    assert m.compression.reduction_pct == 78.4  # guards the committed fixture
+    # 78.4 -> 74.3 on 2026-09-01: behavioral annotations joined every tool def, so
+    # the projected surface honestly got ~4pp less compressed. A real trade, priced
+    # here on purpose: the hints are what agents throttle destructive calls with.
+    assert m.compression.reduction_pct == 74.3  # guards the committed fixture
     assert m.readiness.well_formed_tools == 43 and m.readiness.total_ops == 43
     # the card must not recompute — it renders what compute_metrics returned.
     assert f"{m.compression.reduction_pct}%" in html

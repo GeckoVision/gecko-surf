@@ -28,6 +28,8 @@ field-by-field without being returned).
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 import base64
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
@@ -528,6 +530,9 @@ def list_stores_result(
 
 LIST_STORES_TOOL: dict[str, Any] = {
     "name": "list_stores",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="List stores and menus"
+    ),
     "description": (
         "List every let_me_buy storefront on the network you name — store names, "
         "products and prices, read from each store's own on-chain account. Optionally "
