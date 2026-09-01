@@ -56,7 +56,7 @@ from .modes import CallMode
 from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_client
 from .scope import RETRIEVAL_MAX_TOOLS, build_scope
 from .search import project_hits
-from .toolerror import tool_result_payload
+from .toolerror import ensure_known_tool, tool_result_payload
 from .tools import tool_annotations
 
 logger = logging.getLogger("gecko.mcp_server")
@@ -822,6 +822,28 @@ _STDIO_INSTALL_HINT = (
 )
 
 
+def install_unknown_tool_gate(server: Any, surface: Any) -> None:
+    """Make an unknown tool name a JSON-RPC -32602 error, not a tool result.
+
+    The SDK's ``@server.call_tool()`` decorator catches EVERY exception from the
+    handler — ``McpError`` included — and flattens it into a ``CallToolResult`` with
+    ``isError`` (mcp lowlevel server: ``except Exception: _make_error_result``). The
+    only place a raised ``McpError`` still becomes the structured JSON-RPC error
+    envelope is ``_handle_request`` itself, so the check must sit ABOVE the
+    registered handler: wrap it, raise before the SDK's catch can see it. Applied
+    by BOTH transports (HTTP and stdio) so the wires cannot diverge.
+    """
+    import mcp.types as _types
+
+    inner = server.request_handlers[_types.CallToolRequest]
+
+    async def _gated(req: Any) -> Any:
+        ensure_known_tool(surface, req.params.name)  # raises McpError on a ghost name
+        return await inner(req)
+
+    server.request_handlers[_types.CallToolRequest] = _gated
+
+
 def serve_stdio(
     spec_or_client: Any,
     base_url: str | None = None,
@@ -895,6 +917,8 @@ def serve_stdio(
             content=[mcp_types.TextContent(type="text", text=text)],
             isError=is_error,
         )
+
+    install_unknown_tool_gate(server, surface)
 
     async def _run() -> None:
         async with stdio_server() as (read_stream, write_stream):

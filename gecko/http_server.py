@@ -42,7 +42,7 @@ from .keyauth import KeyGate
 from .modes import CallMode
 from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
-from .mcp_server import McpSurface
+from .mcp_server import McpSurface, install_unknown_tool_gate
 from .telemetry import TelemetryError
 from .surfaces import tools_rev
 from .toolerror import tool_result_payload
@@ -1006,6 +1006,10 @@ def build_http_app(
             raise ValueError(f"unknown resource {str(uri)!r}")
         mime, html = entry
         return [ReadResourceContents(content=html, mime_type=mime)]
+
+    # Unknown tool names become the JSON-RPC -32602 error (with the valid names in
+    # the message) instead of a Skill-Guard-blocked tool RESULT — same gate as stdio.
+    install_unknown_tool_gate(server, surface)
 
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
