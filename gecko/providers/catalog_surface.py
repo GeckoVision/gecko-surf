@@ -58,6 +58,7 @@ from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..pay_route import PLAN_PAYMENT_TOOL, plan_payment_result
 from .whirlpool import PLAN_SWAP_TOOL, plan_swap_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
+from ..submit_transaction import SUBMIT_TRANSACTION_TOOL, submit_transaction_result
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
 from ..rpc import RpcCall, default_rpc_call
 from ..simulate import BuildCall
@@ -224,6 +225,7 @@ class OrquestraCatalogSurface:
             # binding; somebody else signs; this is how anyone proves the signed bytes are
             # the checked ones BEFORE broadcast. Keyless like everything else here.
             VERIFY_SIGNED_TOOL,
+            SUBMIT_TRANSACTION_TOOL,
             # The step BEFORE building, and it sits here because that is where it is
             # reached for. A derive plan can be perfect and still unusable when nothing
             # says WHICH admin and WHICH id the sale a person named actually has — a
@@ -290,13 +292,32 @@ class OrquestraCatalogSurface:
                 build_call=self.purchase_build_call,
             )
         if name == "list_stores":
-            return list_stores_result(args, rpc_call=self.purchase_rpc_call)
+            # A transient RPC failure must come back as a structured refusal the
+            # agent can act on — the friction report caught a bare client-side
+            # "Error occurred during tool execution" here, with no code and no
+            # hint, and the agent's only recovery was dropping the filter.
+            try:
+                return list_stores_result(args, rpc_call=self.purchase_rpc_call)
+            except Exception as exc:  # noqa: BLE001 - refusal, never a bare crash
+                return {
+                    "error": {
+                        "code": "store-read-failed",
+                        "message": f"reading the store directory failed: {type(exc).__name__}",
+                        "hint": (
+                            "usually a transient RPC failure - retry once; if a "
+                            "`product` filter was set, the filter itself is fine "
+                            "(a no-match is an empty list, never an error)"
+                        ),
+                    }
+                }
         if name == "plan_payment":
             return plan_payment_result(args, rpc_call=self.purchase_rpc_call)
         if name == "plan_swap":
             return plan_swap_result(args, rpc_call=self.purchase_rpc_call)
         if name == "verify_signed_transaction":
             return verify_signed_result(args)
+        if name == "submit_transaction":
+            return submit_transaction_result(args)
         # The weakest text on the surface was `unknown tool 'x'` with no
         # recovery — what an agent got for calling `search_capabilities`
         # here, a name Gecko itself taught it one mount over. Name the real

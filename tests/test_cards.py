@@ -83,9 +83,14 @@ def test_the_refusal_renders_as_prominently_as_success() -> None:
     assert "peg" in html.lower()
 
 
-def test_every_card_tool_has_a_resource_and_vice_versa() -> None:
+def test_no_tool_is_stamped_but_the_card_stays_served() -> None:
+    # UNTAGGED 2026-09-01 (friction report): the _meta.ui stamp made claude.ai
+    # gate plan_payment behind connector consent — the SAFE, read-only tool cost
+    # ceremony while raw plan_swap stayed free. The registry is empty until
+    # app-tagged tools stop costing consent; the resource itself stays served.
     uris = card_resources()
-    assert set(UI_TOOL_RESOURCES.values()) == set(uris)
+    assert UI_TOOL_RESOURCES == {}
+    assert PLAN_PAYMENT_RESOURCE_URI in uris
     for uri, (mime, html) in uris.items():
         assert uri.startswith("ui://gecko/")
         assert mime == CARD_MIME_TYPE
@@ -143,14 +148,12 @@ def test_the_tool_declares_its_card_over_the_wire() -> None:
             )
         )
         tools = {t["name"]: t for t in listed["result"]["tools"]}
-        assert (
-            tools["plan_payment"]["_meta"]["ui"]["resourceUri"]
-            == PLAN_PAYMENT_RESOURCE_URI
-        )
-        # and ONLY card tools carry the meta — everything else is byte-identical
-        assert "_meta" not in tools["list_stores"] or "ui" not in tools[
-            "list_stores"
-        ].get("_meta", {})
+        # UNTAGGED 2026-09-01: no tool carries the ui stamp any more (see
+        # cards.UI_TOOL_RESOURCES) — plan_payment must list like every other
+        # tool so no client consent-gates the safe path.
+        for tool in tools.values():
+            meta = tool.get("_meta") or {}
+            assert "ui" not in meta, tool["name"]
 
 
 def test_the_card_resource_is_served_over_the_wire() -> None:

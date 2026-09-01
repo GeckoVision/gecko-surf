@@ -41,9 +41,22 @@ PLAN_PAYMENT_RESOURCE_URI = "ui://gecko/plan-payment"
 
 #: tool name -> the ui resource its results render in. The serve layer reads this to
 #: stamp ``_meta.ui.resourceUri`` on the tool def and to serve the resource itself.
-UI_TOOL_RESOURCES: dict[str, str] = {
-    "plan_payment": PLAN_PAYMENT_RESOURCE_URI,
-}
+#:
+#: EMPTY since 2026-09-01, and the friction report is why: on claude.ai, a tool
+#: carrying ``_meta.ui`` is tagged ``[third_party_mcp_app]`` and gated behind a
+#: connector-consent round trip. plan_payment is the tool that DECIDES whether a
+#: swap is wise — read-only, keyless, no clock — and the gate made the SAFE tool
+#: cost ceremony while the unguarded path (calling plan_swap directly) stayed
+#: free. An inverted safety gradient: the measured web run skipped the peg check
+#: on a stablecoin swap because of exactly this. The card HTML and the resource
+#: stay served (clients that already know the URI can render it); only the
+#: tool-def stamp is withdrawn until app-tagged tools stop costing consent.
+UI_TOOL_RESOURCES: dict[str, str] = {}
+
+#: Tools whose RESULTS also carry ``structuredContent`` (the same dict the JSON
+#: text carries). Decoupled from the ui stamp above on purpose: structured
+#: results cost no consent gate anywhere, so they survive the untagging.
+STRUCTURED_RESULT_TOOLS: frozenset[str] = frozenset({"plan_payment"})
 
 
 _PLAN_PAYMENT_HTML = """<!DOCTYPE html>
