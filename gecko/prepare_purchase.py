@@ -312,7 +312,7 @@ def _signer_required() -> dict[str, Any]:
         "all of that BEFORE re-calling: this tool starts a ~60-second clock, so a buyer "
         "sent off to install something is holding bytes that die while they read.",
         blocker_kind="signer",
-        signers=[dict(signer) for signer in _SIGNERS_KNOWN_TO_WORK],
+        signers=[dict(signer) for signer in SIGNERS_KNOWN_TO_WORK],
     )
 
 
@@ -866,7 +866,9 @@ def _prepare(
 #: an access token that authorises spending from their wallet — a path to a key, which
 #: this module's first paragraph and the public docs both say does not exist. The friction
 #: is a discovery problem and gets a discovery fix; it is not a reason to take custody.
-_SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
+#: Exported for the OTHER money paths (plan_swap's sign rail) — ONE directory,
+#: so the purchase and swap rails can never disagree about how signing works.
+SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
     {
         "name": "PayBox",
         "call": 'request_wallet_sign, op="solanaTransaction", transactionBase64',
@@ -881,6 +883,11 @@ _SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
         "sequence": [
             "list_credentials -> pick the `wallet` credential; its metadata.address IS "
             "the `buyer` for prepare_purchase, and its `credential_id` is what signs",
+            "NO wallet credential in the list? The account has no wallet yet: PayBox "
+            "creates one at enrolment, which is the user signing in to the connector "
+            "(a passkey step only the user can do) - ask them to Connect/sign in at "
+            "the PayBox connector, then re-run list_credentials. An agent cannot "
+            "create the wallet itself, and never asks the user to paste key material",
             "READ ITS `approval_mode` NOW, before preparing anything — see below",
             "prepare_purchase (this tool) once the buyer has chosen",
             'request_wallet_sign {credential_id, intent: {op: "solanaTransaction", '
@@ -995,7 +1002,7 @@ def _next_step(
                 ),
                 "encoding": "base64",
                 "transaction": transaction_base64,
-                "signers_known_to_work": [dict(s) for s in _SIGNERS_KNOWN_TO_WORK],
+                "signers_known_to_work": [dict(s) for s in SIGNERS_KNOWN_TO_WORK],
             },
             {
                 "step": "verify",

@@ -409,7 +409,7 @@ def plan_swap_result(
     ``plan_payment``), and a transport failure comes back redacted to its class.
     """
     from ..networks import network_for_browse
-    from ..prepare_purchase import _resolve_rpc_url
+    from ..prepare_purchase import SIGNERS_KNOWN_TO_WORK, _resolve_rpc_url
 
     args = arguments or {}
     for name in ("input_mint", "output_mint", "user"):
@@ -461,6 +461,19 @@ def plan_swap_result(
     # exactly; a swap deserves the same rail.
     plan["next_steps"] = [
         {
+            "step": "wallet_and_funding",
+            "note": (
+                "no wallet credential in list_credentials? PayBox creates the wallet "
+                "at enrolment — the user signs in to the connector (a passkey step "
+                "only they can do); an agent cannot create it and never asks the user "
+                "to paste key material. FUND before building: the user needs amount_in "
+                "of the input mint plus a little SOL for the fee (PayBox's "
+                "get_buy_link funds an empty wallet), and check the wallet's "
+                "approval_mode BEFORE preparing — always_approve waits for a "
+                "passkey INSIDE the ~60s window."
+            ),
+        },
+        {
             "step": "build",
             "tool": "prepare_instruction",
             "arguments": {
@@ -480,6 +493,9 @@ def plan_swap_result(
                 "Load the signer's tools BEFORE calling prepare_instruction: the "
                 "blockhash budget is ~60s and cold tool-loading is what spends it."
             ),
+            # ONE signer directory for every money path — the purchase refusal's
+            # entries verbatim, so the two rails cannot drift apart.
+            "signers": [dict(signer) for signer in SIGNERS_KNOWN_TO_WORK],
         },
         {
             "step": "verify",

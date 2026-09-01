@@ -324,11 +324,17 @@ def test_the_plan_carries_the_execution_breadcrumb() -> None:
     warning attached where the budget actually burns."""
     out = _result({})
     steps = [s["step"] for s in out["next_steps"]]
-    assert steps == ["build", "sign", "verify", "submit"]
-    sign = out["next_steps"][1]["note"]
+    # wallet_and_funding leads (2026-09-01): funding and the enrolment rung must
+    # settle BEFORE build opens the ~60s blockhash window.
+    assert steps == ["wallet_and_funding", "build", "sign", "verify", "submit"]
+    wallet = out["next_steps"][0]["note"]
+    assert "enrolment" in wallet and "get_buy_link" in wallet
+    sign = out["next_steps"][2]["note"]
     assert "request_wallet_sign" in sign
     assert "BEFORE" in sign
-    verify = out["next_steps"][2]
+    # the sign step carries the SAME signer directory the purchase refusal serves
+    assert out["next_steps"][2]["signers"][0]["name"] == "PayBox"
+    verify = out["next_steps"][3]
     assert verify["tool"] == "verify_signed_transaction"
 
 
