@@ -488,7 +488,16 @@ def plan_swap_result(
         },
         {
             "step": "submit",
-            "note": "sendTransaction with preflightCommitment: confirmed",
+            "note": (
+                "sendTransaction {encoding: base64, preflightCommitment: confirmed, "
+                "maxRetries: 0}, then REBROADCAST the same signed bytes every ~2s "
+                "(skipPreflight: true) until getSignatureStatuses reports confirmed "
+                "or the chain's block height passes expires.last_valid_block_height. "
+                "One-shot sends on public RPC routinely expire unlanded — measured "
+                "on the first attempt of the 2026-09-01 purchase; the resubmit is "
+                "idempotent (same signature), so the loop is free of double-spend "
+                "risk by construction"
+            ),
         },
     ]
     return plan
