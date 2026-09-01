@@ -66,6 +66,53 @@ def test_server_card_carries_the_required_registry_fields() -> None:
     assert {t["name"] for t in card["tools"]} == {"comprehend_api", "list_surfaces"}
 
 
+def test_server_card_lets_a_client_decide_compatibility_before_a_session() -> None:
+    # The fields a client reads BEFORE initialize: which protocol, whether to bring a
+    # credential, and where the PRM is. The version is the SDK's own constant.
+    from mcp.types import LATEST_PROTOCOL_VERSION
+
+    from gecko.wellknown import build_server_card
+
+    card = build_server_card(["jupiter"], "https://mcp.example.com")
+    # One registry name for the product, on this host and mirrored on the landing.
+    assert card["name"] == "tech.geckovision/gecko"
+    assert card["protocolVersion"] == LATEST_PROTOCOL_VERSION
+    auth = card["authentication"]
+    assert auth["required"] is False
+    assert auth["schemes"] == ["bearer"]
+    assert (
+        auth["resource_metadata"]
+        == "https://mcp.example.com/.well-known/oauth-protected-resource"
+    )
+
+
+def test_the_host_index_advertises_llms_txt_only_where_it_is_served() -> None:
+    # Ten advertised `/<name>/llms.txt` paths, ten 404s on the live host (2026-09-01):
+    # the index named the sibling for every mount, but only OpenAPI surfaces emit it.
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    app = build_multi_surface_app(
+        [
+            ("jupiter", "gecko/examples/jupiter_swap_openapi.json"),
+            ("orquestra", OrquestraCatalogSurface()),
+        ],
+        allowed_hosts=["testserver"],
+    )
+    with TestClient(app) as client:
+        surfaces = {
+            e["name"]: e
+            for e in client.get("/.well-known/gecko.json").json()["surfaces"]
+        }
+        assert "llms_txt" in surfaces["jupiter"]
+        assert "llms_txt" not in surfaces["orquestra"]
+        for entry in surfaces.values():
+            if "llms_txt" in entry:
+                assert client.get(entry["llms_txt"]).status_code == 200, entry
+
+
 def test_host_prm_is_honest_and_carries_the_real_scopes() -> None:
     from gecko.wellknown import build_protected_resource_metadata
 

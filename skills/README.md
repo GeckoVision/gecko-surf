@@ -4,12 +4,13 @@
 *whole* surface becomes agent-usable — first-call-correct, served over MCP,
 alongside whatever MCP the provider already ships.**
 
-Six skills — two for **API providers** who want agents to actually *use* their
-API, three for **agent builders** who need to call or safely consume APIs and the
-artifacts around them, and one for JS-rendered docs:
+Seven skills — two for **API providers** who want agents to actually *use* their
+API, four for **agent builders** who need to install, call or safely consume APIs
+and the artifacts around them, and one for JS-rendered docs:
 
 | Skill | For | What it does | Status |
 |---|---|---|---|
+| [`gecko-setup`](gecko-setup/SKILL.md) | agent builder | Wire the hosted Gecko MCP surface into the client you run in (Claude Code, Claude web, Cursor, VS Code, any MCP client) and verify with one real read-only call. The skill behind the one-sentence onboarding prompt on geckovision.tech. | **Live** (hosted surface) |
 | [`use-any-api`](use-any-api/SKILL.md) | agent builder | Call a new or unfamiliar API first-call-correct — point Gecko at OpenAPI or docs, get intent-shaped MCP tools, auth hidden. Measured 10% → 65% on a painful API. | comprehend + serve **Live** |
 | [`read-js-docs`](read-js-docs/SKILL.md) | agent builder | Extract API surface from JS-rendered docs (Mintlify, Redoc, Swagger UI, etc.) when curl/WebFetch returns an empty shell. | **Live** (agent-browser) |
 | [`api-agent-ready`](api-agent-ready/SKILL.md) | provider | Design the surface for agents (best-practices checklist) → comprehend the API with `gecko` → emit the agent-native breadcrumbs → serve the full surface over MCP with a one-click add → make it discoverable. **Leaves the provider's own MCP intact.** | design checklist **guidance**; comprehend + serve **Live**; artifacts + discoverability **Building** |

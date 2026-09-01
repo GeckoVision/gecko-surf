@@ -222,8 +222,14 @@ def test_robots_txt_served_and_steers_off_the_noise() -> None:
         assert r.headers["content-type"].startswith("text/plain")
         assert "Disallow: /.well-known/mcp.json" in r.text
         assert "Disallow: /.well-known/oauth-authorization-server" in r.text
-        # ...but it POINTS crawlers at the real discovery doc, not away from it
+        # ...but it POINTS crawlers at the real discovery docs, not away from them
         assert "Allow: /.well-known/gecko.json" in r.text
+        assert "Allow: /.well-known/mcp/server-card.json" in r.text
+        # The PRM is the document auth.md and every gated 401 tell an agent to fetch.
+        # Disallowing it (as this file did until 2026-09-01) made a robots-respecting
+        # agent refuse our own auth flow.
+        assert "Allow: /.well-known/oauth-protected-resource" in r.text
+        assert "Disallow: /.well-known/oauth-protected-resource" not in r.text
 
 
 def test_security_txt_served_rfc9116() -> None:

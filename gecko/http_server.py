@@ -1436,15 +1436,23 @@ def build_multi_surface_app(
 
     # Comprehended surfaces served on this host (NOT a public marketplace listing —
     # each is a spec the operator chose to serve). Submissions are never added here.
+    #
+    # `llms_txt` is advertised only where the mount SERVES it. Only OpenAPI surfaces
+    # emit the discovery siblings (build_http_app); a program surface such as orquestra
+    # does not, and this index used to name `/orquestra/llms.txt` for every mount
+    # regardless — ten advertised paths, ten 404s on the live host (2026-09-01).
+    def _serves(app: Starlette, path: str) -> bool:
+        return any(getattr(route, "path", None) == path for route in app.routes)
+
     surface_entries: list[dict[str, str]] = [
         {
             "name": name,
             "mcp": f"{public_url.rstrip('/')}/{name}/mcp"
             if public_url
             else f"/{name}/mcp",
-            "llms_txt": f"/{name}/llms.txt",
+            **({"llms_txt": f"/{name}/llms.txt"} if _serves(sub, "/llms.txt") else {}),
         }
-        for name, _ in subs
+        for name, sub in subs
     ]
 
     # Late-bind the meta surface's list_surfaces to the PUBLIC entry view —
