@@ -894,8 +894,36 @@ SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
             "address, transactionBase64}} -> returns a request_id, NOT a signature",
             "poll get_request(request_id) until `output.signedTransactionBase64` — never "
             "re-call request_wallet_sign to finish one, that starts a second operation",
-            "verify_signed_transaction (Gecko) -> then submit",
+            "verify_signed_transaction (Gecko) -> then submit WITH REBROADCAST: "
+            "sendTransaction {maxRetries: 0}, then resubmit the SAME signed bytes "
+            "every ~2s (skipPreflight after the first) until getSignatureStatuses "
+            "says confirmed or the block height passes expires.last_valid_block_height "
+            "— a one-shot send on a public RPC routinely expires unlanded (measured; "
+            "the resubmit is idempotent, same signature)",
         ],
+        # The CHAT connector's signing window renders only in clients with embedded
+        # views (Claude web, ChatGPT). A CODE agent / headless runtime signs
+        # in-process instead — measured 2026-09-01: sign at ~1s, purchase confirmed
+        # at 7.8s wall clock. Gecko's server never signs either way.
+        "headless": {
+            "for": "code agents and CI (no chat window to render the signer in)",
+            "sdk": "@paybox-sh/sdk — PayboxClient({baseUrl, token, signingKey})",
+            "credentials_from": (
+                "PAYBOX_TOKEN (the OAuth bearer) + PAYBOX_SIGNIN_KEY (the pbxk1. "
+                "signing key), from the OS keychain or server env — never from a "
+                "chat prompt, never pasted to any Gecko surface"
+            ),
+            "call": (
+                "client.requestWalletSign({credentialId, intent: {op: "
+                "'solanaTransaction', address, transactionBase64}}, {autoSign: true}) "
+                "-> status 'success' with output.signedTransactionBase64 in-process"
+            ),
+            "note": (
+                "an autonomous grant + the signing key completes with no window and "
+                "no human in the loop; the key stays in PayBox MPC, Gecko still "
+                "never signs or holds it"
+            ),
+        },
         "approval_mode_matters": (
             "`always_approve` means every signature waits for the user's passkey, and that "
             "wait sits INSIDE the ~60s blockhash window — it is the most likely way to "
