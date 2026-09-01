@@ -141,6 +141,16 @@ _DISCOVERY_PREFIXES: tuple[str, ...] = (
     "/.well-known/openid-configuration",
 )
 
+# The ONE OAuth well-known we now SERVE (2026-09-01): RFC 9728 protected-resource
+# metadata, with the REAL per-surface grant scopes and the self-serve mint path in the
+# WorkOS ``agent_auth`` block. Serving a valid 200 here is spec-conformant — the SDK
+# hazard above is about ERROR statuses, not about real metadata. The AS metadata path
+# stays 404: no authorization server exists and fabricating one is the failure mode
+# this repo scores other surfaces down for.
+_SERVED_DISCOVERY_EXACT: frozenset[str] = frozenset(
+    {"/.well-known/oauth-protected-resource"}
+)
+
 # HYGIENE — the two files we SERVE (never block): robots + the RFC 9116 security contact.
 _ROBOTS_PATH = "/robots.txt"
 _SECURITY_PATHS: frozenset[str] = frozenset(
@@ -223,6 +233,8 @@ def classify_path(path: str) -> WafLane:
         return "discovery"
     if p in _DISCOVERY_EXACT or p == "/a2a" or p.startswith("/a2a/"):
         return "discovery"
+    if p in _SERVED_DISCOVERY_EXACT:
+        return "pass"
     if any(p.startswith(pre) for pre in _DISCOVERY_PREFIXES):
         return "discovery"
 

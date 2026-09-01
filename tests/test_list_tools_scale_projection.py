@@ -88,11 +88,15 @@ def _tokens(enc: Any, defs: list[dict[str, Any]]) -> int:
 
 
 def _todays_full_list(client: AgentApiClient) -> list[dict[str, Any]]:
-    """Reconstruct exactly what list_tools emitted before the projection existed:
-    the synthetic tools followed by a full {name, description, inputSchema} per usable tool."""
+    """Reconstruct exactly what list_tools emits: the synthetic tools followed by a
+    full {name, description, inputSchema, annotations} per usable tool (annotations
+    joined 2026-09-01 — behavioral hints derived from each op's HTTP method)."""
     tools = [_SEARCH_TOOL, _GET_CAPABILITY_TOOL, _QUERY_DOCS_TOOL]
     for t in client.list_tools():
-        tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
+        projected = {k: t[k] for k in ("name", "description", "inputSchema")}
+        if t.get("annotations") is not None:
+            projected["annotations"] = t["annotations"]
+        tools.append(projected)
     return tools
 
 

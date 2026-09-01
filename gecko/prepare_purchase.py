@@ -60,6 +60,8 @@ logs, no node response body, no credentials, and nothing is written anywhere.
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -81,7 +83,7 @@ from .networks import UNKNOWN_NETWORK, Network, coerce_network
 from .pda import PdaDerivationError, derive_pda
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
-from .rpc import RpcCall, RpcError
+from .rpc import RpcCall, RpcError, default_rpc_call
 from .simulate import BuildCall, BuiltTx, SimulateError, simulate
 from .wallet_binding import WalletBindingError, WalletDirectory
 
@@ -418,6 +420,51 @@ def _plan_accounts(
     }
 
 
+def _diagnose_failed_purchase(
+    accounts: Mapping[str, str],
+    network: str,
+    rpc_url: str,
+    rpc_call: RpcCall,
+) -> str | None:
+    """Best-effort: name WHY a purchase simulation reverted, in terms the agent can act on.
+
+    A blind agent handed only ``revert_class: "other"`` has to already know Solana to
+    infer that the placeholder buyer's USDC account does not exist — so read the two
+    accounts that decide a purchase (the buyer, and the buyer's token account) and say
+    which one is the problem. One RPC read, never raises: a diagnosis is help, and a
+    diagnostic failure must not eat the refusal it decorates.
+    """
+    try:
+        buyer = accounts.get("signer")
+        sender = accounts.get("sender_token_account")
+        if not buyer or not sender:
+            return None
+        value = (
+            rpc_call(
+                rpc_url,
+                "getMultipleAccounts",
+                [[buyer, sender], {"encoding": "base64"}],
+            ).get("result")
+            or {}
+        ).get("value") or [None, None]
+        buyer_info, sender_info = (value + [None, None])[:2]
+        if buyer_info is None:
+            return (
+                f"the buyer {buyer} does not exist on {network} (0 SOL) — it cannot "
+                "pay the transaction fee; fund it with SOL first"
+            )
+        if sender_info is None:
+            return (
+                f"sender_token_account {sender} does not exist on {network} — the "
+                "buyer holds no token account for the store's mint. Fund the buyer "
+                "with the price in that mint (creating the token account needs "
+                "~0.002 SOL of rent on top of the fee)"
+            )
+        return None
+    except Exception:  # noqa: BLE001 - a diagnosis must never eat the refusal
+        return None
+
+
 def _account_plan(
     accounts: Mapping[str, str], program: ProgramSpec
 ) -> list[dict[str, Any]]:
@@ -720,14 +767,23 @@ def _prepare(
         network=network,
     )
     if receipt.status != "pass":
+        diagnosis = _diagnose_failed_purchase(
+            accounts, network, rpc_url, rpc_call or default_rpc_call
+        )
+        reason = (
+            "the simulation did not pass, so no transaction is returned: a transaction "
+            "that reverts against observed state would only cost you a fee on chain"
+        )
+        if diagnosis:
+            reason = f"{reason}. Likely cause: {diagnosis}"
         return _refuse(
             "receipt-failed",
-            "the simulation did not pass, so no transaction is returned: a transaction "
-            "that reverts against observed state would only cost you a fee on chain",
+            reason,
             network=network,
             status=receipt.status,
             revert_class=receipt.revert_class,
             units_consumed=receipt.units_consumed,
+            diagnosis=diagnosis,
             accounts=_account_plan(accounts, program),
         )
 
@@ -1008,6 +1064,9 @@ _BUYER_BOUND = (
 
 PREPARE_PURCHASE_TOOL: dict[str, Any] = {
     "name": "prepare_purchase",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Prepare an unsigned purchase"
+    ),
     "description": (
         "Plan and verify a real purchase from a let_me_buy storefront, and hand back the "
         "UNSIGNED transaction. Gecko holds no key: YOU SIGN it in your own wallet and you "

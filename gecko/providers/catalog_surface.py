@@ -34,6 +34,8 @@ already safe, so they get none.
 
 from __future__ import annotations
 
+from ..tools import tool_annotations
+
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -683,6 +685,9 @@ def _buildability(surface: Any) -> dict[str, Any]:
 
 _FIND_START_TOOL = {
     "name": "find_start",
+    "annotations": tool_annotations(
+        read_only=True, title="Find the starting instruction"
+    ),
     "description": (
         "Say what you want to do in plain words ('buy this token on pump and hold "
         "it') and get the exact starting point across the wired Solana programs: "
@@ -727,6 +732,7 @@ _FIND_START_TOOL = {
 
 _START_TOOL = {
     "name": "start",
+    "annotations": tool_annotations(read_only=True, title="Start from an intent"),
     "description": (
         "The same routing as `find_start`, projected to the ONE call you are about "
         "to make. You get the chosen start in full — the dependency-ordered derive "
@@ -766,6 +772,7 @@ _START_TOOL = {
 
 _LIST_PROGRAMS_TOOL = {
     "name": "list_programs",
+    "annotations": tool_annotations(read_only=True, title="List comprehended programs"),
     "description": (
         "List the wired, agent-ready program surfaces (with their intents and "
         "derivable PDAs) plus one page of the Orquestra program catalog "
@@ -780,6 +787,9 @@ _LIST_PROGRAMS_TOOL = {
 
 _COMPREHEND_TOOL = {
     "name": "comprehend_program",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Comprehend a Solana program"
+    ),
     "description": (
         "Auto-comprehend an unwired catalog program (the D-A path): fetch its "
         "Orquestra surface and generate the Gecko program config, with per-PDA "

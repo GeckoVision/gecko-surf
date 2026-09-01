@@ -57,6 +57,7 @@ from .risk import RiskAssessment, RiskPolicy, assess_from_client, policy_from_cl
 from .scope import RETRIEVAL_MAX_TOOLS, build_scope
 from .search import project_hits
 from .toolerror import ensure_known_tool, tool_result_payload
+from .tools import tool_annotations
 
 logger = logging.getLogger("gecko.mcp_server")
 
@@ -118,6 +119,7 @@ def question_error(arguments: Mapping[str, Any]) -> str | None:
 
 _SEARCH_TOOL = {
     "name": "search_capabilities",
+    "annotations": tool_annotations(read_only=True, title="Search capabilities"),
     "description": (
         "Find which endpoint/tool fits a natural-language intent. Returns "
         "{plan, tools}: `tools` = full schemas for just the ops that answer it; "
@@ -149,6 +151,7 @@ _SEARCH_TOOL = {
 
 _QUERY_DOCS_TOOL = {
     "name": "query_docs",
+    "annotations": tool_annotations(read_only=True, title="Query the API docs"),
     "description": (
         "Search the comprehended API's virtualized docs (spec-derived summaries, "
         "params, and agent-native artifacts) to understand WHY a call failed and how "
@@ -174,6 +177,7 @@ _QUERY_DOCS_TOOL = {
 
 _GET_CAPABILITY_TOOL = {
     "name": "get_capability",
+    "annotations": tool_annotations(read_only=True, title="Get one capability"),
     "description": (
         "Fetch ONE tool's full callable schema by name. Use this whenever you already "
         "know which tool you want (e.g. from a tools/list entry) — one schema, no "
@@ -353,7 +357,10 @@ class McpSurface:
         if self.client.surface_all:
             tools = list(synthetic)
             for t in usable:
-                tools.append({k: t[k] for k in ("name", "description", "inputSchema")})
+                projected = {k: t[k] for k in ("name", "description", "inputSchema")}
+                if t.get("annotations") is not None:
+                    projected["annotations"] = t["annotations"]
+                tools.append(projected)
         else:
             tools = list(synthetic) + [to_lightweight_ref(t) for t in usable]
         # Opt-in only: expose the decoys so a PROBING agent enumerating the surface sees
@@ -703,6 +710,9 @@ class McpSurface:
 
 _COMPREHEND_TOOL = {
     "name": "comprehend_api",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Comprehend an API"
+    ),
     "description": (
         "Submit an API's OpenAPI URL (or a human docs page URL with from_docs=true) and "
         "get it comprehended into first-call-correct agent tools — no integration code. "
@@ -796,6 +806,7 @@ class MetaComprehendSurface:
 
 _LIST_SURFACES_TOOL: dict[str, Any] = {
     "name": "list_surfaces",
+    "annotations": tool_annotations(read_only=True, title="List hosted surfaces"),
     "description": (
         "Every API surface served on this host, with the MCP URL to reconnect "
         "to. Use it when you landed on the host root and need a specific API. "
@@ -890,6 +901,7 @@ def serve_stdio(
                 name=t["name"],
                 description=t["description"],
                 inputSchema=t["inputSchema"],
+                annotations=t.get("annotations"),
             )
             for t in tools
         ]

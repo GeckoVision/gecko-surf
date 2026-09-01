@@ -299,6 +299,35 @@ def auth_location_is_safe(spec: dict[str, Any], op: Operation) -> bool:
     return True
 
 
+def tool_annotations(
+    *,
+    read_only: bool,
+    destructive: bool = False,
+    idempotent: bool | None = None,
+    open_world: bool = False,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """The MCP behavioral-annotation block, built honestly and in one place.
+
+    Agents use these hints to decide what needs confirmation before running, so a
+    wrong hint is worse than none: ``read_only`` means the call changes NO state
+    anywhere (building an UNSIGNED transaction qualifies; signing on a throwaway
+    fork does not), ``destructive`` means an irreversible external effect, and
+    ``open_world`` means the tool reaches beyond this server (an upstream API, a
+    chain RPC). Every tool-def source imports this ONE builder so the vocabulary
+    cannot drift between surfaces.
+    """
+    annotations: dict[str, Any] = {
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": read_only if idempotent is None else idempotent,
+        "openWorldHint": open_world,
+    }
+    if title is not None:
+        annotations["title"] = title
+    return annotations
+
+
 def to_tool(op: Operation, declared: Mapping[str, str] | None = None) -> dict[str, Any]:
     # Anti-poisoning: the summary/description and every param schema come from the
     # (untrusted) spec. Neutralize any injected instruction / secret-looking default
@@ -315,10 +344,21 @@ def to_tool(op: Operation, declared: Mapping[str, str] | None = None) -> dict[st
     # like) — the caller supplies them from ``_invoke["spec_fixed"]``. Absent when the spec
     # fixes nothing, so every other tool def (and its tools_rev) is byte-identical.
     input_schema, spec_fixed = strip_spec_fixed_required(input_schema)
+    method = str(op.method).lower()
     tool: dict[str, Any] = {
         "name": tool_name(op),
         "description": description,
         "inputSchema": input_schema,
+        # Behavioral hints derived from the HTTP method the spec itself declares:
+        # a GET/HEAD is read-only, DELETE is destructive, GET/PUT/DELETE are
+        # idempotent by HTTP semantics, and every operation reaches the upstream
+        # API (open world).
+        "annotations": tool_annotations(
+            read_only=method in ("get", "head"),
+            destructive=method == "delete",
+            idempotent=method in ("get", "head", "put", "delete"),
+            open_world=True,
+        ),
         # Comprehension metadata: whether this op is auth-gated and which schemes.
         # The client uses this to hide ops a no-auth session can't satisfy.
         "requires_auth": _security_requires_auth(op),

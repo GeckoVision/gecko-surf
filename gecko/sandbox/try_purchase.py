@@ -54,6 +54,8 @@ the sandbox's pattern-based redactor first.
 
 from __future__ import annotations
 
+from ..tools import tool_annotations
+
 import ipaddress
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -475,6 +477,12 @@ def _to_json(rehearsal: Rehearsal, *, proof: SurfnetProof) -> dict[str, Any]:
 
 TRY_PURCHASE_TOOL: dict[str, Any] = {
     "name": "try_purchase",
+    "annotations": tool_annotations(
+        read_only=False,
+        destructive=False,
+        idempotent=False,
+        title="Rehearse a purchase on a local fork",
+    ),
     "description": (
         "REHEARSE a real purchase on a local fork of mainnet, and see what actually "
         "moved. This is `prepare_purchase` taken all the way through: it funds a "
@@ -492,7 +500,9 @@ TRY_PURCHASE_TOOL: dict[str, Any] = {
         "else. "
         "USE IT to see the whole loop before spending, to check a store really debits "
         "what it lists, or to show a buyer what will happen. It needs NO wallet, NO signer "
-        "and NO funds. "
+        "and NO funds — but on a HOSTED server it does need a signed-in account, and the "
+        "fork must run on the server's own machine: a hosted anonymous session cannot "
+        "rehearse here (run `surfpool start` yourself and serve locally instead). "
         "A FORK IS NOT A COMPUTE ORACLE: measured, the same purchase simulates at 36,399 "
         "CU on mainnet and 42,494 on the fork (+16.7%), so never size a compute budget "
         "from what comes back. Nor is it a price oracle for the fee: the buyer's token "

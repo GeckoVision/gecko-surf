@@ -31,6 +31,8 @@ never a claim about where any particular account currently sits.
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -239,6 +241,9 @@ def build_lifecycle(graph: ProgramGraph, idl: Mapping[str, Any]) -> ProgramLifec
 
 LIFECYCLE_TOOL = {
     "name": "program_lifecycle",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Read a program lifecycle"
+    ),
     "description": (
         "The ORDER a program's instructions must happen in, and which accounts move "
         "together — derived from the graph, not from documentation.\n"

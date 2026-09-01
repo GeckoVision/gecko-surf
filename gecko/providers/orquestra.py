@@ -15,6 +15,8 @@ each.
 
 from __future__ import annotations
 
+from ..tools import tool_annotations
+
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -213,6 +215,7 @@ def _pda_summary(node: PdaNode) -> dict[str, Any]:
 
 _GRAPH_TOOL = {
     "name": "get_program_graph",
+    "annotations": tool_annotations(read_only=True, title="Get the program graph"),
     "description": (
         "Return this program's derivable PDAs (with what each needs) and the intents you "
         "can plan. Execution runs on Orquestra's builder — this surface tells you what to "
@@ -223,6 +226,7 @@ _GRAPH_TOOL = {
 
 _DERIVE_TOOL = {
     "name": "derive_pda",
+    "annotations": tool_annotations(read_only=True, title="Derive a program address"),
     "description": (
         "Derive one of this program's PDAs — including the helper-seeded roots an IDL "
         "drops. Give the account name and its bindings (mints as base58, ints as numbers)."
@@ -241,6 +245,9 @@ _DERIVE_TOOL = {
 
 _SIMULATE_TOOL = {
     "name": "simulate",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Simulate an instruction"
+    ),
     "description": (
         "Simulate a built plan into a Receipt: does this tx LAND against a state snapshot, "
         "with compute units + a categorical revert class if not. Give the plan (from a "
@@ -276,6 +283,8 @@ def _intent_tool(intent: Intent) -> dict[str, Any]:
     return {
         "name": intent.name,
         "description": intent.description,
+        # Plans derive accounts and read the chain; they never sign or send.
+        "annotations": tool_annotations(read_only=True, open_world=True),
         "inputSchema": {
             "type": "object",
             "properties": {k: {"type": "string"} for k in intent.inputs},

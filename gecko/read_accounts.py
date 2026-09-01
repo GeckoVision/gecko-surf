@@ -34,6 +34,8 @@ prefix the requested fields need. Nothing here signs or broadcasts.
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 import base64
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
@@ -428,6 +430,9 @@ def _judge(
 
 READ_ACCOUNTS_TOOL: dict[str, Any] = {
     "name": "read_accounts",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Read program accounts"
+    ),
     "description": (
         "Look up the LIVE instances of one of a program's declared account types, and "
         "the values inside them — the step between a human name ('the DEATON sale') and "

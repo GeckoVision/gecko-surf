@@ -26,6 +26,8 @@ nothing stored.
 
 from __future__ import annotations
 
+from .tools import tool_annotations
+
 import base64
 import binascii
 import hmac
@@ -301,6 +303,9 @@ def _carries_a_signature(transaction: str) -> bool:
 
 VERIFY_SIGNED_TOOL: dict[str, Any] = {
     "name": "verify_signed_transaction",
+    "annotations": tool_annotations(
+        read_only=True, open_world=True, title="Verify a signed transaction"
+    ),
     "description": (
         "Check that a SIGNED transaction is the one Gecko attested — before you "
         "broadcast it. Pass the base64 your signer returned and the `binding` from the "
