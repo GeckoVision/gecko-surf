@@ -107,6 +107,24 @@ def test_the_corpus_and_the_gate_read_one_declaration() -> None:
     assert UNKNOWN_NETWORK not in APPROVABLE_NETWORKS
 
 
+def test_every_tool_that_takes_a_network_enumerates_the_one_approvable_set() -> None:
+    """The tool SCHEMAS are the third consumer. A `network` property without an enum
+    lets a client send anything (a blind agent guessed "mainnet" as a bare string on
+    2026-09-01); one with a hand-typed list is a fourth vocabulary. So: every schema's
+    enum is derived from the same declaration, or the tool does not declare one."""
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    enums = {
+        tool["name"]: tool["inputSchema"]["properties"]["network"].get("enum")
+        for tool in OrquestraCatalogSurface().list_tools()
+        if "network" in tool.get("inputSchema", {}).get("properties", {})
+    }
+
+    assert enums, "no tool on the surface declares a `network` argument"
+    for name, enum in enums.items():
+        assert enum == sorted(APPROVABLE_NETWORKS), f"{name}: {enum}"
+
+
 # --------------------------------------------------------------------------- #
 # The catch-all approves nothing — the T1 blocking condition, both spellings.
 # --------------------------------------------------------------------------- #

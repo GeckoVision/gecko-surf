@@ -34,7 +34,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from .networks import UNKNOWN_NETWORK, coerce_network
+from .networks import APPROVABLE_NETWORKS, UNKNOWN_NETWORK, coerce_network
 from .prepare_purchase import USDC_MINT, _resolve_rpc_url, BLOCKHASH_CLOCK_PROSE
 from .rpc import RpcCall, RpcError, default_rpc_call
 from .token_program import (
@@ -564,7 +564,7 @@ LIST_STORES_TOOL: dict[str, Any] = {
         "properties": {
             "network": {
                 "type": "string",
-                "enum": ["mainnet", "devnet", "testnet", "fork"],
+                "enum": sorted(APPROVABLE_NETWORKS),
                 "description": (
                     "which network to list. YOU say; nothing here infers it from an "
                     "RPC URL, and there is no default."

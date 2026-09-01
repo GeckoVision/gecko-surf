@@ -79,7 +79,7 @@ from .autonomous_purchase import (
 from .handoff import verify_handoff
 from .landing import RPC_COMMITMENT, block_height, latest_blockhash
 from .netguard import UnsafeUrlError, validate_public_url
-from .networks import UNKNOWN_NETWORK, Network, coerce_network
+from .networks import APPROVABLE_NETWORKS, UNKNOWN_NETWORK, Network, coerce_network
 from .pda import PdaDerivationError, derive_pda
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
@@ -286,7 +286,7 @@ def _pubkey_or_none(value: Any) -> str | None:
         return None
 
 
-def _signer_required() -> dict[str, Any]:
+def _signer_required(order: Mapping[str, Any]) -> dict[str, Any]:
     """ "You have no wallet yet" — as DATA, not as a schema wall.
 
     ``buyer`` used to be `required`, so an agent with no wallet could not call this tool
@@ -301,17 +301,29 @@ def _signer_required() -> dict[str, Any]:
 
     Funding is step three because an unfunded address gets you a passing plan and a
     reverting transaction — the receipt is honest about the bytes, not about the balance.
+
+    ``order`` is the store read that already happened: this refusal fires AFTER the
+    store and the product resolved, so a keyless caller learns "order valid, signer
+    required" in one call. Before (blind-agent test, 2026-09-01) the first proof that a
+    product name resolved came after a signer was installed, funded and approval-settled,
+    inside the ~60-second window this same refusal warns about.
     """
+    lead = (
+        f"Order valid: {order['product']} at {order['price_ui']} from {order['store']} "
+        f"on {order['network']}. Signer required to continue: "
+    )
     return _refuse(
         "signer-required",
-        "no wallet address to buy from, and this is not something to ask the human for "
-        "as a raw string — get it from a signer. Gecko never holds a key: it plans and "
+        lead
+        + "no wallet address to buy from, and this is not something to ask the human "
+        "for as a raw string — get it from a signer. Gecko never holds a key: it plans and "
         "checks the transaction, and something else signs it. Add one of the signers "
         "below, ASK IT for the wallet address, FUND that address with the price plus a "
         "little SOL for the fee, then call this again with that address as `buyer`. Do "
         "all of that BEFORE re-calling: this tool starts a ~60-second clock, so a buyer "
         "sent off to install something is holding bytes that die while they read.",
         blocker_kind="signer",
+        order=dict(order),
         signers=[dict(signer) for signer in SIGNERS_KNOWN_TO_WORK],
     )
 
@@ -324,6 +336,10 @@ def _resolve_buyer(
     A bound account's buyer comes from the record, never from the request. The three
     outcomes that are not "use the caller's word" are all refusals, never substitutions:
     a mismatch, an unreadable directory, and an unparseable ``buyer``.
+
+    ``(None, None)`` is the fourth outcome and NOT a refusal: an unbound caller that named
+    no buyer at all. That caller is keyless, and the store read still happens for them so
+    the ``signer-required`` refusal can echo the resolved order — see the caller.
     """
     supplied_raw = args.get("buyer")
     supplied = _pubkey_or_none(supplied_raw)
@@ -348,9 +364,8 @@ def _resolve_buyer(
 
     if binding is None:
         # Mode A: no account, or an account that has bound no wallet. These bytes are for
-        # a wallet we know nothing about, so its owner names it.
-        if supplied is None:
-            return None, _signer_required()
+        # a wallet we know nothing about, so its owner names it — or nobody does yet, and
+        # that is the keyless caller the docstring's fourth outcome describes.
         return supplied, None
 
     if supplied is not None and supplied != binding.pubkey:
@@ -561,8 +576,10 @@ def prepare_purchase_result(
     product = product.strip()[:_MAX_PRODUCT_CHARS]
 
     buyer, buyer_refusal = _resolve_buyer(args, account, wallets)
-    if buyer is None:
-        return buyer_refusal or _refuse("argument-invalid", "no usable `buyer`")
+    if buyer_refusal is not None:
+        return buyer_refusal
+    # ``buyer is None`` from here on is a KEYLESS caller. They still get the store read
+    # below, so their refusal names a resolved order, not just a missing wallet.
 
     table = args.get("table", 0)
     if isinstance(table, bool) or not isinstance(table, int) or not 0 <= table <= 255:
@@ -647,6 +664,20 @@ def prepare_purchase_result(
             f"({purchase.product.price_raw} raw, {purchase.product.decimals} decimals)"
         ),
     )
+    if buyer is None:
+        # The order resolved; the caller has no wallet. Deliberately AFTER the store read
+        # and BEFORE the builder: one `getAccountInfo` is the price of telling a keyless
+        # agent its product name is right, and no bytes exist yet to start a clock on.
+        return _signer_required(
+            {
+                "store": resolved.store_name,
+                "product": purchase.product.name,
+                "price_ui": str(purchase.product.price_ui),
+                "mint": purchase.product.mint,
+                "network": network,
+                "order_valid": True,
+            }
+        )
 
     try:
         return _prepare(
@@ -1087,8 +1118,10 @@ def _http_build_call(plan: Mapping[str, Any]) -> BuiltTx:
 _BUYER_SUPPLIED = (
     "the PUBLIC key of the wallet that will sign and pay. Never a secret key — nothing "
     "here can use one. Do not ask the human to type one: get it from a signer connector, "
-    "and omit this argument if you have not got one yet — the refusal names the signers "
-    "that reach this client and the order to do it in."
+    "and omit this argument if you have not got one yet — the refusal first confirms the "
+    "order resolved (store, product as listed, price), then names the signers that reach "
+    "this client and the order to do it in. So a keyless call is the cheap way to check "
+    "a product name before any wallet exists."
 )
 
 #: ...and what it means when this deployment can look the caller's wallet up. The schema
@@ -1159,7 +1192,7 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
             "buyer": {"type": "string", "description": _BUYER_SUPPLIED},
             "network": {
                 "type": "string",
-                "enum": ["mainnet", "devnet", "testnet", "fork"],
+                "enum": sorted(APPROVABLE_NETWORKS),
                 "description": (
                     "which network this is for. YOU say; nothing here infers it from the "
                     "RPC URL, and there is no default."

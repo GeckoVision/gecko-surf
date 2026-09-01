@@ -2,7 +2,7 @@
 
 # Module index
 
-234 modules in `gecko/` (subpackages included), from their own docstrings.
+235 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -175,7 +175,7 @@ package depends on it, which is worth a look before you add a caller.
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 42 · `autonomous_purchase`, `cli`, `drift_watch` +39 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 43 · `autonomous_purchase`, `cli`, `drift_watch` +40 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
@@ -215,6 +215,7 @@ package depends on it, which is worth a look before you add a caller.
 | `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
 | `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 11 · `pay_route`, `prepare_purchase`, `providers.jurassic_fi` +8 |
 | `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 8 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.agents` +5 |
+| `submit_transaction` | Submit a Gecko-verified signed transaction and rebroadcast until it lands. | 1 · `providers.catalog_surface` |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |
 | `surfacereport` | The graph report for an API surface — what the graph says about the API. | 1 · `workflows` |
@@ -224,13 +225,13 @@ package depends on it, which is worth a look before you add a caller.
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 28 · `agentnative`, `catalog`, `chain_eval` +25 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 29 · `agentnative`, `catalog`, `chain_eval` +26 |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
 | `value_sources` | Where a missing seed value can be READ from — the hop between two of our own tools. | 1 · `prepare_instruction` |
 | `verify` | verify-docs — check a surface's operations against reality, attach verdicts (VAS-2). | 2 · `authcheck`, `report` |
-| `verify_signed` | Did the signer sign the transaction we checked? | 1 · `providers.catalog_surface` |
+| `verify_signed` | Did the signer sign the transaction we checked? | 2 · `providers.catalog_surface`, `submit_transaction` |
 | `vindex` | The value-domain index (§13 Phase 3.3) — "what correlates with X across ALL | 4 · `catalog_mcp`, `cli`, `metrics` +1 |
 | `vocab_gap` | Which words a user said that reach NO card — the input the blurb lever needs. | 0 |
 | `waf` | WAF / robot-block middleware for the hosted multi-surface MCP server. | 1 · `http_server` |
