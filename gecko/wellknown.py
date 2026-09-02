@@ -71,11 +71,21 @@ def build_server_card(
     already-gate-filtered name list, so this can never leak a gated mount the
     index would withhold. Branding fields (title/iconUrl) because a name+icon+
     description trio is what registries render as a complete listing.
+
+    ``protocolVersion`` and ``authentication`` let a client decide compatibility
+    BEFORE opening a session (the Apify card does this; ours did not, 2026-09-01).
+    The protocol version is the SDK's own constant, never a literal, so the card
+    cannot claim a version the transport does not speak. ``name`` is the product's
+    registry name: one name whether the card is read on this host or mirrored on
+    the landing.
     """
+    from mcp.types import LATEST_PROTOCOL_VERSION
+
     from . import __version__
     from .mcp_server import MetaComprehendSurface
 
     base = public_url.rstrip("/") if public_url else ""
+    prm_path = "/.well-known/oauth-protected-resource"
     # The host root's own tools (comprehend + surface discovery) — real, callable at
     # serverUrl. Per-surface tools live behind each remote and are not flattened here.
     root_tools = [
@@ -87,7 +97,7 @@ def build_server_card(
         for t in MetaComprehendSurface().list_tools()
     ]
     return {
-        "name": "tech.geckovision/gecko-host",
+        "name": "tech.geckovision/gecko",
         "title": "Gecko",
         "description": (
             "Comprehended API surfaces served agent-native over Streamable "
@@ -95,7 +105,16 @@ def build_server_card(
             "refusals that say why."
         ),
         "version": __version__,
+        "protocolVersion": LATEST_PROTOCOL_VERSION,
         "serverUrl": f"{base}/mcp" if base else "/mcp",
+        # Open remotes need no credential. A gated surface answers 401 with a
+        # WWW-Authenticate that names the PRM below; the PRM carries the self-serve
+        # mint path. No OAuth authorization server exists, and none is claimed.
+        "authentication": {
+            "required": False,
+            "schemes": ["bearer"],
+            "resource_metadata": f"{base}{prm_path}" if base else prm_path,
+        },
         # What an agent can actually DO here, stated up front — a blind-agent test
         # (2026-09-01) showed the words "store"/"purchase" first appeared only inside
         # the initialize response, so an agent tasked with buying had to gamble that

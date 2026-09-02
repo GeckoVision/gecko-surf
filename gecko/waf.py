@@ -271,8 +271,13 @@ def _expires_in_a_year() -> str:
 
 def _robots_body() -> str:
     """robots.txt: steer polite crawlers away from the noise manifests while POINTING them
-    at the one discovery doc we DO serve (``/.well-known/gecko.json``). Attack scanners
-    ignore robots.txt — this only quiets the well-behaved agent-discovery crawlers."""
+    at the discovery docs we DO serve. Attack scanners ignore robots.txt — this only
+    quiets the well-behaved agent-discovery crawlers.
+
+    The RFC 9728 PRM is ALLOWED, not disallowed: ``auth.md`` and every gated 401 tell
+    an agent to fetch exactly that path, and a robots-respecting agent refused the
+    document our own auth flow requires (Apify audit, 2026-09-01). The authorization-
+    server well-known stays disallowed because we 404 it on purpose (no AS exists)."""
     disallows = "\n".join(
         f"Disallow: {line}"
         for line in (
@@ -289,7 +294,15 @@ def _robots_body() -> str:
             "/.well-known/ai-agent.json",
             "/.well-known/a2a.json",
             "/.well-known/oauth-authorization-server",
+        )
+    )
+    allows = "\n".join(
+        f"Allow: {line}"
+        for line in (
+            "/.well-known/gecko.json",
+            "/.well-known/mcp/server-card.json",
             "/.well-known/oauth-protected-resource",
+            "/.well-known/security.txt",
         )
     )
     return (
@@ -297,7 +310,7 @@ def _robots_body() -> str:
         "# Real discovery lives at /.well-known/gecko.json — please use that.\n"
         "User-agent: *\n"
         f"{disallows}\n"
-        "Allow: /.well-known/gecko.json\n"
+        f"{allows}\n"
     )
 
 
