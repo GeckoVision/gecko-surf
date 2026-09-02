@@ -31,6 +31,7 @@ from ..tools import tool_annotations
 from typing import Any, Mapping
 
 from ..find_start import StartSpec
+from ..networks import APPROVABLE_NETWORKS
 from ..pda_resolve import read_account_owner
 from ..provider_config import load_packaged_provider
 from ..rpc import RpcCall, default_rpc_call
@@ -374,6 +375,7 @@ PLAN_SWAP_TOOL: dict[str, Any] = {
             },
             "network": {
                 "type": "string",
+                "enum": sorted(APPROVABLE_NETWORKS),
                 "description": "mainnet (default) or a fork you name with rpc_url",
             },
             "rpc_url": {

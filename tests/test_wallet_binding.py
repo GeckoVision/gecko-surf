@@ -190,14 +190,29 @@ def test_mode_a_without_a_buyer_hands_back_a_signer_rather_than_a_schema_wall() 
     # out, as DATA. A client that loads tools by search summarizes long descriptions; it
     # cannot summarize a tool result, which is the only reason this lives here.
     builder, rpc = FakeBuilder(), FakeRpc()
-    out = _prepare(builder, rpc, drop_buyer=True)
+    out = _prepare(builder, rpc, drop_buyer=True, product="water")
 
     assert out["refused"] is True
     assert out["code"] == "signer-required"
     assert out["blocker_kind"] == "signer"
     assert "transaction" not in out
-    # Nothing was built and no node was asked: the refusal is decided before either.
-    assert builder.calls == [] and rpc.calls == []
+    # Nothing was built: no bytes exist, so no clock started. The node WAS asked, once,
+    # for the store — that read is what lets the refusal name a resolved order.
+    assert builder.calls == []
+    assert rpc.calls == ["getAccountInfo"]
+
+    # The order echo: a keyless agent learns its product name is right BEFORE it goes off
+    # to install, fund and approval-settle a signer (blind-agent test, 2026-09-01).
+    order = out["order"]
+    assert order["order_valid"] is True
+    assert order["store"] == "jonasbar"
+    assert order["product"] == "Water"  # as listed on chain, not as the caller typed it
+    assert order["price_ui"] == "0.1"
+    assert order["network"] == "mainnet"
+    assert "mint" in order
+    assert out["reason"].startswith(
+        "Order valid: Water at 0.1 from jonasbar on mainnet."
+    )
 
     connectors = [signer["connector"] for signer in out["signers"]]
     assert "https://api.paybox.sh/mcp" in connectors, connectors
@@ -205,6 +220,30 @@ def test_mode_a_without_a_buyer_hands_back_a_signer_rather_than_a_schema_wall() 
     # The ORDER is the load-bearing part — funding after the address, before re-calling.
     assert reason.index("ask it for") < reason.index("fund that address")
     assert "call this again" in reason
+
+
+def test_a_keyless_caller_with_a_wrong_product_learns_that_first() -> None:
+    # The whole point of resolving the order before the signer check: a typo surfaces as
+    # `product-unknown` with the menu, not as `signer-required` followed by a second
+    # refusal after the wallet is funded.
+    builder, rpc = FakeBuilder(), FakeRpc()
+    out = _prepare(builder, rpc, drop_buyer=True, product="Sparkling wter")
+
+    assert out["refused"] is True
+    assert out["code"] == "product-unknown"
+    assert "signers" not in out
+    assert [entry["name"] for entry in out["products"]] == ["Water"]
+    assert builder.calls == []
+
+
+def test_a_keyless_caller_with_an_unknown_store_learns_that_first() -> None:
+    builder, rpc = FakeBuilder(), FakeRpc(serve_store=False)
+    out = _prepare(builder, rpc, drop_buyer=True)
+
+    assert out["refused"] is True
+    assert out["code"] == "store-unknown"
+    assert "signers" not in out
+    assert builder.calls == []
 
 
 # --- 4. a directory that cannot answer fails CLOSED -----------------------------

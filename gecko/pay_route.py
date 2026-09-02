@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
+from .networks import APPROVABLE_NETWORKS
 from .peg_guard import PegReader, PegVerdict, verdict_from_reading
 from .store_accounts import TOKEN_PROGRAM_ID, derive_ata
 from .whirlpool_venue import Direction
@@ -569,6 +570,7 @@ PLAN_PAYMENT_TOOL: dict[str, Any] = {
             },
             "network": {
                 "type": "string",
+                "enum": sorted(APPROVABLE_NETWORKS),
                 "description": "mainnet (default) or a fork you name with rpc_url",
             },
             "rpc_url": {
