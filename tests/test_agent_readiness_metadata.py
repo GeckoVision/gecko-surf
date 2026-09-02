@@ -203,6 +203,6 @@ def test_initialize_reports_the_engine_version_not_the_sdk_version() -> None:
         text = res.text
         import json as _json
 
-        line = next(l for l in text.splitlines() if l.startswith("data:"))
+        line = next(row for row in text.splitlines() if row.startswith("data:"))
         payload = _json.loads(line[5:])
         assert payload["result"]["serverInfo"]["version"] == __version__
