@@ -48,7 +48,7 @@ PROVIDERS: dict[str, str] = {
     "pegana_api2": "examples/pegana_demo/spec/pegana_openapi.json",
     "refugios": "examples/refugios_demo/spec/refugios_openapi.json",
     "reportavnzla": "examples/reportavnzla_demo/spec/reportavnzla_openapi.json",
-    "sosvenezuela": "examples/sos_vzla_bot/spec/sosvenezuela_openapi.json",
+    "sosvenezuela": "examples/sosvenezuela_demo/spec/sosvenezuela_openapi.json",
     "surfpool": "examples/surfpool/spec/surfpool_openapi.json",
     "txline": "examples/txline_demo/spec/txline_openapi.yaml",
     "colosseum": "gecko/examples/colosseum_copilot_openapi.json",

@@ -72,7 +72,7 @@ _SURFACES: list[tuple[str, Path]] = [
     ),
     (
         "sosvenezuela",
-        _ROOT / "examples" / "sos_vzla_bot" / "spec" / "sosvenezuela_openapi.json",
+        _ROOT / "examples" / "sosvenezuela_demo" / "spec" / "sosvenezuela_openapi.json",
     ),
 ]
 

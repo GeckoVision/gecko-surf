@@ -66,7 +66,7 @@ call(mode="recorded"|"live")`, `gecko/client.py`.)
    prepare / call` contract works on any OpenAPI, so integration work amortizes to
    zero. Proven end-to-end on a real, painful, paywalled API — TxODDS, via a full
    on-chain subscribe. Fork `examples/_starter/` — an app on any API in ~20 lines, $0 —
-   or see `examples/sos_vzla_bot/` for a full LLM agent.
+   or wrap `client.search` / `client.call` in an LLM tool-use loop for a full agent.
 
 > **Note:** today the capability search is **lexical** (`gecko/catalog.py`); the
 > vectorized semantic index is on the V2 roadmap.

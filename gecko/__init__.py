@@ -11,7 +11,7 @@ The names re-exported here are the **stable SDK surface** a builder embeds:
     client = AgentApiClient(spec, session=public_session())
     client.call(tool, args, mode="recorded")  # $0, offline, falsifiable
 
-Everything here resolves engine-only — no `serve`/`sosbot` extra needed to import.
+Everything here resolves engine-only — no `serve` extra needed to import.
 The MCP transport (mcp/uvicorn/starlette) stays in `gecko.http_server`/`serve`,
 imported lazily by those modules so `import gecko` stays dep-light.
 """

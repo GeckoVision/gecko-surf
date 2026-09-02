@@ -1,7 +1,7 @@
 """The public SDK surface — `from gecko import ...`.
 
 Builders embed Gecko as a library; these top-level imports are the contract.
-They must resolve engine-only (no `serve`/`sosbot` extras installed), so nothing
+They must resolve engine-only (no `serve` extra installed), so nothing
 exported here may pull in mcp/uvicorn/anthropic at import time.
 """
 

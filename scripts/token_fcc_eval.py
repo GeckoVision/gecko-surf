@@ -56,12 +56,9 @@ def main() -> None:
     key = os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     llm = None
     if key:
-        import sys
+        import anthropic  # optional; only the live lane needs it
 
-        sys.path.insert(0, str(ROOT / "examples"))
-        from sos_vzla_bot.providers import make_llm  # type: ignore
-
-        llm = make_llm("anthropic", key)
+        llm = anthropic.Anthropic(api_key=key)
 
     print(
         f"{'fixture':10} {'RAW tok':>8} {'GECKO tok':>10} {'reduce':>7}   "
