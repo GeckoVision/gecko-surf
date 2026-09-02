@@ -779,3 +779,22 @@ def test_the_tool_says_where_to_GET_a_signer_before_it_is_called() -> None:
     # …and in the order a first-time buyer needs: connect, THEN fund, THEN buy.
     assert "fund" in described.lower()
     assert "before" in described.lower()
+
+
+def test_the_paybox_sequence_verifies_before_it_submits() -> None:
+    # agents.md says sign -> verify -> submit; the refusal's own sequence said sign ->
+    # submit (blind agent, run 3). One order everywhere: verify is the cheap check that
+    # catches a wrong artifact or a closed window before a broadcast.
+    from gecko.prepare_purchase import SIGNERS_KNOWN_TO_WORK
+
+    paybox = next(s for s in SIGNERS_KNOWN_TO_WORK if s["name"].startswith("PayBox"))
+    steps = paybox["sequence"]
+    verify = next(
+        i
+        for i, step in enumerate(steps)
+        if step.startswith("verify_signed_transaction")
+    )
+    submit = next(
+        i for i, step in enumerate(steps) if step.startswith("submit_transaction")
+    )
+    assert verify < submit

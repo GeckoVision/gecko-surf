@@ -927,6 +927,10 @@ SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
             "address, transactionBase64}} -> returns a request_id, NOT a signature",
             "poll get_request(request_id) until `output.signedTransactionBase64` — never "
             "re-call request_wallet_sign to finish one, that starts a second operation",
+            "verify_signed_transaction (Gecko) with the signed bytes, `binding`, "
+            "`binding_strength: exact`, `expires.last_valid_block_height` and "
+            "`submit.rpc_url` — cheap, and it catches a signer that returned other "
+            "bytes or a window that closed while you polled, BEFORE a broadcast",
             "submit_transaction (Gecko) with the signed bytes + the `binding` and "
             "`expires.last_valid_block_height` from the prepare result — it verifies "
             "the binding (non-droppable), sends, and rebroadcasts the same bytes "
@@ -1190,7 +1194,13 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                     "read from that store's own account"
                 ),
             },
-            "product": {"type": "string", "description": "the product's name"},
+            "product": {
+                "type": "string",
+                "description": (
+                    "the product's name as `list_stores` lists it; matched whole, "
+                    "case-insensitively"
+                ),
+            },
             "buyer": {"type": "string", "description": _BUYER_SUPPLIED},
             "network": {
                 "type": "string",
@@ -1204,7 +1214,10 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 255,
-                "description": "the table number the order is for (u8)",
+                "description": (
+                    "the table number the order is for (u8); omit it when the store "
+                    "has no tables, which sends 0"
+                ),
             },
             "rpc_url": {
                 "type": "string",
