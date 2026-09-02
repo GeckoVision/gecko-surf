@@ -13,8 +13,8 @@ cent or a token. This is the whole point: first-call-correct, falsifiable offlin
 
 FORK THIS:
   - real data: pass a real `Session` and `mode="live"` (see gecko.access).
-  - a full agent: wrap `client.search` / `client.call` in an LLM tool-use loop —
-    `examples/sos_vzla_bot/` is exactly that (Telegram + Claude/OpenRouter).
+  - a full agent: wrap `client.search` / `client.call` in an LLM tool-use loop
+    (allow-list the tools, sanitize inputs, never raise into the chat).
 """
 
 from __future__ import annotations

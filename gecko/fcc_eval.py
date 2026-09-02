@@ -24,8 +24,8 @@ Control-plane discipline: records only metadata — picked tool name, the boolea
 and the *shape* of args (param name -> value-KIND). Never a response payload; never a raw
 arg value beyond the kind used for the disambiguation check.
 
-The LLM is an injected seam (the Anthropic ``messages.create`` shape reused from
-``examples/sos_vzla_bot``), so the whole harness is offline-mockable — tests drive it with a
+The LLM is an injected seam (the Anthropic ``messages.create`` shape), so the whole
+harness is offline-mockable — tests drive it with a
 scripted fake; only the runner talks to Haiku.
 """
 

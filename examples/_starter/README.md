@@ -12,7 +12,7 @@ uv run python -m examples._starter.app <openapi-spec-url-or-path> "<what you wan
 
 # Example — any public OpenAPI:
 uv run python -m examples._starter.app \
-  examples/sos_vzla_bot/spec/sosvenezuela_openapi.json \
+  examples/sosvenezuela_demo/spec/sosvenezuela_openapi.json \
   "cuántas personas desaparecidas hay" 
 ```
 
@@ -38,7 +38,7 @@ That's the whole contract: **comprehend → find → first-call-correct**.
 |---|---|
 | Real data | pass a real `Session` (`gecko.access`) + `mode="live"` |
 | A paywalled API | a BYOK `Session` whose `auth_headers()` returns your creds — injected at call time, never in the tool defs |
-| A full AI agent | wrap `client.search` / `client.call` in an LLM tool-use loop — see **[`examples/sos_vzla_bot/`](../sos_vzla_bot/)** (Telegram + Claude/OpenRouter, allow-list + sanitize + never-raise) |
+| A full AI agent | wrap `client.search` / `client.call` in an LLM tool-use loop: allow-list the tools, sanitize inputs, never raise into the chat |
 | An MCP endpoint for Claude/Cursor | `gecko <openapi-url>` — zero code, prints the one-click add string |
 
 Gecko stays **control-plane only**: it never stores the API's responses — your
