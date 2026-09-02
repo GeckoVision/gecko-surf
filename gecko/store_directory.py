@@ -469,6 +469,20 @@ def list_stores(
         "program": LET_ME_BUY_PROGRAM_ID,
         "stores": stores,
         "skipped_undecodable": skipped,
+        "skipped_undecodable_note": (
+            "program-owned accounts whose bytes are not a store listing (another account "
+            "type, or a layout this reader does not know). They are counted so the number "
+            "is visible and never guessed at; no store named in `stores` was skipped."
+        ),
+        "product_filter": {
+            "applied": needle is not None,
+            "query": product,
+            "note": (
+                "a product match shows only the matching products; a match on the store "
+                "name shows that store's whole menu. Call again without `product` for "
+                "every menu in full."
+            ),
+        },
         "truncated": truncated,
         "note": (
             "a MENU read from one node's view of the chain, not an authorization: the "

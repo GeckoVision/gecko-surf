@@ -886,8 +886,15 @@ def serve_stdio(
     surface = _surface_from(spec_or_client, base_url, mode, enforce)
     # Same instructions as the HTTP transport — stdio used to drop them, so the
     # two transports disagreed on the one text a client shows before tool choice.
+    # The engine version, not the MCP SDK's: `serverInfo.version` used to say 1.28.1
+    # (the SDK) while the server card said 0.10.3, and a blind agent flagged the
+    # contradiction (2026-09-01). Lazy import: the package __init__ imports transports.
+    from . import __version__ as engine_version
+
     server: Any = Server(
-        server_name, instructions=getattr(surface, "instructions", None)
+        server_name,
+        version=engine_version,
+        instructions=getattr(surface, "instructions", None),
     )
 
     @server.list_tools()

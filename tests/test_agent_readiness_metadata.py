@@ -167,3 +167,42 @@ def test_prm_served_on_the_host_and_named_by_the_gated_401() -> None:
             'resource_metadata="https://mcp.example.com'
             '/.well-known/oauth-protected-resource"' in challenge
         )
+
+
+def test_initialize_reports_the_engine_version_not_the_sdk_version() -> None:
+    # serverInfo.version said 1.28.1 (the MCP SDK) while the server card said 0.10.3;
+    # a blind agent read that as a contradiction (2026-09-01). One version, ours.
+    from starlette.testclient import TestClient
+
+    from gecko import __version__
+    from gecko.http_server import build_multi_surface_app
+
+    app = build_multi_surface_app(
+        [("jupiter", "gecko/examples/jupiter_swap_openapi.json")],
+        allowed_hosts=["testserver"],
+    )
+    with TestClient(app) as client:
+        res = client.post(
+            "/jupiter/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "p", "version": "0"},
+                },
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+        assert res.status_code == 200
+        text = res.text
+        import json as _json
+
+        line = next(row for row in text.splitlines() if row.startswith("data:"))
+        payload = _json.loads(line[5:])
+        assert payload["result"]["serverInfo"]["version"] == __version__

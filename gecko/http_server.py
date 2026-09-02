@@ -880,8 +880,15 @@ def build_http_app(
     #
     # Surfaces opt in by carrying an `instructions` attribute; anything without one sends
     # None, exactly as today.
+    # The engine version, not the MCP SDK's: `serverInfo.version` used to say 1.28.1
+    # (the SDK) while the server card said 0.10.3, and a blind agent flagged the
+    # contradiction (2026-09-01). Lazy import: the package __init__ imports transports.
+    from . import __version__ as engine_version
+
     server: Any = Server(
-        server_name, instructions=getattr(surface, "instructions", None)
+        server_name,
+        version=engine_version,
+        instructions=getattr(surface, "instructions", None),
     )
     # Asked once, at build time: the answer is a property of the surface class, and
     # inspecting a signature on every tool call would be per-request work for a constant.
