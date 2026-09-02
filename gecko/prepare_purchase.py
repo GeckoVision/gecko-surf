@@ -319,9 +319,11 @@ def _signer_required(order: Mapping[str, Any]) -> dict[str, Any]:
         "for as a raw string — get it from a signer. Gecko never holds a key: it plans and "
         "checks the transaction, and something else signs it. Add one of the signers "
         "below, ASK IT for the wallet address, FUND that address with the price plus a "
-        "little SOL for the fee, then call this again with that address as `buyer`. Do "
-        "all of that BEFORE re-calling: this tool starts a ~60-second clock, so a buyer "
-        "sent off to install something is holding bytes that die while they read.",
+        "little SOL for the fee, then call this again with that address as `buyer`. No "
+        "clock has started: nothing was built on this call. The call that carries "
+        "`buyer` starts a ~60-second clock, so do all of the above BEFORE re-calling; a "
+        "buyer sent off to install something after that call is holding bytes that die "
+        "while they read.",
         blocker_kind="signer",
         order=dict(order),
         signers=[dict(signer) for signer in SIGNERS_KNOWN_TO_WORK],

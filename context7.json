@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "gecko-surf",
-  "description": "The knowledge graph for APIs your agent can trust \u2014 map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves.",
+  "description": "Gecko checks an agent's API call or Solana transaction against the real surface before it counts: first-call-correct MCP tools from any OpenAPI or program, unsigned checked bytes for money paths, and refusals that say why.",
   "folders": [
     "docs"
   ],
@@ -9,13 +9,17 @@
     "private",
     "tests",
     ".venv",
-    "node_modules"
+    "node_modules",
+    "docs/specs",
+    "docs/assets",
+    "docs/superpowers"
   ],
   "rules": [
-    "gecko-surf is the API comprehension layer for agents: it derives the Agent Surface (a deterministic call graph) above an OpenAPI, never a payment rail or a marketplace.",
-    "Gecko is the control plane, never the data plane \u2014 it stores the API surface and correctness metadata, never response payloads, user data, or secrets.",
+    "gecko-surf is the API comprehension layer for agents: it turns an OpenAPI or a Solana program into first-call-correct MCP tools. It is never a payment rail or a marketplace.",
+    "Gecko is the control plane, never the data plane: it stores the API surface and correctness metadata, never response payloads, user data, or secrets.",
     "Onboard any API with `gecko add <api>`; serve one over MCP with `gecko <openapi-url>`; verify doc claims against reality with `gecko verify-docs <spec>`.",
-    "Gecko composes on top of OpenAPI (input) and MCP (transport) and Context7 (a docs input) \u2014 it does not replace them.",
-    "Gecko is safe by construction: it treats every ingested API surface (specs, docs, tool descriptions, images) as untrusted and quarantines prompt-injection or tool-poisoning before the agent reads it, and injects auth at call time so the agent never holds API keys."
+    "Gecko composes on top of OpenAPI (input), MCP (transport) and Context7 (a docs input). It does not replace them.",
+    "Gecko never holds a key and never signs: every money path ends in unsigned, simulation-checked bytes plus a receipt, and the user's own wallet signs.",
+    "Gecko treats every ingested API surface (specs, docs, tool descriptions, images) as untrusted input and quarantines prompt injection or tool poisoning before the agent reads it; auth is injected at call time so the agent never holds API keys."
   ]
 }

@@ -205,6 +205,17 @@ def test_the_product_filter_matches_substring_case_insensitively() -> None:
     out = list_stores(rpc_url="http://node", rpc_call=rpc, product="water")
     by_store = {s["store"]: [p["name"] for p in s["products"]] for s in out["stores"]}
     assert by_store == {"jonasbar": ["Water"], "geckocoffee": ["Sparkling water"]}
+    # The filter is REPORTED: a blind agent (run 2, 2026-09-01) could not tell whether
+    # the one product shown was the whole menu, nor what `skipped_undecodable` counted.
+    assert out["product_filter"] == {
+        "applied": True,
+        "query": "water",
+        "note": out["product_filter"]["note"],
+    }
+    assert "without `product`" in out["product_filter"]["note"]
+    assert "counted" in out["skipped_undecodable_note"]
+    unfiltered = list_stores(rpc_url="http://node", rpc_call=FakeRpc([]))
+    assert unfiltered["product_filter"]["applied"] is False
 
 
 def test_it_asks_for_the_right_program() -> None:

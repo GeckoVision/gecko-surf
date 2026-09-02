@@ -220,6 +220,9 @@ def test_mode_a_without_a_buyer_hands_back_a_signer_rather_than_a_schema_wall() 
     # The ORDER is the load-bearing part — funding after the address, before re-calling.
     assert reason.index("ask it for") < reason.index("fund that address")
     assert "call this again" in reason
+    # The keyless call builds nothing, so it must say no clock started (blind agent,
+    # run 2: the old text implied the 60-second clock was already running).
+    assert "no clock has started" in reason
 
 
 def test_a_keyless_caller_with_a_wrong_product_learns_that_first() -> None:
