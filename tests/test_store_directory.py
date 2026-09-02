@@ -232,17 +232,9 @@ def test_the_store_filter_narrows_to_the_named_store() -> None:
         "query": "GeckoCoffee",
         "note": out["store_filter"]["note"],
     }
-    assert (
-        list_stores_result(
-            {"rpc_url": "http://node", "network": "mainnet", "store": "nope"},
-            rpc_call=FakeRpc(
-                _rows(
-                    ("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)]))
-                )
-            ),
-        )["stores"]
-        == []
-    )
+    no_match = list_stores(rpc_url="http://node", rpc_call=rpc, store="nope")
+    assert no_match["stores"] == []
+    assert no_match["store_filter"]["applied"] is True
 
 
 def test_it_asks_for_the_right_program() -> None:
