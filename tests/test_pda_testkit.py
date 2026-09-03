@@ -100,12 +100,15 @@ def test_surfpool_fork_reaps_child_process(tmp_path: Path) -> None:
     with SurfpoolFork(
         "http://local.invalid", binary=str(fake), rpc_call=healthy, ready_timeout=5
     ):
-        for _ in range(50):  # wait for the child pid to be recorded
-            if pidfile.exists():
+        for _ in range(50):  # wait for the child pid to be WRITTEN, not just the file
+            # The redirect creates the file before `echo` writes into it; a read in
+            # that gap saw '' (QA round, 2026-09-02) and int('') failed the sweep.
+            if pidfile.exists() and pidfile.read_text().strip():
                 break
             time.sleep(0.1)
-    assert pidfile.exists(), "fake surfpool never spawned its child"
-    child_pid = int(pidfile.read_text().strip())
+    recorded = pidfile.read_text().strip() if pidfile.exists() else ""
+    assert recorded, "fake surfpool never recorded its child pid"
+    child_pid = int(recorded)
 
     # after the context exits, the child must have been reaped with the group
     for _ in range(30):
