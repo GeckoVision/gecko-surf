@@ -1,0 +1,90 @@
+{
+  "mission": "geckocoffee-purchase",
+  "date": "2026-09-02",
+  "runner": "blind-tester",
+  "target": "https://geckovision.tech",
+  "requests_total": 13,
+  "requests_to_menu": 8,
+  "requests_excluding_redirects": true,
+  "checks": [
+    {
+      "id": "menu-in-8",
+      "result": "pass",
+      "evidence": "list_stores {network: mainnet} was request 8 (landing=1, llms.txt=2, agents.md=3, catalog.md=4, initialize=5, initialized=6, tools/list=7). 12 stores, geckocoffee with 20 priced products; 'Sparkling water' price_ui '0.05', mint_note 'USDC', token_program classic-spl-token."
+    },
+    {
+      "id": "no-html-detour",
+      "result": "pass",
+      "evidence": "Runbook (agents.md) reached at request 3; the only HTML fetched before it was the landing (request 1). Every later fetch up to the refusal was text/plain, text/markdown, or MCP. Post-runbook note: request 13 (/case-studies/mainnet.md) answered text/html despite the .md suffix."
+    },
+    {
+      "id": "handshake-no-guess",
+      "result": "pass",
+      "evidence": "Copied the four curl lines from agents.md 'Raw MCP over HTTP'. Request 5 initialize: HTTP 200, mcp-session-id header captured, result.protocolVersion '2025-03-26', serverInfo orquestra 1.28.1. Request 6 notifications/initialized: 202. Request 7 tools/list: 16 tools. No parameter or header guessed."
+    },
+    {
+      "id": "order-before-signer",
+      "result": "pass",
+      "evidence": "Request 8 menu line: geckocoffee / 'Sparkling water' / price_ui '0.05' / mint EPjF...Dt1v. Request 9 keyless prepare_purchase refusal: code 'signer-required', order.order_valid true, order.price_ui '0.05', order.product 'Sparkling water', order.network 'mainnet'. No signer step was ever taken."
+    },
+    {
+      "id": "payload-before-clock",
+      "result": "pass",
+      "evidence": "agents.md, section 'What a successful prepare_purchase returns' (read at request 3, before any prepare): refused, status, units_consumed, binding, binding_strength, network, fee_payer, accounts[], transaction.unsigned_transaction (+signed, encoding), expires.blockhash / last_valid_block_height / blocks_remaining / seconds_remaining_estimate, submit.rpc_url / preflight_commitment, next_steps[]."
+    },
+    {
+      "id": "verify-submit-args",
+      "result": "pass",
+      "evidence": "agents.md (request 3): 'call verify_signed_transaction with transaction (the signed base64), binding, binding_strength and expires.last_valid_block_height; then submit_transaction with the same three plus rpc_url from submit'. tools/list (request 7) inputSchema: verify_signed_transaction {transaction, binding, binding_strength, last_valid_block_height, rpc_url; required transaction, binding}; submit_transaction {transaction, binding, last_valid_block_height, rpc_url; required transaction, binding, last_valid_block_height}."
+    },
+    {
+      "id": "human-enrol-stated",
+      "result": "pass",
+      "evidence": "agents.md, 'The order for money paths', step 0: 'A HUMAN ENROLS THE SIGNER FIRST. Every signer path (PayBox, Phantom, Privy) needs a one-time human step: an OAuth connect, a desktop install, or a login on the machine. An agent with no client and no human has no path to funds; say so instead of looping.'"
+    },
+    {
+      "id": "keyless-no-clock",
+      "result": "pass",
+      "evidence": "agents.md step 1: 'A keyless call to prepare_purchase (no buyer) confirms the order resolved and names the signers that reach your client; it builds nothing and starts no clock.' The refusal itself (request 9) does not say this; it only warns 'this tool starts a ~60-second clock'."
+    },
+    {
+      "id": "headless-path-in-docs",
+      "result": "fail",
+      "evidence": "Only the refusal (request 9) names one: signers[0].headless = PayBox '@paybox-sh/sdk', PayboxClient({baseUrl, token, signingKey}), 'for: code agents and CI (no chat window to render the signer in)'; and Privy agent-wallet CLI 'reaches anywhere a shell runs'. The runbook agents.md says only 'Phantom's or Privy's local servers reach desktop clients' and routes 'Headless code, a script, a server' to raw MCP for Gecko, not to a signer. docs.geckovision.tech/mainnet.md (request 12) narrates a past run ('Gecko asked a Privy server wallet to sign ... no human in the loop') but names no path an agent can take. Nearest miss noted; rubric says a document must name the path."
+    },
+    {
+      "id": "no-retries",
+      "result": "pass",
+      "evidence": "13 requests, 0 retries, 0 transport errors, 0 rejected arguments. Every URL, header and argument came from a document read earlier in the log (llms.txt -> agents.md -> curl block -> list_stores -> prepare_purchase keyless). The single refusal was the documented keyless probe, not a failed guess."
+    }
+  ],
+  "friction": [
+    "llms.txt promises catalog.md carries 'what to ask each, the tools each use case runs ... and the first call to make'; catalog.md is a bare surface list. That content lives at /catalog/orquestra.md, one hop further (request 10).",
+    "The keyless refusal's reason says 'this tool starts a ~60-second clock' without saying the keyless call it just answered started none; an agent that has not read agents.md line 117 will believe it is now on a clock.",
+    "The headless signer path (PayBox SDK with PAYBOX_TOKEN + pbxk1 signing key; Privy CLI 'anywhere a shell runs') exists only inside the refusal payload. agents.md, the tool description and the catalog page all describe signers as chat or desktop only.",
+    "docs.geckovision.tech/llms.txt 'What is not built' states 'The receipt is not bound to the signed message hash. The signing gate checks the verdict only.' That contradicts agents.md and the verify_signed_transaction/submit_transaction schemas, which are built on `binding`. A cold agent cannot tell which document is current.",
+    "Two different 'the MCP endpoint' claims: the landing wires https://mcp.geckovision.tech/orquestra/mcp; docs llms.txt lists https://mcp.geckovision.tech/mcp as 'Hosted MCP endpoint' and leads with /pegana/mcp. A store-buying agent starting from the docs would land on the wrong surface.",
+    "/case-studies/mainnet.md returns text/html (43 KB); the '.md twin' convention holds for the home page and catalog pages but not case studies, while docs llms.txt says 'Append .md to any page URL'.",
+    "list_stores reports skipped_undecodable: 10 with no explanation of what was skipped or whether a store the buyer wants could be among them.",
+    "Fulfilment is a Telegram channel id and prepare_purchase has an unexplained optional `table` (u8); nothing states what a buyer receives after the transaction lands or whether `table` is required for a real order at geckocoffee.",
+    "Every geckovision.tech URL published in llms.txt/agents.md redirects apex -> www (one hop each); cheap, but the canonical host in the documents is the non-canonical one.",
+    "Store menu and refusal are consistent, but the Sparkling water price is 0.05 USDC while the buyer must also hold SOL for fee plus ~0.00204 SOL rent if no USDC ATA exists; this funding total appears only in the refusal's PayBox branch, not in the runbook's FUND step."
+  ],
+  "verdict": "A cold agent went from the landing to a priced menu in 8 requests and to a validated order (order_valid true, Sparkling water, 0.05 USDC, mainnet) in 9, with a first-time raw MCP handshake copied verbatim from agents.md and zero retries. Purchase correctly stopped at the signer: no human had enrolled one, the runbook said a human must, and the refusal named the paths without asking for a key. 9 of 10 checks pass; the one failure is that the headless signer path is documented only in the refusal, so an agent with no chat window learns how to sign only after it has been refused.",
+  "single_most_valuable_change": "Lift the refusal's signers[].headless block (PayBox @paybox-sh/sdk with token + signing key from the OS keychain, autoSign; Privy agent-wallet CLI 'anywhere a shell runs') into agents.md step 2, replacing 'Phantom's or Privy's local servers reach desktop clients', and add one sentence to the keyless refusal: 'This keyless call built nothing and started no clock.'",
+  "log": [
+    "1. GET https://geckovision.tech -> 301 to https://www.geckovision.tech/ (redirect hop, excluded) -> 200 text/html 90 KB. Told me: rel=alternate llms.txt and index.md; footer 'For agents' -> /agents.md; next: read llms.txt.",
+    "2. GET https://geckovision.tech/llms.txt -> www redirect (excluded) -> 200 text/plain. Told me: canonical runbook agents.md, catalog.md, MCP endpoint https://mcp.geckovision.tech/orquestra/mcp, 'Gecko never signs'; next: agents.md then catalog.md.",
+    "3. GET https://geckovision.tech/agents.md -> www redirect (excluded) -> 200 text/markdown 12 KB. Told me: raw MCP handshake curl block; money-path order (human enrols signer; keyless prepare starts no clock; prepare -> sign -> verify -> submit); success payload field names; verify/submit argument names.",
+    "4. GET https://geckovision.tech/catalog.md -> www redirect (excluded) -> 200 text/markdown 3 KB. Told me: orquestra surface = storefront purchases, 16 tools, open; per-surface detail at /catalog/orquestra(.md).",
+    "5. POST https://mcp.geckovision.tech/orquestra/mcp initialize (protocolVersion 2025-03-26) -> 200, mcp-session-id captured, server echoed 2025-03-26, serverInfo orquestra 1.28.1.",
+    "6. POST same, notifications/initialized with mcp-session-id -> 202.",
+    "7. POST same, tools/list -> 16 tools incl. list_stores, prepare_purchase, verify_signed_transaction, submit_transaction, plan_payment; schemas read for the three money tools.",
+    "8. POST same, tools/call list_stores {network: mainnet} -> 12 stores, truncated false, skipped_undecodable 10; geckocoffee found, 'Sparkling water' price_ui 0.05 USDC classic-spl-token. MENU REACHED.",
+    "9. POST same, tools/call prepare_purchase {store: geckocoffee, product: 'Sparkling water', network: mainnet} with NO buyer (the documented keyless probe) -> refused true, code signer-required, order_valid true, price_ui 0.05; signers: PayBox (chat connector + headless SDK), Phantom MCP (desktop), Privy CLI (shell). Buying branch STOPPED: no signer enrolled, no key, no address to fabricate.",
+    "10. GET https://geckovision.tech/catalog/orquestra.md -> www redirect (excluded) -> 200 text/markdown. Told me: use case 'Buy a sparkling water from geckocoffee on mainnet', tools in order list_stores, prepare_purchase, verify_signed_transaction, submit_transaction; proof tx #24 2026-09-01 0.05 USDC.",
+    "11. GET https://docs.geckovision.tech/llms.txt -> 200 text/plain. Looking for a documented headless signer path. Found instead: 'receipt is not bound to the signed message hash' (contradicts agents.md) and a different 'Hosted MCP endpoint' URL.",
+    "12. GET https://docs.geckovision.tech/mainnet.md -> 200 text/markdown. Found narrative 'Gecko asked a Privy server wallet to sign ... no human in the loop' (txs #12-#16); no agent-facing path named.",
+    "13. GET https://geckovision.tech/case-studies/mainnet.md -> www redirect (excluded) -> 200 but text/html 43 KB (no markdown twin). Not parsed; nothing further needed. Run ended: 13 requests, 0 retries."
+  ]
+}

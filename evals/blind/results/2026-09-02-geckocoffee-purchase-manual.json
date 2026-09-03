@@ -1,0 +1,51 @@
+{
+  "mission": "geckocoffee-purchase",
+  "date": "2026-09-02",
+  "runner": "manual",
+  "runner_note": "Run 3 of the same brief, executed by a general-purpose subagent from session dd0d1a57 before the blind-tester agent existed; answers transcribed from its report against the rubric.",
+  "target": "https://geckovision.tech",
+  "requests_total": 9,
+  "requests_to_menu": 8,
+  "requests_excluding_redirects": true,
+  "checks": [
+    {"id": "menu-in-8", "result": "pass", "evidence": "list_stores was request 9 including one 307 hop; 8 excluding it"},
+    {"id": "no-html-detour", "result": "fail", "evidence": "fetched /index.md after agents.md (self-reported over-fetch, invited by the three Link alternates)"},
+    {"id": "handshake-no-guess", "result": "pass", "evidence": "requests 6 to 8: session id captured, initialized 202, tools/list 16 tools; no retry"},
+    {"id": "order-before-signer", "result": "pass", "evidence": "keyless prepare_purchase: order_valid true, price_ui 0.05, product 'Sparkling water'"},
+    {"id": "payload-before-clock", "result": "pass", "evidence": "agents.md (request 4) listed refused, status, units_consumed, binding, binding_strength, transaction.unsigned_transaction, expires.last_valid_block_height, submit.rpc_url, next_steps"},
+    {"id": "verify-submit-args", "result": "pass", "evidence": "agents.md (request 4); tools/list schemas at request 8 matched"},
+    {"id": "human-enrol-stated", "result": "pass", "evidence": "agents.md step 0: A HUMAN ENROLS THE SIGNER FIRST"},
+    {"id": "keyless-no-clock", "result": "pass", "evidence": "agents.md step 1: 'it builds nothing and starts no clock'; refusal had no expires"},
+    {"id": "headless-path-in-docs", "result": "fail", "evidence": "the PayBox SDK headless path appeared only in the prepare_purchase refusal at request 10"},
+    {"id": "no-retries", "result": "pass", "evidence": "'Nothing required a retry or a guess that failed'"}
+  ],
+  "friction": [
+    "Three Link alternates with no priority; llms.txt and agents.md overlap; index.md redundant",
+    "list_stores.network: schema requires nothing, prose says 'there is no default'",
+    "skipped_undecodable: 10 with no names",
+    "No store-name filter on list_stores",
+    "Headless signer path only in the refusal",
+    "agents.md says sign -> verify -> submit; the refusal's PayBox sequence goes sign -> submit",
+    "'the same three plus rpc_url' after listing four verify arguments",
+    "Funding figure (~0.00204 SOL rent) appears only in the refusal",
+    "prepare_purchase.product case sensitivity unstated",
+    "table (u8) parameter undocumented",
+    "notifications/initialized answers an empty 202; not stated",
+    "Tool descriptions are 1-2k chars each",
+    "submit_transaction says 'exact strength' but takes no binding_strength argument"
+  ],
+  "verdict": "Yes: a wallet-holding agent with an enrolled signer could complete the purchase with only what was found; every field was known before the clock would start.",
+  "single_most_valuable_change": "Move the headless signer path and the funding figure out of the refusal into agents.md, and make agents.md and the refusal agree on verify before submit.",
+  "log": [
+    "1. GET https://geckovision.tech: start: 307 to www",
+    "2. GET https://www.geckovision.tech/: Link header names /index.md, /llms.txt, /agents.md",
+    "3. GET /llms.txt: names agents.md as the runbook and the MCP endpoint",
+    "4. GET /agents.md: the runbook, the return shape, the verify/submit arguments",
+    "5. GET /index.md: wasted",
+    "6. POST initialize: session id; server 2025-03-26",
+    "7. POST notifications/initialized: 202",
+    "8. POST tools/list: 16 tools",
+    "9. tools/call list_stores {network: mainnet}: geckocoffee, Sparkling water 0.05 USDC",
+    "10. tools/call prepare_purchase (no buyer): signer-required, order_valid true; stop"
+  ]
+}

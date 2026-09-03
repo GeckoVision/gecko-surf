@@ -1,0 +1,56 @@
+{
+  "mission": "geckocoffee-purchase",
+  "version": 1,
+  "checks": [
+    {
+      "id": "menu-in-8",
+      "question": "Store menu with prices reached in 8 requests or fewer, redirects excluded",
+      "lane": "product-engineer"
+    },
+    {
+      "id": "no-html-detour",
+      "question": "Runbook reached without fetching an HTML page that has a machine twin",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "handshake-no-guess",
+      "question": "Raw MCP handshake worked first time from the site's instructions",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "order-before-signer",
+      "question": "Product resolution and price known before any signer step",
+      "lane": "software-engineer"
+    },
+    {
+      "id": "payload-before-clock",
+      "question": "Field names of a successful prepare_purchase known before any clock",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "verify-submit-args",
+      "question": "Arguments of verify_signed_transaction and submit_transaction known before any clock",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "human-enrol-stated",
+      "question": "A document states a human must enrol a signer before an agent can buy",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "keyless-no-clock",
+      "question": "The keyless prepare_purchase is stated to start no clock",
+      "lane": "software-engineer"
+    },
+    {
+      "id": "headless-path-in-docs",
+      "question": "A document (not only the refusal) names a signer path for an agent with no chat window",
+      "lane": "tech-docs-writer"
+    },
+    {
+      "id": "no-retries",
+      "question": "No retries and no failed guesses in the run",
+      "lane": "product-engineer"
+    }
+  ]
+}
