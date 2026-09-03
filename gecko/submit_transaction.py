@@ -222,7 +222,7 @@ SUBMIT_TRANSACTION_TOOL: dict[str, Any] = {
     "description": (
         "Broadcast a SIGNED transaction that Gecko prepared, with the checks and "
         "the rebroadcast loop built in: verifies the bytes against the receipt's "
-        "`binding` (exact strength - refused without it, so this cannot relay "
+        "`binding` from the prepare result (re-verified here at exact strength before anything is sent, and refused without it, so this cannot relay "
         "arbitrary transactions), sends with maxRetries 0, rebroadcasts the same "
         "bytes every ~1.5s (idempotent - same signature) until confirmed or the "
         "block height passes `last_valid_block_height`, and returns {signature, "

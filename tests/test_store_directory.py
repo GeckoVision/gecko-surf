@@ -218,6 +218,25 @@ def test_the_product_filter_matches_substring_case_insensitively() -> None:
     assert unfiltered["product_filter"]["applied"] is False
 
 
+def test_the_store_filter_narrows_to_the_named_store() -> None:
+    rpc = FakeRpc(
+        _rows(
+            ("A1", encode_store("jonasbar", products=[("Water", 100_000, 6)])),
+            ("B1", encode_store("geckocoffee", products=[("Espresso", 100_000, 6)])),
+        )
+    )
+    out = list_stores(rpc_url="http://node", rpc_call=rpc, store="GeckoCoffee")
+    assert [s["store"] for s in out["stores"]] == ["geckocoffee"]
+    assert out["store_filter"] == {
+        "applied": True,
+        "query": "GeckoCoffee",
+        "note": out["store_filter"]["note"],
+    }
+    no_match = list_stores(rpc_url="http://node", rpc_call=rpc, store="nope")
+    assert no_match["stores"] == []
+    assert no_match["store_filter"]["applied"] is True
+
+
 def test_it_asks_for_the_right_program() -> None:
     rpc = FakeRpc([])
     list_stores(rpc_url="http://node", rpc_call=rpc)

@@ -364,8 +364,9 @@ def list_stores(
     rpc_url: str,
     rpc_call: RpcCall | None = None,
     product: str | None = None,
+    store: str | None = None,
 ) -> dict[str, Any]:
-    """Every decodable storefront at ``rpc_url``, optionally filtered by product name.
+    """Every decodable storefront at ``rpc_url``, optionally filtered by product or store name.
 
     Returns a plain dict shaped for the MCP surface: ``stores`` (each with its products
     and prices), ``skipped`` (accounts that did not decode — counted, never guessed at),
@@ -400,6 +401,11 @@ def list_stores(
         if isinstance(product, str) and product.strip()
         else None
     )
+    # A mission usually names the STORE (blind agent, run 3: it pulled twelve stores to
+    # find one). Substring, case-insensitive, like the product filter.
+    store_needle = (
+        store.strip().lower() if isinstance(store, str) and store.strip() else None
+    )
 
     listings: list[StoreListing] = []
     skipped = 0
@@ -412,6 +418,13 @@ def list_stores(
             # Not this layout, or not the shape a node answers with. Counted, not guessed.
             skipped += 1
             continue
+
+    if store_needle is not None:
+        listings = [
+            listing
+            for listing in listings
+            if store_needle in listing.store_name.lower()
+        ]
 
     # ONE read per DISTINCT mint for the whole directory, before any filtering: a menu
     # prices many products in the same mint, and reading it per line item would be a round
@@ -474,6 +487,11 @@ def list_stores(
             "type, or a layout this reader does not know). They are counted so the number "
             "is visible and never guessed at; no store named in `stores` was skipped."
         ),
+        "store_filter": {
+            "applied": store_needle is not None,
+            "query": store,
+            "note": "case-insensitive substring on the store name; nothing else is filtered",
+        },
         "product_filter": {
             "applied": needle is not None,
             "query": product,
@@ -533,8 +551,12 @@ def list_stores_result(
         return {"error": refusal or "no usable rpc_url"}
     product = args.get("product")
     product = product if isinstance(product, str) else None
+    store = args.get("store")
+    store = store if isinstance(store, str) else None
     try:
-        out = list_stores(rpc_url=rpc_url, rpc_call=rpc_call, product=product)
+        out = list_stores(
+            rpc_url=rpc_url, rpc_call=rpc_call, product=product, store=store
+        )
     except RpcError as exc:
         # The failure class only — an RPC error body is untrusted transport output.
         return {"error": f"RpcError: {exc}"}
@@ -580,8 +602,16 @@ LIST_STORES_TOOL: dict[str, Any] = {
                 "type": "string",
                 "enum": sorted(APPROVABLE_NETWORKS),
                 "description": (
-                    "which network to list. YOU say; nothing here infers it from an "
-                    "RPC URL, and there is no default."
+                    "the network to list. Defaults to mainnet when omitted. REQUIRED "
+                    "when you pass `rpc_url`: a node's chain cannot be read from its "
+                    "hostname, so you say it."
+                ),
+            },
+            "store": {
+                "type": "string",
+                "description": (
+                    "optional case-insensitive store-name filter, e.g. 'geckocoffee'; "
+                    "combine with `product` to narrow both"
                 ),
             },
             "product": {
