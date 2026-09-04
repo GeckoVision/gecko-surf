@@ -1223,6 +1223,7 @@ def build_multi_surface_app(
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     require_gecko_key: bool | None = None,
     gated_surfaces: Iterable[str] | None = None,
+    unlisted_surfaces: Iterable[str] | None = None,
     key_gate: KeyGate | None = None,
     key_registry: Any | None = None,
     login_service: Any | None = None,
@@ -1361,6 +1362,17 @@ def build_multi_surface_app(
     # only ever gate MORE surfaces, never fewer, so it is safe in the fail-closed direction.
     gated_folded = None if gated_names is None else {n.casefold() for n in gated_names}
 
+    #: SERVED but never ADVERTISED. Distinct from gating: an unlisted surface needs no
+    #: key and answers normally at /{name}/mcp, so a caller already pointed at it keeps
+    #: working — it simply stops appearing in any discovery door. That is the honest
+    #: shape for a surface we no longer market but have not retired: withdrawing the
+    #: advertisement is ours to do, breaking somebody's integration is not.
+    unlisted_folded = {n.casefold() for n in (unlisted_surfaces or ())}
+
+    def _listed(name: str) -> bool:
+        """One rule for every door: is this surface advertised at all?"""
+        return name not in gated_mounts and name.casefold() not in unlisted_folded
+
     # A gated name this host does not serve is inert BY DESIGN (it lets an operator
     # forward-declare a future paid surface) — but inert must never be SILENT: a typo
     # ("birdye") is indistinguishable from a correct config on the wire, and the end state
@@ -1467,13 +1479,18 @@ def build_multi_surface_app(
     # Late-bind the meta surface's list_surfaces to the PUBLIC entry view —
     # the same gated-mount withholding the index route applies (one rule).
     meta_surface.surface_index = lambda: [
-        e for e in surface_entries if e["name"] not in gated_mounts
+        e for e in surface_entries if _listed(e["name"])
     ]
+
+    # An UNLISTED surface is withheld from everyone, key or no key: not being
+    # marketed is a decision about advertising, not about authorisation, so it
+    # cannot be unlocked by holding a key the way a gated mount can.
+    listed_entries = [e for e in surface_entries if e["name"] not in unlisted_folded]
 
     index = {
         "name": "gecko",
         "description": "Comprehended API surfaces, served agent-native.",
-        "surfaces": surface_entries,
+        "surfaces": listed_entries,
         # The submit-your-API front doors — comprehend and return to the submitter only.
         "submit": {
             "http": _abs(COMPREHEND_PATH),
@@ -1527,7 +1544,7 @@ def build_multi_surface_app(
         if not gated_mounts
         else {
             **index,
-            "surfaces": [e for e in surface_entries if e["name"] not in gated_mounts],
+            "surfaces": [e for e in surface_entries if _listed(e["name"])],
         }
     )
 
@@ -1562,14 +1579,14 @@ def build_multi_surface_app(
     async def _well_known_server_card(request: Request) -> Any:
         # Public entries only — the same withholding as the index and
         # list_surfaces (one rule, three doors).
-        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        names = [e["name"] for e in surface_entries if _listed(e["name"])]
         return JSONResponse(build_server_card(names, public_url))
 
     async def _well_known_ard(request: Request) -> Any:
         # ARD (agenticresourcediscovery.org): what is available for a task, answered
         # BEFORE invocation. Same public-only withholding as the card and the index.
         # CORS is explicit because the spec requires crawlers be able to fetch it.
-        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        names = [e["name"] for e in surface_entries if _listed(e["name"])]
         return JSONResponse(
             build_ard_catalog(names, public_url),
             headers={"access-control-allow-origin": "*"},
@@ -1577,7 +1594,7 @@ def build_multi_surface_app(
 
     async def _host_llms_txt(request: Request) -> Any:
         # The breadcrumb an agent reads first. Public surfaces only — same rule.
-        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        names = [e["name"] for e in surface_entries if _listed(e["name"])]
         return Response(
             build_host_llms_txt(names, public_url),
             media_type="text/plain; charset=utf-8",
@@ -1596,12 +1613,15 @@ def build_multi_surface_app(
 
     async def _well_known_x402(request: Request) -> Any:
         # Honest, control-plane-safe x402 stance: Gecko composes x402, custody none.
-        # Gated surfaces are withheld from anonymous callers on the same rule as the index.
-        visible = (
-            surfaces
-            if _sees_gated(request.scope)
-            else [(n, s) for n, s in surfaces if n not in gated_mounts]
-        )
+        # Gated surfaces are withheld from anonymous callers on the same rule as the
+        # index; an UNLISTED one is withheld from everybody, key or no key, because not
+        # marketing something is not a permission a key can carry.
+        visible = [
+            (n, spec)
+            for n, spec in surfaces
+            if n.casefold() not in unlisted_folded
+            and (_sees_gated(request.scope) or _listed(n))
+        ]
         return JSONResponse(build_x402_manifest(visible, public_url))
 
     # Built once (static per host): both onboarding paths + the canonical doc links.
@@ -1958,13 +1978,15 @@ def serve_multi_http(
     registry_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     gated_surfaces: Iterable[str] | None = None,
+    unlisted_surfaces: Iterable[str] | None = None,
 ) -> None:  # pragma: no cover - exercised by the founder-run live smoke
     """Serve MANY surfaces from one host via uvicorn (each under /{name}). Blocks.
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
     ``block`` default (see ``build_multi_surface_app``). ``registry_routes``,
-    ``background_tasks`` and ``gated_surfaces`` (which mounts the Gecko-key gate applies
-    to) are forwarded unchanged (see ``build_multi_surface_app``)."""
+    ``background_tasks``, ``gated_surfaces`` (which mounts the Gecko-key gate applies
+    to) and ``unlisted_surfaces`` (served, never advertised) are forwarded unchanged
+    (see ``build_multi_surface_app``)."""
     import uvicorn
 
     hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
@@ -1978,5 +2000,6 @@ def serve_multi_http(
         registry_routes=registry_routes,
         background_tasks=background_tasks,
         gated_surfaces=gated_surfaces,
+        unlisted_surfaces=unlisted_surfaces,
     )
     uvicorn.run(app, **_uvicorn_kwargs(host, port))

@@ -153,6 +153,32 @@ PUBLIC_URL = f"https://{PUBLIC_HOST}"
 # overrides this set at deploy time without a code change.
 GATED_SURFACES = frozenset({"birdeye"})
 
+# SERVED but never ADVERTISED. These mounts answer normally — no key, no change for a
+# caller already pointed at one — but they appear in no discovery door: not the index,
+# the server card, the ARD catalog, llms.txt, list_surfaces, or the x402 manifest.
+#
+# The humanitarian mounts came off the marketed catalog without being retired, and we do
+# not know whether anyone still calls them. Withdrawing the advertisement is ours to do;
+# breaking somebody's integration is not, so they keep serving. txline is a showcase
+# demo kept reachable for the material that links to it.
+#
+# `GECKO_UNLISTED_SURFACES` (comma-separated) overrides this at deploy time.
+UNLISTED_SURFACES = frozenset({"reportavnzla", "sosvenezuela", "txline"})
+
+
+def resolve_unlisted_surfaces(default: frozenset[str] = frozenset()) -> frozenset[str]:
+    """Which surfaces are served but never advertised.
+
+    ``GECKO_UNLISTED_SURFACES`` (comma-separated) overrides ``default``. An empty or
+    garbage value falls back to ``default`` rather than to "advertise everything":
+    the fallback can only ever list FEWER surfaces, and a casing slip in an env var
+    should not be what puts an unmarketed mount back in the catalog. Names fold case
+    for the same reason the gate's do.
+    """
+    raw = os.environ.get("GECKO_UNLISTED_SURFACES", "")
+    names = {part.strip().casefold() for part in raw.split(",") if part.strip()}
+    return frozenset(names) if names else default
+
 
 class GateStanceError(RuntimeError):
     """Boot refusal: a DECLARED-PAID surface would be served with the Gecko-key gate OFF.
@@ -565,6 +591,8 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         # Gate ONLY the paid surfaces (env can override; see GATED_SURFACES). Without
         # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.
         gated_surfaces=gated,
+        # Advertised nowhere, still served. See UNLISTED_SURFACES.
+        unlisted_surfaces=resolve_unlisted_surfaces(UNLISTED_SURFACES),
     )
 
 
