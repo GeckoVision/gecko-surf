@@ -266,3 +266,65 @@ def test_ard_catalog_withholds_a_gated_surface() -> None:
     )
     with TestClient(app) as client:
         assert client.get("/.well-known/ai-catalog.json").json()["entries"] == []
+
+
+def test_host_llms_txt_leads_with_when_to_use_and_routes_to_every_surface() -> None:
+    """The breadcrumb an agent reads first.
+
+    A readiness scan called out that generic marketing copy does not read as
+    guidance, so this leads with when to use the host — and, just as usefully,
+    when not to.
+    """
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    app = build_multi_surface_app(
+        [
+            ("jupiter", "gecko/examples/jupiter_swap_openapi.json"),
+            ("orquestra", OrquestraCatalogSurface()),
+        ],
+        allowed_hosts=["testserver"],
+        public_url="https://mcp.example.com",
+    )
+    with TestClient(app) as client:
+        response = client.get("/llms.txt")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        body = response.text
+
+        # llms.txt is a navigation index: heading-led, with markdown links.
+        assert body.startswith("# Gecko")
+        assert "## When to use this" in body
+        # The boundary is stated as plainly as the capability — an agent looking
+        # for custody should leave rather than try.
+        assert "## When not to" in body
+        assert "holds no funds" in body
+        # Every public surface is reachable from here.
+        for name in ("jupiter", "orquestra"):
+            assert f"https://mcp.example.com/{name}/mcp" in body
+        # ...and so is the rest of the discovery surface.
+        assert "/.well-known/mcp/server-card.json" in body
+        assert "/.well-known/ard.json" in body
+        # Comfortably inside the 30k the convention asks for.
+        assert len(body) < 30_000
+
+
+def test_host_llms_txt_withholds_a_gated_surface() -> None:
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.keyregistry import InMemoryKeyRegistry
+
+    app = build_multi_surface_app(
+        [("jupiter", "gecko/examples/jupiter_swap_openapi.json")],
+        allowed_hosts=["testserver"],
+        require_gecko_key=True,
+        gated_surfaces=frozenset({"jupiter"}),
+        key_registry=InMemoryKeyRegistry(),
+    )
+    with TestClient(app) as client:
+        body = client.get("/llms.txt").text
+        assert "jupiter" not in body
+        assert "No public surfaces" in body

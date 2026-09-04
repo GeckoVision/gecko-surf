@@ -210,6 +210,86 @@ def build_ard_catalog(
     return {"entries": entries}
 
 
+def build_host_llms_txt(surface_names: list[str], public_url: str | None) -> str:
+    """The host-root ``/llms.txt`` — the breadcrumb an agent reads FIRST.
+
+    Per-surface ``llms.txt`` files describe one comprehended API; this one
+    describes the host and routes to them. It leads with WHEN TO USE THIS,
+    because an agent that lands here from a search result needs to decide
+    relevance before it decides anything else — a readiness scan called that
+    out, and generic marketing copy does not read as guidance.
+
+    The boundary is stated as plainly as the capability. Gecko composes payment
+    rails and never becomes one, so an agent looking for custody or settlement
+    should leave rather than try — a wrong tool confidently used is the failure
+    this whole surface exists to prevent.
+
+    Gate-filtered names come from the caller: one withholding rule, five doors.
+    """
+    # Deferred import keeps the routes single-sourced without an import cycle,
+    # the same way build_onboard_breadcrumb does it.
+    from .http_server import COMPREHEND_PATH, MCP_PATH
+
+    base = public_url.rstrip("/") if public_url else ""
+
+    def link(path: str) -> str:
+        return f"{base}{path}" if base else path
+
+    lines = [
+        "# Gecko",
+        "",
+        "> Comprehended API surfaces served agent-native over Streamable HTTP:",
+        "> first-call-correct tools, auth injected server-side, refusals that say why.",
+        "",
+        "## When to use this",
+        "",
+        "- You need to call an API you have never called before, correctly on the first",
+        "  try, without reading its docs yourself.",
+        "- You want the accounts, arguments and cost of a call checked BEFORE it is",
+        "  signed or spent, not after.",
+        "- You want to make your own API agent-usable: POST an OpenAPI URL to",
+        f"  [{link(COMPREHEND_PATH)}]({link(COMPREHEND_PATH)}) and get served tools back.",
+        "",
+        "## When not to",
+        "",
+        "- Custody, settlement, or holding funds. Gecko composes payment rails and is",
+        "  not one: it holds no funds, signs nothing, and takes no cut.",
+        "- Discovering third-party APIs to buy. This host serves the surfaces its",
+        "  operator chose to serve; it is not a marketplace.",
+        "",
+        "## Surfaces",
+        "",
+    ]
+    if surface_names:
+        for name in surface_names:
+            url = link(f"/{name}{MCP_PATH}")
+            lines.append(f"- [{name}]({url}): Streamable-HTTP MCP endpoint.")
+            for query in _REPRESENTATIVE_QUERIES.get(name, _GENERIC_QUERIES):
+                lines.append(f"  - ask it: {query}")
+    else:
+        lines.append("- No public surfaces are served on this host right now.")
+    lines += [
+        "",
+        "## Discovery",
+        "",
+        f"- [MCP server card]({link('/.well-known/mcp/server-card.json')}): name, version,"
+        " protocol and tools, readable before opening a session.",
+        f"- [ARD catalog]({link('/.well-known/ard.json')}): what is available for a task"
+        f" (also served at {link('/.well-known/ai-catalog.json')}).",
+        f"- [Host manifest]({link('/.well-known/gecko.json')}): the surfaces and the"
+        " submit door.",
+        f"- [Onboarding]({link('/.well-known/onboard.md')}): how to use a surface, or"
+        " onboard your own.",
+        "",
+        "## Docs",
+        "",
+        f"- [Quickstart]({_DOCS_QUICKSTART})",
+        f"- [For providers]({_DOCS_FOR_PROVIDERS})",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def build_protected_resource_metadata(
     public_url: str | None, gated_surfaces: list[str]
 ) -> dict[str, Any]:

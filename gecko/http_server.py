@@ -1307,6 +1307,7 @@ def build_multi_surface_app(
     from .waf import WafMiddleware
     from .wellknown import (
         build_ard_catalog,
+        build_host_llms_txt,
         build_onboard_breadcrumb,
         build_protected_resource_metadata,
         build_server_card,
@@ -1574,6 +1575,14 @@ def build_multi_surface_app(
             headers={"access-control-allow-origin": "*"},
         )
 
+    async def _host_llms_txt(request: Request) -> Any:
+        # The breadcrumb an agent reads first. Public surfaces only — same rule.
+        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        return Response(
+            build_host_llms_txt(names, public_url),
+            media_type="text/plain; charset=utf-8",
+        )
+
     async def _well_known_prm(request: Request) -> Any:
         # RFC 9728 with the REAL per-surface grant scopes (deny-by-default), the
         # self-serve mint path in agent_auth, and NO fabricated authorization server.
@@ -1795,6 +1804,7 @@ def build_multi_surface_app(
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
         # ARD defines `ard.json`; readiness scanners probe `ai-catalog.json` while
         # citing that same spec. One payload, both names — being found is the point.
+        Route("/llms.txt", endpoint=_host_llms_txt),
         Route("/.well-known/ard.json", endpoint=_well_known_ard),
         Route("/.well-known/ai-catalog.json", endpoint=_well_known_ard),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
