@@ -145,6 +145,71 @@ def build_server_card(
     }
 
 
+#: Natural-language queries a discovery service can vector-match against. ARD asks
+#: for 2-5 per entry; these describe what a surface is actually FOR, in the words
+#: someone would use before they know our vocabulary. Surfaces without an entry
+#: fall back to the generic pair below — never a fabricated claim about the surface.
+_REPRESENTATIVE_QUERIES: dict[str, list[str]] = {
+    "orquestra": [
+        "buy something onchain with USDC on Solana",
+        "what can I order from this Solana storefront",
+        "derive the accounts for a Solana instruction I have never called",
+        "check what this transaction will cost before I sign it",
+    ],
+}
+
+_GENERIC_QUERIES = [
+    "call this API correctly on the first try",
+    "which operation of this API answers my question",
+]
+
+
+def build_ard_catalog(
+    surface_names: list[str], public_url: str | None
+) -> dict[str, Any]:
+    """The Agentic Resource Discovery manifest (agenticresourcediscovery.org).
+
+    ARD sits BEFORE invocation: a client asks "what is available for this task?"
+    and a discovery service answers with matching resources. So each entry says
+    what the surface is for in plain language, and points at the MCP endpoint the
+    client then speaks to natively.
+
+    The caller passes the already-gate-filtered names, so this can never advertise
+    a mount the index withholds — one withholding rule, now four doors.
+
+    Served at BOTH `/.well-known/ard.json` (the path the ARD spec defines) and
+    `/.well-known/ai-catalog.json` (the path readiness scanners actually probe
+    while citing that same spec). One payload, two names, because being
+    discoverable is the whole point of the file.
+    """
+    base = public_url.rstrip("/") if public_url else ""
+    host = base.split("://", 1)[-1] if base else "geckovision.tech"
+
+    entries = [
+        {
+            # urn:air:<domain>:<namespace>:<name>, the domain-anchored URN ARD requires.
+            "identifier": f"urn:air:{host}:mcp:{name}",
+            "displayName": f"Gecko — {name}",
+            "type": "application/mcp-server+json",
+            "url": f"{base}/{name}/mcp" if base else f"/{name}/mcp",
+            "description": (
+                "A comprehended API surface served as first-call-correct MCP tools. "
+                "Auth is injected server-side; a call that cannot be built correctly "
+                "is refused with the reason rather than guessed."
+            ),
+            # `capabilities` is omitted, not emptied. The per-surface tool list lives
+            # behind each remote and is not flattened here, and an empty array would
+            # claim this surface has no capabilities — a fabrication where the honest
+            # answer is "ask the endpoint". A client reads tools/list from `url`.
+            "representativeQueries": _REPRESENTATIVE_QUERIES.get(
+                name, _GENERIC_QUERIES
+            ),
+        }
+        for name in surface_names
+    ]
+    return {"entries": entries}
+
+
 def build_protected_resource_metadata(
     public_url: str | None, gated_surfaces: list[str]
 ) -> dict[str, Any]:

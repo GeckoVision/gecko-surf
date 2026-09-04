@@ -1306,6 +1306,7 @@ def build_multi_surface_app(
     from .mcp_server import MetaComprehendSurface
     from .waf import WafMiddleware
     from .wellknown import (
+        build_ard_catalog,
         build_onboard_breadcrumb,
         build_protected_resource_metadata,
         build_server_card,
@@ -1563,6 +1564,16 @@ def build_multi_surface_app(
         names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
         return JSONResponse(build_server_card(names, public_url))
 
+    async def _well_known_ard(request: Request) -> Any:
+        # ARD (agenticresourcediscovery.org): what is available for a task, answered
+        # BEFORE invocation. Same public-only withholding as the card and the index.
+        # CORS is explicit because the spec requires crawlers be able to fetch it.
+        names = [e["name"] for e in surface_entries if e["name"] not in gated_mounts]
+        return JSONResponse(
+            build_ard_catalog(names, public_url),
+            headers={"access-control-allow-origin": "*"},
+        )
+
     async def _well_known_prm(request: Request) -> Any:
         # RFC 9728 with the REAL per-surface grant scopes (deny-by-default), the
         # self-serve mint path in agent_auth, and NO fabricated authorization server.
@@ -1782,6 +1793,10 @@ def build_multi_surface_app(
         Route("/.well-known/x402.json", endpoint=_well_known_x402),
         Route("/.well-known/x402", endpoint=_well_known_x402),
         Route("/.well-known/onboard.md", endpoint=_well_known_onboard),
+        # ARD defines `ard.json`; readiness scanners probe `ai-catalog.json` while
+        # citing that same spec. One payload, both names — being found is the point.
+        Route("/.well-known/ard.json", endpoint=_well_known_ard),
+        Route("/.well-known/ai-catalog.json", endpoint=_well_known_ard),
         Route(COMPREHEND_PATH, endpoint=_comprehend, methods=["POST"]),
         Route(SERVABLE_PATH, endpoint=_servable, methods=["POST"]),
         # The `gecko add` onboard-ping ingest (see parse_onboard_ping above).
