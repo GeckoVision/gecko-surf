@@ -328,3 +328,94 @@ def test_host_llms_txt_withholds_a_gated_surface() -> None:
         body = client.get("/llms.txt").text
         assert "jupiter" not in body
         assert "No public surfaces" in body
+
+
+def test_an_unlisted_surface_is_served_but_advertised_nowhere() -> None:
+    """Served, never advertised — distinct from gated, which demands a key.
+
+    A surface we stop marketing is not a surface we retire: somebody may still be
+    calling it, and withdrawing the advertisement is ours to do while breaking
+    their integration is not. So the mount answers normally and disappears from
+    every discovery door at once.
+    """
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    app = build_multi_surface_app(
+        [
+            ("jupiter", "gecko/examples/jupiter_swap_openapi.json"),
+            ("orquestra", OrquestraCatalogSurface()),
+        ],
+        allowed_hosts=["testserver"],
+        unlisted_surfaces={"jupiter"},
+        public_url="https://mcp.example.com",
+    )
+    with TestClient(app) as client:
+        # Every door, one rule.
+        doors = {
+            "index": [s["name"] for s in client.get("/").json()["surfaces"]],
+            "gecko.json": [
+                s["name"]
+                for s in client.get("/.well-known/gecko.json").json()["surfaces"]
+            ],
+            "server card": [
+                r["name"]
+                for r in client.get("/.well-known/mcp/server-card.json").json()[
+                    "remotes"
+                ]
+            ],
+            "ard": [
+                e["identifier"].rsplit(":", 1)[-1]
+                for e in client.get("/.well-known/ai-catalog.json").json()["entries"]
+            ],
+            "x402": [
+                s["name"]
+                for s in client.get("/.well-known/x402.json").json()["surfaces"]
+            ],
+        }
+        for door, names in doors.items():
+            assert "jupiter" not in names, (
+                f"{door} still advertises the unlisted surface"
+            )
+            assert "orquestra" in names, f"{door} lost the listed surface"
+        assert "jupiter" not in client.get("/llms.txt").text
+
+        # ...and it still answers, so nobody's integration breaks.
+        initialize = client.post(
+            "/jupiter/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "c", "version": "1"},
+                },
+            },
+            headers={"accept": "application/json, text/event-stream"},
+        )
+        assert initialize.status_code == 200, initialize.text
+
+
+def test_unlisted_env_override_falls_back_rather_than_advertising_everything() -> None:
+    """Garbage in the env must never be what puts an unmarketed mount back on show."""
+    import os
+
+    from gecko.serve_mcp import resolve_unlisted_surfaces
+
+    default = frozenset({"txline"})
+    previous = os.environ.get("GECKO_UNLISTED_SURFACES")
+    try:
+        for value in ("", "   ", ",", ",,,"):
+            os.environ["GECKO_UNLISTED_SURFACES"] = value
+            assert resolve_unlisted_surfaces(default) == default, value
+        os.environ["GECKO_UNLISTED_SURFACES"] = "Foo, BAR"
+        assert resolve_unlisted_surfaces(default) == {"foo", "bar"}
+    finally:
+        if previous is None:
+            os.environ.pop("GECKO_UNLISTED_SURFACES", None)
+        else:
+            os.environ["GECKO_UNLISTED_SURFACES"] = previous
