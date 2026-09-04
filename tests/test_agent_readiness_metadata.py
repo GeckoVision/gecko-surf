@@ -206,3 +206,125 @@ def test_initialize_reports_the_engine_version_not_the_sdk_version() -> None:
         line = next(row for row in text.splitlines() if row.startswith("data:"))
         payload = _json.loads(line[5:])
         assert payload["result"]["serverInfo"]["version"] == __version__
+
+
+def test_ard_catalog_is_served_at_both_probed_paths() -> None:
+    """ARD defines `ard.json`; readiness scanners probe `ai-catalog.json`.
+
+    They cite the same spec and disagree on the filename, so one payload answers
+    both names. A discovery file nobody looks for is not discovery.
+    """
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    app = build_multi_surface_app(
+        [
+            ("jupiter", "gecko/examples/jupiter_swap_openapi.json"),
+            ("orquestra", OrquestraCatalogSurface()),
+        ],
+        allowed_hosts=["testserver"],
+    )
+    with TestClient(app) as client:
+        spec_path = client.get("/.well-known/ard.json")
+        probed = client.get("/.well-known/ai-catalog.json")
+        assert spec_path.status_code == 200
+        assert probed.status_code == 200
+        assert spec_path.json() == probed.json()
+        # Crawlers fetch this cross-origin; the spec requires it be allowed.
+        assert probed.headers["access-control-allow-origin"] == "*"
+
+        entries = probed.json()["entries"]
+        names = {e["identifier"].rsplit(":", 1)[-1] for e in entries}
+        assert names == {"jupiter", "orquestra"}
+        for entry in entries:
+            # The domain-anchored URN the spec requires, not a bare slug.
+            assert entry["identifier"].startswith("urn:air:"), entry
+            assert entry["type"] == "application/mcp-server+json"
+            assert entry["url"].endswith("/mcp")
+            # 2-5 natural-language queries so a discovery service can match on them.
+            assert 2 <= len(entry["representativeQueries"]) <= 5, entry
+            # `capabilities` is omitted rather than emptied: an empty array would
+            # claim the surface has none, and the honest answer is "ask the endpoint".
+            assert "capabilities" not in entry, entry
+
+
+def test_ard_catalog_withholds_a_gated_surface() -> None:
+    """One withholding rule, now four doors: index, card, list_surfaces, ARD."""
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.keyregistry import InMemoryKeyRegistry
+
+    app = build_multi_surface_app(
+        [("jupiter", "gecko/examples/jupiter_swap_openapi.json")],
+        allowed_hosts=["testserver"],
+        require_gecko_key=True,
+        gated_surfaces=frozenset({"jupiter"}),
+        key_registry=InMemoryKeyRegistry(),
+    )
+    with TestClient(app) as client:
+        assert client.get("/.well-known/ai-catalog.json").json()["entries"] == []
+
+
+def test_host_llms_txt_leads_with_when_to_use_and_routes_to_every_surface() -> None:
+    """The breadcrumb an agent reads first.
+
+    A readiness scan called out that generic marketing copy does not read as
+    guidance, so this leads with when to use the host — and, just as usefully,
+    when not to.
+    """
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.providers.catalog_surface import OrquestraCatalogSurface
+
+    app = build_multi_surface_app(
+        [
+            ("jupiter", "gecko/examples/jupiter_swap_openapi.json"),
+            ("orquestra", OrquestraCatalogSurface()),
+        ],
+        allowed_hosts=["testserver"],
+        public_url="https://mcp.example.com",
+    )
+    with TestClient(app) as client:
+        response = client.get("/llms.txt")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        body = response.text
+
+        # llms.txt is a navigation index: heading-led, with markdown links.
+        assert body.startswith("# Gecko")
+        assert "## When to use this" in body
+        # The boundary is stated as plainly as the capability — an agent looking
+        # for custody should leave rather than try.
+        assert "## When not to" in body
+        assert "holds no funds" in body
+        # Every public surface is reachable from here.
+        for name in ("jupiter", "orquestra"):
+            assert f"https://mcp.example.com/{name}/mcp" in body
+        # ...and so is the rest of the discovery surface.
+        assert "/.well-known/mcp/server-card.json" in body
+        assert "/.well-known/ard.json" in body
+        # Comfortably inside the 30k the convention asks for.
+        assert len(body) < 30_000
+
+
+def test_host_llms_txt_withholds_a_gated_surface() -> None:
+    from starlette.testclient import TestClient
+
+    from gecko.http_server import build_multi_surface_app
+    from gecko.keyregistry import InMemoryKeyRegistry
+
+    app = build_multi_surface_app(
+        [("jupiter", "gecko/examples/jupiter_swap_openapi.json")],
+        allowed_hosts=["testserver"],
+        require_gecko_key=True,
+        gated_surfaces=frozenset({"jupiter"}),
+        key_registry=InMemoryKeyRegistry(),
+    )
+    with TestClient(app) as client:
+        body = client.get("/llms.txt").text
+        assert "jupiter" not in body
+        assert "No public surfaces" in body

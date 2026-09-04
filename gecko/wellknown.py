@@ -145,6 +145,154 @@ def build_server_card(
     }
 
 
+#: Natural-language queries a discovery service can vector-match against. ARD asks
+#: for 2-5 per entry; these describe what a surface is actually FOR, in the words
+#: someone would use before they know our vocabulary. Surfaces without an entry
+#: fall back to the generic pair below — never a fabricated claim about the surface.
+_REPRESENTATIVE_QUERIES: dict[str, list[str]] = {
+    "orquestra": [
+        "buy something onchain with USDC on Solana",
+        "what can I order from this Solana storefront",
+        "derive the accounts for a Solana instruction I have never called",
+        "check what this transaction will cost before I sign it",
+    ],
+}
+
+_GENERIC_QUERIES = [
+    "call this API correctly on the first try",
+    "which operation of this API answers my question",
+]
+
+
+def build_ard_catalog(
+    surface_names: list[str], public_url: str | None
+) -> dict[str, Any]:
+    """The Agentic Resource Discovery manifest (agenticresourcediscovery.org).
+
+    ARD sits BEFORE invocation: a client asks "what is available for this task?"
+    and a discovery service answers with matching resources. So each entry says
+    what the surface is for in plain language, and points at the MCP endpoint the
+    client then speaks to natively.
+
+    The caller passes the already-gate-filtered names, so this can never advertise
+    a mount the index withholds — one withholding rule, now four doors.
+
+    Served at BOTH `/.well-known/ard.json` (the path the ARD spec defines) and
+    `/.well-known/ai-catalog.json` (the path readiness scanners actually probe
+    while citing that same spec). One payload, two names, because being
+    discoverable is the whole point of the file.
+    """
+    base = public_url.rstrip("/") if public_url else ""
+    host = base.split("://", 1)[-1] if base else "geckovision.tech"
+
+    entries = [
+        {
+            # urn:air:<domain>:<namespace>:<name>, the domain-anchored URN ARD requires.
+            "identifier": f"urn:air:{host}:mcp:{name}",
+            "displayName": f"Gecko — {name}",
+            "type": "application/mcp-server+json",
+            "url": f"{base}/{name}/mcp" if base else f"/{name}/mcp",
+            "description": (
+                "A comprehended API surface served as first-call-correct MCP tools. "
+                "Auth is injected server-side; a call that cannot be built correctly "
+                "is refused with the reason rather than guessed."
+            ),
+            # `capabilities` is omitted, not emptied. The per-surface tool list lives
+            # behind each remote and is not flattened here, and an empty array would
+            # claim this surface has no capabilities — a fabrication where the honest
+            # answer is "ask the endpoint". A client reads tools/list from `url`.
+            "representativeQueries": _REPRESENTATIVE_QUERIES.get(
+                name, _GENERIC_QUERIES
+            ),
+        }
+        for name in surface_names
+    ]
+    return {"entries": entries}
+
+
+def build_host_llms_txt(surface_names: list[str], public_url: str | None) -> str:
+    """The host-root ``/llms.txt`` — the breadcrumb an agent reads FIRST.
+
+    Per-surface ``llms.txt`` files describe one comprehended API; this one
+    describes the host and routes to them. It leads with WHEN TO USE THIS,
+    because an agent that lands here from a search result needs to decide
+    relevance before it decides anything else — a readiness scan called that
+    out, and generic marketing copy does not read as guidance.
+
+    The boundary is stated as plainly as the capability. Gecko composes payment
+    rails and never becomes one, so an agent looking for custody or settlement
+    should leave rather than try — a wrong tool confidently used is the failure
+    this whole surface exists to prevent.
+
+    Gate-filtered names come from the caller: one withholding rule, five doors.
+    """
+    # Deferred import keeps the routes single-sourced without an import cycle,
+    # the same way build_onboard_breadcrumb does it.
+    from .http_server import COMPREHEND_PATH, MCP_PATH
+
+    base = public_url.rstrip("/") if public_url else ""
+
+    def link(path: str) -> str:
+        return f"{base}{path}" if base else path
+
+    lines = [
+        "# Gecko",
+        "",
+        "> Comprehended API surfaces served agent-native over Streamable HTTP:",
+        "> first-call-correct tools, auth injected server-side, refusals that say why.",
+        "",
+        "## When to use this",
+        "",
+        "- You need to call an API you have never called before, correctly on the first",
+        "  try, without reading its docs yourself.",
+        "- You want the accounts, arguments and cost of a call checked BEFORE it is",
+        "  signed or spent, not after.",
+        "- You want to make your own API agent-usable: POST an OpenAPI URL to",
+        f"  [{link(COMPREHEND_PATH)}]({link(COMPREHEND_PATH)}) and get served tools back.",
+        "",
+        "## When not to",
+        "",
+        "- Custody, settlement, or holding a key. Gecko composes payment rails and is",
+        "  not one: it holds no funds, never signs a transaction, and takes no cut.",
+        "  It DOES inject the API credential at call time, server-side, so the",
+        "  credential never reaches the agent. Transaction signing belongs to your",
+        "  own wallet or signer.",
+        "- Discovering third-party APIs to buy. This host serves the surfaces its",
+        "  operator chose to serve; it is not a marketplace.",
+        "",
+        "## Surfaces",
+        "",
+    ]
+    if surface_names:
+        for name in surface_names:
+            url = link(f"/{name}{MCP_PATH}")
+            lines.append(f"- [{name}]({url}): Streamable-HTTP MCP endpoint.")
+            for query in _REPRESENTATIVE_QUERIES.get(name, _GENERIC_QUERIES):
+                lines.append(f"  - ask it: {query}")
+    else:
+        lines.append("- No public surfaces are served on this host right now.")
+    lines += [
+        "",
+        "## Discovery",
+        "",
+        f"- [MCP server card]({link('/.well-known/mcp/server-card.json')}): name, version,"
+        " protocol and tools, readable before opening a session.",
+        f"- [ARD catalog]({link('/.well-known/ard.json')}): what is available for a task"
+        f" (also served at {link('/.well-known/ai-catalog.json')}).",
+        f"- [Host manifest]({link('/.well-known/gecko.json')}): the surfaces and the"
+        " submit door.",
+        f"- [Onboarding]({link('/.well-known/onboard.md')}): how to use a surface, or"
+        " onboard your own.",
+        "",
+        "## Docs",
+        "",
+        f"- [Quickstart]({_DOCS_QUICKSTART})",
+        f"- [For providers]({_DOCS_FOR_PROVIDERS})",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def build_protected_resource_metadata(
     public_url: str | None, gated_surfaces: list[str]
 ) -> dict[str, Any]:
