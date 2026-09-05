@@ -41,6 +41,11 @@ __all__ = [
 
 DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 _REBROADCAST_EVERY_S = 1.5
+#: Read the block height every Nth tick rather than every one. Skipping a read can
+#: only make the expiry declaration LATER, never earlier — and later is the safe
+#: direction, because `{expired: true, spent: false}` is a claim that no funds moved.
+#: Declaring that early is the one error in this loop that would be a lie.
+_HEIGHT_EVERY = 3
 #: Hard wall-clock cap — the block-height budget is the real stop, this is the
 #: backstop against a stalled RPC keeping the tool call open forever.
 _MAX_SECONDS = 120
@@ -151,23 +156,16 @@ def submit_transaction_result(
     # 3. REBROADCAST UNTIL CONFIRMED OR THE BUDGET IS SPENT. Same bytes, same
     #    signature — idempotent by construction.
     started = clock()
+    ticks = 0
     while clock() - started < _MAX_SECONDS:
-        sleep(_REBROADCAST_EVERY_S)
-        try:
-            call(
-                rpc_url,
-                "sendTransaction",
-                [
-                    transaction,
-                    {"encoding": "base64", "skipPreflight": True, "maxRetries": 0},
-                ],
-            )
-        except RpcError:
-            pass  # a failed rebroadcast is retried next tick; the status poll decides
+        # ASK BEFORE WAITING. The send above may already have landed, and sleeping
+        # first turned a transaction confirmed in 400ms into one reported in ~2.7s —
+        # the wait, then a resend, then finally the question. The poll is the only
+        # call that can end this loop, so it goes first.
         try:
             statuses = call(rpc_url, "getSignatureStatuses", [[signature]])
         except RpcError:
-            continue
+            statuses = {}
         status = ((statuses.get("result") or {}).get("value") or [None])[0]
         if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
             return {
@@ -178,11 +176,17 @@ def submit_transaction_result(
                 "err": status.get("err"),
                 "confirmation_status": status.get("confirmationStatus"),
             }
-        try:
-            height_res = call(rpc_url, "getBlockHeight", [{"commitment": "confirmed"}])
-        except RpcError:
-            continue
-        height = height_res.get("result")
+        # `ticks and ...` skips the read on the first pass: we have just sent, so the
+        # budget cannot have run out yet, and a 600ms round trip here would sit in
+        # front of the fast confirmation the reorder above exists to deliver.
+        height: object = None
+        if ticks and ticks % _HEIGHT_EVERY == 0:
+            try:
+                height = (
+                    call(rpc_url, "getBlockHeight", [{"commitment": "confirmed"}])
+                ).get("result")
+            except RpcError:
+                height = None
         if isinstance(height, int) and height > last_valid + 5:
             return {
                 "refused": False,
@@ -197,6 +201,19 @@ def submit_transaction_result(
                     "sign THOSE — never re-submit these"
                 ),
             }
+        sleep(_REBROADCAST_EVERY_S)
+        try:
+            call(
+                rpc_url,
+                "sendTransaction",
+                [
+                    transaction,
+                    {"encoding": "base64", "skipPreflight": True, "maxRetries": 0},
+                ],
+            )
+        except RpcError:
+            pass  # a failed rebroadcast is retried next tick; the status poll decides
+        ticks += 1
     return {
         "refused": False,
         "confirmed": False,

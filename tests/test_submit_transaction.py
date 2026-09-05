@@ -127,3 +127,58 @@ def test_expiry_is_honest_and_names_the_next_step() -> None:
     )
     assert out["expired"] is True and out["spent"] is False
     assert "never re-submit" in out["reason"]
+
+
+def test_a_transaction_already_landed_is_reported_without_waiting() -> None:
+    """Ask before waiting.
+
+    The loop used to sleep, then rebroadcast, then finally poll — so a transaction
+    confirmed 400ms after the first send was reported roughly 2.7s later, and the
+    resend it did in between was pure waste. The poll is the only call that can end
+    the loop, so it goes first.
+    """
+    tx, binding = _tx_with_binding()
+    call, calls = _fake_rpc(confirm_after=1)
+    slept: list[float] = []
+
+    out = submit_transaction_result(
+        {"transaction": tx, "binding": binding, "last_valid_block_height": 100},
+        rpc_call=call,
+        sleep=lambda seconds: slept.append(seconds),
+    )
+
+    assert out["confirmed"] is True
+    assert slept == [], "a transaction that already landed must not wait a full tick"
+    assert calls["sends"] == 1, "and it must not rebroadcast one it can already see"
+
+
+def test_the_height_read_is_skipped_on_the_first_pass() -> None:
+    """A 600ms round trip must not sit in front of the fast confirmation above.
+
+    Skipping height reads is safe in ONE direction only: it can make the expiry
+    declaration later, never earlier. Declaring expiry early would be the loop's one
+    real lie — `spent: false` asserts that no funds moved.
+    """
+    tx, binding = _tx_with_binding()
+    heights: list[int] = []
+
+    def call(url, method, params):
+        if method == "sendTransaction":
+            return {"result": "SigFake1111"}
+        if method == "getSignatureStatuses":
+            return {"result": {"value": [None]}}
+        if method == "getBlockHeight":
+            heights.append(1)
+            # Expired, so the loop ends as soon as it actually looks.
+            return {"result": 10_000}
+        raise AssertionError(method)
+
+    out = submit_transaction_result(
+        {"transaction": tx, "binding": binding, "last_valid_block_height": 100},
+        rpc_call=call,
+        sleep=lambda _s: None,
+    )
+    assert out["expired"] is True
+    assert out["spent"] is False
+    # Not read on the first pass; read once the loop has actually been round a few times.
+    assert len(heights) == 1, "height is read periodically, not every tick"
