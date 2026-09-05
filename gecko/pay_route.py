@@ -77,9 +77,16 @@ TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 #: again silently.
 SWAP_SLIPPAGE_BPS = 100
 
+#: States where Pegana is telling us something, as opposed to failing to tell us
+#: anything. A block carrying one of these is never downgraded to a warning.
+_PEG_BAD_STATES: frozenset[str] = frozenset(
+    {"DRIFT", "DEPEG", "CRITICAL", "BLACK_SWAN"}
+)
+
 PayOutcome = Literal[
     "payable_now",
     "route_found",
+    "route_found_peg_unverified",
     "pinned_program_mismatch",
     "self_purchase",
     "no_candidates",
@@ -89,6 +96,9 @@ PayOutcome = Literal[
 
 #: Everything that is not an actionable answer. Stated as a set rather than "not in
 #: {payable_now, route_found}" so a new outcome must be classified deliberately.
+#: `route_found_peg_unverified` is deliberately NOT here: a route WAS found and the caller
+#: may act on it knowingly. The caveat rides in the outcome NAME rather than only in a
+#: nested field, because a caller skimming one field must not read it as a clean route.
 BLOCKING: frozenset[str] = frozenset(
     {
         "pinned_program_mismatch",
@@ -333,7 +343,11 @@ class PayabilityReport:
             # the moment of "how do I run this route", the only swap path carrying
             # instructions was the wallet's own aggregator — which consults no venue
             # check and no peg gate. route_found now names the tool.
-            "next_tool": "plan_swap" if self.outcome == "route_found" else None,
+            "next_tool": (
+                "plan_swap"
+                if self.outcome in ("route_found", "route_found_peg_unverified")
+                else None
+            ),
             # The FULL rail, for BOTH good outcomes. next_tool above only ever named
             # plan_swap, so payable_now — the most common good outcome — left the agent
             # pointerless one step from success (the exact failure class again, one
@@ -352,6 +366,35 @@ class PayabilityReport:
 MintOwner = Callable[[str], str]
 #: Keyword-only venue lookup, so a caller cannot silently swap the pair's order.
 VenueFinder = Callable[..., Sequence[Any]]
+
+
+def _staleness_only(verdict: PegVerdict) -> bool:
+    """Does this verdict block because the reading is OLD, rather than because it is BAD?
+
+    The peg guard folds both into `refuse`, and for a CONVERSION that is right: an
+    out-of-date reading and a depeg are equally poor grounds on which to move money.
+
+    But `plan_payment` moves nothing. It reads a wallet, picks a venue and returns a plan
+    — and blocking that on a seven-day-old reading, which is exactly what happened to a
+    blind tester on 2026-09-02, denies the caller an answer without protecting anything,
+    because there is nothing yet to protect. The refusal belongs where bytes are built,
+    and it still lives there.
+
+    The line is ABSENCE versus SIGNAL, and only absence is downgraded:
+
+      * stale, and the state is not one of the bad ones — we HAVE a reading and it is
+        old. Warn, and let the plan through.
+      * DRIFT / DEPEG / CRITICAL / BLACK_SWAN — Pegana is telling us something. Keep
+        refusing, stale or not.
+      * ``undetermined`` — we could not reach the oracle at all. NOT downgraded: silence
+        is not an old reading, it is no reading, and that distinction is the whole reason
+        the four-value vocabulary exists.
+    """
+    if not verdict.blocks or verdict.outcome != "refuse":
+        return False  # `undetermined` is silence, not staleness
+    if verdict.state in _PEG_BAD_STATES:
+        return False
+    return verdict.stale
 
 
 def assess_payment(
@@ -440,8 +483,12 @@ def assess_payment(
             peg_checks=tuple(checks),
         )
 
-    # 5. A conversion INTO a broken peg is refused, whatever the wallet holds.
-    if checks[0].blocks:
+    # 5. A conversion INTO a broken peg is refused, whatever the wallet holds — unless
+    #    the only thing wrong is that the reading is OLD. This call builds nothing, so a
+    #    stale opinion is a caveat to carry, not a reason to withhold the answer. A real
+    #    verdict (DRIFT/DEPEG/CRITICAL/BLACK_SWAN) or an unreachable oracle still refuses.
+    destination_stale_only = _staleness_only(destination_verdict)
+    if checks[0].blocks and not destination_stale_only:
         return report(
             "peg_blocked",
             (
@@ -498,10 +545,16 @@ def assess_payment(
             )
             continue
         return report(
-            "route_found",
+            "route_found_peg_unverified" if destination_stale_only else "route_found",
             (
                 f"convert {quote.amount_in} of {held_mint} into {priced_mint} at pool "
                 f"{quote.pool}, then purchase."
+                + (
+                    f" The peg reading for {priced_mint} is stale, so nothing here "
+                    "vouches for it being on peg right now — check it before converting."
+                    if destination_stale_only
+                    else ""
+                )
             ),
             route=Leg(held_mint, held_raw, quote),
             peg_checks=tuple(checks),

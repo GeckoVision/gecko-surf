@@ -57,7 +57,18 @@ STOPWORDS = frozenset(
         "their its am been being but nor not than too very just really also only ever "
         "again still yet such own same other others each every either neither none few "
         "many most more less all both here now while because so however therefore thing "
-        "things way ways lot lots kind sort about"
+        "things way ways lot lots kind sort about "
+        # Added 2026-09-05 after a measured miss. "I want to buy a coffee. I have USDG,
+        # no SOL." scored WORSE than the same sentence without the last two words: `no`
+        # counted as evidence and lifted the wrong card. `not`, `nor` and `none` were
+        # already here; the shortest one was simply missed.
+        #
+        # HONEST LIMIT: this stops the negation scoring as a term. It does NOT teach the
+        # scorer that "no SOL" means the user LACKS SOL — `sol` still matches, and still
+        # promotes a buy-SOL card alongside the real answer. Reading what somebody says
+        # they are missing as a statement of what they want needs negation handling this
+        # index does not have, and one stopword should not be mistaken for that fix.
+        "no"
     ).split()
 )
 
