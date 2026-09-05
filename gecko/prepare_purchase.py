@@ -982,6 +982,55 @@ SIGNERS_KNOWN_TO_WORK: tuple[dict[str, Any], ...] = (
         ),
     },
     {
+        "name": "Orquestra signer MCP",
+        "call": "sign_transaction, or sign_and_send_transaction",
+        "reaches": "Claude Desktop, Cursor, Claude Code — a local stdio server",
+        "connector": "npx @orquestradev/signer-mcp",
+        "how_to_add": (
+            "a LOCAL server: add it to your client's MCP config. It fronts twelve "
+            "@solana/keychain backends — memory, Turnkey, Privy, Fireblocks, DFNS, "
+            "AWS/GCP KMS, HashiCorp Vault, CDP, Crossmint, Openfort, Para — so a team "
+            "that already has key management keeps it and adds nothing."
+        ),
+        # THE REASON THIS ENTRY EXISTS. Its `sign_transaction` takes an optional
+        # `binding`: a sha256 over the message, compared timing-safely, refusing with
+        # "Nothing was signed." That is the one signer here that can be handed OUR
+        # binding and refuse on it — the check and the signature stop being connected
+        # by nothing but the agent's cooperation.
+        "pass_our_binding": (
+            'pass `binding` (from this result) and `binding_strength: "exact"` to '
+            "sign_transaction. It recomputes the digest over the message and refuses "
+            "if the bytes are not the ones we simulated — verification the signer "
+            "enforces, rather than a step an agent can skip."
+        ),
+        "version_note": (
+            "the published npm package (0.1.3) PREDATES the binding parameter and "
+            "ignores it silently — passing a binding to it neither refuses nor errors. "
+            "Until a release ships it, install from the repository if you want the "
+            "refusal; without it this is a signer like any other here."
+        ),
+        "sequence": [
+            "get_signer_address -> the address that will sign; use it as `buyer`",
+            "prepare_purchase (this tool) once the buyer has chosen",
+            'sign_transaction {transaction, binding, binding_strength: "exact"} — '
+            "it refuses rather than signing bytes we did not simulate",
+            "verify_signed_transaction (Gecko) with the signed bytes and the same "
+            "`binding` — cheap, and it is the check that does not depend on which "
+            "signer produced them",
+            "submit_transaction (Gecko) with the signed bytes, the `binding` and "
+            "`expires.last_valid_block_height` — it re-verifies, sends, and "
+            "rebroadcasts the same bytes until confirmed",
+        ],
+        # sign_and_send_transaction signs AND broadcasts in one call, so Gecko's
+        # verify/submit never run and the rebroadcast loop is gone. Named because an
+        # agent will otherwise find it and prefer it: it is one call instead of three.
+        "prefer_sign_transaction": (
+            "`sign_and_send_transaction` broadcasts in the same call, which skips "
+            "verify_signed_transaction and the rebroadcast budget. Use it only if you "
+            "cannot call submit_transaction, and pass the `binding` either way."
+        ),
+    },
+    {
         "name": "Phantom MCP",
         "call": "signTransaction",
         "reaches": "Claude Desktop, Cursor, Claude Code — not Claude web",
