@@ -76,6 +76,7 @@ from .autonomous_purchase import (
     PurchaseTransportError,
     _with_fresh_blockhash,
 )
+from .effects import describe_effects
 from .handoff import verify_handoff
 from .landing import RPC_COMMITMENT, block_height, latest_blockhash
 from .netguard import UnsafeUrlError, validate_public_url
@@ -84,7 +85,8 @@ from .pda import PdaDerivationError, derive_pda
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
 from .rpc import RpcCall, RpcError, default_rpc_call
-from .simulate import BuildCall, BuiltTx, SimulateError, simulate
+from .simulate import BuildCall, BuiltTx, Receipt, SimulateError, simulate
+from .txbind import TxDecodeError, UnresolvedLookupError, decode_message
 from .wallet_binding import WalletBindingError, WalletDirectory
 
 __all__ = [
@@ -482,6 +484,23 @@ def _diagnose_failed_purchase(
         return None
 
 
+def _effects_field(transaction_base64: str, receipt: Receipt) -> dict[str, Any]:
+    """`{"effects": ...}`, or `{}` when the message cannot be honestly summarised.
+
+    Returns a MAPPING rather than a value so the caller can splat it: a key that is
+    absent says "this was not established", where `"effects": null` would say "it does
+    nothing", and those are different claims about a transaction somebody is about to
+    sign.
+    """
+    try:
+        decoded = decode_message(transaction_base64, encoding="base64")
+    except (TxDecodeError, UnresolvedLookupError):
+        # UnresolvedLookupError is the lookup-table case and is expected, not exceptional:
+        # those addresses are not in the bytes, so nothing here may describe them.
+        return {}
+    return {"effects": describe_effects(decoded, receipt).as_dict()}
+
+
 def _account_plan(
     accounts: Mapping[str, str], program: ProgramSpec
 ) -> list[dict[str, Any]]:
@@ -852,6 +871,14 @@ def _prepare(
         "args": instruction_args,
         "fee_payer": buyer,
         "accounts": _account_plan(accounts, program),
+        # WHAT THESE BYTES DO, before anybody signs them. `accounts` says what the
+        # transaction touches; this says what it MOVES, composed from the message we
+        # bound and the movements the simulation observed — never from the arguments the
+        # caller passed us, which are a description of intent rather than evidence of it.
+        # Absent when the message cannot be decoded (a v0 lookup table carries no binding
+        # and no honest summary either), because a sentence written about bytes we could
+        # not read would be a guess wearing a decoder's authority.
+        **_effects_field(handoff.transaction_base64, receipt),
         "transaction": {
             "signed": False,
             "encoding": "base64",
