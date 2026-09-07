@@ -262,3 +262,41 @@ def test_the_tool_declares_what_it_needs_and_holds_nothing() -> None:
             secret in name.lower()
             for secret in ("key", "token", "secret", "seed", "password", "auth")
         ), name
+
+
+def test_a_partly_signed_two_signer_transaction_is_not_reported_as_signed() -> None:
+    """One filled slot out of two is a transaction that cannot land.
+
+    The check read slot 0 alone, which is correct only while the buyer IS the fee
+    payer. Under a paymaster co-signing (so the buyer needs no SOL), slot 0 becomes
+    the fee payer's — and a transaction missing the BUYER's signature would have read
+    as signed, then been rejected by the node with no cause named.
+    """
+    import base64
+
+    from gecko.verify_signed import _carries_a_signature
+
+    body = b"\x80" + b"\x01" * 64  # a stand-in message; only the slots matter here
+    both = base64.b64encode(bytes([2]) + b"\xaa" * 64 + b"\xbb" * 64 + body).decode()
+    first_only = base64.b64encode(
+        bytes([2]) + b"\xaa" * 64 + b"\x00" * 64 + body
+    ).decode()
+    second_only = base64.b64encode(
+        bytes([2]) + b"\x00" * 64 + b"\xbb" * 64 + body
+    ).decode()
+
+    assert _carries_a_signature(both) is True
+    assert _carries_a_signature(first_only) is False, "slot 0 filled is not enough"
+    assert _carries_a_signature(second_only) is False, "nor is any single slot"
+
+
+def test_a_truncated_transaction_is_not_reported_as_signed() -> None:
+    """A count promising more slots than the bytes carry is not a signed transaction."""
+    import base64
+
+    from gecko.verify_signed import _carries_a_signature
+
+    truncated = base64.b64encode(
+        bytes([2]) + b"\xaa" * 64
+    ).decode()  # promises 2, has 1
+    assert _carries_a_signature(truncated) is False

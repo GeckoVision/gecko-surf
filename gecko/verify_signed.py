@@ -281,12 +281,22 @@ def _is_binding(value: str) -> bool:
 
 
 def _carries_a_signature(transaction: str) -> bool:
-    """Is the first signature slot non-empty?
+    """Is EVERY required signature slot non-empty?
 
     Deliberately NOT a signature verification: checking an ed25519 signature needs the
     signer's public key, and a substituted transaction supplies its own. The binding is
-    what proves WHICH message; this proves only that somebody filled the slot. The two
+    what proves WHICH message; this proves only that somebody filled the slots. The two
     together are the claim — either alone is not.
+
+    IT USED TO CHECK SLOT 0 ALONE, which was correct only by coincidence: today the
+    buyer IS the fee payer, so slot 0 is the authorising signature. The moment a
+    transaction carries a separate fee payer — a paymaster co-signing so the buyer needs
+    no SOL — slot 0 becomes the fee payer's and a transaction missing the BUYER's
+    signature would read as signed. It cannot land, so this was never a way to move
+    money; it was a way to be told "verified" and then get a bare rejection from the
+    node, which is the "names no cause, offers no remedy" failure this module exists to
+    prevent. Counting the slots the header actually requires costs nothing and is right
+    under either shape.
     """
     try:
         raw = base64.b64decode(transaction, validate=True)
@@ -297,8 +307,15 @@ def _carries_a_signature(transaction: str) -> bool:
     count = raw[0]  # a compact-u16 below 128 is one byte; a real tx never exceeds it
     if count == 0 or count > 127:
         return False
-    first = raw[1 : 1 + _SIGNATURE_BYTES]
-    return len(first) == _SIGNATURE_BYTES and any(first)
+    end = 1 + count * _SIGNATURE_BYTES
+    if len(raw) < end:
+        return False  # truncated: fewer bytes than the count promises
+    slots = [
+        raw[1 + index * _SIGNATURE_BYTES : 1 + (index + 1) * _SIGNATURE_BYTES]
+        for index in range(count)
+    ]
+    # `all`, not `any`: one filled slot out of two is a transaction that cannot land.
+    return all(any(slot) for slot in slots)
 
 
 VERIFY_SIGNED_TOOL: dict[str, Any] = {
