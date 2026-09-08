@@ -1,8 +1,8 @@
-"""Screenplay — "we said it would cost 36,508 before it happened" (the mainnet cut).
+"""Screenplay — "we said it would cost 48,409 before it happened" (the mainnet cut).
 
 The first three demos ended at a simulation. This one ends on chain.
 
-A real purchase — 0.1 USDC of water at a real bar, from a real agentic wallet — was
+A real purchase — 0.1 USDC of espresso at a real coffee shop, from a real agentic wallet — was
 verified by Gecko, signed by the wallet, and landed on Solana mainnet. The take does two
 things live: it re-runs the pre-flight against mainnet, and it reads the transaction that
 actually landed. The compute units on both sides are read off the wire during the
@@ -49,12 +49,12 @@ from screenplay import BOLD, CYAN, GREEN, RESET, YELLOW, clear, out, put  # noqa
 
 RPC = os.environ["GECKO_MAINNET_RPC"]
 #: The transaction this demo is about. Public, and checkable by anyone.
-SIGNATURE = "5cjBs5VE8WVVctG2EoUkYiRkW92sXkoT4YsNxszWC9CE3sK7triTJ5vnY6TrcQ2BRPYUtWsd3LtTnyieUfn8Hw2Y"
-WALLET = "3HrXPry37q5bcaa5C3m543bHLShpMxu7LF4KbRjBJN4i"
+SIGNATURE = "3oXRbDYNWbjHcU8ana66BE3NkUnZUrQ1YwT9D5kjCE6uuficgdtD4s6DBNGFJWESSbFSjRShMPRadSjfjo5qDzKE"
+WALLET = "9cJbQKxxqCbumpoeb7YWC3QESzFD8LxpbHVAXrTUsPfh"
 #: The storefront and the item this take re-prices live. A NAME, not three addresses: the
 #: accounts are resolved from it (gecko/store_accounts.py).
-STORE = "jonasbar"
-PRODUCT = "Water"
+STORE = "geckocoffee"
+PRODUCT = "Espresso"
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
 
 
@@ -99,7 +99,7 @@ def _build() -> dict:
 
 # ---------------------------------------------------------------- scene 1
 out(f"{BOLD}An agent is about to spend real money.{RESET}", pause=0.5)
-out("0.1 USDC. A bottle of water, at a bar that takes crypto.", pause=0.7)
+out("0.1 USDC. An espresso, at a coffee shop that takes crypto.", pause=0.7)
 out("Small — and once it is signed, it is gone.", pause=0.9)
 out()
 out(f"{CYAN}$ # ask first: what does this call actually do?{RESET}", 0.02)
@@ -113,6 +113,7 @@ _receipt = simulate(
         tx=_built["serializedTransaction"], encoding=_built.get("encoding", "base58")
     ),
     replace_blockhash=False,
+    network="mainnet",
     network_label="simulated against LIVE mainnet (read-only, unsigned)",
 )
 
@@ -132,6 +133,7 @@ _verdict = evaluate_tx(
     _receipt,
     encoding=_built.get("encoding", "base58"),
     require="exact",
+    expected_network="mainnet",
 )
 put(f"{YELLOW}The receipt is bound to THIS message. Not one like it.{RESET}", pause=1.6)
 
@@ -197,7 +199,7 @@ _post = {
 for _i in sorted(set(_pre) | set(_post)):
     _delta = _post.get(_i, 0) - _pre.get(_i, 0)
     if abs(_delta) > 1e-9:
-        _who = "the buyer " if _delta < 0 else "the bar   "
+        _who = "the buyer " if _delta < 0 else "the shop  "
         put(f"  {_who} {_delta:+.2f} USDC", pause=0.4)
 put()
 
