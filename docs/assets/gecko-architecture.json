@@ -2,251 +2,147 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Gecko \u2014 the verification path",
-    "subtitle": "Arazzo says what an endpoint can do. We show how it acts \u2014 dynamically, never mocked.",
+    "title": "Where Gecko sits",
+    "subtitle": "It reads the surface, prepares the call, and checks it. It never holds a key.",
     "visual_preset": "signal-flow",
     "quality_profile": "showcase"
   },
   "components": [
     {
-      "id": "specs",
-      "type": "external",
-      "label": "Provider specs",
-      "sublabel": "OpenAPI 3.1 \u00b7 Arazzo 1.1 \u00b7 Gecko",
-      "pos": [
-        30,
-        90
-      ],
-      "size": [
-        230,
-        64
-      ]
-    },
-    {
-      "id": "ingest",
-      "type": "backend",
-      "label": "Ingest",
-      "sublabel": "re-runs on every change",
-      "pos": [
-        360,
-        90
-      ],
-      "size": [
-        160,
-        64
-      ]
-    },
-    {
-      "id": "graph",
-      "type": "database",
-      "label": "Context graph",
-      "sublabel": "provenance on every claim",
-      "pos": [
-        630,
-        90
-      ],
-      "size": [
-        170,
-        64
-      ]
-    },
-    {
-      "id": "rehearse",
-      "type": "security",
-      "label": "Rehearse",
-      "sublabel": "on a fork, for real",
-      "pos": [
-        920,
-        90
-      ],
-      "size": [
-        160,
-        64
-      ]
-    },
-    {
-      "id": "page",
-      "type": "cloud",
-      "label": "Surface page",
-      "sublabel": "provider owns it",
-      "pos": [
-        630,
-        250
-      ],
-      "size": [
-        170,
-        64
-      ]
-    },
-    {
-      "id": "score",
-      "type": "backend",
-      "label": "Observe & verify",
-      "sublabel": "what actually moved",
-      "pos": [
-        920,
-        250
-      ],
-      "size": [
-        160,
-        64
-      ],
-      "tag": "the verdict"
-    },
-    {
-      "id": "persist",
-      "type": "external",
-      "label": "Persist?",
-      "sublabel": "undecided \u2014 see note",
-      "pos": [
-        1160,
-        250
-      ],
-      "size": [
-        150,
-        64
-      ],
-      "tag": "open question"
-    },
-    {
-      "id": "surface",
-      "type": "frontend",
-      "label": "Context injection",
-      "sublabel": "tools \u00b7 auth hidden",
-      "pos": [
-        350,
-        410
-      ],
-      "size": [
-        160,
-        64
-      ]
-    },
-    {
-      "id": "gate",
-      "type": "security",
-      "label": "Gate & refuse",
-      "sublabel": "order \u00b7 window \u00b7 signing",
-      "pos": [
-        630,
-        410
-      ],
-      "size": [
-        170,
-        64
-      ]
-    },
-    {
-      "id": "act",
-      "type": "backend",
-      "label": "Action",
-      "sublabel": "unsigned bytes + receipt",
-      "pos": [
-        920,
-        410
-      ],
-      "size": [
-        160,
-        64
-      ]
-    },
-    {
       "id": "agent",
       "type": "external",
-      "label": "The agent",
-      "sublabel": "calls \u00b7 signs \u00b7 never ours",
+      "label": "Your agent",
+      "sublabel": "one sentence",
       "pos": [
-        1160,
-        410
+        40,
+        260
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "comprehend",
+      "type": "backend",
+      "label": "Comprehend",
+      "sublabel": "the real surface",
+      "pos": [
+        270,
+        260
       ],
       "size": [
         150,
+        64
+      ]
+    },
+    {
+      "id": "prepare",
+      "type": "backend",
+      "label": "Prepare",
+      "sublabel": "unsigned bytes + receipt",
+      "pos": [
+        540,
+        260
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "signer",
+      "type": "security",
+      "label": "Your signer",
+      "sublabel": "holds the key",
+      "pos": [
+        570,
+        80
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "not us"
+    },
+    {
+      "id": "verify",
+      "type": "security",
+      "label": "Verify",
+      "sublabel": "same bytes we checked",
+      "pos": [
+        810,
+        260
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "chain",
+      "type": "cloud",
+      "label": "Solana mainnet",
+      "sublabel": "it lands, or it does not",
+      "pos": [
+        1070,
+        260
+      ],
+      "size": [
+        170,
         64
       ]
     }
   ],
   "boundaries": [
     {
-      "kind": "region",
-      "label": "Build loop \u2014 ours, unattended",
-      "wraps": [
-        "ingest",
-        "graph",
-        "rehearse",
-        "score"
-      ]
-    },
-    {
       "kind": "security-group",
-      "label": "Run loop \u2014 the agent's harness",
+      "label": "Gecko \u2014 no key, ever",
       "wraps": [
-        "surface",
-        "gate",
-        "act"
+        "comprehend",
+        "prepare",
+        "verify"
       ]
     }
   ],
   "connections": [
     {
-      "id": "c1",
-      "from": "specs",
-      "to": "ingest",
-      "label": "on every update"
-    },
-    {
-      "id": "c2",
-      "from": "ingest",
-      "to": "graph"
-    },
-    {
-      "id": "c3",
-      "from": "graph",
-      "to": "rehearse"
-    },
-    {
-      "id": "c4",
-      "from": "rehearse",
-      "to": "score"
-    },
-    {
-      "id": "c5",
-      "from": "score",
-      "to": "page",
-      "label": "score"
-    },
-    {
-      "id": "c6",
-      "from": "page",
-      "to": "surface"
-    },
-    {
-      "id": "c7",
-      "from": "surface",
-      "to": "gate"
-    },
-    {
-      "id": "c8",
-      "from": "gate",
-      "to": "act"
-    },
-    {
-      "id": "c9",
-      "from": "act",
-      "to": "agent"
-    },
-    {
-      "id": "c10",
-      "from": "score",
-      "to": "gate",
-      "label": "verify before act",
+      "id": "ask",
+      "from": "agent",
+      "to": "comprehend",
+      "label": "what I want",
       "variant": "emphasis"
     },
     {
-      "id": "c11",
-      "from": "agent",
-      "to": "persist",
-      "label": "worth storing?",
-      "variant": "dashed"
+      "id": "route",
+      "from": "comprehend",
+      "to": "prepare",
+      "label": "the route"
+    },
+    {
+      "id": "handover",
+      "from": "prepare",
+      "to": "signer",
+      "label": "unsigned",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "signed",
+      "from": "signer",
+      "to": "verify",
+      "label": "signed",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "submit",
+      "from": "verify",
+      "to": "chain",
+      "label": "submit",
+      "variant": "emphasis"
     }
   ]
 }

@@ -11,8 +11,8 @@ the screen recording plays.
 > **What we do.** Gecko makes it check first. We say what a transaction will do before
 > anyone signs it. And we refuse when we cannot vouch for something.
 >
-> **The proof.** This week we ran five transactions on Solana mainnet. Every one, we
-> predicted the cost before signing. All five landed exact.
+> **The proof.** This week we ran eleven transactions on Solana mainnet. Every one, we
+> predicted the cost before signing. All eleven landed exact.
 >
 > **What is next.** The app, and our first design partners onboarding.
 
@@ -27,7 +27,7 @@ the screen recording plays.
 ### Swaps, if a beat feels flat
 
 - Opening: *"An agent that can spend money should not be guessing what it costs."*
-- Proof: *"Five for five, and the number we said beforehand is the number the chain charged."*
+- Proof: *"Eleven for eleven, and the number we said beforehand is the number the chain charged."*
 
 ---
 

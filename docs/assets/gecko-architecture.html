@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.13.0">
-  <title>Gecko — the verification path Diagram</title>
+  <title>Where Gecko sits Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -4496,9 +4496,9 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>Gecko — the verification path</h1>
+        <h1>Where Gecko sits</h1>
       </div>
-      <p class="subtitle">Arazzo says what an endpoint can do. We show how it acts — dynamically, never mocked.</p>
+      <p class="subtitle">It reads the surface, prepares the call, and checks it. It never holds a key.</p>
     </div>
 
     <script id="archify-guided-views-data" type="application/json">[]</script>
@@ -4544,9 +4544,9 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read">
-      <svg viewBox="0 0 1350 562" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="signal-flow" data-quality-profile="showcase">
-        <title id="archify-diagram-title">Gecko — the verification path</title>
-        <desc id="archify-diagram-description">Arazzo says what an endpoint can do. We show how it acts — dynamically, never mocked.</desc>
+      <svg viewBox="0 0 1280 412" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="signal-flow" data-quality-profile="showcase">
+        <title id="archify-diagram-title">Where Gecko sits</title>
+        <desc id="archify-diagram-description">It reads the surface, prepares the call, and checks it. It never holds a key.</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -4570,209 +4570,127 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="330" y="60" width="780" height="274" rx="12" class="c-region" stroke-width="1"/>
-        <text x="338" y="78" class="t-cloud" font-size="9" font-weight="600">Build loop — ours, unattended</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" x="320" y="380" width="790" height="114" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="328" y="398" class="t-security" font-size="9" font-weight="600">Run loop — the agent&#39;s harness</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="0" x="240" y="230" width="770" height="114" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="248" y="248" class="t-security" font-size="9" font-weight="600">Gecko — no key, ever</text>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="specs" data-edge-to="ingest" data-edge-label="on every update" data-edge-key="0" data-edge-id="c1" data-composition-points="260,122;360,122" d="M 260 122 L 360 122" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="ingest" data-edge-to="graph" data-edge-key="1" data-edge-id="c2" data-composition-points="520,122;630,122" d="M 520 122 L 630 122" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="graph" data-edge-to="rehearse" data-edge-key="2" data-edge-id="c3" data-composition-points="800,122;920,122" d="M 800 122 L 920 122" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="rehearse" data-edge-to="score" data-edge-key="3" data-edge-id="c4" data-composition-points="1000,154;1000,250" d="M 1000 154 L 1000 250" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="score" data-edge-to="page" data-edge-label="score" data-edge-key="4" data-edge-id="c5" data-composition-points="920,275;896,275;896,298;824,298;824,282;800,282" d="M 920 275 L 904 275 Q 896 275 896 283 L 896 290 Q 896 298 888 298 L 832 298 Q 824 298 824 290 L 824 290 Q 824 282 816 282 L 800 282" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="page" data-edge-to="surface" data-edge-key="5" data-edge-id="c6" data-composition-points="630,282;570,282;570,435;510,435" d="M 630 282 L 578 282 Q 570 282 570 290 L 570 427 Q 570 435 562 435 L 510 435" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="surface" data-edge-to="gate" data-edge-key="6" data-edge-id="c7" data-composition-points="510,449;534,449;534,465;606,465;606,442;630,442" d="M 510 449 L 526 449 Q 534 449 534 457 L 534 457 Q 534 465 542 465 L 598 465 Q 606 465 606 457 L 606 450 Q 606 442 614 442 L 630 442" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="gate" data-edge-to="act" data-edge-key="7" data-edge-id="c8" data-composition-points="800,449;824,449;824,465;896,465;896,442;920,442" d="M 800 449 L 816 449 Q 824 449 824 457 L 824 457 Q 824 465 832 465 L 888 465 Q 896 465 896 457 L 896 450 Q 896 442 904 442 L 920 442" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="act" data-edge-to="agent" data-edge-key="8" data-edge-id="c9" data-composition-points="1080,442;1160,442" d="M 1080 442 L 1160 442" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="score" data-edge-to="gate" data-edge-label="verify before act" data-edge-key="9" data-edge-id="c10" data-composition-points="920,289;860,289;860,435;800,435" d="M 920 289 L 868 289 Q 860 289 860 297 L 860 427 Q 860 435 852 435 L 800 435" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="agent" data-edge-to="persist" data-edge-label="worth storing?" data-edge-key="10" data-edge-id="c11" data-composition-points="1235,410;1235,314" d="M 1235 410 L 1235 314" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="agent" data-edge-to="comprehend" data-edge-label="what I want" data-edge-key="0" data-edge-id="ask" data-composition-points="180,292;270,292" d="M 180 292 L 270 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="comprehend" data-edge-to="prepare" data-edge-label="the route" data-edge-key="1" data-edge-id="route" data-composition-points="420,292;540,292" d="M 420 292 L 540 292" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="prepare" data-edge-to="signer" data-edge-label="unsigned" data-edge-key="2" data-edge-id="handover" data-composition-points="625,260;625,202;645,202;645,144" d="M 625 260 L 625 210 Q 625 202 633 202 L 637 202 Q 645 202 645 194 L 645 144" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="signer" data-edge-to="verify" data-edge-label="signed" data-edge-key="3" data-edge-id="signed" data-composition-points="720,112;895,112;895,260" d="M 720 112 L 887 112 Q 895 112 895 120 L 895 260" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="verify" data-edge-to="chain" data-edge-label="submit" data-edge-key="4" data-edge-id="submit" data-composition-points="980,292;1070,292" d="M 980 292 L 1070 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Components -->
-        <g id="node-specs" data-node-id="specs" data-node-label="Provider specs" tabindex="0" role="button" aria-label="Focus Provider specs, OpenAPI 3.1 · Arazzo 1.1 · Gecko, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="OpenAPI 3.1 · Arazzo 1.1 · Gecko" data-node-context="Architecture component">
-          <title>Provider specs · OpenAPI 3.1 · Arazzo 1.1 · Gecko · Architecture component</title>
-          <rect x="30" y="90" width="230" height="64" rx="6" class="c-mask"/>
-          <rect x="30" y="90" width="230" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(36 96) scale(0.6875)">
+        <g id="node-agent" data-node-id="agent" data-node-label="Your agent" tabindex="0" role="button" aria-label="Focus Your agent, one sentence, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="one sentence" data-node-context="Architecture component">
+          <title>Your agent · one sentence · Architecture component</title>
+          <rect x="40" y="260" width="140" height="64" rx="6" class="c-mask"/>
+          <rect x="40" y="260" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 266) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-detail-anchor x="145" y="120" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Provider specs</text>
-        <text data-detail="context" x="145" y="136" class="t-muted" font-size="9" text-anchor="middle">OpenAPI 3.1 · Arazzo 1.1 · Gecko</text>
+          <text data-detail-anchor x="110" y="290" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Your agent</text>
+        <text data-detail="context" x="110" y="306" class="t-muted" font-size="9" text-anchor="middle">one sentence</text>
         </g>
 
-        <g id="node-ingest" data-node-id="ingest" data-node-label="Ingest" tabindex="0" role="button" aria-label="Focus Ingest, re-runs on every change, Build loop — ours, unattended" aria-pressed="false" data-node-kind="backend" data-node-sublabel="re-runs on every change" data-node-context="Build loop — ours, unattended">
-          <title>Ingest · re-runs on every change · Build loop — ours, unattended</title>
-          <rect x="360" y="90" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="360" y="90" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(366 96) scale(0.6875)">
+        <g id="node-comprehend" data-node-id="comprehend" data-node-label="Comprehend" tabindex="0" role="button" aria-label="Focus Comprehend, the real surface, Gecko — no key, ever" aria-pressed="false" data-node-kind="backend" data-node-sublabel="the real surface" data-node-context="Gecko — no key, ever">
+          <title>Comprehend · the real surface · Gecko — no key, ever</title>
+          <rect x="270" y="260" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="270" y="260" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(276 266) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="440" y="120" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Ingest</text>
-        <text data-detail="context" x="440" y="136" class="t-muted" font-size="9" text-anchor="middle">re-runs on every change</text>
+          <text data-detail-anchor x="345" y="290" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Comprehend</text>
+        <text data-detail="context" x="345" y="306" class="t-muted" font-size="9" text-anchor="middle">the real surface</text>
         </g>
 
-        <g id="node-graph" data-node-id="graph" data-node-label="Context graph" tabindex="0" role="button" aria-label="Focus Context graph, provenance on every claim, Build loop — ours, unattended" aria-pressed="false" data-node-kind="database" data-node-sublabel="provenance on every claim" data-node-context="Build loop — ours, unattended">
-          <title>Context graph · provenance on every claim · Build loop — ours, unattended</title>
-          <rect x="630" y="90" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="630" y="90" width="170" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(636 96) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+        <g id="node-prepare" data-node-id="prepare" data-node-label="Prepare" tabindex="0" role="button" aria-label="Focus Prepare, unsigned bytes + receipt, Gecko — no key, ever" aria-pressed="false" data-node-kind="backend" data-node-sublabel="unsigned bytes + receipt" data-node-context="Gecko — no key, ever">
+          <title>Prepare · unsigned bytes + receipt · Gecko — no key, ever</title>
+          <rect x="540" y="260" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="540" y="260" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(546 266) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="715" y="120" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Context graph</text>
-        <text data-detail="context" x="715" y="136" class="t-muted" font-size="9" text-anchor="middle">provenance on every claim</text>
+          <text data-detail-anchor x="625" y="290" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Prepare</text>
+        <text data-detail="context" x="625" y="306" class="t-muted" font-size="9" text-anchor="middle">unsigned bytes + receipt</text>
         </g>
 
-        <g id="node-rehearse" data-node-id="rehearse" data-node-label="Rehearse" tabindex="0" role="button" aria-label="Focus Rehearse, on a fork, for real, Build loop — ours, unattended" aria-pressed="false" data-node-kind="security" data-node-sublabel="on a fork, for real" data-node-context="Build loop — ours, unattended">
-          <title>Rehearse · on a fork, for real · Build loop — ours, unattended</title>
-          <rect x="920" y="90" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="920" y="90" width="160" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(926 96) scale(0.6875)">
+        <g id="node-signer" data-node-id="signer" data-node-label="Your signer" tabindex="0" role="button" aria-label="Focus Your signer, holds the key, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="holds the key" data-node-tag="not us" data-node-context="Architecture component">
+          <title>Your signer · holds the key · Architecture component · not us</title>
+          <rect x="570" y="80" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="570" y="80" width="150" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(576 86) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-detail-anchor x="1000" y="120" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Rehearse</text>
-        <text data-detail="context" x="1000" y="136" class="t-muted" font-size="9" text-anchor="middle">on a fork, for real</text>
+          <text data-detail-anchor x="645" y="110" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Your signer</text>
+        <text data-detail="context" x="645" y="126" class="t-muted" font-size="9" text-anchor="middle">holds the key</text>
+        <text data-detail="fine" x="645" y="136" class="t-security" font-size="7" text-anchor="middle">not us</text>
         </g>
 
-        <g id="node-page" data-node-id="page" data-node-label="Surface page" tabindex="0" role="button" aria-label="Focus Surface page, provider owns it, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="provider owns it" data-node-context="Architecture component">
-          <title>Surface page · provider owns it · Architecture component</title>
-          <rect x="630" y="250" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="630" y="250" width="170" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(636 256) scale(0.6875)">
+        <g id="node-verify" data-node-id="verify" data-node-label="Verify" tabindex="0" role="button" aria-label="Focus Verify, same bytes we checked, Gecko — no key, ever" aria-pressed="false" data-node-kind="security" data-node-sublabel="same bytes we checked" data-node-context="Gecko — no key, ever">
+          <title>Verify · same bytes we checked · Gecko — no key, ever</title>
+          <rect x="810" y="260" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="810" y="260" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(816 266) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-detail-anchor x="895" y="290" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify</text>
+        <text data-detail="context" x="895" y="306" class="t-muted" font-size="9" text-anchor="middle">same bytes we checked</text>
+        </g>
+
+        <g id="node-chain" data-node-id="chain" data-node-label="Solana mainnet" tabindex="0" role="button" aria-label="Focus Solana mainnet, it lands, or it does not, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="it lands, or it does not" data-node-context="Architecture component">
+          <title>Solana mainnet · it lands, or it does not · Architecture component</title>
+          <rect x="1070" y="260" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1070" y="260" width="170" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1076 266) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-detail-anchor x="715" y="280" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Surface page</text>
-        <text data-detail="context" x="715" y="296" class="t-muted" font-size="9" text-anchor="middle">provider owns it</text>
-        </g>
-
-        <g id="node-score" data-node-id="score" data-node-label="Observe &amp; verify" tabindex="0" role="button" aria-label="Focus Observe &amp; verify, what actually moved, Build loop — ours, unattended" aria-pressed="false" data-node-kind="backend" data-node-sublabel="what actually moved" data-node-tag="the verdict" data-node-context="Build loop — ours, unattended">
-          <title>Observe &amp; verify · what actually moved · Build loop — ours, unattended · the verdict</title>
-          <rect x="920" y="250" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="920" y="250" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(926 256) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="1000" y="280" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Observe &amp; verify</text>
-        <text data-detail="context" x="1000" y="296" class="t-muted" font-size="9" text-anchor="middle">what actually moved</text>
-        <text data-detail="fine" x="1000" y="306" class="t-backend" font-size="7" text-anchor="middle">the verdict</text>
-        </g>
-
-        <g id="node-persist" data-node-id="persist" data-node-label="Persist?" tabindex="0" role="button" aria-label="Focus Persist?, undecided — see note, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="undecided — see note" data-node-tag="open question" data-node-context="Architecture component">
-          <title>Persist? · undecided — see note · Architecture component · open question</title>
-          <rect x="1160" y="250" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1160" y="250" width="150" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1166 256) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1235" y="280" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Persist?</text>
-        <text data-detail="context" x="1235" y="296" class="t-muted" font-size="9" text-anchor="middle">undecided — see note</text>
-        <text data-detail="fine" x="1235" y="306" class="t-external" font-size="7" text-anchor="middle">open question</text>
-        </g>
-
-        <g id="node-surface" data-node-id="surface" data-node-label="Context injection" tabindex="0" role="button" aria-label="Focus Context injection, tools · auth hidden, Run loop — the agent&#39;s harness" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="tools · auth hidden" data-node-context="Run loop — the agent&#39;s harness">
-          <title>Context injection · tools · auth hidden · Run loop — the agent&#39;s harness</title>
-          <rect x="350" y="410" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="350" y="410" width="160" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(356 416) scale(0.6875)">
-            <rect x="2" y="3" width="12" height="10" rx="2"/>
-            <path d="M2 6.5h12"/>
-            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
-            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
-          </g>
-          <text data-detail-anchor x="430" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Context injection</text>
-        <text data-detail="context" x="430" y="456" class="t-muted" font-size="9" text-anchor="middle">tools · auth hidden</text>
-        </g>
-
-        <g id="node-gate" data-node-id="gate" data-node-label="Gate &amp; refuse" tabindex="0" role="button" aria-label="Focus Gate &amp; refuse, order · window · signing, Run loop — the agent&#39;s harness" aria-pressed="false" data-node-kind="security" data-node-sublabel="order · window · signing" data-node-context="Run loop — the agent&#39;s harness">
-          <title>Gate &amp; refuse · order · window · signing · Run loop — the agent&#39;s harness</title>
-          <rect x="630" y="410" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="630" y="410" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(636 416) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-detail-anchor x="715" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Gate &amp; refuse</text>
-        <text data-detail="context" x="715" y="456" class="t-muted" font-size="9" text-anchor="middle">order · window · signing</text>
-        </g>
-
-        <g id="node-act" data-node-id="act" data-node-label="Action" tabindex="0" role="button" aria-label="Focus Action, unsigned bytes + receipt, Run loop — the agent&#39;s harness" aria-pressed="false" data-node-kind="backend" data-node-sublabel="unsigned bytes + receipt" data-node-context="Run loop — the agent&#39;s harness">
-          <title>Action · unsigned bytes + receipt · Run loop — the agent&#39;s harness</title>
-          <rect x="920" y="410" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="920" y="410" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(926 416) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="1000" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Action</text>
-        <text data-detail="context" x="1000" y="456" class="t-muted" font-size="9" text-anchor="middle">unsigned bytes + receipt</text>
-        </g>
-
-        <g id="node-agent" data-node-id="agent" data-node-label="The agent" tabindex="0" role="button" aria-label="Focus The agent, calls · signs · never ours, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="calls · signs · never ours" data-node-context="Architecture component">
-          <title>The agent · calls · signs · never ours · Architecture component</title>
-          <rect x="1160" y="410" width="150" height="64" rx="6" class="c-mask"/>
-          <rect x="1160" y="410" width="150" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1166 416) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-detail-anchor x="1235" y="440" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">The agent</text>
-        <text data-detail="context" x="1235" y="456" class="t-muted" font-size="9" text-anchor="middle">calls · signs · never ours</text>
+          <text data-detail-anchor x="1155" y="290" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Solana mainnet</text>
+        <text data-detail="context" x="1155" y="306" class="t-muted" font-size="9" text-anchor="middle">it lands, or it does not</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="specs" data-edge-to="ingest" data-edge-label="on every update" data-edge-key="0" data-edge-id="c1">
-          <rect x="269" y="102" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="310" y="112" class="t-muted" font-size="8" text-anchor="middle">on every update</text>
+        <g data-detail="context" data-edge-from="agent" data-edge-to="comprehend" data-edge-label="what I want" data-edge-key="0" data-edge-id="ask">
+          <rect x="193.6" y="272" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="225" y="282" class="t-backend" font-size="8" text-anchor="middle">what I want</text>
         </g>
-
-
-
-        <g data-detail="context" data-edge-from="score" data-edge-to="page" data-edge-label="score" data-edge-key="4" data-edge-id="c5">
-          <rect x="879" y="266.5" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="896" y="276.5" class="t-muted" font-size="8" text-anchor="middle">score</text>
+        <g data-detail="context" data-edge-from="comprehend" data-edge-to="prepare" data-edge-label="the route" data-edge-key="1" data-edge-id="route">
+          <rect x="453.4" y="272" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="480" y="282" class="t-muted" font-size="8" text-anchor="middle">the route</text>
         </g>
-
-
-
-
-        <g data-detail="context" data-edge-from="score" data-edge-to="gate" data-edge-label="verify before act" data-edge-key="9" data-edge-id="c10">
-          <rect x="814.2" y="342" width="91.6" height="14" rx="3" class="c-mask"/>
-          <text x="860" y="352" class="t-backend" font-size="8" text-anchor="middle">verify before act</text>
+        <g data-detail="context" data-edge-from="prepare" data-edge-to="signer" data-edge-label="unsigned" data-edge-key="2" data-edge-id="handover">
+          <rect x="610.8" y="182" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="635" y="192" class="t-security" font-size="8" text-anchor="middle">unsigned</text>
         </g>
-        <g data-detail="context" data-edge-from="agent" data-edge-to="persist" data-edge-label="worth storing?" data-edge-key="10" data-edge-id="c11">
-          <rect x="1196.4" y="390" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="1235" y="400" class="t-messagebus" font-size="8" text-anchor="middle">worth storing?</text>
+        <g data-detail="context" data-edge-from="signer" data-edge-to="verify" data-edge-label="signed" data-edge-key="3" data-edge-id="signed">
+          <rect x="875.6" y="166" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="895" y="176" class="t-security" font-size="8" text-anchor="middle">signed</text>
+        </g>
+        <g data-detail="context" data-edge-from="verify" data-edge-to="chain" data-edge-label="submit" data-edge-key="4" data-edge-id="submit">
+          <rect x="1005.6" y="272" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="1025" y="282" class="t-backend" font-size="8" text-anchor="middle">submit</text>
         </g>
 
         <!-- Legend -->
         <g data-legend data-legend-bridge>
-          <text x="40" y="526" class="t-primary" font-size="10" font-weight="600">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="546" data-legend-width="82">
-            <rect x="40" y="538" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-            <text x="61" y="546" class="t-muted" font-size="8">Frontend</text>
+          <text x="40" y="376" class="t-primary" font-size="10" font-weight="600">Legend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="40" data-legend-baseline="396" data-legend-width="77">
+            <rect x="40" y="388" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="61" y="396" class="t-muted" font-size="8">Backend</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="144" data-legend-baseline="546" data-legend-width="77">
-            <rect x="144" y="538" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="165" y="546" class="t-muted" font-size="8">Backend</text>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud" data-legend-x="139" data-legend-baseline="396" data-legend-width="67">
+            <rect x="139" y="388" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+            <text x="160" y="396" class="t-muted" font-size="8">Cloud</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="243" data-legend-baseline="546" data-legend-width="82">
-            <rect x="243" y="538" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="264" y="546" class="t-muted" font-size="8">Database</text>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="228" data-legend-baseline="396" data-legend-width="82">
+            <rect x="228" y="388" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="249" y="396" class="t-muted" font-size="8">Security</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud" data-legend-x="347" data-legend-baseline="546" data-legend-width="67">
-            <rect x="347" y="538" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
-            <text x="368" y="546" class="t-muted" font-size="8">Cloud</text>
-          </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="436" data-legend-baseline="546" data-legend-width="82">
-            <rect x="436" y="538" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-            <text x="457" y="546" class="t-muted" font-size="8">Security</text>
-          </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="540" data-legend-baseline="546" data-legend-width="82">
-            <rect x="540" y="538" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-            <text x="561" y="546" class="t-muted" font-size="8">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="332" data-legend-baseline="396" data-legend-width="82">
+            <rect x="332" y="388" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="353" y="396" class="t-muted" font-size="8">External</text>
           </g>
         </g>
       </svg>

@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gecko — weekly, 8 September 2026</title>
+<style>
+  :root{
+    --ink:#1b1a18; --muted:#6b6862; --rule:#e4e1db; --ground:#faf9f7;
+    --panel:#fff; --accent:#c05a34; --good:#2f7d5f;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme=light]){
+      --ink:#eceae6; --muted:#a3a09a; --rule:#33322f; --ground:#1a1917;
+      --panel:#232220; --accent:#e08a63; --good:#69b894;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+       font:16px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:56px 24px 96px}
+  header{border-bottom:1px solid var(--rule);padding-bottom:28px;margin-bottom:44px}
+  .eyebrow{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+           letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+  h1{font-size:38px;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;text-wrap:balance}
+  .lede{font-size:19px;color:var(--muted);margin:0;max-width:62ch}
+  h2{font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+     letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+     margin:52px 0 18px;font-weight:600}
+  figure{margin:0}
+  video,.shot{width:100%;display:block;border:1px solid var(--rule);border-radius:10px;background:#000}
+  .shot{background:var(--panel)}
+  figcaption{font-size:14px;color:var(--muted);margin-top:12px}
+  a{color:var(--accent)}
+  .grid{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+        border-radius:10px;overflow:hidden;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+  .cell{background:var(--panel);padding:18px 20px}
+  .n{font:700 27px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+     font-variant-numeric:tabular-nums;display:block;margin-bottom:6px}
+  .cell small{color:var(--muted);font-size:13px;line-height:1.45;display:block}
+  blockquote{margin:0;padding:20px 24px;background:var(--panel);
+             border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:8px}
+  blockquote p{margin:0 0 14px}blockquote p:last-child{margin:0}
+  blockquote b{color:var(--accent)}
+  .warn{border-left-color:var(--good)}
+  ul{padding-left:20px;color:var(--muted)}li{margin:7px 0}
+  li b{color:var(--ink)}
+  footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);
+         font-size:13px;color:var(--muted)}
+</style>
+<div class="wrap">
+<header>
+  <p class="eyebrow">Weekly · 8 September 2026</p>
+  <h1>An agent bought a coffee, and we never held a key</h1>
+  <p class="lede">One sentence in. Gecko read the shop's real surface, worked out the wallet
+  was short, derived a swap nobody chose, and prepared the bytes. A separate signer signed
+  them. Both transactions landed on Solana mainnet.</p>
+</header>
+
+<h2>The take</h2>
+<figure>
+  <video controls preload="metadata" poster="weekly-paybox-coffee.thumb.png">
+    <source src="weekly-paybox-coffee.mp4" type="video/mp4">
+  </video>
+  <figcaption>8.7s, one unedited run against the hosted MCP. Every number was read off the
+  wire during the recording.</figcaption>
+</figure>
+
+<h2>Where Gecko sits</h2>
+<figure>
+  <img class="shot" src="gecko-architecture-2026-09-08.png"
+       alt="Your agent asks Gecko, which comprehends the surface and prepares unsigned bytes with a receipt. A separate signer, outside Gecko's boundary, holds the key and signs. Gecko verifies the signed bytes match what it checked, then submits to Solana mainnet.">
+  <figcaption>The dashed boundary is the whole product decision: comprehension and
+  verification sit inside it, the key sits outside.
+  <a href="gecko-architecture.html">Open the interactive version →</a></figcaption>
+</figure>
+
+<h2>What is checkable</h2>
+<div class="grid">
+  <div class="cell"><span class="n">11</span><small>mainnet transactions today, all predicted before signing and exact on chain</small></div>
+  <div class="cell"><span class="n">20 / 20</span><small>compute predicted before signing, exact on chain, with its denominator</small></div>
+  <div class="cell"><span class="n">2</span><small>design partners in conversation, neither from the waitlist</small></div>
+  <div class="cell"><span class="n">1 · 0</span><small>waitlist signups · users on the app</small></div>
+</div>
+
+<h2>The 30 seconds</h2>
+<blockquote>
+  <p><b>The problem.</b> Point an AI agent at an API and it guesses. Which call to make,
+  which account, what it will cost. When money moves, a guess is expensive.</p>
+  <p><b>What we do.</b> Gecko makes it check first. We say what a transaction will do before
+  anyone signs it. And we refuse when we cannot vouch for something.</p>
+  <p><b>The proof.</b> This week we ran eleven transactions on Solana mainnet. Every one, we
+  predicted the cost before signing, and every one was exact.</p>
+  <p><b>What is next.</b> The app, and our first design partners onboarding.</p>
+</blockquote>
+
+<h2>Not claimed</h2>
+<ul>
+  <li><b>The agent did not sign.</b> Gecko prepared; a separate signer signed. Say "it was
+  signed", never imply Gecko did it.</li>
+  <li><b>Nothing here is gasless.</b> The signer held the key; it did not sponsor the fee.</li>
+  <li><b>Eleven landed, twenty are verified.</b> All eleven were predicted before signing
+  and exact on chain. Only five were written to our ledger with a recorded prediction; the
+  six the agent landed went through the hosted surface, which does not write it, so they
+  matched when read back by hand but do not join the running count.</li>
+  <li><b>One waitlist signup is not one lead.</b> We do not know she is an API provider.</li>
+  <li><b>Design partners are not customers.</b> Willingness to pay is unvalidated, and
+  neither partner is named here without asking them first.</li>
+</ul>
+
+<footer>Assets in <code>docs/assets/</code>. Script and cue sheet in
+<code>demo/kit/weekly-script.md</code>. Diagram spec:
+<code>gecko-architecture.json</code>, 9 of 9 showcase checks, 0 errors.</footer>
+</div>
