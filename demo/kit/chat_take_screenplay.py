@@ -157,10 +157,34 @@ def main() -> int:
             parts.append((line[i:], ui, INK))
         return parts or [(line, ui, INK)]
 
-    body = [ln for ln in answer.splitlines()]
-    ans_lines = []
-    for ln in body:
-        ans_lines.extend(wrap(B58.sub(lambda m: m.group()[:6] + "…", ln), ui, (W - 130) * S) if ln.strip() else [""])
+    # Markdown tables become real tables. A pipe row is a row; the |---| rule is dropped.
+    def is_row(ln):
+        t = ln.strip()
+        return t.startswith("|") and t.endswith("|") and t.count("|") >= 3
+    def cells(ln):
+        return [c.strip() for c in ln.strip().strip("|").split("|")]
+
+    ans_lines, i = [], 0
+    body = answer.splitlines()
+    while i < len(body):
+        ln = body[i]
+        if is_row(ln):
+            block = []
+            while i < len(body) and is_row(body[i]):
+                c = cells(body[i])
+                if not all(set(x) <= set("-: ") for x in c):
+                    block.append([B58.sub(lambda m: m.group()[:6] + "…", x) for x in c])
+                i += 1
+            CAP = 9   # header + 8 rows; a 20-row menu owns the whole frame otherwise
+            if len(block) > CAP:
+                hidden = len(block) - CAP
+                block = block[:CAP] + [[f"… and {hidden} more", ""][: len(block[0])]]
+            ans_lines.append(("table", block))
+            continue
+        clean = B58.sub(lambda m: m.group()[:6] + "…", ln)
+        for w_ in (wrap(clean, ui, (W - 130) * S) if ln.strip() else [""]):
+            ans_lines.append(("text", w_))
+        i += 1
 
     def frame(n_rows, n_ans):
         img = Image.new("RGB", (W * S, H * S), BG)
@@ -173,7 +197,10 @@ def main() -> int:
             blocks.append(("rows", min(n_rows, len(steps)), min(n_rows, len(steps)) * ROW + 22 * S))
         if n_ans > 0:
             shown = ans_lines[:n_ans]
-            blocks.append(("ans", shown, len(shown) * 25 * S + 10 * S))
+            h = 0
+            for kind_, payload in shown:
+                h += (len(payload) * 30 * S + 18 * S) if kind_ == "table" else 25 * S
+            blocks.append(("ans", shown, h + 10 * S))
         total = sum(h for _, _, h in blocks)
         y = 40 * S + min(0, (H - 80) * S - total)
         for kind, data, h in blocks:
@@ -206,11 +233,37 @@ def main() -> int:
                         x += scratch.textlength("Failed", font=small) + 10 * S
                     d.text((x, ry + 9 * S), "›", font=small, fill=DIM)
             else:
-                for j, l in enumerate(data):
-                    x = PAD
-                    for txt, fnt, col in segments(l):
-                        d.text((x, y + j * 25 * S), txt, font=fnt, fill=col)
-                        x += scratch.textlength(txt, font=fnt)
+                yy = y
+                for kind_, payload in data:
+                    if kind_ == "table":
+                        ncol = max(len(r) for r in payload)
+                        widths = [
+                            max(scratch.textlength((r[c] if c < len(r) else "").strip("`").replace("**", ""), font=ui_b) for r in payload) + 34 * S
+                            for c in range(ncol)
+                        ]
+                        th = len(payload) * 30 * S
+                        d.rounded_rectangle([PAD, yy, PAD + sum(widths), yy + th], 8 * S,
+                                            fill=BOX, outline=RULE, width=S)
+                        for ri, row in enumerate(payload):
+                            ry = yy + ri * 30 * S
+                            if ri:
+                                d.line([(PAD, ry), (PAD + sum(widths), ry)], fill=RULE, width=S)
+                            cx = PAD + 16 * S
+                            for ci in range(ncol):
+                                txt = row[ci] if ci < len(row) else ""
+                                code = txt.startswith("`") and txt.endswith("`") and len(txt) > 1
+                                txt = txt.strip("`").replace("**", "")
+                                fnt = ui_b if ri == 0 else (mono if code else ui)
+                                d.text((cx, ry + (7 if not code or ri == 0 else 9) * S), txt,
+                                       font=fnt, fill=INK if ri == 0 else CHIP)
+                                cx += widths[ci]
+                        yy += th + 18 * S
+                    else:
+                        x = PAD
+                        for txt, fnt, col in segments(payload):
+                            d.text((x, yy), txt, font=fnt, fill=col)
+                            x += scratch.textlength(txt, font=fnt)
+                        yy += 25 * S
             y += h
         return img
 

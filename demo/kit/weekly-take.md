@@ -122,7 +122,7 @@ waitlist signup, and we do not know whether she is even an API provider. Two des
 partners, both from conversations the founder started himself. **Neither came from the
 waitlist.**
 
-    5 mainnet transactions today. Compute predicted before signing, exact on chain.
+    9 mainnet transactions today. Compute predicted before signing, exact on chain.
     Verified-exact record: 20 of 20.
     2 design partners in conversation, neither from the waitlist. Onboarding starts this week.
     Waitlist: 1. Users on the app: 0.
@@ -144,6 +144,15 @@ Rules that govern those four lines:
 - **The compute record carries its denominator.** 18 of 18, never 53 of 53: 15 rows have no
   recorded prediction and the rest are predicted but not re-read from the chain.
 - Cohort size is still unconfirmed by the founder, so it is not on the card.
+- **"9 today" and "20 of 20 verified" count different things, and both are true.** Nine
+  landed. Five were written to `docs/mainnet-ledger.jsonl` by our own scripts with a
+  recorded prediction, and those five take the verified record from 15 to 20. The other
+  four were landed by the AGENT through the hosted surface, which does not write our
+  ledger — their compute figures matched on chain when read back by hand, but they carry
+  no recorded prediction, so they do not join the verified count. That is the
+  post-broadcast verification gap in
+  `docs/specs/2026-09-08-agent-ready-gaps-from-the-mainnet-run.md`, demonstrated the same
+  day it was written.
 - **Never name a design partner on screen without asking them first.** One of the two is
   waiting to onboard and has not agreed to be named publicly. "2 design partners in
   conversation" carries the same information and needs nobody's permission. Naming an
