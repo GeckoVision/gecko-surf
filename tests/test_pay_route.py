@@ -528,3 +528,89 @@ def test_a_blocked_report_has_no_next_steps() -> None:
     )
     assert report.blocks is True
     assert report.to_dict()["next_steps"] is None
+
+
+#: Tracked, read, and OLD — the shape USDG and USDC actually returned. Absence of a
+#: fresh opinion, not a bad one.
+STALE = PegReading(
+    tracked=True,
+    symbol="X",
+    state_body={"state": "UNKNOWN", "stale": True, "state_reason": "stale_source"},
+)
+#: Old AND bad. Staleness must not launder a real verdict into a warning.
+STALE_AND_DEPEGGED = PegReading(
+    tracked=True, symbol="X", state_body={"state": "DEPEG", "stale": True}
+)
+
+
+def test_a_stale_reading_warns_on_a_read_only_plan_instead_of_blocking_it() -> None:
+    """`plan_payment` builds nothing, so a seven-day-old reading must not withhold the
+    answer. Measured: a blind tester on 2026-09-02 got `peg_blocked` with empty holdings
+    because Pegana's USDC reading was stale, and had to open a second MCP session just
+    to discover a mint address."""
+    store = _Store(mint=USDC)
+    venue = pay_route.Quote(
+        pool="pool111",
+        amount_in=200_000,
+        direction="a_to_b",
+        liquidity=10**9,
+        tick_spacing=64,
+        fee_rate=300,
+    )
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: STALE, USDG: PEGGED}),
+        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
+    )
+    assert report.outcome == "route_found_peg_unverified"
+    assert report.route is not None, "the caller gets the plan"
+    assert report.blocks is False
+    assert "stale" in report.reason, "and is told, in the outcome and in the reason"
+
+
+def test_the_caveated_route_still_points_at_the_next_tool() -> None:
+    """A route the caller may act on knowingly must not be a dead end."""
+    store = _Store(mint=USDC)
+    venue = pay_route.Quote(
+        pool="pool111",
+        amount_in=200_000,
+        direction="a_to_b",
+        liquidity=10**9,
+        tick_spacing=64,
+        fee_rate=300,
+    )
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: STALE, USDG: PEGGED}),
+        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
+    )
+    assert report.to_dict()["next_tool"] == "plan_swap"
+
+
+def test_a_real_depeg_still_refuses_even_when_the_reading_is_also_stale() -> None:
+    """Staleness downgrades ABSENCE of a signal, never a signal. A DEPEG that happens to
+    be old is still Pegana telling us something."""
+    store = _Store(mint=USDC)
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: STALE_AND_DEPEGGED, USDG: PEGGED}),
+    )
+    assert report.outcome == "peg_blocked"
+    assert report.route is None
+
+
+def test_an_unreachable_oracle_still_refuses() -> None:
+    """Silence is not an old reading, it is no reading. `undetermined` is never
+    downgraded — that distinction is why the four-value vocabulary exists."""
+    unreachable = PegReading(tracked=None, error="ConnectionError")
+    store = _Store(mint=USDC)
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: unreachable, USDG: PEGGED}),
+    )
+    assert report.outcome == "peg_blocked"
+    assert report.route is None
