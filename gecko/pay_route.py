@@ -517,7 +517,11 @@ def assess_payment(
     for held_mint, held_raw in candidates:
         verdict = verdict_from_reading(held_mint, peg_reader(held_mint))
         checks.append(PegCheck.of(verdict, "candidate"))
-        if verdict.blocks:
+        # The SAME downgrade the destination gets, on the mint we would sell. Applying it
+        # to one side only is what produced "every mint this wallet could convert from has
+        # a peg verdict that blocks" on 2026-09-08, when both readings were merely old.
+        candidate_stale_only = _staleness_only(verdict)
+        if verdict.blocks and not candidate_stale_only:
             # Skip THIS mint, not the wallet — another holding may be sound.
             peg_refused += 1
             rejected.append(Leg(held_mint, held_raw, None, verdict.reason))
@@ -544,15 +548,24 @@ def assess_payment(
                 )
             )
             continue
+        unverified = [
+            mint
+            for mint, is_stale in (
+                (priced_mint, destination_stale_only),
+                (held_mint, candidate_stale_only),
+            )
+            if is_stale
+        ]
         return report(
-            "route_found_peg_unverified" if destination_stale_only else "route_found",
+            "route_found_peg_unverified" if unverified else "route_found",
             (
                 f"convert {quote.amount_in} of {held_mint} into {priced_mint} at pool "
                 f"{quote.pool}, then purchase."
                 + (
-                    f" The peg reading for {priced_mint} is stale, so nothing here "
-                    "vouches for it being on peg right now — check it before converting."
-                    if destination_stale_only
+                    f" The peg reading for {' and '.join(unverified)} is stale, so "
+                    "nothing here vouches for it being on peg right now — check it "
+                    "before converting."
+                    if unverified
                     else ""
                 )
             ),

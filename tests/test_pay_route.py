@@ -614,3 +614,48 @@ def test_an_unreachable_oracle_still_refuses() -> None:
     )
     assert report.outcome == "peg_blocked"
     assert report.route is None
+
+
+def test_a_stale_candidate_is_downgraded_too_not_only_a_stale_destination() -> None:
+    """The 2026-09-08 case, measured against live Pegana: BOTH mints read stale.
+
+    `_staleness_only` was applied to the destination and never to the candidates, so a
+    wallet whose only holding had an old reading got `peg_blocked` — "every mint this
+    wallet could convert from has a peg verdict that blocks" — while the destination's
+    identical staleness was correctly waved through. One rule, applied on one side.
+
+    A real depeg on the candidate still refuses; that is the next test.
+    """
+    store = _Store(mint=USDC)
+    venue = pay_route.Quote(
+        pool="pool111",
+        amount_in=200_000,
+        direction="a_to_b",
+        liquidity=10**9,
+        tick_spacing=64,
+        fee_rate=300,
+    )
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: STALE, USDG: STALE}),
+        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
+    )
+    assert report.outcome == "route_found_peg_unverified", report.reason
+    assert report.route is not None, (
+        "an old reading on the source is still not a signal"
+    )
+    assert report.blocks is False
+
+
+def test_a_depegged_candidate_still_refuses_even_when_the_destination_is_fine() -> None:
+    """The downgrade is for ABSENCE of a signal. A DEPEG on the mint we would SELL is a
+    signal, and selling into it is the loss the guard exists to prevent."""
+    store = _Store(mint=USDC)
+    report, *_ = _assess(
+        store=store,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        peg=recorded_peg_reader({USDC: PEGGED, USDG: STALE_AND_DEPEGGED}),
+    )
+    assert report.outcome == "peg_blocked"
+    assert report.route is None
