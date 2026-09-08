@@ -29,6 +29,12 @@ zero install** — and the live path is what finally emits usage telemetry (toda
 
 ### Tier 0 — the hero: one line, zero install (the anti-bounce)
 
+> **Status 2026-09-07.** `txline` is still served but is *unlisted* since #515
+> (`UNLISTED_SURFACES` in `gecko/serve_mcp.py`), so the hero below works and is
+> advertised nowhere. `docs/specs/2026-09-07-onboarding-catalog-and-autonomous-agents.md`
+> proposes the root `/mcp` aggregator as the front door and a listed, keyless hero
+> (`jupiter`) in its place; the bundled `skills/mcp.json` changes only with that ruling.
+
 ```
 claude mcp add --transport http gecko-txline https://mcp.geckovision.tech/txline/mcp
 ```
@@ -81,6 +87,9 @@ The README's "your own API" section leads with `uvx`, mentions `pip install` onl
 as the contributor/library path.
 
 ## The one open decision: aggregator vs per-surface
+
+> **2026-09-07:** the aggregator is now proposed as the front door, not V2. See
+> `docs/specs/2026-09-07-onboarding-catalog-and-autonomous-agents.md`, section (a).
 
 Today each `claude mcp add` wires **one** surface. Two directions:
 
