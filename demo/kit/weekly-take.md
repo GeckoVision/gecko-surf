@@ -67,6 +67,44 @@ uv run --with pyte --with pillow python demo/kit/render_cast.py \
   --scene "Gecko — unsigned|Gecko never holds a key"
 ```
 
+## The signer, wired (2026-09-08)
+
+There are TWO PayBox paths and they are not interchangeable. The claude.ai **connector**
+signs through an in-chat window that cannot render headlessly, so a request there parks at
+`pending_signature` forever — that is what the first take hit, and it is a property of the
+path, not a fault. The **SDK** path signs in-process in about a second and is what landed
+mainnet tx #24, #25 and #26.
+
+Until now no agent could reach the working one. `gecko-app/scripts/paybox-mcp.mjs` is a
+local stdio MCP server that gives it a door: `paybox_wallet` returns the address PayBox
+will sign for, and `paybox_sign_solana` signs unsigned bytes and returns them. It **never
+broadcasts**, and it refuses any transaction whose fee payer is not the PayBox wallet —
+the same rule `gecko/signer.py` applies locally.
+
+Proven end to end on 2026-09-08: prepared a real Whirlpool swap (46,197 CU, binding
+`3f5110af…` exact), signed it through the server, and `verify_signed` came back
+`verified: True, binding_matches: True` — byte-identical over its message to the one the
+receipt attested. The wrong-wallet refusal was tested too, and fires.
+
+Wallet `GpaLFMwQWh2xuBkMQGKmcYT5A1WgYJekofu6DJjp8W9c`, funded 2026-09-08 with 0.3 USDG
+plus the 0.059352 USDC and 0.022895 SOL it already held. Both token accounts exist, so no
+rent surprise.
+
+To record the take with it, add the server alongside gecko-store and allow its two tools.
+It needs `PAYBOX_TOKEN` and `PAYBOX_SIGNIN_KEY` in its environment, from
+`gecko-app/.env.local`, and they must never reach the cast:
+
+```json
+{"mcpServers":{
+  "gecko-store":{"type":"http","url":"https://mcp.geckovision.tech/orquestra/mcp"},
+  "paybox":{"command":"node","args":["scripts/paybox-mcp.mjs"],"cwd":"../gecko-app"}}}
+```
+
+**Residual, stated rather than hidden:** the signer does not re-derive the binding, so it
+cannot tell a prepared transaction from any other well-formed one with the same fee payer.
+The binding check lives on the Gecko side, before and after. Do not move it into the signer
+and call that a gate.
+
 ## Where the take ends, and the open decision
 
 The gecko-store surface has **no signer**, so a headless agent physically cannot broadcast.
