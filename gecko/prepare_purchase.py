@@ -86,7 +86,12 @@ from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
 from .rpc import RpcCall, RpcError, default_rpc_call
 from .simulate import BuildCall, BuiltTx, Receipt, SimulateError, simulate
-from .txbind import TxDecodeError, UnresolvedLookupError, decode_message
+from .txbind import (
+    TxDecodeError,
+    UnresolvedLookupError,
+    binding_prefix,
+    decode_message,
+)
 from .wallet_binding import WalletBindingError, WalletDirectory
 
 __all__ = [
@@ -859,6 +864,24 @@ def _prepare(
         "units_consumed": receipt.units_consumed,
         "binding": receipt.message_binding,
         "binding_strength": receipt.binding_strength,
+        # THE PREFIX IS FOR A PERSON, and it is the only part of this result that does
+        # not depend on trusting this result. The binding travels in the same payload as
+        # the bytes it covers, so anything able to rewrite one rewrites the other; a
+        # human who reads these sixteen characters here and confirms them at the signer
+        # is a second origin, which nothing else in the flow supplies.
+        **(
+            {
+                "binding_prefix": binding_prefix(receipt.message_binding),
+                "binding_prefix_note": (
+                    "Show this to the person approving, and have them confirm the same "
+                    "characters at the signer before they approve. It is a speed bump "
+                    "against substituted bytes, not a proof — read it beside `effects`, "
+                    "which says what the transaction actually moves."
+                ),
+            }
+            if receipt.message_binding
+            else {}
+        ),
         "network": receipt.network,
         "network_label": receipt.network_label,
         "instruction": {

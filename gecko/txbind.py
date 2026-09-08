@@ -94,6 +94,7 @@ __all__ = [
     "SigningVerdict",
     "TxDecodeError",
     "UnresolvedLookupError",
+    "binding_prefix",
     "blockhash_offset",
     "decode_message",
     "evaluate_tx",
@@ -412,6 +413,53 @@ def _advance(buf: bytes, pos: int, count: int) -> int:
     if end > len(buf):
         raise TxDecodeError("message ends inside a section it declared")
     return end
+
+
+#: How many hex characters of the binding a human is asked to compare. Four groups of
+#: four is sixteen characters — 64 bits — which is short enough to read across two
+#: screens and long enough that grinding a matching prefix is not a laptop exercise.
+_PREFIX_GROUPS = 4
+_PREFIX_GROUP_SIZE = 4
+
+
+def binding_prefix(binding: str) -> str:
+    """A short, human-comparable rendering of a binding: ``3F9A-2C7B-...``.
+
+    WHAT THIS BUYS, exactly. The binding is an unkeyed sha256 returned in the SAME tool
+    result as the bytes it covers. Anything that can rewrite that result can recompute
+    it, so "the receipt matches the bytes" is, on its own, a comparison of a value
+    against itself. It is a strong check against a WRONG plan — a builder that bound two
+    accounts to one owner, a blockhash nobody simulated — and no check at all against a
+    SUBSTITUTED one.
+
+    A prefix a person reads on one screen and confirms on another is the cheapest way to
+    introduce a second origin. The attacker must then produce not merely a different
+    transaction, but one whose message hashes to the SAME sixteen characters — a partial
+    second preimage rather than a recomputation.
+
+    WHAT IT DOES NOT BUY, and this must not be overstated: sixty-four bits is a speed
+    bump, not a proof. Someone willing to grind can find a colliding prefix, and the
+    variation is cheap to source (a memo byte, the low bits of an amount). What makes the
+    pair useful is that the effects summary travels beside it: a ground transaction still
+    has to survive a human reading which mint, how much, and to whom. The prefix defeats
+    a silent swap; the effects defeat a plausible one.
+
+    Uppercase, grouped, and hex — no wordlist to ship and no character pair a reader can
+    confuse, because ``0``/``O`` and ``1``/``l`` do not both occur in hexadecimal.
+    """
+    cleaned = binding.strip().lower()
+    if len(cleaned) < _PREFIX_GROUPS * _PREFIX_GROUP_SIZE:
+        raise ValueError(
+            "a binding is a 64-character sha256 hex digest; this is too short to take a "
+            "prefix from, and a truncated prefix would be compared just as confidently"
+        )
+    if any(char not in "0123456789abcdef" for char in cleaned):
+        raise ValueError("a binding is hexadecimal; refusing to render a prefix of it")
+    head = cleaned[: _PREFIX_GROUPS * _PREFIX_GROUP_SIZE].upper()
+    return "-".join(
+        head[index : index + _PREFIX_GROUP_SIZE]
+        for index in range(0, len(head), _PREFIX_GROUP_SIZE)
+    )
 
 
 def blockhash_offset(serialized: bytes, version: MessageVersion) -> int:
