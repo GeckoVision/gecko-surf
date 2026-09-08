@@ -35,6 +35,11 @@ LABEL = {
     "mcp__gecko-store__prepare_purchase": "Prepare an unsigned purchase",
     "mcp__gecko-store__read_accounts": "Read accounts on chain",
     "mcp__gecko-store__start": "Open the storefront surface",
+    "mcp__gecko-store__prepare_instruction": "Prepare the unsigned swap",
+    "mcp__gecko-store__verify_signed_transaction": "Verify the signed bytes",
+    "mcp__gecko-store__submit_transaction": "Submit to mainnet",
+    "mcp__paybox__paybox_wallet": "Ask PayBox which wallet it signs for",
+    "mcp__paybox__paybox_sign_solana": "PayBox signs",
 }
 B58 = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
 
@@ -56,8 +61,13 @@ def chip_of(name: str, inp: dict) -> str:
         return " ".join(dict.fromkeys(parts))[:60]
     bits = []
     for k, v in inp.items():
-        v = B58.sub(lambda m: m.group()[:6] + "…", str(v))
-        bits.append(v if len(inp) == 1 else f"{k} {v}")
+        raw = str(v)
+        # Serialized bytes are noise on screen: "AQAAAA…" tells a reader nothing.
+        if len(raw) > 90 and " " not in raw:
+            bits.append(f"{k} {len(raw)} bytes" if len(inp) > 1 else f"{len(raw)} bytes")
+            continue
+        raw = B58.sub(lambda m: m.group()[:6] + "…", raw)
+        bits.append(raw if len(inp) == 1 else f"{k} {raw}")
     # Drop whole arguments rather than cutting one in half: "· am" reads as a bug.
     out_ = ""
     for bit in bits:
@@ -82,12 +92,16 @@ def parse(path: Path):
         if kind == "stream_event":
             d = ev.get("event", {}).get("delta", {})
             if d.get("type") == "text_delta":
+                if answer and answer[-1] == "\x00":
+                    answer[-1] = " "          # a tool call ran between two sentences
                 answer.append(d.get("text", ""))
             elif d.get("type") == "thinking_delta":
                 think.append(d.get("thinking", ""))
         elif kind == "assistant":
             for b in ev.get("message", {}).get("content", []):
                 if b.get("type") == "tool_use":
+                    if answer and answer[-1] != "\x00":
+                        answer.append("\x00")
                     steps.append(
                         {"label": label_of(b["name"]), "chip": chip_of(b["name"], b.get("input", {})), "fail": False}
                     )
@@ -100,7 +114,7 @@ def parse(path: Path):
                             if not st["fail"]:
                                 st["fail"] = True
                                 break
-    return steps, "".join(answer).strip()
+    return steps, "".join(answer).replace("\x00", " ").strip()
 
 
 def main() -> int:
