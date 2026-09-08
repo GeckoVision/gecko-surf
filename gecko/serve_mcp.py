@@ -50,6 +50,7 @@ from .http_server import (
 )
 from .examples.ore import build_ore_surface
 from .jito_surface import build_jito_surface, build_jito_tips_surface
+from .kora_surface import build_kora_catalog_surface, build_kora_surface
 from .mcp_server import McpSurface
 from .provider_sync import fetch_provider_surfaces
 from .providers.catalog_surface import OrquestraCatalogSurface
@@ -347,6 +348,28 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     # (catalog-only). Built via the shared boundary builder so serve_mcp and
     # serve_providers enforce the identical split; hosted enforce keeps the risk gate on.
     surfaces.append(("jito", build_jito_surface(hosted_enforce)))
+    # Kora — the gasless fee payer. Its shipped OpenAPI comprehends to ZERO operations, so
+    # ours is recovered from source (see gecko.kora_surface for what was verified on the
+    # wire rather than inferred).
+    #
+    # A Kora node holds a FUNDED FEE PAYER, so the public mount serves the CATALOG only:
+    # all ten methods, $0, reaching no node and spending nobody's SOL. That is the whole
+    # comprehension value with none of the custody risk.
+    #
+    # KORA_NODE_URL promotes it to the live split (reads live, money-movers still
+    # recorded) for an operator serving their OWN node. Absent, we stay catalog-only:
+    # fail-safe, exactly as birdeye degrades rather than erroring.
+    kora_node = os.environ.get("KORA_NODE_URL", "").strip()
+    kora_live = bool(kora_node) and kora_node != _UNSET_SENTINEL
+    surfaces.append(
+        (
+            "kora",
+            build_kora_surface(kora_node, hosted_enforce)
+            if kora_live
+            else build_kora_catalog_surface(hosted_enforce),
+        )
+    )
+    logger.info("kora surface mode=%s", "live-reads" if kora_live else "catalog")
     # Jito's tip floor is a DIFFERENT host (bundles.jito.wtf) and plain REST, so it gets
     # its own mount: one client pins one base URL (that pin is the trust anchor), and
     # smuggling a second host into the block-engine surface is what 404'd it before.

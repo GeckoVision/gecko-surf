@@ -1,0 +1,1040 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kora (gasless fee payer for Solana)",
+    "version": "2.2.0",
+    "description": "Kora is a Solana fee payer: it signs a transaction as the fee payer so the user needs no SOL, and charges for it in a token instead.\n\nPROVENANCE. Kora publishes no usable specification. Its own generator emits OpenAPI 3.1.0 with 30 schemas and zero operations, because every method is POST / with a JSON-RPC envelope and OpenAPI cannot express many operations on one path. This document is RECOVERED FROM SOURCE: the request and response structs in crates/lib/src/rpc_server/method/*.rs and the method table in rpc.rs, at kora 2.2.0-beta.8. Three things in it were verified against a running node on 2026-09-07 and appear in no document: the server accepts a per-method path (POST /getVersion answers exactly as POST / does), parameters are NAMED and positional parameters are refused, and a no-argument method takes an empty object."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8080",
+      "description": "a Kora node you run"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Optional. Set only when the node configures kora.auth.api_key."
+      }
+    }
+  },
+  "paths": {
+    "/getVersion": {
+      "post": {
+        "operationId": "getVersion",
+        "tags": [
+          "kora"
+        ],
+        "summary": "The Kora node's version string.",
+        "description": "No arguments. Use it to check a node is reachable and which build it is.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getVersion",
+                    "default": "getVersion"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "description": "the node's version"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/liveness": {
+      "post": {
+        "operationId": "liveness",
+        "tags": [
+          "kora"
+        ],
+        "summary": "Whether the node is healthy enough to serve requests.",
+        "description": "No arguments. Also reachable as GET /liveness, the only method with a route of its own.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "liveness",
+                    "default": "liveness"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getBlockhash": {
+      "post": {
+        "operationId": "getBlockhash",
+        "tags": [
+          "kora"
+        ],
+        "summary": "A recent blockhash from the node's Solana RPC.",
+        "description": "No arguments. The blockhash a transaction must carry; it expires in about 60 seconds.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getBlockhash",
+                    "default": "getBlockhash"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "blockhash": {
+                          "type": "string",
+                          "description": "a recent blockhash"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getSupportedTokens": {
+      "post": {
+        "operationId": "getSupportedTokens",
+        "tags": [
+          "kora"
+        ],
+        "summary": "The mints this node will accept as payment for fees.",
+        "description": "No arguments. A mint that is not on this list cannot pay for gas here, whatever the wallet holds.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getSupportedTokens",
+                    "default": "getSupportedTokens"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "tokens": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "description": "mint address"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getPayerSigner": {
+      "post": {
+        "operationId": "getPayerSigner",
+        "tags": [
+          "kora"
+        ],
+        "summary": "The fee payer's address, and where its fee should be sent.",
+        "description": "No arguments. Read this before building a transaction: signer_address is the account to set as the transaction's fee payer.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getPayerSigner",
+                    "default": "getPayerSigner"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "signer_address": {
+                          "type": "string",
+                          "description": "the fee payer to set on the transaction"
+                        },
+                        "payment_address": {
+                          "type": "string",
+                          "description": "where the fee in tokens should be sent"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getConfig": {
+      "post": {
+        "operationId": "getConfig",
+        "tags": [
+          "kora"
+        ],
+        "summary": "The node's fee payers, validation rules and enabled methods.",
+        "description": "No arguments. validation_config carries the allowlists that decide whether this node will sign at all.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "getConfig",
+                    "default": "getConfig"
+                  },
+                  "params": {
+                    "type": "object",
+                    "properties": {},
+                    "default": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "fee_payers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "description": "fee payer address"
+                          }
+                        },
+                        "validation_config": {
+                          "type": "object",
+                          "description": "allowed programs, tokens, destinations and caps"
+                        },
+                        "enabled_methods": {
+                          "type": "object",
+                          "description": "which RPC methods this node serves"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/estimateTransactionFee": {
+      "post": {
+        "operationId": "estimateTransactionFee",
+        "tags": [
+          "kora"
+        ],
+        "summary": "What this transaction will cost, in lamports and optionally in a token.",
+        "description": "Simulates the transaction to price it. Nothing is signed and nothing is sent. fee_in_token is the number to show a user when the wallet holds no SOL.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "estimateTransactionFee",
+                    "default": "estimateTransactionFee"
+                  },
+                  "params": {
+                    "type": "object",
+                    "required": [
+                      "transaction"
+                    ],
+                    "properties": {
+                      "transaction": {
+                        "type": "string",
+                        "description": "base64 serialized transaction"
+                      },
+                      "fee_token": {
+                        "type": "string",
+                        "description": "optional mint to price the fee in; omit for lamports only"
+                      },
+                      "signer_key": {
+                        "type": "string",
+                        "description": "optional fee payer to price against, for consistency"
+                      },
+                      "sig_verify": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "verify signatures during simulation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "fee_in_lamports": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "the exact fee in lamports"
+                        },
+                        "fee_in_token": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "the fee in fee_token's base units, if fee_token was given"
+                        },
+                        "signer_pubkey": {
+                          "type": "string",
+                          "description": "the fee payer priced against"
+                        },
+                        "payment_address": {
+                          "type": "string",
+                          "description": "where the token fee should be sent"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signTransaction": {
+      "post": {
+        "operationId": "signTransaction",
+        "tags": [
+          "kora"
+        ],
+        "summary": "Sign a transaction with the node's fee payer, without sending it.",
+        "description": "MONEY MOVER. The node signs the exact bytes it is handed and returns them; the client then adds its own signature and sends. Prefer this over signAndSendTransaction when you want to check what you are sending.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "signTransaction",
+                    "default": "signTransaction"
+                  },
+                  "params": {
+                    "type": "object",
+                    "required": [
+                      "transaction"
+                    ],
+                    "properties": {
+                      "transaction": {
+                        "type": "string",
+                        "description": "base64 serialized transaction"
+                      },
+                      "signer_key": {
+                        "type": "string",
+                        "description": "optional fee payer to sign with"
+                      },
+                      "sig_verify": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "user_id": {
+                        "type": "string",
+                        "description": "optional caller id for usage tracking"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "signed_transaction": {
+                          "type": "string",
+                          "description": "base64 transaction signed by the fee payer"
+                        },
+                        "signer_pubkey": {
+                          "type": "string",
+                          "description": "the fee payer that signed"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signAndSendTransaction": {
+      "post": {
+        "operationId": "signAndSendTransaction",
+        "tags": [
+          "kora"
+        ],
+        "summary": "Sign a transaction with the node's fee payer and broadcast it.",
+        "description": "MONEY MOVER, and it lands on chain. The node signs and sends in one call, so there is no moment in which to inspect the bytes it broadcast.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "signAndSendTransaction",
+                    "default": "signAndSendTransaction"
+                  },
+                  "params": {
+                    "type": "object",
+                    "required": [
+                      "transaction"
+                    ],
+                    "properties": {
+                      "transaction": {
+                        "type": "string",
+                        "description": "base64 serialized transaction"
+                      },
+                      "signer_key": {
+                        "type": "string",
+                        "description": "optional fee payer to sign with"
+                      },
+                      "sig_verify": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "user_id": {
+                        "type": "string",
+                        "description": "optional caller id for usage tracking"
+                      },
+                      "respond_after": {
+                        "type": "string",
+                        "description": "when to return: how far to wait for confirmation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "signed_transaction": {
+                          "type": "string",
+                          "description": "base64 signed transaction"
+                        },
+                        "signer_pubkey": {
+                          "type": "string",
+                          "description": "the fee payer that signed"
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "the transaction signature"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transferTransaction": {
+      "post": {
+        "operationId": "transferTransaction",
+        "tags": [
+          "kora"
+        ],
+        "summary": "Build a token transfer whose fee the node will pay.",
+        "description": "MONEY MOVER. Returns an unsigned transaction with the node's fee payer already set, for the caller to sign.",
+        "security": [
+          {},
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method",
+                  "params"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0",
+                    "default": "2.0"
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer"
+                    ],
+                    "default": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "const": "transferTransaction",
+                    "default": "transferTransaction"
+                  },
+                  "params": {
+                    "type": "object",
+                    "required": [
+                      "amount",
+                      "token",
+                      "source",
+                      "destination"
+                    ],
+                    "properties": {
+                      "amount": {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "amount in the token's base units"
+                      },
+                      "token": {
+                        "type": "string",
+                        "description": "mint address"
+                      },
+                      "source": {
+                        "type": "string",
+                        "description": "source owner address"
+                      },
+                      "destination": {
+                        "type": "string",
+                        "description": "destination owner address"
+                      },
+                      "signer_key": {
+                        "type": "string",
+                        "description": "optional fee payer to build against"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "transaction": {
+                          "type": "string",
+                          "description": "base64 unsigned transaction"
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "base64 message"
+                        },
+                        "blockhash": {
+                          "type": "string",
+                          "description": "the blockhash it carries"
+                        },
+                        "signer_pubkey": {
+                          "type": "string",
+                          "description": "the fee payer set on it"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

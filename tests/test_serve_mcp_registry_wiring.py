@@ -37,6 +37,7 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
         "jito-tips",
         "jupiter",
         "pegana",
+        "kora",
         "ore",
         "orquestra",
     }
