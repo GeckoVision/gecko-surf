@@ -79,14 +79,20 @@ holds enough: the live plan wants 101,012 USDG of 749,699 held.
 
 ## The closing card
 
-Four lines, same shape every week. Founder ruling 2026-09-08: **there is no waitlist row.**
-We do not have a waitlist number worth reporting, and inventing a funnel stage to fill the
-slot is the exact failure the metrics doc warns about. What we have is two conversations.
+Four lines, same shape every week. The real state, founder-confirmed 2026-09-08: **one**
+waitlist signup, and we do not know whether she is even an API provider. Two design
+partners, both from conversations the founder started himself. **Neither came from the
+waitlist.**
 
     3 mainnet transactions this week. Compute predicted before signing, exact on chain.
     Verified-exact record: 18 of 18.
-    2 design partners in conversation. Onboarding starts this week.
-    Users on the app: 0.
+    2 design partners in conversation, neither from the waitlist. Onboarding starts this week.
+    Waitlist: 1. Users on the app: 0.
+
+The ratio is the point and it is worth saying rather than hiding: one signup, two partners,
+and the partners came from talking to people. That is a finding about how this actually
+grows, and it is more useful to a build-in-public audience than any number we could dress
+up. It also sets a real target for next week.
 
 Rules that govern those four lines:
 
@@ -100,3 +106,9 @@ Rules that govern those four lines:
 - **The compute record carries its denominator.** 18 of 18, never 53 of 53: 15 rows have no
   recorded prediction and the rest are predicted but not re-read from the chain.
 - Cohort size is still unconfirmed by the founder, so it is not on the card.
+- **Never name a design partner on screen without asking them first.** One of the two is
+  waiting to onboard and has not agreed to be named publicly. "2 design partners in
+  conversation" carries the same information and needs nobody's permission. Naming an
+  un-onboarded partner in a public update is how a relationship gets spent.
+- **One waitlist signup is not one lead.** We do not know she is an API provider. Report
+  the count, never a qualification we have not made.
