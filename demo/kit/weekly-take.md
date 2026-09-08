@@ -79,9 +79,24 @@ holds enough: the live plan wants 101,012 USDG of 749,699 held.
 
 ## The closing card
 
-Four lines, from `private/demos/metrics-we-can-show.md`, which is a **proposal the founder
-has not answered**. Do not label it approved. The numbers that are checkable today:
+Four lines, same shape every week. Founder ruling 2026-09-08: **there is no waitlist row.**
+We do not have a waitlist number worth reporting, and inventing a funnel stage to fill the
+slot is the exact failure the metrics doc warns about. What we have is two conversations.
 
-- 3 mainnet transactions on 2026-09-08, compute predicted before signing and exact on chain
-- verified-exact record 18 of 18, with its denominator
-- 2 design partners in conversation, 0 onboarded users on the app, and say the zero out loud
+    3 mainnet transactions this week. Compute predicted before signing, exact on chain.
+    Verified-exact record: 18 of 18.
+    2 design partners in conversation. Onboarding starts this week.
+    Users on the app: 0.
+
+Rules that govern those four lines:
+
+- **"Onboarding starts" is a plan, not a result.** Future tense on screen, and it stays
+  future tense until someone has actually finished onboarding. Next week it becomes a
+  number, which is the whole point of a weekly cadence.
+- **Say the zero out loud.** A build-in-public audience forgives a zero and never forgives
+  a number that turns out to be crawlers. Roughly 94% of sessions on our hosted surface are
+  indexers, so we of all people know.
+- **Design partners are not customers.** Willingness to pay is unvalidated.
+- **The compute record carries its denominator.** 18 of 18, never 53 of 53: 15 rows have no
+  recorded prediction and the rest are predicted but not re-read from the chain.
+- Cohort size is still unconfirmed by the founder, so it is not on the card.
