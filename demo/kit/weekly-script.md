@@ -33,45 +33,28 @@ the screen recording plays.
 
 ## Cue sheet for the screen recording
 
-For `docs/assets/weekly-usdg-coffee.mp4`, 55.2s. Cues are measured from the rendered
-file, not estimated. Roughly 150 words, which is a calm pace over this length.
+For `docs/assets/weekly-paybox-coffee.mp4`, **8.7s**. It is one continuous take with no
+scene breaks — the rows appear in the order they happened, then the two tables.
 
-Every number below is on screen. If a line is cut, cut the claim with it.
+*(The older `weekly-usdg-coffee.mp4`, 55.3s, is the previous cut: a terminal take that
+ends at the signer boundary plus a receipt read-back. Superseded, kept for reference.)*
 
----
+**How to run it.** The 30-second pitch is spoken first, to camera, with nothing on screen.
+Then the take plays. Nothing is narrated over the take — it is 8.7 seconds and the rows
+are the point. Land on the closing card.
 
-**0:00 — 0:11 · the agent take**
-*On screen: one prompt, then tool calls, then the answer streaming in.*
+What is on screen, in order:
 
-> One prompt. "I want to buy a coffee, I only have USDG."
->
-> Nobody told it which shop, which pool, or which token program. It read the menu,
-> read the wallet, and found the problem: the shop prices in classic USDC, and USDG
-> is Token-2022. Different asset, not a different label.
->
-> Then it stopped. The peg oracle hasn't updated since August. And we never hold a key.
-> It said both, instead of routing around either.
-
-**0:11 — 0:28 · before it happened**
-*On screen: the pre-flight, the receipt, the binding.*
-
-> This is the part that matters. Before anything is signed, we say what it will cost.
-> Forty-eight thousand nine hundred and seventy-two compute units.
-
-**0:28 — 0:37 · who did what**
-*On screen: the three-way agreement.*
-
-> Three things had to agree. We checked it, the wallet signed it, the policy allowed it.
-> Verification is not authorisation.
-
-**0:37 — 0:55 · after it happened**
-*On screen: the landed transaction, and the two numbers.*
-
-> And the chain charged forty-eight thousand nine hundred and seventy-two.
->
-> Five transactions on mainnet today. Five predicted before signing. Five exact.
-
----
+| what appears | why it matters |
+|---|---|
+| the prompt, as a bubble | one sentence, no integration code |
+| `List stores and menus` | it found the shop itself |
+| `Ask PayBox which wallet it signs for` | it asked the signer who it is; nobody told it |
+| `Read token balances over raw RPC` | no Gecko tool answers this, so it shelled out — a gap, visible |
+| `Check what the wallet can pay with` -> `Plan a token swap` | short of the price, so it derived a route |
+| `Prepare the unsigned swap` -> `PayBox signs` -> `Submit to mainnet` | Gecko prepared, PayBox signed, neither is the other |
+| the same three again for the purchase | the loop, twice |
+| menu table, then transactions table | prices it saw, and what it landed with compute units |
 
 ## The closing card
 
