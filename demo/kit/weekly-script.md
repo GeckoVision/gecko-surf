@@ -16,6 +16,46 @@ the screen recording plays.
 >
 > **What is next.** The app, and our first design partners onboarding.
 
+## The diagram walkthrough, spoken
+
+Six boxes, about 30 seconds, over `gecko-architecture.png`. One sentence each — the boxes
+are on screen, so the words should not repeat them. Use this INSTEAD of the pitch above
+when you want to explain the mechanism, or after it when you have a minute.
+
+| beat | on screen | say |
+|---|---|---|
+| ~0:00 | **Your agent** | "It asks in one sentence. It does not know the program, the accounts, or the price." |
+| ~0:05 | **Comprehend** | "Gecko reads the surface itself — not the docs, the thing. What it does, which accounts, which mint." |
+| ~0:11 | **Prepare** | "It builds the exact bytes, runs them, and hands back a receipt: this is what it will cost, this is what it moves. Nothing is signed." |
+| ~0:18 | **Your signer** | "This one is outside us. Your key, your wallet, your rules. We never see it." |
+| ~0:23 | **Verify** | "The signed bytes come back and we check they are the same ones we ran. Byte for byte, or it does not go." |
+| ~0:28 | **Solana mainnet** | "It lands. And the number we said beforehand is the number the chain charged." |
+
+**The line to land on**, over the dashed boundary:
+
+> "Everything inside that box reads and checks. Nothing inside it has ever held a key."
+
+### Why each line says what it says
+
+- **"not the docs, the thing"** — this is the whole differentiator in four words. Docs go
+  stale; the surface cannot.
+- **"Nothing is signed"** on Prepare — say it there, not later. It is the sentence that
+  makes the signer box make sense when it appears.
+- **"outside us"** on the signer — the boundary is the product decision, so name it the
+  moment the box is on screen rather than saving it for the end.
+- **"Byte for byte, or it does not go"** — Verify is the least intuitive box. Do not explain
+  the binding; explain the refusal.
+- **"the number we said beforehand"** — the proof lands harder as a comparison than as a
+  figure. The figure goes on the card.
+
+### What NOT to say while walking the diagram
+
+- Do not read the sublabels aloud. They are already on screen and repeating them is the
+  fastest way to sound like a slide deck.
+- Do not say "simply" or "just". Nothing here is simple; that is why it is worth showing.
+- Do not name PayBox unless you want to explain what it is. "Your signer" is the point —
+  the box works with any of them.
+
 ### Notes on delivery
 
 - The three beats are problem, mechanism, proof. Do not reorder them. The proof only
