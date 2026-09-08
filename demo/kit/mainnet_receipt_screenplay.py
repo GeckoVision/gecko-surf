@@ -1,8 +1,8 @@
-"""Screenplay — "we said it would cost 48,409 before it happened" (the mainnet cut).
+"""Screenplay — "we said it would cost 48,972 before it happened" (the mainnet cut).
 
 The first three demos ended at a simulation. This one ends on chain.
 
-A real purchase — 0.1 USDC of espresso at a real coffee shop, from a real agentic wallet — was
+A real purchase — 0.12 USDC of coffee at a real coffee shop, from a real agentic wallet — was
 verified by Gecko, signed by the wallet, and landed on Solana mainnet. The take does two
 things live: it re-runs the pre-flight against mainnet, and it reads the transaction that
 actually landed. The compute units on both sides are read off the wire during the
@@ -49,12 +49,12 @@ from screenplay import BOLD, CYAN, GREEN, RESET, YELLOW, clear, out, put  # noqa
 
 RPC = os.environ["GECKO_MAINNET_RPC"]
 #: The transaction this demo is about. Public, and checkable by anyone.
-SIGNATURE = "3oXRbDYNWbjHcU8ana66BE3NkUnZUrQ1YwT9D5kjCE6uuficgdtD4s6DBNGFJWESSbFSjRShMPRadSjfjo5qDzKE"
+SIGNATURE = "4B9z8JvPjg6YurR9QxiGJZUCxgfgyLvabh7Z5MBEcyieiRZq5pfsWYeepffqpQi6k4vvXiEWnEgyKjiVuRL7Fwgn"
 WALLET = "9cJbQKxxqCbumpoeb7YWC3QESzFD8LxpbHVAXrTUsPfh"
 #: The storefront and the item this take re-prices live. A NAME, not three addresses: the
 #: accounts are resolved from it (gecko/store_accounts.py).
 STORE = "geckocoffee"
-PRODUCT = "Espresso"
+PRODUCT = "Brewed Coffee (drip)"
 BUILD_URL = "https://api.orquestra.dev/api/p7o7nf4pucllzadrmiqhf/instructions/make_purchase/build"
 
 
@@ -99,7 +99,7 @@ def _build() -> dict:
 
 # ---------------------------------------------------------------- scene 1
 out(f"{BOLD}An agent is about to spend real money.{RESET}", pause=0.5)
-out("0.1 USDC. An espresso, at a coffee shop that takes crypto.", pause=0.7)
+out("0.12 USDC. A brewed coffee, at a shop that takes crypto.", pause=0.7)
 out("Small — and once it is signed, it is gone.", pause=0.9)
 out()
 out(f"{CYAN}$ # ask first: what does this call actually do?{RESET}", 0.02)

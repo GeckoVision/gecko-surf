@@ -84,8 +84,8 @@ waitlist signup, and we do not know whether she is even an API provider. Two des
 partners, both from conversations the founder started himself. **Neither came from the
 waitlist.**
 
-    3 mainnet transactions this week. Compute predicted before signing, exact on chain.
-    Verified-exact record: 18 of 18.
+    5 mainnet transactions today. Compute predicted before signing, exact on chain.
+    Verified-exact record: 20 of 20.
     2 design partners in conversation, neither from the waitlist. Onboarding starts this week.
     Waitlist: 1. Users on the app: 0.
 
