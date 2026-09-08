@@ -596,6 +596,29 @@ def test_program_query_tokens_drop_bare_numbers() -> None:
     assert any("espresso" in t for t in tokens)
 
 
+def test_program_query_tokens_drop_clitic_fragments() -> None:
+    """The same rule as bare numbers, for the other junk the tokenizer manufactures.
+
+    Measured 2026-09-08 while adding Raydium CLMM as distractor cards: the out-of-scope
+    intent "send ten usdc to my friend's wallet" became a runnable START at
+    `ore.claimOre`, corroborated by `('s', 'wallet')`. The `s` is the orphaned half of
+    the possessive in "friend's", and it matched the `s` that falls out of tokenizing
+    base58 addresses in card notes (17 wired cards carry a bare `s` for that reason).
+
+    It fired only once 39 Raydium cards were added, because `_distinguishing_terms`
+    measures document frequency against `len(cards) / 2` — new cards moved the
+    denominator and PROMOTED a single letter to distinguishing evidence.
+
+    One character names no program and no instruction. Same argument as the digit rule
+    above, same place, for the same reason: the API-operation side may legitimately want
+    short tokens, program routing never does."""
+    from gecko.find_start import _query_tokens
+
+    tokens = _query_tokens("send ten usdc to my friend's wallet")
+    assert "s" not in tokens, "a possessive fragment is not evidence"
+    assert "usdc" in tokens and "wallet" in tokens, "real terms survive"
+
+
 def test_a_quantity_does_not_route_a_purchase_to_a_token_launchpad() -> None:
     """The founder's Q5, pinned. "buy 2 Espressos … convert … USDC" must start at the
     storefront purchase, not at pumpfun — whose only claim was the token `2` (from
