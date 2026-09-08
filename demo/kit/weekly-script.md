@@ -1,4 +1,37 @@
-# Weekly update — voiceover script
+# Weekly update — what to say
+
+## The 30-second pitch, spoken
+
+76 words. About 30 seconds at a normal pace. Say it once, straight to camera, before
+the screen recording plays.
+
+> **The problem.** Point an AI agent at an API and it guesses. Which call to make,
+> which account, what it will cost. When money moves, a guess is expensive.
+>
+> **What we do.** Gecko makes it check first. We say what a transaction will do before
+> anyone signs it. And we refuse when we cannot vouch for something.
+>
+> **The proof.** This week we ran five transactions on Solana mainnet. Every one, we
+> predicted the cost before signing. All five landed exact.
+>
+> **What is next.** The app, and our first design partners onboarding.
+
+### Notes on delivery
+
+- The three beats are problem, mechanism, proof. Do not reorder them. The proof only
+  lands after the mechanism is understood.
+- "We refuse when we cannot vouch for something" is the line to slow down on. It is the
+  part competitors cannot fake in a demo, and this week the product did it on camera.
+- If you need to cut to 20 seconds, drop "What is next". Never drop the refusal line.
+
+### Swaps, if a beat feels flat
+
+- Opening: *"An agent that can spend money should not be guessing what it costs."*
+- Proof: *"Five for five, and the number we said beforehand is the number the chain charged."*
+
+---
+
+## Cue sheet for the screen recording
 
 For `docs/assets/weekly-usdg-coffee.mp4`, 55.2s. Cues are measured from the rendered
 file, not estimated. Roughly 150 words, which is a calm pace over this length.
