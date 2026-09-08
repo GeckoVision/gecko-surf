@@ -40,6 +40,9 @@ LABEL = {
     "mcp__gecko-store__submit_transaction": "Submit to mainnet",
     "mcp__paybox__paybox_wallet": "Ask PayBox which wallet it signs for",
     "mcp__paybox__paybox_sign_solana": "PayBox signs",
+    # Not one of ours. It appears because no Gecko tool answers "what does this wallet
+    # hold", so the agent reaches for a raw RPC read. Labelled for what it is.
+    "Bash": "Read token balances over raw RPC",
 }
 B58 = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
 
