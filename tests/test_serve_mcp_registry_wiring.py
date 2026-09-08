@@ -40,6 +40,9 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
         "kora",
         "ore",
         "orquestra",
+        # The cohort mount: the same program surface as `orquestra`, served under its
+        # own name so `surf.connect` records a separable `surface_id`. Unlisted.
+        "bootcamp",
     }
 
     store = serve_mcp._registry_store(surfaces)
@@ -48,9 +51,10 @@ def test_registry_store_contains_colosseum_and_every_hosted_surface(monkeypatch)
     assert "colosseum" in store_names
     # Every OpenAPI-hosted surface is registry-distributed. The two PROGRAM surfaces are
     # hosted but have no OpenAPI spec to distribute — ORE is a PDA graph, and orquestra is
-    # a router over program graphs (find_start / list_programs / comprehend_program). Both
-    # are mounted, not distributed.
-    program_surfaces = {"ore", "orquestra"}
+    # a router over program graphs (find_start / list_programs / comprehend_program). They
+    # are mounted, not distributed. `bootcamp` is the same surface as orquestra under a
+    # second name, so it inherits the same rule.
+    program_surfaces = {"ore", "orquestra", "bootcamp"}
     for name in hosted_names - program_surfaces:
         assert name in store_names
     assert not (program_surfaces & store_names)

@@ -164,7 +164,7 @@ GATED_SURFACES = frozenset({"birdeye"})
 # demo kept reachable for the material that links to it.
 #
 # `GECKO_UNLISTED_SURFACES` (comma-separated) overrides this at deploy time.
-UNLISTED_SURFACES = frozenset({"reportavnzla", "sosvenezuela", "txline"})
+UNLISTED_SURFACES = frozenset({"reportavnzla", "sosvenezuela", "txline", "bootcamp"})
 
 
 def resolve_unlisted_surfaces(default: frozenset[str] = frozenset()) -> frozenset[str]:
@@ -430,6 +430,26 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     surfaces.append(
         (
             "orquestra",
+            OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
+        )
+    )
+    # The COHORT mount. Byte-identical to `orquestra` in what it serves — same surface,
+    # same tools, same refusals — and different in exactly one way that matters: its
+    # mount name is what `surf.connect` records as `surface_id`, so traffic from the
+    # bootcamp is separable from everyone else's by a field we already store.
+    #
+    # WHY THIS RATHER THAN A NEW FIELD. Measured 2026-09-08: `tier` is populated on 0 of
+    # 80,523 surf_events, and of 11,841 connects only 590 are `client_kind: client` —
+    # the rest are crawlers. Without a separable id, ~250 people arrive, the counters
+    # move, and nobody can say by how much. A second mount costs one tuple and reuses
+    # the id we already record correctly.
+    #
+    # It is UNLISTED (see UNLISTED_SURFACES): served, and advertised nowhere, so the
+    # public catalog does not show two doors to the same room. The cohort gets the URL
+    # from the course materials.
+    surfaces.append(
+        (
+            "bootcamp",
             OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
         )
     )
