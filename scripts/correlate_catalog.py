@@ -13,10 +13,11 @@ import json
 import sys
 import urllib.request
 from collections import Counter, defaultdict
+from pathlib import Path
 
-sys.path.insert(0, "/home/nan/PycharmProjects/Gecko/surfcall")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gecko.program_graph import build_program_graph
+from gecko.program_graph import build_program_graph  # noqa: E402
 
 UA = {"User-Agent": "gecko-surf/correlation-study"}
 BASE = "https://api.orquestra.dev"
@@ -50,7 +51,50 @@ def idl_of(project_id: str) -> dict | None:
     return value if isinstance(value, dict) and "instructions" in value else None
 
 
-projects = json.load(open("/tmp/projects.json"))["projects"]
+#: The committed catalog snapshot. Deterministic and offline, so the study reruns and
+#: reproduces; `--live` pages the real catalog when a fresh sample is the point.
+DEFAULT_PROJECTS = (
+    Path(__file__).resolve().parent.parent / "tests/fixtures/orquestra/projects.json"
+)
+
+
+def load_projects(argv: list[str]) -> list[dict]:
+    """The project list, from a committed snapshot, a named file, or the live catalog.
+
+    It used to be `open("/tmp/projects.json")` at module scope — a file nobody creates,
+    so the script could not run at all and the coverage number it produces ("56 of 60
+    programs build a graph") could not be reproduced or challenged. A measurement whose
+    producer does not execute is a claim, not a measurement.
+    """
+    if "--live" in argv:
+        # One IDL fetch per project, against a PARTNER's API. The live catalog was 4,534
+        # projects on 2026-09-09, so an unbounded run is 4,534 requests we do not get to
+        # spend on someone else's infrastructure. `--limit` is required, not optional,
+        # and 60 reproduces the sample the "56 of 60" claim came from.
+        from gecko.orquestra_client import OrquestraClient
+
+        limit = 60
+        for i, a in enumerate(argv):
+            if a == "--limit" and i + 1 < len(argv):
+                limit = int(argv[i + 1])
+        client = OrquestraClient()
+        out: list[dict] = []
+        page, total = 1, 1
+        while page <= total and len(out) < limit:
+            got = client.list_projects(page=page)
+            total = got.total_pages
+            out.extend(
+                {"id": p.id, "name": p.name, "program_id": p.program_id}
+                for p in got.projects
+            )
+            page += 1
+        return out[:limit]
+    named = [a for a in argv[1:] if not a.startswith("-")]
+    path = Path(named[0]) if named else DEFAULT_PROJECTS
+    return json.loads(path.read_text(encoding="utf-8"))["projects"]
+
+
+projects = load_projects(sys.argv)
 
 name_programs: dict[str, set[str]] = defaultdict(
     set
