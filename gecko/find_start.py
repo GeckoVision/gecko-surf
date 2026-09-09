@@ -1469,10 +1469,19 @@ def _query_tokens(intent: str) -> set[str]:
     # `getWidgetKind77`), which is why this filter lives in this query builder and not
     # in the shared `content_tokens`. The scorer sees the same filtered set — the tokens
     # below ARE the query it ranks with — so the gate and the ranking cannot drift.
+    # Single characters carry no more than bare numbers do, and for the same reason:
+    # nothing is named by one letter. Measured 2026-09-08: "send ten usdc to my friend's
+    # wallet" became a runnable START at ore.claimOre on the evidence `('s', 'wallet')` —
+    # the `s` being the orphaned half of the possessive, matching the bare `s` that falls
+    # out of tokenizing base58 addresses in card notes (17 wired cards carry one). It
+    # surfaced only when 39 Raydium cards moved the `len(cards) / 2` document-frequency
+    # denominator far enough to PROMOTE a single letter to distinguishing evidence, which
+    # is the scale failure `_distinguishing_terms` warns about arriving through the floor
+    # rather than through the ranking.
     return {
         t
         for t in normalize_query(_tokens(intent[:MAX_INTENT_CHARS]))
-        if not t.isdigit()
+        if not t.isdigit() and len(t) > 1
     }
 
 

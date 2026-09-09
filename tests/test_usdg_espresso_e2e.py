@@ -120,14 +120,13 @@ def test_the_whole_point_a_usdg_wallet_gets_a_checked_route_to_an_espresso() -> 
     "reading,why",
     [
         (DEPEGGED, "a depegged source"),
-        (STALE, "a stale reading — a statement about the past"),
         (PegReading(tracked=None, error="URLError"), "an unreachable oracle"),
         (PegReading(tracked=None, status=429), "a rate-limited oracle"),
         (PegReading(tracked=None, status=200), "a degraded 200 that is not a card"),
     ],
 )
 def test_the_same_wallet_is_refused_when_the_peg_cannot_vouch(reading, why) -> None:
-    """The identical request, refused for five different reasons — and the last three are
+    """The identical request, refused for four different reasons — and the last three are
     the oracle SAYING NOTHING. Silence is not consent: this is the defect that shipped in
     the script, where an unreachable Pegana read as permission to convert."""
     report = _run(
@@ -138,6 +137,26 @@ def test_the_same_wallet_is_refused_when_the_peg_cannot_vouch(reading, why) -> N
     assert report.outcome == "peg_blocked", why
     assert report.blocks is True
     assert report.route is None
+
+
+def test_a_stale_source_warns_and_still_routes() -> None:
+    """STALE moved OUT of the refusal list on 2026-09-08, and the line it moved across is
+    the one that matters: staleness downgrades the ABSENCE of a signal, never a signal.
+
+    An old reading is a statement about the past; an unreachable oracle is no statement at
+    all. The four cases above keep refusing because three of them are silence and one is a
+    real DEPEG. This one says "we have a reading and it is out of date" — so the caller
+    gets the route WITH the caveat attached, rather than being told no by a feed that
+    stopped updating on 2026-08-26 and is not coming back."""
+    report = _run(
+        holdings={USDG: (5_000_000, TOKEN_2022)},
+        peg=recorded_peg_reader({USDC: PEGGED, USDG: STALE}),
+        venues=lambda **k: [_pool(101_500)],
+    )
+    assert report.outcome == "route_found_peg_unverified"
+    assert report.blocks is False
+    assert report.route is not None, "the caller gets the plan"
+    assert "stale" in report.reason, "and is told why it is unverified"
 
 
 def test_a_depegged_destination_refuses_even_with_a_healthy_wallet() -> None:
