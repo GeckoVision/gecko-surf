@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Phase 2 — one score, two readers",
+    "subtitle": "An agent asks which of these should I call. A provider asks which of mine need work. Same measurement, read in opposite directions.",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "animation": "trace"
+  },
+  "components": [
+    { "id": "recipes", "type": "database", "label": "PDA recipes",
+      "sublabel": "resolvable + origins", "pos": [40, 90], "size": [170, 62] },
+    { "id": "cards", "type": "database", "label": "The card text",
+      "sublabel": "summary + notes", "pos": [40, 260], "size": [170, 62] },
+    { "id": "siblings", "type": "database", "label": "Its siblings",
+      "sublabel": "same program", "pos": [40, 430], "size": [170, 62] },
+    { "id": "callable", "type": "backend", "label": "callable",
+      "sublabel": "can we derive it?", "pos": [300, 90], "size": [180, 62] },
+    { "id": "findable", "type": "backend", "label": "findable",
+      "sublabel": "does it find itself?", "pos": [300, 260], "size": [180, 62] },
+    { "id": "distinct", "type": "backend", "label": "distinct",
+      "sublabel": "clear of its siblings?", "pos": [300, 430], "size": [180, 62] },
+    { "id": "score", "type": "security", "label": "The worst component",
+      "sublabel": "never a blend", "pos": [580, 260], "size": [190, 62] },
+    { "id": "agent", "type": "external", "label": "The agent",
+      "sublabel": "rank what we can land", "pos": [870, 150], "size": [190, 62] },
+    { "id": "provider", "type": "external", "label": "The provider",
+      "sublabel": "fix what is named", "pos": [870, 370], "size": [190, 62] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "offline, deterministic, no model",
+      "wraps": ["callable", "findable", "distinct", "score"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "recipes", "to": "callable" },
+    { "id": "c2", "from": "cards", "to": "findable" },
+    { "id": "c3", "from": "siblings", "to": "distinct" },
+    { "id": "c4", "from": "callable", "to": "score" },
+    { "id": "c5", "from": "findable", "to": "score", "variant": "emphasis" },
+    { "id": "c6", "from": "distinct", "to": "score" },
+    { "id": "c7", "from": "score", "to": "agent", "label": "rankable" },
+    { "id": "c8", "from": "score", "to": "provider", "label": "weak or blocked" }
+  ]
+}
