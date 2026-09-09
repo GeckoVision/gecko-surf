@@ -1346,6 +1346,81 @@ RECORDED_REFUSALS: dict[str, tuple[str, str]] = {
 }
 
 
+#: A byte order is a property of the PROGRAM's source, never of its IDL. Anchor declares
+#: `index: u16` and stops; `to_le_bytes()` and `to_be_bytes()` produce the same declared
+#: type and different addresses. So an integer seed that arrived by extraction carries an
+#: assumption, and this names it.
+_INTEGER_ENCODINGS = frozenset({"le", "be"})
+
+#: Origins where a human established the byte order by reading source or reproducing an
+#: address on chain. `extracted` is the IDL alone, which cannot establish it.
+_ENDIANNESS_ESTABLISHED = frozenset({"manual", "recovered"})
+
+
+def check_seed_endianness(api_id: str, program: Mapping[str, Any]) -> CheckResult:
+    """Which integer seeds rest on an ASSUMED byte order rather than an established one.
+
+    Measured on chain 2026-09-09. Raydium CLMM seeds `amm_config` with
+    `index.to_be_bytes()`; its IDL declares `index: u16` and nothing more, so extraction
+    emits `encoding="le"` — the only thing it can emit — and Gecko derives
+    `Bq4zek…` for index 1 where the chain holds `E64NGk…`. Big-endian matched 8 of 8 live
+    configs, little-endian 1 of 8, and that one was index 0 where both encodings are the
+    same two zero bytes. A well-formed, confidently derived, wrong address: the exact
+    failure class the independent witness exists for.
+
+    **The default is not the bug.** Orca and Meteora really are little-endian and five
+    wired recipes rest on it correctly. The bug is that once written to a config, an
+    assumption is indistinguishable from a measurement. This warns where the byte order
+    came from the IDL alone and stays silent where `manual` or `recovered` says a human
+    read the source or reproduced the address.
+
+    `warn`, never `refuse`: five shipped recipes are `extracted` today, and a gate that
+    blocked on every unverified assumption would block the catalog it is meant to grow.
+    """
+    pdas = program.get("pdas") or {}
+    origins = program.get("pda_origins") or {}
+    assumed: list[str] = []
+    established: list[str] = []
+    for account, node in pdas.items() if isinstance(pdas, Mapping) else ():
+        seeds = (node or {}).get("seeds") or [] if isinstance(node, Mapping) else []
+        names = [
+            str(s.get("name") or "?")
+            for s in seeds
+            if isinstance(s, Mapping) and s.get("encoding") in _INTEGER_ENCODINGS
+        ]
+        if not names:
+            continue
+        where = f"{account}.{'+'.join(names)}"
+        if str(origins.get(account, "extracted")) in _ENDIANNESS_ESTABLISHED:
+            established.append(where)
+        else:
+            assumed.append(where)
+
+    measured = {
+        "assumed": len(assumed),
+        "established": len(established),
+        "assumed_seeds": tuple(sorted(assumed)),
+    }
+    if not assumed:
+        total = len(established)
+        return CheckResult(
+            "seed-endianness",
+            "ok",
+            f"{api_id}: no integer seed rests on an assumed byte order "
+            f"({total} established by source or a reproduced address).",
+            measured=measured,
+        )
+    return CheckResult(
+        "seed-endianness",
+        "warn",
+        f"{api_id}: {len(assumed)} integer seed(s) took their byte order from the IDL, "
+        f"which cannot carry one — {', '.join(sorted(assumed))}. Derive each against a "
+        f"live account both ways before trusting it: Raydium's amm_config is big-endian "
+        f"and extraction reads it as little-endian, yielding a valid wrong address.",
+        measured=measured,
+    )
+
+
 def precheck_config(
     api_id: str,
     config: Mapping[str, Any],
@@ -1389,6 +1464,7 @@ def precheck_config(
             provider=provider,
         ),
         check_framework_fingerprint(api_id, idl, idl_source=idl_source),
+        check_seed_endianness(api_id, program),
     ]
     outcome = _worst(c.outcome for c in checks)
     declared = list(program.get("intents") or ())

@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Phase 1 \u2014 where a byte order goes missing",
+    "subtitle": "An Anchor IDL cannot carry endianness. Extraction has to assume it, and once written to a config an assumption reads exactly like a measurement.",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "animation": "trace"
+  },
+  "components": [
+    {
+      "id": "source",
+      "type": "external",
+      "label": "The source",
+      "sublabel": "index.to_be_bytes()",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "idl",
+      "type": "external",
+      "label": "The Anchor IDL",
+      "sublabel": "index: u16, no more",
+      "pos": [
+        270,
+        300
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "extract",
+      "type": "backend",
+      "label": "Extraction",
+      "sublabel": "assumes little-endian",
+      "pos": [
+        510,
+        300
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "origin",
+      "type": "backend",
+      "label": "pda_origins",
+      "sublabel": "who established it?",
+      "pos": [
+        760,
+        300
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "assumed",
+      "type": "security",
+      "label": "extracted",
+      "sublabel": "the IDL alone",
+      "pos": [
+        790,
+        110
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "an assumption"
+    },
+    {
+      "id": "warn",
+      "type": "security",
+      "label": "seed-endianness: warn",
+      "sublabel": "named before ingest",
+      "pos": [
+        1030,
+        110
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "ok",
+      "type": "cloud",
+      "label": "established",
+      "sublabel": "a human read the source",
+      "pos": [
+        1010,
+        300
+      ],
+      "size": [
+        200,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "5 of 7 wired integer seeds sit here",
+      "wraps": [
+        "assumed",
+        "warn"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "compiled",
+      "from": "source",
+      "to": "idl",
+      "label": "compiled"
+    },
+    {
+      "id": "lost",
+      "from": "idl",
+      "to": "extract",
+      "label": "byte order lost",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "id": "writes",
+      "from": "extract",
+      "to": "origin"
+    },
+    {
+      "id": "verified",
+      "from": "origin",
+      "to": "ok",
+      "label": "verified"
+    },
+    {
+      "id": "idlonly",
+      "from": "origin",
+      "to": "assumed",
+      "label": "IDL only",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "named",
+      "from": "assumed",
+      "to": "warn",
+      "variant": "security"
+    }
+  ]
+}
