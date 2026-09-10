@@ -89,6 +89,9 @@ forbids the query from sharing any token with the target. Zero overlap ⇒ zero 
 filtered out. A lexical ranker scoring above 0.00 on that archetype would mean the
 invariant had broken.
 
+**Scope caveat (see §10):** every figure in this section comes from the four HTTP
+showcase surfaces. Orquestra — the biggest use case — is not in this harness.
+
 Read the per-archetype table, never the aggregate — the aggregate blends a floor, a
 ceiling and a middle over buckets of arbitrary size, so it moves when the *mix* changes:
 
@@ -126,6 +129,11 @@ Pooled against the shipped overlap arm:
 
 BM25 wins one bucket and loses two. It is the right tool at 500+ ops and the wrong tool
 at 21. Not building it is not the gap; **it is built, and it is currently a net loss.**
+
+**Measured on the four HTTP showcase surfaces only.** Whether BM25 loses on Orquestra is
+unknown, because nobody has run it there — see §10. Long identifiers, absent summaries and
+slang intents are a different distribution, and IDF over 4,534 programs is not IDF over 21
+cards.
 
 ---
 
@@ -165,6 +173,9 @@ query, because confidence remains lexically anchored.
 The dense/RRF gate (`ops > 50 AND BM25 recall@3 < 0.8`) **fires on birdeye today**
 (ops=89, 0.50). It is the one surface where the spec's own condition says dense is
 justified, and the arm that would serve it is not wired.
+
+**Birdeye is a showcase surface.** Whether the gate fires on Orquestra is unmeasured, and
+that is the question that should decide this, not birdeye — see §10.
 
 ---
 
@@ -302,7 +313,7 @@ level up.
 
 ---
 
-## 9. The last inch: the pattern behind all three findings
+## 9. The last inch: the pattern behind these findings
 
 `gecko/graph.py` is 1,071 lines. It builds a deterministic, content-addressed graph from
 ingest's `Operation`s, carries provenance on every edge, and walks it to plan chain-shaped
@@ -325,7 +336,20 @@ An agent that does not already know the door exists will never open it.
 
 Three modules, three weeks, one pattern: **we close 95% of the distance to the consumer
 and stop.** `54ce7a7 fix(serve): unlisted surfaces — served, advertised nowhere (#515)`
-is the fourth instance, already fixed once as an incident rather than as a rule.
+is the fourth instance, already fixed once as an incident rather than as a rule. §10 is
+the fifth, and it is the same shape applied to measurement rather than to a capability.
+
+**Each was a defensible trade, made for a budget.** `get_surface_graph` is hidden because
+a whole-graph dump on Stripe is ~337 edges and enumeration costs tokens on every
+`list_tools`. #515 was cleaning clutter. The dense arm is unwired because an embedding
+call on the hot path costs latency and a dependency. None of those decisions was wrong.
+
+What none of them has is **a record that the trade was made, and a check that it stays
+deliberate.** So the gate's job is not "everything must be enumerated" — that would undo
+what #515 deliberately cleaned. It is: **anything not enumerated must declare that it is
+hidden, and why, somewhere a test can read.** A capability hidden on purpose passes. A
+capability hidden because someone forgot fails. Today those two are indistinguishable,
+and that is the actual defect.
 
 ### The mechanism, so it scales
 
@@ -344,8 +368,57 @@ is the fourth instance, already fixed once as an incident rather than as a rule.
    graph query; the query and its answer go in the PR. When the graph cannot answer, that
    failure is the finding — as it was here.
 
-## 10. What to do, in order
+## 10. Orquestra is not in the harness that decides retrieval
 
+Found after the first draft, and it puts a scope caveat on §1, §3 and §4 of this
+document.
+
+There are **two different functions both named `evaluate_golden`**:
+
+| | `gecko/evaluate.py` | `gecko/retrieval_eval.py` |
+|---|---|---|
+| covers | txodds, pegana, privy, birdeye | **Orquestra**, 52 rows |
+| shape | archetypes, `is_fallback`, ranker vs with_fallback | intent -> program/instruction |
+| `archetype` mentions | yes | **0** |
+| `is_fallback` mentions | yes | **0** |
+
+And `scripts/retrieval_arms_eval.py` — the harness that compares overlap / BM25 / dense
+and whose gate decides whether we adopt a retriever — **does not mention `orquestra`,
+`program` or `solana` anywhere.**
+
+So the arms comparison runs on four HTTP showcase surfaces and zero Solana ones, while
+the biggest use case is measured by a different function with a different shape and no
+concept of a confidence floor.
+
+### What this invalidates, and what survives
+
+| claim | status |
+|---|---|
+| BM25 is a net loss (§3) | **showcase only** — unmeasured on Orquestra |
+| the dense gate fires on birdeye (§4) | **showcase only** — whether it fires on Orquestra is unknown |
+| the `is_fallback` chain (§1) | **stands** — it is a property of the code, not of a fixture |
+| scale does not collapse ranking (§6) | **stands** — the Raydium distractor run *was* Orquestra |
+| the cards are the bottleneck (§5) | **stands** — `vocab_gap` measured on the wired Orquestra intents |
+
+Orquestra's distribution is not the showcase's: long identifiers, absent summaries, slang
+intents (*"ape into a pump fun memecoin"*), and IDF over 4,534 programs is not IDF over 21
+cards. A retriever decision made on birdeye may be the wrong decision for the product.
+
+### The fifth instance of §9's pattern
+
+The other four are capabilities built and not reached. This one is the same shape applied
+to measurement: **the thing we optimise is the thing the harness happens to cover**, and
+the harness was built around the showcase because that is what existed when it was written.
+Nobody decided Orquestra should be out. It was never in.
+
+**Before any retriever recommendation in this document is acted on, bring Orquestra into
+`retrieval_arms_eval` — same arms, same readings, same gate.** If the gate fires
+differently there, §3 and §4 are provisional.
+
+## 11. What to do, in order
+
+0. **Bring Orquestra into `retrieval_arms_eval`** (§10). Until it is there, every
+   retriever recommendation below is a decision made on the showcase.
 1. **Fix the metric first.** Decide the `is_fallback` contract and measure the OOS cost
    of loosening it. Until this lands, every retrieval number — including the local dense
    probe's paraphrase rows — is uninterpretable. Nothing else on this list is worth
