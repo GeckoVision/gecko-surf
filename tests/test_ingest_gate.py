@@ -29,6 +29,7 @@ from gecko.ingest_gate import (
     CHECKS,
     DISCRIMINATION_CAVEAT,
     check_framework_fingerprint,
+    check_seed_endianness,
     gate,
 )
 
@@ -983,7 +984,16 @@ def test_a_candidate_config_can_be_gated_before_it_is_packaged():
     assert "intent-reachability" in report.summary
     assert "discrimination" in report.summary
     assert "plan_swap" in report.summary
-    assert [c.name for c in report.checks] == ["cardinality", "framework-fingerprint"]
+    assert [c.name for c in report.checks] == [
+        "cardinality",
+        "framework-fingerprint",
+        # Added 2026-09-09. An integer seed's byte order is a property of the program's
+        # SOURCE and an Anchor IDL cannot carry one, so extraction assumes little-endian
+        # — correct for Orca and Meteora, wrong for Raydium, and indistinguishable from a
+        # measurement once written to a config. It runs pre-ingest because that is the
+        # only moment the assumption is still cheap to correct.
+        "seed-endianness",
+    ]
 
 
 def test_no_wired_program_refuses_without_a_written_disposition(reports):
@@ -1017,3 +1027,73 @@ def test_an_open_refusal_is_never_described_as_accepted():
         else:
             assert "NO CONTAINMENT" in why, f"{api_id} is open, so it must say plainly "
             "that nothing is holding it"
+
+
+def test_an_extracted_integer_seed_warns_that_byte_order_was_assumed() -> None:
+    """The Raydium trap, measured on chain 2026-09-09 and generalised.
+
+    Raydium CLMM seeds `amm_config` with `index.to_be_bytes()`. Its IDL declares
+    `index: u16` and nothing more — so `pda_extract.from_anchor_idl` emits `encoding="le"`
+    because that is the only thing it can emit, and Gecko derives
+    `Bq4zekcSsjqxt7c3zADivPEGQCBcioQDAb4BbjdrkqPb` for index 1 where the chain holds
+    `E64NGkDLLCdQ2yFNPcavaKptrEgmiQaNykUuLC1Qgwyp`. Big-endian matches 8 of 8 live
+    configs; little-endian matches 1 of 8, and that one is index 0, where both encodings
+    are the identical two zero bytes. A well-formed, confidently derived, wrong address.
+
+    The default is not the bug — Orca and Meteora really are little-endian, and five wired
+    recipes rest on it. The bug is that an ASSUMPTION is indistinguishable from a
+    MEASUREMENT once written to a config, so this warns wherever an integer seed arrived
+    by extraction and stays silent where a human established the byte order.
+    """
+    config = {
+        "program": {
+            "program_id": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+            "pdas": {
+                "amm_config": {
+                    "seeds": [
+                        {"kind": "constant", "value": "amm_config", "encoding": "utf8"},
+                        {
+                            "kind": "variable",
+                            "name": "index",
+                            "source": "argument",
+                            "encoding": "le",
+                            "width": 2,
+                        },
+                    ]
+                }
+            },
+            "pda_origins": {"amm_config": "extracted"},
+        }
+    }
+    result = check_seed_endianness("raydium_clmm", config["program"])
+    assert result.outcome == "warn"
+    assert "amm_config" in result.headline
+    assert result.measured["assumed"] == 1
+
+    # A byte order a human established is not an assumption, and must not warn.
+    verified = dict(config["program"])
+    verified["pda_origins"] = {"amm_config": "manual"}
+    assert check_seed_endianness("raydium_clmm", verified).outcome == "ok"
+
+
+def test_a_pubkey_or_string_seed_carries_no_byte_order_to_assume() -> None:
+    """Only integers have an endianness. A check that warned on every extracted PDA
+    would be noise, and noise is how a real warning gets ignored."""
+    program = {
+        "program_id": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+        "pdas": {
+            "position": {
+                "seeds": [
+                    {"kind": "constant", "value": "position", "encoding": "utf8"},
+                    {
+                        "kind": "variable",
+                        "name": "owner",
+                        "source": "account",
+                        "encoding": "pubkey",
+                    },
+                ]
+            }
+        },
+        "pda_origins": {"position": "extracted"},
+    }
+    assert check_seed_endianness("raydium_clmm", program).outcome == "ok"
