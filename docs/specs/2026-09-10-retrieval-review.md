@@ -415,10 +415,37 @@ Nobody decided Orquestra should be out. It was never in.
 `retrieval_arms_eval` — same arms, same readings, same gate.** If the gate fires
 differently there, §3 and §4 are provisional.
 
+### The order inside item 0, because the obvious route is a trap
+
+The arms table is only interpretable per archetype — §2 says why, and
+`retrieval_arms_eval.py:286` says it in the code. But Orquestra's 52 rows **carry no
+archetype labels**, so bringing them in means *authoring* them.
+
+That is fixture authoring on the surface whose numbers will then justify buying a
+retriever. `paraphrase_no_overlap` is the sharp end: `test_golden_set.py:90` CI-enforces
+that those rows share zero tokens with their target, so whoever applies that label is
+choosing **what the lexical arm is guaranteed to fail**. Done carelessly it manufactures
+the headline it wanted. It is the same failure as #528's symbol-adding, one level up: the
+eval learns its answers, and this time from the person who wants the answer.
+
+So, in this order:
+
+1. **Extend the harness to run over program cards, unlabelled** — only the metrics that
+   already exist, reported per set, no archetype breakdown. That yields an honest "here is
+   Orquestra under the same arms" number nobody could have tuned. This alone is a complete
+   and defensible deliverable.
+2. **Archetype labelling is a separate, later, reviewed change** — same trust class as the
+   value-domain review in #529, argued on its own merits rather than shipped as harness
+   plumbing.
+
+Adding labels in the same change would make the resulting numbers un-auditable.
+
 ## 11. What to do, in order
 
-0. **Bring Orquestra into `retrieval_arms_eval`** (§10). Until it is there, every
-   retriever recommendation below is a decision made on the showcase.
+0. **Bring Orquestra into `retrieval_arms_eval`, unlabelled** (§10). Until it is there,
+   every retriever recommendation below is a decision made on the showcase. Archetype
+   labels are a separate reviewed change — labelling and then measuring on the same
+   surface, in the same PR, is how an eval learns its answers.
 1. **Fix the metric first.** Decide the `is_fallback` contract and measure the OOS cost
    of loosening it. Until this lands, every retrieval number — including the local dense
    probe's paraphrase rows — is uninterpretable. Nothing else on this list is worth
