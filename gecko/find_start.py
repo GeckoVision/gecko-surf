@@ -136,6 +136,23 @@ class StartSpec:
     #: class as ``recovered`` above, and asserted against the landing orchestrator in
     #: ``tests/test_derive_plan_provenance.py``. Absence means FLAGGED, never ``extracted``.
     surface_named: tuple[str, ...] = ()
+    #: ``slot name -> value-domain token``, in the ``graph._norm`` vocabulary
+    #: (``solana-token-mint`` -> ``solanatokenmint``) that ``canonical.py`` and
+    #: ``provider_matrix.py`` already share. Declared, never inferred.
+    #:
+    #: WHY DECLARED. Both available inferences are wrong in opposite directions, measured
+    #: 2026-09-10 (``docs/specs/2026-09-10-value-domains-not-yet.md``). By account NAME,
+    #: 15 of 21 cards look token-shaped — including ``pumpfun.mint_authority``, which the
+    #: program DERIVES rather than a caller choosing. By declared INPUT, 8 of 21, which
+    #: drops ``jurassic_fi.contribute``: its caller names a LAUNCH and the launch fixes the
+    #: payment mint, so the mint is real but never an input. Too broad breaks the floor,
+    #: too narrow drops real answers, and no third proxy exists.
+    #:
+    #: Same trust class as ``surface_named`` and for the same reason: a reviewed claim a
+    #: human made about one program, not a guess a scorer made from the shape of a name.
+    #: Every key is asserted to exist in ``accounts``/inputs by
+    #: ``tests/test_value_domains.py``, so a typo cannot ship as a confident claim.
+    value_domains: Mapping[str, str] = field(default_factory=dict)
 
 
 # --- declared lifecycle chains (the join an IDL/llms.txt loses) ------------------
