@@ -788,6 +788,9 @@ PUMPFUN_INTENTS: dict[str, Intent] = {_BUY.name: _BUY, _SELL.name: _SELL}
 # canonical notes — single source), and the DECLARED landing preludes. Pure data.
 PUMPFUN_STARTS: dict[str, StartSpec] = {
     "plan_buy": StartSpec(
+        # Reviewed 2026-09-10. The caller names the token bought or sold. SOL is the implicit other side and is
+        # not named, so it is not declared here.
+        value_domains={"mint": "solanatokenmint"},
         accounts=(
             "global",
             "fee_config",
@@ -828,6 +831,9 @@ PUMPFUN_STARTS: dict[str, StartSpec] = {
         ),
     ),
     "plan_sell": StartSpec(
+        # Reviewed 2026-09-10. The caller names the token bought or sold. SOL is the implicit other side and is
+        # not named, so it is not declared here.
+        value_domains={"mint": "solanatokenmint"},
         accounts=(
             "global",
             "bonding_curve",

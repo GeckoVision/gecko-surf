@@ -293,6 +293,12 @@ WHIRLPOOL_INTENTS: dict[str, Intent] = {_PLAN_SWAP.name: _PLAN_SWAP}
 WHIRLPOOL_STARTS: dict[str, StartSpec] = {
     "plan_swap": StartSpec(
         accounts=("whirlpool", "tick_array", "oracle", "token_badge"),
+        # Reviewed 2026-09-10. The caller names BOTH sides; the pool is derived from
+        # them, never chosen. This is the clearest case of a caller-supplied asset.
+        value_domains={
+            "input_mint": "solanatokenmint",
+            "output_mint": "solanatokenmint",
+        },
         recovered={
             "whirlpool": (
                 "PDA [whirlpools_config, mint_a, mint_b, tick_spacing(u16 LE)] — "
