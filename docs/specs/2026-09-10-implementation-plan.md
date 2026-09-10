@@ -9,7 +9,12 @@ code.
 ## The method: every task opens with a subgraph
 
 Before implementing or reviewing anything below, cut a **task subgraph** from
-`graphify-out/graph.json` and commit it beside the work.
+`graphify-out/graph.json` with `scripts/task_subgraph.py`.
+
+`graphify-out/` is gitignored (`.gitignore:54`) and the slices are large — the 0a slice is
+684 KB — so the artifact stays local and **the command goes in the PR body**. That is the
+right way round: the slice is regenerable from the command, and a command is reviewable
+where a 684 KB JSON blob is not.
 
 Two rules, both learned the hard way today:
 
