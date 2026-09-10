@@ -5,6 +5,7 @@ Every call is REAL (live credits). Secrets never printed."""
 import json
 import os
 import sys
+from pathlib import Path
 import time
 import urllib.request
 
@@ -97,7 +98,7 @@ put("")
 put("Gecko comprehends the spec → returns the CHAIN:", 0.8)
 
 # real plan + live chain via the gecko engine
-sys.path.insert(0, "/home/nan/PycharmProjects/Gecko/surfcall")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from gecko.access import keychain_session  # noqa: E402
 from gecko.client import AgentApiClient  # noqa: E402
 from gecko.examples import txline  # noqa: E402
