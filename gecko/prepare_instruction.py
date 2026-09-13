@@ -94,6 +94,8 @@ def plan_accounts(
     instruction: str,
     values: Mapping[str, Any],
     payer: str | None = None,
+    *,
+    payer_acts: bool = True,
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve every account slot of ``instruction``.
 
@@ -117,6 +119,19 @@ def plan_accounts(
     simulates with `sigVerify: False`, which cannot tell one actor from three, so the
     residual is a clean-simulating transaction with the WRONG ACTOR in it. Several open
     signers is a question with several answers, so it is asked, not answered.
+
+    AND IT ONLY EARNS THE FIRST SLOT WHILE THE PAYER IS THE ACTOR. ``payer_acts=False``
+    says the key pays the fee and authorises nothing — a gasless relay. The rule above
+    reasons "the lone open signer is the actor, and the payer signs", which is sound
+    only while those are the same person; the moment a relay pays, filling the actor's
+    slot with the relay's key hands it whatever that slot governs. Measured on the same
+    fixtures: meteora `initialize_position` with `position` and `payer` named leaves
+    `owner` as the lone open signer, so the relay would become the POSITION OWNER, in a
+    transaction that simulates perfectly. `payer` is a TRANSACTION-level fact —
+    ``account_keys[0]``, which is why `txbind` reads it from the message header — and an
+    instruction's authority slot is not the place for it. Withheld, never guessed; a
+    caller who NAMES the relay in a slot is still obeyed, because answering the question
+    is not the same as having it answered for you.
 
     A signer slot that is a PDA is never the payer's either, whatever the count: a
     program-derived signer is signed for by the program, and the payer's key in that slot
@@ -160,11 +175,16 @@ def plan_accounts(
         for a in target.accounts
         if a.signer and not a.is_pda and a.name not in resolved
     )
+    withheld: set[str] = set()
     if payer and len(open_signers) == 1:
         only = open_signers[0]
-        resolved[only.name] = payer
-        origins.append({"account": only.name, "origin": "supplied"})
-        open_signers = ()
+        if payer_acts:
+            resolved[only.name] = payer
+            origins.append({"account": only.name, "origin": "supplied"})
+            open_signers = ()
+        else:
+            # A fee payer is not an actor. Report the slot instead of filling it.
+            withheld.add(only.name)
 
     # PASS 2 — derive the PDAs in DEPENDENCY order, which the graph already computed.
     for name in target.derivation_order:
@@ -225,7 +245,9 @@ def plan_accounts(
             {
                 "account": account.name,
                 "why": (
-                    _why_several_signers(open_signers)
+                    _why_fee_payer_is_not_an_actor(account)
+                    if account.name in withheld
+                    else _why_several_signers(open_signers)
                     if account.name in several
                     else _why_absent(account, target, graph)
                 ),
@@ -234,6 +256,23 @@ def plan_accounts(
         )
 
     return resolved, origins, missing
+
+
+def _why_fee_payer_is_not_an_actor(account: Any) -> str:
+    """Why the lone open signer was left open when the payer only pays.
+
+    Says what the slot GOVERNS, not merely that it is unfilled, because the caller's next
+    move is to name the real actor and they need to know what they are authorising.
+    """
+    return (
+        f"`{account.name}` is this instruction's only open signer, but the key supplied "
+        "pays the fee and does not act — so it is withheld rather than poured in. A fee "
+        "payer is a transaction-level account (`account_keys[0]`); an instruction's "
+        "signer slot is an AUTHORITY, and filling it here would grant that authority to "
+        "whoever is paying. Supply the real actor by name. Simulation runs with "
+        "`sigVerify` disabled and cannot tell one signer from another, so this would "
+        "not be caught downstream."
+    )
 
 
 def _why_several_signers(open_signers: tuple[Any, ...]) -> str:
