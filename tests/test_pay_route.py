@@ -58,6 +58,9 @@ class _Counter:
 def _assess(
     *, store, holdings, peg=None, mint_owner=None, idl=None, venues=None, buyer=BUYER
 ):
+    """`idl` is accepted and ignored: `assess_payment` no longer fetches one (2026-09-13),
+    the venue finder owns its own. The parameter stays so the many callers below read
+    unchanged, and the returned counter stays at 0 to prove nothing fetches behind them."""
     peg_reader = _Counter(peg or recorded_peg_reader({}))
     idl_fetch = _Counter(idl or (lambda program: {}))
     find_venues = _Counter(venues or (lambda **k: []))
@@ -67,7 +70,6 @@ def _assess(
         holdings=holdings,
         mint_owner=mint_owner or (lambda m: TOKEN_PROGRAM_ID),
         peg_reader=peg_reader,
-        idl_fetch=idl_fetch,
         find_venues=find_venues,
     )
     return report, peg_reader, idl_fetch, find_venues
@@ -161,6 +163,8 @@ def test_a_peg_refusal_on_one_mint_does_not_abandon_the_wallet() -> None:
     is fine, and refusing the whole request would be a blanket denial."""
     store = _Store(mint=USDC)
     venue = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=200_000,
         direction="a_to_b",
@@ -232,6 +236,8 @@ def test_a_pair_with_no_pool_is_no_route() -> None:
 def test_a_route_that_costs_more_than_is_held_is_rejected_and_recorded() -> None:
     store = _Store(mint=USDC)
     too_big = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=10**12,
         direction="a_to_b",
@@ -314,6 +320,8 @@ def test_a_quote_carries_the_bound_its_guarantee_depends_on() -> None:
     """A guarantee that does not carry its own precondition is how this shipped. A
     builder using a different bound must be able to DETECT that, not silently void it."""
     q = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="p",
         amount_in=1,
         direction="a_to_b",
@@ -396,6 +404,8 @@ def test_conversion_required_is_stated_not_inferred() -> None:
         peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [
             pay_route.Quote(
+                venue="whirlpool",
+                curve="clmm",
                 pool="p",
                 amount_in=200_000,
                 direction="a_to_b",
@@ -423,6 +433,8 @@ def test_route_found_names_its_execution_tool() -> None:
         peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [
             pay_route.Quote(
+                venue="whirlpool",
+                curve="clmm",
                 pool="p",
                 amount_in=200_000,
                 direction="a_to_b",
@@ -495,6 +507,8 @@ def test_route_found_carries_the_two_step_rail_with_the_argument_joins() -> None
     names the tool but not the joins still leaves the venue re-derivation to chance."""
     store = _Store(mint=USDC)
     venue = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=200_000,
         direction="a_to_b",
@@ -550,6 +564,8 @@ def test_a_stale_reading_warns_on_a_read_only_plan_instead_of_blocking_it() -> N
     to discover a mint address."""
     store = _Store(mint=USDC)
     venue = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=200_000,
         direction="a_to_b",
@@ -573,6 +589,8 @@ def test_the_caveated_route_still_points_at_the_next_tool() -> None:
     """A route the caller may act on knowingly must not be a dead end."""
     store = _Store(mint=USDC)
     venue = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=200_000,
         direction="a_to_b",
@@ -628,6 +646,8 @@ def test_a_stale_candidate_is_downgraded_too_not_only_a_stale_destination() -> N
     """
     store = _Store(mint=USDC)
     venue = pay_route.Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="pool111",
         amount_in=200_000,
         direction="a_to_b",
@@ -659,3 +679,89 @@ def test_a_depegged_candidate_still_refuses_even_when_the_destination_is_fine() 
     )
     assert report.outcome == "peg_blocked"
     assert report.route is None
+
+
+# --- venue identity: the report must be able to say WHICH venue, and why ---------------
+#
+# These pin the fix for the weld found on 2026-09-13. `_default_idl_fetch` was
+# `lambda _name: idl_fetch(WHIRLPOOL_PROGRAM)` — a function that takes a program name and
+# DISCARDS it — so the seam looked parameterised and was not. Worse, `Quote` carried
+# `tick_spacing` with no `venue` field at all, which made a CPMM or DLMM quote
+# unrepresentable and a chosen venue unnameable. A hardcode that looks like a seam is
+# worse than an obvious one: it hides which venues actually work.
+
+
+def _quote(**over):
+    base = dict(
+        venue="whirlpool",
+        curve="clmm",
+        pool="pool111",
+        amount_in=1_000,
+        direction="a_to_b",
+        liquidity=10**12,
+        fee_rate=300,
+        tick_spacing=64,
+    )
+    base.update(over)
+    return pay_route.Quote(**base)
+
+
+def test_a_quote_names_its_venue_and_curve() -> None:
+    """A route nobody can attribute is a route nobody can check."""
+    quote = _quote()
+    assert quote.venue == "whirlpool"
+    assert quote.curve == "clmm"
+    payload = quote.to_dict()
+    assert payload["venue"] == "whirlpool", "the caller must see which venue was chosen"
+    assert payload["curve"] == "clmm", "and on which liquidity shape"
+
+
+def test_a_constant_product_quote_needs_no_tick_spacing() -> None:
+    """`tick_spacing` is a CLMM concept. Requiring it made Raydium CPMM and Meteora DLMM
+    quotes unrepresentable, which is why the ladder could not be built."""
+    cpmm = _quote(venue="raydium", curve="cpmm", tick_spacing=None)
+    assert cpmm.tick_spacing is None
+    # Absent, never nulled — the same rule `gecko.effects` follows, for the same reason:
+    # a null reads as "the answer is nothing", a missing key as "does not apply here".
+    assert "tick_spacing" not in cpmm.to_dict()
+    assert _quote().to_dict()["tick_spacing"] == 64, (
+        "and still present where it applies"
+    )
+
+
+def test_assess_payment_does_not_fetch_an_idl_of_its_own() -> None:
+    """The venue finder owns its venue's IDL. Threading one generic `idl` through
+    `assess_payment` is what welded every route to whirlpool."""
+    import inspect
+
+    params = inspect.signature(pay_route.assess_payment).parameters
+    assert "idl_fetch" not in params, (
+        "assess_payment must not fetch an IDL — the finder owns it"
+    )
+    assert not hasattr(pay_route, "_default_idl_fetch"), (
+        "the name-discarding lambda must be gone, not merely unused"
+    )
+
+
+def test_a_second_venue_can_be_offered_without_touching_assess_payment() -> None:
+    """The point of the seam: a CPMM finder drops in and the report attributes it."""
+    store = _Store(mint=USDC)
+    seen: dict = {}
+
+    def raydium_finder(**kw):
+        seen.update(kw)
+        return [_quote(venue="raydium", curve="cpmm", tick_spacing=None, amount_in=500)]
+
+    report = pay_route.assess_payment(
+        store=store,
+        buyer=BUYER,
+        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
+        mint_owner=lambda m: TOKEN_PROGRAM_ID,
+        peg_reader=recorded_peg_reader({USDG: PEGGED, USDC: PEGGED}),
+        find_venues=raydium_finder,
+    )
+    assert "idl" not in seen, "the finder is asked for a route, not handed an IDL"
+    assert report.outcome in {"route_found", "route_found_peg_unverified"}
+    leg = report.to_dict()["route"]
+    assert leg["quote"]["venue"] == "raydium"
+    assert leg["quote"]["curve"] == "cpmm"

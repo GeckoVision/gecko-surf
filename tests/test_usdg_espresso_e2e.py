@@ -64,6 +64,8 @@ class _Espresso:
 
 def _pool(amount_in: int) -> Quote:
     return Quote(
+        venue="whirlpool",
+        curve="clmm",
         pool="7qbRF6YsyGuLUVs6Y1q64bdVrfe4ZcUUz1JRdoVNUJnm",
         amount_in=amount_in,
         direction="a_to_b",
@@ -80,7 +82,6 @@ def _run(*, holdings, peg, venues):
         holdings=holdings,
         mint_owner=lambda m: TOKEN_2022 if m == USDG else TOKEN_PROGRAM_ID,
         peg_reader=peg,
-        idl_fetch=lambda _n: {},
         find_venues=venues,
     )
 
@@ -222,7 +223,10 @@ def test_an_espresso_priced_in_token_2022_is_refused_before_the_oracle_is_asked(
         holdings={USDG: (5_000_000, TOKEN_2022)},
         mint_owner=lambda m: TOKEN_2022,
         peg_reader=lambda m: pytest.fail("the oracle must not be asked"),
-        idl_fetch=lambda _n: pytest.fail("the IDL must not be fetched"),
+        # "the IDL must not be fetched" used to be asserted through its own seam. The
+        # finder now owns its venue's IDL, so the line below subsumes it: no venue
+        # sought means no IDL fetched, and there is no longer a way to fetch one behind
+        # the finder's back.
         find_venues=lambda **k: pytest.fail("no venue must be sought"),
     )
     assert report.outcome == "pinned_program_mismatch"

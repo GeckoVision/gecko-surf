@@ -65,13 +65,16 @@ class ProveResult:
 Simulator = Callable[[StartPoint, Mapping[str, Any], str, RpcCall | None], Any]
 
 
-def _default_simulator(
-    start: StartPoint,
-    bindings: Mapping[str, Any],
-    rpc_url: str,
-    rpc_call: RpcCall | None,
-) -> Any:
-    """Dispatch a routed start point to the orchestrator that owns it."""
+def landing_table() -> dict[tuple[str, str], Any]:
+    """Which (program, instruction) pairs this repo can actually PROVE.
+
+    Public and interrogable on purpose. It used to be a local inside the dispatcher,
+    which made "what can we prove?" a question you answered by reading code — and a new
+    venue is one forgotten edit away from being comprehended, wired, and silently
+    unprovable. `tests/test_prove_coverage.py` compares this against the landing
+    orchestrators that exist on disk, so the gap shows up as a red test on the day it
+    opens rather than as a surprise at demo time.
+    """
     from .providers import (
         jupiter_landing,
         metadao_landing,
@@ -80,13 +83,7 @@ def _default_simulator(
         pumpfun_landing,
     )
 
-    common: dict[str, Any] = {
-        "rpc_url": rpc_url,
-        "rpc_call": rpc_call,
-        "include_derive_only": False,
-    }
-    key = (start.program.lower(), (start.instruction or "").lower())
-    table = {
+    return {
         ("pumpfun", "buy"): pumpfun_landing.simulate_buy_landing,
         ("pumpfun", "sell"): pumpfun_landing.simulate_sell_landing,
         ("meteora", "swap"): meteora_landing.simulate_swap_landing,
@@ -94,7 +91,22 @@ def _default_simulator(
         ("metadao_ico", "fund"): metadao_landing.simulate_fund_landing,
         ("jupiter", "route"): jupiter_landing.simulate_route_landing,
     }
-    runner: Any = table.get(key)
+
+
+def _default_simulator(
+    start: StartPoint,
+    bindings: Mapping[str, Any],
+    rpc_url: str,
+    rpc_call: RpcCall | None,
+) -> Any:
+    """Dispatch a routed start point to the orchestrator that owns it."""
+    common: dict[str, Any] = {
+        "rpc_url": rpc_url,
+        "rpc_call": rpc_call,
+        "include_derive_only": False,
+    }
+    key = (start.program.lower(), (start.instruction or "").lower())
+    runner: Any = landing_table().get(key)
     if runner is None:
         raise ProofError(
             f"no orchestrator wired for {start.program}/{start.instruction}"

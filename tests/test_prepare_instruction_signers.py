@@ -169,3 +169,68 @@ def test_a_pda_signer_is_derived_not_papered_over_with_the_payer(
     ).address
     assert resolved["mayhem_token_vault"] == vault
     assert _missing(missing, "sol_vault_authority") is None
+
+
+# -- a THIRD-PARTY fee payer is not an actor -------------------------------
+#
+# The rule above ("the lone open signer is the payer") holds only while the payer and the
+# actor are the SAME person. A gasless relay breaks exactly that: Kora pays the fee and
+# has no business authorising anything. `payer` is a TRANSACTION-level fact — it is
+# `account_keys[0]`, which is why `txbind` reads it from the message header — and pouring
+# it into an INSTRUCTION's authority slot hands the relay whatever that slot governs.
+#
+# Found 2026-09-13 while sequencing Kora stage 2, before any relay code existed.
+
+KORA = "KoRAFeePayer11111111111111111111111111111111"
+
+
+def test_a_fee_payer_never_becomes_the_actor(meteora: ProgramGraph) -> None:
+    """Name `position` and `payer`, leave `owner` open, and hand over a RELAY's key.
+
+    With `payer_acts=True` the lone-signer rule would make the relay the position
+    OWNER — a well-formed transaction that gives away the position. The relay pays; it
+    does not own.
+    """
+    resolved, _origins, missing = plan_accounts(
+        meteora,
+        "initialize_position",
+        {"position": POSITION, "payer": PAYER},
+        payer=KORA,
+        payer_acts=False,
+    )
+    assert resolved.get("owner") != KORA, (
+        "the fee payer was made the position owner — this is the drain"
+    )
+    gap = _missing(missing, "owner")
+    assert gap is not None, "owner must be reported as a gap, not filled"
+    assert gap["signer"] is True
+    assert "fee payer" in gap["why"], gap["why"]
+
+
+def test_the_actor_arm_is_untouched_by_default(meteora: ProgramGraph) -> None:
+    """`payer_acts` defaults to True, so every existing caller keeps its behaviour."""
+    resolved, origins, missing = plan_accounts(
+        meteora,
+        "initialize_position",
+        {"position": POSITION, "owner": OWNER},
+        payer=PAYER,
+    )
+    assert resolved["payer"] == PAYER
+    assert _origin(origins, "payer") == "supplied"
+    assert _missing(missing, "payer") is None
+
+
+def test_a_fee_payer_may_still_fill_a_slot_the_caller_named(
+    meteora: ProgramGraph,
+) -> None:
+    """Refusing to INFER is not refusing to accept. A caller who states that the relay
+    fills a named slot is answering the question, not having it answered for them."""
+    resolved, origins, _ = plan_accounts(
+        meteora,
+        "initialize_position",
+        {"position": POSITION, "owner": OWNER, "payer": KORA},
+        payer=KORA,
+        payer_acts=False,
+    )
+    assert resolved["payer"] == KORA
+    assert _origin(origins, "payer") == "supplied"
