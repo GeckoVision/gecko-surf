@@ -154,29 +154,50 @@ class _StoreLike(Protocol):
 
 @dataclass(frozen=True)
 class Quote:
-    """A sized conversion at one proven venue."""
+    """A sized conversion at one proven venue, and WHICH venue it was.
 
+    ``venue`` and ``curve`` are required and have no defaults, because a route nobody can
+    attribute is a route nobody can check. Until 2026-09-13 this carried neither, so the
+    report could not name the venue it had chosen and every caller was free to assume
+    Orca — which is what the code did.
+
+    ``curve`` is the shape of the liquidity, not a brand: it decides what accounts the
+    call needs. A CLMM swap must name tick arrays in the direction of travel; a DLMM one
+    names bins; a CPMM pool needs neither. That is why ``tick_spacing`` is optional here
+    rather than required — it is a CLMM fact, and demanding it made a Raydium CPMM or
+    Meteora DLMM quote literally unrepresentable.
+    """
+
+    venue: str
+    curve: Curve
     pool: str
     amount_in: int
     direction: Direction
     liquidity: int
-    tick_spacing: int
     fee_rate: int
+    #: CLMM only. ``None`` on curves that have no ticks.
+    tick_spacing: int | None = None
     #: The bound ``amount_in`` was sized against. It travels with the number because a
     #: guarantee without its precondition is not a guarantee — a builder that applies a
     #: DIFFERENT bound can now detect the mismatch instead of silently voiding this.
     slippage_bps: int = SWAP_SLIPPAGE_BPS
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
+            "venue": self.venue,
+            "curve": self.curve,
             "pool": self.pool,
             "amount_in": str(self.amount_in),
             "direction": self.direction,
             "liquidity": str(self.liquidity),
-            "tick_spacing": self.tick_spacing,
             "fee_rate": self.fee_rate,
             "slippage_bps": self.slippage_bps,
         }
+        # Absent, never nulled — the rule `gecko.effects` follows, for the same reason: a
+        # null reads as "the answer is nothing", a missing key as "does not apply here".
+        if self.tick_spacing is not None:
+            out["tick_spacing"] = self.tick_spacing
+        return out
 
 
 @dataclass(frozen=True)
@@ -365,6 +386,10 @@ class PayabilityReport:
 #: (mint) -> the program that owns it. Injected so the whole module runs offline.
 MintOwner = Callable[[str], str]
 #: Keyword-only venue lookup, so a caller cannot silently swap the pair's order.
+#: The shape of a venue's liquidity, which is what decides the accounts a swap needs.
+#: Not a brand: two programs with the same curve are called the same way.
+Curve = Literal["cpmm", "clmm", "dlmm", "bonding_curve", "aggregator", "orchestrator"]
+
 VenueFinder = Callable[..., Sequence[Any]]
 
 
@@ -404,7 +429,6 @@ def assess_payment(
     holdings: Mapping[str, tuple[int, str]],
     mint_owner: MintOwner,
     peg_reader: PegReader,
-    idl_fetch: Callable[[str], Mapping[str, Any]],
     find_venues: VenueFinder,
     max_candidates: int = 8,
 ) -> PayabilityReport:
@@ -509,7 +533,6 @@ def assess_payment(
             peg_checks=tuple(checks),
         )
 
-    idl = idl_fetch("whirlpool")
     rejected: list[Leg] = []
     no_pool: list[str] = []
     peg_refused = 0
@@ -530,7 +553,6 @@ def assess_payment(
         venues = find_venues(
             held_mint=held_mint,
             needed_mint=priced_mint,
-            idl=idl,
             target_out=price_raw - held_priced,
         )
         if not venues:
@@ -715,7 +737,6 @@ def plan_payment_result(
             holdings=read_holdings(rpc_url, str(buyer), rpc_call=call),
             mint_owner=lambda mint: read_mint_owner(rpc_url, mint, rpc_call=call),
             peg_reader=peg_reader or _default_peg_reader(),
-            idl_fetch=idl_fetch or _default_idl_fetch(),
             find_venues=_venue_finder(rpc_url, call),
         )
     except Exception as exc:  # noqa: BLE001 - redacted to a class at the transport edge
@@ -775,14 +796,6 @@ def _default_peg_reader() -> PegReader:
     return pegana_reader()
 
 
-def _default_idl_fetch() -> Callable[[str], Mapping[str, Any]]:
-    from .providers.catalog_surface import orquestra_seams
-    from .whirlpool_venue import WHIRLPOOL_PROGRAM
-
-    idl_fetch, _build = orquestra_seams()
-    return lambda _name: idl_fetch(WHIRLPOOL_PROGRAM)
-
-
 def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
     """Bind the venue search to this call's transport, and size each pool's input.
 
@@ -794,21 +807,25 @@ def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
     from .whirlpool_math import size_input_for_output
 
     bound = validate_swap_bound(SWAP_SLIPPAGE_BPS)
+    from .providers.catalog_surface import orquestra_seams
     from .whirlpool_venue import (
+        WHIRLPOOL_PROGRAM,
         find_venues as _find,
         whirlpool_layout,
     )
 
+    idl_fetch, _build = orquestra_seams()
     _, apis = load_packaged_provider("orquestra")
     program = apis["whirlpool"].program
     if program is None:  # pragma: no cover - the packaged config always carries it
         raise PayRouteError("the packaged whirlpool config declares no program")
     recipe = dict(program.pdas)["whirlpool"]
 
-    def finder(
-        *, held_mint: str, needed_mint: str, idl: Mapping[str, Any], target_out: int
-    ) -> list[Quote]:
-        layout = whirlpool_layout(idl)
+    def finder(*, held_mint: str, needed_mint: str, target_out: int) -> list[Quote]:
+        # The IDL is fetched HERE, by the finder that knows which program it needs.
+        # Threading a generic `idl` down from `assess_payment` is what welded every
+        # route to Orca: the parameter was named for any program and only ever held one.
+        layout = whirlpool_layout(idl_fetch(WHIRLPOOL_PROGRAM))
         venues = _find(
             rpc_url,
             held_mint,
@@ -819,6 +836,8 @@ def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
         )
         return [
             Quote(
+                venue="whirlpool",
+                curve="clmm",
                 pool=v.pool,
                 amount_in=size_input_for_output(
                     target_out,
