@@ -375,6 +375,13 @@ LET_ME_BUY_INTENTS: dict[str, Intent] = {_PLAN_PURCHASE.name: _PLAN_PURCHASE}
 
 LET_ME_BUY_STARTS: dict[str, StartSpec] = {
     "plan_purchase": StartSpec(
+        # Reviewed 2026-09-10. DELIBERATELY EMPTY, and the first draft got this wrong.
+        # `plan_purchase` takes store, product, buyer — no mint. The buyer names a
+        # STORE and the store's own account fixes the mint it prices in. Declaring one
+        # here would claim a choice the caller never makes, which is the same reason
+        # jurassic_fi and ore are empty: name a container, and the container fixes the
+        # asset.
+        value_domains={},
         accounts=(
             "receipts",
             "sender_token_account",

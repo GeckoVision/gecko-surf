@@ -85,6 +85,10 @@ JURASSIC_FI_INTENTS: dict[str, Intent] = {_PLAN_CONTRIBUTE.name: _PLAN_CONTRIBUT
 
 JURASSIC_FI_STARTS: dict[str, StartSpec] = {
     "plan_contribute": StartSpec(
+        # Reviewed 2026-09-10. DELIBERATELY EMPTY. A token is involved — payment_mint, payment_mint_allowlist —
+        # but the caller names a launch_id and the LAUNCH fixes the mint from its own
+        # allowlist. Declaring one here would claim a choice the caller never makes.
+        value_domains={},
         accounts=("launch", "user_position", "payment_vault"),
         recovered={
             "launch": (

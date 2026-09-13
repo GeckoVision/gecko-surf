@@ -293,6 +293,9 @@ METADAO_INTENTS: dict[str, Intent] = {_FUND.name: _FUND}
 # landing preludes. Pure data.
 METADAO_STARTS: dict[str, StartSpec] = {
     "plan_fund": StartSpec(
+        # Reviewed 2026-09-10. base_mint identifies the launch's asset and the caller supplies it to reach the
+        # launch, so the asset really is caller-chosen here.
+        value_domains={"base_mint": "solanatokenmint"},
         accounts=(
             "launch",
             "funding_record",

@@ -78,6 +78,11 @@ JUPITER_INTENTS: dict[str, Intent] = {_ROUTE.name: _ROUTE}
 #: two code paths now read one source and cannot drift apart.
 JUPITER_STARTS: dict[str, StartSpec] = {
     "plan_route": StartSpec(
+        # Reviewed 2026-09-10. An aggregator — the two mints ARE the request; the route is what it returns.
+        value_domains={
+            "input_mint": "solanatokenmint",
+            "output_mint": "solanatokenmint",
+        },
         accounts=tuple(DECLARED_ROUTE_ACCOUNTS),
         surface_named=tuple(DECLARED_ROUTE_ACCOUNTS),
         recovered={

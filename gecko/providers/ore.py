@@ -446,6 +446,8 @@ ORE_INTENTS: dict[str, Intent] = {_CLAIM.name: _CLAIM}
 # FLAGGED gaps, and the DECLARED landing preludes. Pure data.
 ORE_STARTS: dict[str, StartSpec] = {
     "plan_claim": StartSpec(
+        # Reviewed 2026-09-10. DELIBERATELY EMPTY. `mint` is ORE's own fixed mint, not an asset a caller picks.
+        value_domains={},
         accounts=("board", "treasury", "miner", "mint", "recipient", "treasury_tokens"),
         recovered={
             "miner": (

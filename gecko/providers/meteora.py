@@ -388,6 +388,12 @@ METEORA_INTENTS: dict[str, Intent] = {_SWAP.name: _SWAP}
 # DECLARED landing preludes. Pure data.
 METEORA_STARTS: dict[str, StartSpec] = {
     "plan_swap": StartSpec(
+        # Reviewed 2026-09-10. Same shape as whirlpool: the caller names both assets and bin_step/base_factor
+        # pick which of the pair's pools to use.
+        value_domains={
+            "input_mint": "solanatokenmint",
+            "output_mint": "solanatokenmint",
+        },
         accounts=(
             "lb_pair",
             "reserve",
