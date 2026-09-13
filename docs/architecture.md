@@ -74,7 +74,7 @@ flowchart TB
     subgraph SRC["SOURCES — all untrusted"]
         OAS["OpenAPI / docs / llms.txt"]
         IDL["Anchor IDL / program source (Steel too)"]
-        OC["Orquestra catalog — 4,500 projects"]
+        OC["Orquestra catalog — 4,534 projects"]
     end
 
     subgraph COMP["COMPREHENSION"]
@@ -158,7 +158,7 @@ Live, verbatim: **pump buy** — naive ❌ `account_error (3012)` → Gecko bund
 
 | Layer | ✅ Working & proven | 🚧 Not built yet |
 |---|---|---|
-| **Comprehension** | OpenAPI + docs ingest · anti-poison quarantine · Skill Guard (image/encoded) · PDA recovery (Anchor + Steel source) · auto-comprehend w/ measured overlays (4 programs, differential-proven) | catalog breadth (4,500 projects listed, 4 wired) · non-Anchor beyond ORE |
+| **Comprehension** | OpenAPI + docs ingest · anti-poison quarantine · Skill Guard (image/encoded) · PDA recovery (Anchor + Steel source) · auto-comprehend w/ measured overlays (4 programs, differential-proven) | catalog breadth (4,534 projects listed, 8 wired, 4 differential-proven) · non-Anchor beyond ORE |
 | **Knowledge** | surface graph + VERIFIED/REFUTED · program graph + FLAGGED honesty · cross-API correlation (DECLARED-first) · one unified provenance module (`gecko/provenance.py`) | semantic tier (evidence-gated OFF) |
 | **Projection** | hosted + local MCP · question-shaped tools, auth invisible · scale-adaptive listing (defs on demand) · −77%/−89% context cuts (two real specs) · Scorecard/Playground · `find_start` intent router | public-docs refresh |
 | **Action/verify** | simulate→Receipt (pump + Meteora live proofs) · landing preludes · state-read args · never-sign AST boundary | pump `sell` round-trip · ORE claim / MetaDAO fund intents · hosted point-&-simulate |

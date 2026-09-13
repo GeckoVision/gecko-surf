@@ -1,15 +1,19 @@
 # Step 4 — Make it discoverable (breadcrumb, not a catalog)
 
-**Status: Building.** The breadcrumb pattern is documented here; there is no hosted
-Gecko discovery service, and there will **not** be a public catalog.
+**Status: Building.** The breadcrumb pattern is documented here, and it stays the
+recommended route: an agent should find your MCP from *your* domain. Gecko does serve a
+public catalog of the surfaces it has comprehended (opt-in, no scores) — what it will
+**not** do is index providers' APIs without asking, or broker them.
 
 Discoverability is the last mile: an agent has to be able to *find* the agent-ready
 MCP. There are two ways to do that, and this kit deliberately picks the smaller one.
 
 ## The discipline: breadcrumb, not catalog
 
-**Gecko does not host a public directory of providers' APIs.** That is a standing
-product decision (the "day-one model" discipline), for two reasons:
+**Gecko does not host a public directory of providers' APIs.** A catalog of surfaces we
+were *asked* to carry is a different thing from a directory of everyone's API, and only
+the second one is ruled out. That is a standing product decision (the "day-one model"
+discipline), for two reasons:
 
 1. Listing providers' APIs in a central catalog would make Gecko a **marketplace** —
    the frames.ag / Bazaar lane. We compose with those; we don't become one.

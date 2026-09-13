@@ -9,8 +9,10 @@ Gecko is a comprehension layer, not a middleman:
   your endpoints all stay intact. Gecko never replaces them.
 - It is **not a payment rail**: it composes onto *your* x402 endpoint, holds no funds,
   and signs nothing. The money moves between the agent and you.
-- It **never re-lists your API** in a public catalog. Your surface is served because
-  you asked for it, to the agents you point at it — not marketed to the world.
+- It **never lists your API without your asking.** Gecko does serve a public catalog of
+  comprehended surfaces — that is how an agent finds one — but yours enters it because
+  you opted in, and leaves when you say so. What is never on the table: brokering your
+  API, taking a cut of it, or reselling it as ours.
 - Your developers **never pay Gecko** to use your API. (How the provider side is
   eventually priced is a separate, later conversation — see *Where we are* below.)
 
@@ -146,7 +148,7 @@ changing hands to start, no exclusivity.**
 |---|---|
 | **Control plane only** | Gecko stores your API's *surface* and correctness metadata — never response payloads, user data, or your secrets. |
 | **Compose, never become, the rail** | Payment settles on *your* x402 endpoint. Gecko holds no funds, signs nothing, takes no cut. |
-| **No public catalog** | Your surface is served to the agents you point at it — never re-listed or marketed as ours. |
+| **Listed only with your yes** | A public catalog of comprehended surfaces is how agents find one. Yours is in it because you opted in, and out when you say so — never brokered, never resold as ours, never a cut taken. |
 | **Aggregate, not replace** | Your own MCP, docs, and endpoints stay intact. Gecko sits beside them. |
 | **Auth is invisible to the agent** | Credentials are injected at call time; the agent never sees a token. |
 

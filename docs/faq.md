@@ -55,7 +55,9 @@ No, and deliberately so. There are three different jobs in the agentic economy: 
 getting **paid** (settlement rails — x402, Metera), skills getting **distributed**
 (marketplaces — Bazaar, frames.ag), and APIs getting **used**. Gecko does only the third:
 **comprehension and consumption.** We *compose on top of* MCP and x402 and consume a
-payment catalog as an input — we don't re-list APIs and we don't move money. If you're
+payment catalog as an input. We do serve a catalog of the surfaces we have comprehended,
+because an agent has to find one somehow — but we don't broker them, don't bill for them,
+don't take a cut, and don't move money. A catalog is not a marketplace. If you're
 looking for a place to discover or bill for APIs, that's a layer below us; Gecko is the
 layer that makes an API you already have actually callable by an agent.
 

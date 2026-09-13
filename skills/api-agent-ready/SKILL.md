@@ -44,7 +44,7 @@ discipline that keeps it in lane.
 | 1 | **Comprehend** the OpenAPI/docs → first-call-correct tools | [comprehend.md](comprehend.md) | **Live** |
 | 2 | **Emit artifacts** — `llms.txt`, `x-gecko`, `gecko.json` breadcrumbs | [artifacts.md](artifacts.md) | **Building** (hand-authored pattern) |
 | 3 | **Serve MCP** — Streamable-HTTP + one-click `claude mcp add` | [serve-mcp.md](serve-mcp.md) | **Live** |
-| 4 | **Make discoverable** — breadcrumb, not a public catalog | [discoverable.md](discoverable.md) | **Building** |
+| 4 | **Make discoverable** — breadcrumb on your own origin, first | [discoverable.md](discoverable.md) | **Building** |
 | 5 | **Aggregate, not replace** — never touch the provider's own MCP | [aggregate-not-replace.md](aggregate-not-replace.md) | invariant |
 
 Get all of them and the provider's *entire* API is usable by an agent, first try —
