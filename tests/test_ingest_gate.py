@@ -1097,3 +1097,66 @@ def test_a_pubkey_or_string_seed_carries_no_byte_order_to_assume() -> None:
         "pda_origins": {"position": "extracted"},
     }
     assert check_seed_endianness("raydium_clmm", program).outcome == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# seed-endianness is a GATE check, not only a pre-ingest one
+#
+# `check_seed_endianness` shipped in #526 and was wired into `precheck_config` only, so
+# a program's byte orders were judged once — before it was ingested — and never again.
+# Any later edit to a packaged config could reintroduce an assumed `le` and nothing
+# would say so. `gate()` is the check that runs over what is ALREADY in, which is
+# exactly where a silent regression lands.
+#
+# Warn, never refuse: five shipped recipes are `extracted` today, and refusing would
+# block the catalog this check exists to grow. The same reasoning #526 recorded.
+
+
+def test_seed_endianness_is_one_of_the_gate_checks() -> None:
+    assert "seed-endianness" in CHECKS, (
+        "a check that runs only before ingestion cannot catch a regression after it"
+    )
+
+
+def test_every_wired_program_is_judged_on_its_byte_orders(reports) -> None:
+    """Not 'some programs have the check' — every one, or the gap is where trouble hides."""
+    for api_id in ALL_PROGRAMS:
+        named = {c.name for c in reports[api_id].checks}
+        assert "seed-endianness" in named, f"{api_id} was never asked"
+
+
+def test_the_known_assumed_byte_orders_are_reported_as_warnings(reports) -> None:
+    """The four measured on 2026-09-11, by name.
+
+    whirlpool carries fee_tier + adaptive_fee_tier, meteora bin_array, jurassic_fi
+    launch. If one of these starts passing, it was either recovered (delete it from
+    here and say so in the config's `why`) or the check stopped looking.
+    """
+    expected = {
+        # `bundled_position` is the third whirlpool account and is NOT in the four the
+        # roadmap named — it is one of the two "surface-only, nobody has looked" cases
+        # (docs/specs/2026-09-11-all-calls-working.md §C). It belongs here because the
+        # check found it, not because anyone decided about it yet.
+        "whirlpool": {"fee_tier", "adaptive_fee_tier", "bundled_position"},
+        "meteora": {"bin_array"},
+        "jurassic_fi": {"launch"},
+    }
+    for api_id, accounts in expected.items():
+        check = next(c for c in reports[api_id].checks if c.name == "seed-endianness")
+        assert check.outcome == "warn", f"{api_id}: {check.detail}"
+        # measured as `<account>.<seed>`; the account is what a fix is recorded against.
+        seen = {s.split(".", 1)[0] for s in check.measured["assumed_seeds"]}
+        assert accounts == seen, f"{api_id}: expected {accounts}, measured {seen}"
+
+
+def test_a_program_with_no_assumed_byte_order_passes_the_check(reports) -> None:
+    """The check must be able to say ok, or it is a constant, not a measurement."""
+    outcomes = {
+        api_id: next(
+            c for c in reports[api_id].checks if c.name == "seed-endianness"
+        ).outcome
+        for api_id in ALL_PROGRAMS
+    }
+    assert "ok" in outcomes.values(), (
+        f"no program passes seed-endianness — the check may be stuck: {outcomes}"
+    )
