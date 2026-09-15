@@ -89,7 +89,7 @@ def blocks(espresso, held, cu):
         ("user", "I want to buy a coffee. I only have USDG."),
         (
             "tool",
-            f"list_stores  geckocoffee",
+            "list_stores  geckocoffee",
             f"Espresso {price} USDC  ·  mint {mint[:6]}…{mint[-4:]}  ·  classic SPL",
         ),
         (
@@ -189,13 +189,15 @@ def main() -> int:
         for blk, lines, h in items:
             kind = blk[0]
             if kind == "user":
-                wpx = max(d.textlength(l, font=ui) for l in lines) + 40 * s
+                wpx = max(d.textlength(line, font=ui) for line in lines) + 40 * s
                 x0 = W * s - PAD - wpx
                 d.rounded_rectangle(
                     [x0, y, W * s - PAD, y + h - 22 * s], 14 * s, fill=USER_BG
                 )
-                for j, l in enumerate(lines):
-                    d.text((x0 + 20 * s, y + 12 * s + j * 26 * s), l, font=ui, fill=INK)
+                for j, line in enumerate(lines):
+                    d.text(
+                        (x0 + 20 * s, y + 12 * s + j * 26 * s), line, font=ui, fill=INK
+                    )
             elif kind == "tool":
                 d.rounded_rectangle(
                     [PAD, y, W * s - PAD, y + 62 * s],
@@ -213,8 +215,8 @@ def main() -> int:
                 d.rectangle([PAD, y + 6 * s, PAD + 4 * s, y + 50 * s], fill=GOOD)
                 d.text((PAD + 22 * s, y + 17 * s), blk[1], font=ui_b, fill=GOOD)
             else:
-                for j, l in enumerate(lines):
-                    d.text((PAD, y + j * 27 * s), l, font=ui, fill=INK)
+                for j, line in enumerate(lines):
+                    d.text((PAD, y + j * 27 * s), line, font=ui, fill=INK)
             y += h
         # header last, so scrolled content passes under it
         d.rectangle([0, 0, W * s, 44 * s], fill=PANEL)
