@@ -1,22 +1,39 @@
 # Changelog
 
-## 0.10.3
+## 0.11.0
 
-The release that makes `gecko prove` say something useful when it cannot reach an RPC.
-0.10.2 shipped before that fix merged, so the published binary still printed
-`no receipt — could not run (URLError)` — no cause, no next action, and no hint that a
-LOCAL fork is the default. Anyone we pointed at the CLI hit that first.
+The release where `gecko ingest-gate` works in the binary you install. It never has:
+`_dispatch_keys` read its keyset by `ast.parse`-ing `drift_watch`'s SOURCE, and a
+PyInstaller bundle carries compiled bytecode and no `.py`, so the command died with a
+`FileNotFoundError` before printing anything. Every published binary since the check was
+written. A release smoke test that runs a packaged-config command against the frozen
+build found it on its first run — the same run that caught `[ocr]`, which had been in the
+release workflow since 2026-08-08 and had never once survived a build.
 
-Also in this release, all merged since 0.10.2:
+Two bugs that existed ONLY in the artifact people install, both invisible to a green
+suite. That is the shape of the gap this release closes.
 
-- a cyclic seed dependency is a gap, not a confident derivation order
-- untrusted spec prose can no longer mint a value domain that reads as declared
-- an unknown account no longer defaults to claiming the surface stated it
-- a scan that could not run no longer renders as a scan that passed
-- the bare-`id` REST chain now produces an edge
-- each PDA recipe carries its origin into the agent payload
+Also in this release, all merged since 0.10.3 — five weeks and 240 commits:
 
-## Unreleased
+- **one score per endpoint**, read by an agent choosing and by a provider fixing: callable
+  / findable / distinct, offline and deterministic, and the verdict is the WORST component
+  rather than a blend, because 0.72 tells a provider nothing they can act on
+- **a byte order the IDL cannot state is now a gate check**, not only a pre-ingest one, so
+  a config edit can no longer reintroduce an assumed `le` in silence
+- **whirlpool can finally be proven** — the one endpoint with real mainnet swaps behind it
+  had no landing orchestrator, so `gecko prove` could not run it and `gecko watch` could
+  not notice the day it broke
+- **a relay can pay the fee**, and the binding covers who does: swapping the fee payer
+  changes the message hash, so a relay that rewrites it invalidates the receipt instead of
+  quietly landing different bytes than the ones we attested
+- **two independent signatures assemble into one transaction** without trusting either
+  signer, refusing any contribution made over a message that is not byte-identical to the
+  one we handed out
+- **each program's value domains are declared**, one reviewed claim at a time, never inferred
+- one dispatch table instead of two: the watcher and the prover route the same programs,
+  and a test says so
+- the docs stop promising there is no public catalog, because there is one, and say the
+  true thing instead: listed only with your yes
 
 ### Fixed
 - **The signing gate verified the bytes it had just built — a tautology.**
@@ -254,6 +271,22 @@ Also in this release, all merged since 0.10.2:
   `patch_webhook.id` → `delete_webhook{id}`); pegana gains two plans, both sourced
   from the `GET`. `find_start` retrieval eval unchanged (recall@1 0.74, recall@3 0.89,
   MRR 0.81, 4/4 out-of-scope rejected, 0 false accepts).
+
+## 0.10.3
+
+The release that makes `gecko prove` say something useful when it cannot reach an RPC.
+0.10.2 shipped before that fix merged, so the published binary still printed
+`no receipt — could not run (URLError)` — no cause, no next action, and no hint that a
+LOCAL fork is the default. Anyone we pointed at the CLI hit that first.
+
+Also in this release, all merged since 0.10.2:
+
+- a cyclic seed dependency is a gap, not a confident derivation order
+- untrusted spec prose can no longer mint a value domain that reads as declared
+- an unknown account no longer defaults to claiming the surface stated it
+- a scan that could not run no longer renders as a scan that passed
+- the bare-`id` REST chain now produces an edge
+- each PDA recipe carries its origin into the agent payload
 
 ## 0.10.2 — 2026-08-06
 
