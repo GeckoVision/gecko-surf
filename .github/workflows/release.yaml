@@ -59,7 +59,7 @@ jobs:
       # certifi` floats to whatever is latest at build time, so two builds of the same
       # tag could bundle different CA snapshots; deriving the pin from the committed
       # lockfile makes the bundled trust store reproducible and lock-governed.
-      - name: Install gecko-surf[serve,solana,ocr] + pyinstaller + certifi (pinned to uv.lock)
+      - name: Install gecko-surf[serve,solana] + pyinstaller + certifi (pinned to uv.lock)
         shell: bash
         run: |
           python -m pip install --upgrade pip
@@ -68,15 +68,24 @@ jobs:
           # [solana] bundles solders so the frozen binary can derive PDAs
           # (`gecko orquestra --program …` / `npx @geckovision/gecko orquestra …`).
           #
-          # [ocr] bundles tesserocr, whose wheels carry libtesseract + leptonica, so the
-          # binary reads rendered pixels with no system tesseract. Without it every
-          # `gecko scan-image` on a binary install returns INCOMPLETE on the one channel
-          # a GhostCommit payload lives in — honest, and useless. A binary install is how
-          # a stranger first meets Skill Guard, so the capability has to be in the box.
-          # The matrix is Python 3.11 on linux-x86_64 / linux-arm64 / darwin-arm64, which
-          # is exactly the wheel coverage tesserocr has; the pytesseract fallback stays
-          # for anyone installing from PyPI on a platform without a wheel.
-          python -m pip install ".[serve,solana,ocr]" pyinstaller "certifi==$CERTIFI_VER"
+          # [ocr] IS DELIBERATELY ABSENT, and the reason is measured rather than assumed.
+          # `4d5f093` added it on 2026-08-08 believing tesserocr's wheels carry
+          # libtesseract + leptonica. They do not carry enough: on darwin-arm64 pip finds
+          # no usable wheel, falls back to building from source, and dies on a missing
+          # `leptonica/allheaders.h`; on both linux legs the wheel installs but
+          # `--collect-all tesserocr` does not pull libtesseract or tessdata into the
+          # onefile bundle, so the scanner reports "channels scanned: 0". That commit has
+          # never once survived a release build.
+          #
+          # v0.10.3 — the version actually in the wild — shipped `.[serve,solana]`, so
+          # this is the known-good state and not a capability anyone loses today. A user
+          # is not misled either: `scan-image` says INCOMPLETE and claims no verdict for
+          # the channel it could not read, which the smoke test below now enforces.
+          #
+          # Putting the pixel channel in the box is still worth doing. It needs system
+          # tesseract installed per-runner (apt / brew) plus an explicit --add-data for
+          # tessdata, which is its own piece of work and must not hold a release hostage.
+          python -m pip install ".[serve,solana]" pyinstaller "certifi==$CERTIFI_VER"
 
       # Flags mirror the locally-proven build exactly. The serve path imports
       # mcp/uvicorn/starlette lazily, so they must be force-collected; pyyaml is a
@@ -163,35 +172,39 @@ jobs:
           fi
           echo "packaged configs OK: whirlpool read from the bundle, checks ran"
 
-      - name: Smoke test (the pixel channel is readable in the frozen binary)
+      # THE BINARY DOES NOT CARRY OCR, AND SAYS SO. `4d5f093` tried to bundle [ocr] on
+      # 2026-08-08 and has never survived a release build: on darwin-arm64 pip falls back
+      # to building tesserocr from source and dies on a missing leptonica header, and on
+      # both linux legs the wheel installs but `--collect-all tesserocr` does not carry
+      # libtesseract or tessdata into the onefile bundle, so the scanner reports
+      # "channels scanned: 0". v0.10.3 — the version in the wild — shipped `.[serve,solana]`
+      # with no tesserocr at all, so this is the known-good state, not a reduction.
+      #
+      # What is asserted instead is the honesty contract, which is the part that protects
+      # a user: scan-image must RUN, must say INCOMPLETE, and must claim NO VERDICT for a
+      # channel it could not read. A scanner that silently returned "clean" because it
+      # could not look is the actual danger, and that is what this catches.
+      - name: Smoke test (a channel it cannot read is reported, never assumed clean)
         shell: bash
         run: |
           rc=0
           "out/${{ matrix.asset }}" scan-image \
             tests/fixtures/imagescan/build_spec_payload.png > ocr_smoke.out 2>&1 || rc=$?
           cat ocr_smoke.out
-          if grep -q "INCOMPLETE" ocr_smoke.out; then
-            echo "::error::frozen binary cannot read rendered pixels — [ocr] is installed but not reachable from the bundle (check --collect-all tesserocr and the vendored tessdata)"
+          if grep -qi "^CLEAN\|no findings" ocr_smoke.out; then
+            echo "::error::scan-image reported CLEAN on a channel it cannot read — a scanner that cannot look must not say it found nothing"
             exit 1
           fi
-          if ! grep -q "POISON" ocr_smoke.out; then
-            echo "::error::expected POISON on the GhostCommit fixture, got neither POISON nor INCOMPLETE (exit $rc) — the scanner did not run"
+          if ! grep -q "INCOMPLETE" ocr_smoke.out; then
+            echo "::error::expected INCOMPLETE (the binary carries no [ocr]); got neither INCOMPLETE nor a recognised verdict (exit $rc)"
             exit 1
           fi
-          if [ "$rc" -ne 2 ]; then
-            echo "::error::POISON printed but exit was $rc, expected 2 — the exit-code contract broke"
+          if ! grep -q "no verdict is claimed" ocr_smoke.out; then
+            echo "::error::INCOMPLETE printed but the no-verdict disclaimer is missing — the honesty contract broke"
             exit 1
           fi
-          echo "pixel channel OK: POISON reached on rendered pixels alone, exit 2"
+          echo "honesty contract OK: unreadable channel reported, no verdict claimed"
 
-      # TLS smoke: ONE real https GET through the binary's own code path (netguard's
-      # pinned HTTPS connect — the exact line that failed on darwin-arm64 in the field
-      # when the binary shipped without a CA store). SSL_CERT_FILE/SSL_CERT_DIR are
-      # scrubbed so the bundled-certifi hook is what's under test. Target = this repo's
-      # own jito spec fixture pinned to the tagged commit (we own it; content can't
-      # drift). Gate on the rendered scorecard, NOT the exit code alone: a transport
-      # failure escapes `inspect` as a traceback with the same exit 1 that grading
-      # semantics use, so only "NN/100" output proves the https fetch succeeded.
       - name: Smoke test (real https through the frozen binary)
         shell: bash
         run: |
