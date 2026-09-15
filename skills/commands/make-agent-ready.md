@@ -29,7 +29,8 @@ auth path. This is provider-side design work, upstream of the steps below. (See
    optional `x-gecko` spec annotations) for the provider to drop at their origin.
    State clearly that `gecko` does not auto-emit these yet. (See
    `skills/api-agent-ready/artifacts.md`.)
-4. **Make discoverable.** Breadcrumb-based, provider-hosted — not a public catalog.
+4. **Make discoverable.** Breadcrumb-based and provider-hosted first — an agent should
+   find your MCP from your own origin.
    (See `skills/api-agent-ready/discoverable.md`.)
 5. **Confirm aggregate-not-replace.** State explicitly that the provider's own MCP is
    untouched and runs side by side. (See

@@ -1,5 +1,5 @@
 ---
-description: When onboarding a provider's API or wiring payments, AGGREGATE never replace the provider's own MCP, and COMPOSE the payment rail never become it — no take-rate, no public catalog, no signing/broadcasting.
+description: When onboarding a provider's API or wiring payments, AGGREGATE never replace the provider's own MCP, and COMPOSE the payment rail never become it — no take-rate, no un-consented listing, no signing/broadcasting.
 alwaysApply: false
 ---
 
@@ -14,9 +14,11 @@ When making a provider's API agent-ready (or adding pay-per-call), stay in the
   Gecko comprehends the OpenAPI and serves the **full** surface **alongside** it.
 - The provider's hand-wrapped tools keep working unchanged; Gecko adds first-call-
   correct coverage of the rest. Onboarding is **additive** — nothing regresses.
-- **No public catalog.** Discovery is provider-hosted and breadcrumb-based
-  (`llms.txt` / `gecko.json` at the provider's origin). Never re-list a provider's
-  API in a Gecko-hosted directory — that's a marketplace, not our lane.
+- **Never list a provider without their yes.** Discovery is provider-hosted and
+  breadcrumb-based by default (`llms.txt` / `gecko.json` at the provider's origin).
+  Gecko does serve a public catalog of surfaces it was asked to carry, with no scores
+  in it; re-listing a provider's API uninvited, or brokering one, is a marketplace and
+  not our lane.
 
 ## 2. Compose the rail, never become it
 
@@ -39,7 +41,8 @@ Before any onboarding or payments step, ask:
 
 - Does this modify or replace the provider's own MCP? → **stop.**
 - Does this route money through Gecko, add a take-rate, or custody funds? → **stop.**
-- Does this list the provider's API in a Gecko-hosted catalog? → **stop.**
+- Does this list the provider's API in a Gecko-hosted catalog *without their opt-in*,
+  or publish their scorecard? → **stop.**
 - Does this store a response payload, user datum, or secret? → **stop.**
 - Would this sign or broadcast a transaction without founder go-ahead? → **stop.**
 

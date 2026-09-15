@@ -14,7 +14,9 @@ single deliverable:
 
 Same class of artifact as the SVG call graph and the Skill-Guard outputs we already generate:
 one file, no server, no hosting bill, runs in CI. **We are not hosting anyone's API** — we
-ship them a scorecard and a *showcase*. No marketplace, no public catalog (a hard non-goal).
+ship them a scorecard and a *showcase*. No marketplace, and **the scorecard is never
+published** — it is the provider's, delivered to them. (Gecko does serve a public catalog
+of comprehended *surfaces*, opt-in; a catalog of surfaces is not a catalog of scores.)
 
 ## What it shows (built vs. needs-work — honest)
 
@@ -67,7 +69,8 @@ GitHub-Action trigger (the PR-comment bot — V1.1). The drift-watch is the *rec
 - A hosted multi-tenant App before a provider signals WTP (marketplace/infra trap).
 - Storing provider **response payloads** to "prove" correctness — the scorecard is spec-only
   by construction (control-plane invariant #1).
-- A **public catalog** of scored APIs — the report is *the provider's*, delivered to them.
+- A **public catalog of scored APIs** — the report is *the provider's*, delivered to them.
+  (The surface catalog we do serve carries no scores, and is opt-in.)
 - Over-indexing the single-spec scorecard on cross-API correlation — it's DECLARED-gated and
   shines across surfaces; upsell, not V1 pillar.
 

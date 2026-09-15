@@ -8,7 +8,7 @@ is just the shortest path through them.*
 
 Gecko turns your API's *surface* into first-call-correct agent tools, handles auth
 invisibly, and — if you charge — lets agents pay you directly. You keep 100%. Gecko is
-not a payment rail, holds no funds, and never re-lists your API in a public catalog. It
+not a payment rail, holds no funds, and never lists your API without your asking. It
 **aggregates** onto what you already have; it never replaces your own MCP or docs.
 
 ## Do this now — free, offline, $0
@@ -49,8 +49,8 @@ changing hands to start, no exclusivity.
 ## The guarantees we hold
 
 Control-plane only (we store your API's *surface*, never payloads/secrets) · compose,
-never become, the payment rail · no public catalog · aggregate, not replace · auth is
-invisible to the agent. Detail:
+never become, the payment rail · listed only with your yes · aggregate, not replace ·
+auth is invisible to the agent. Detail:
 [data governance](https://docs.geckovision.tech/status).
 
 ## Worked example — a provider handover

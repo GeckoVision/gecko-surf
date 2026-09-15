@@ -90,7 +90,7 @@ simulation before execution, and never signs, never broadcasts, never stores pay
   happen). Hosted point-and-simulate. Hosted program surfaces beyond the first.
 - The signing gate binding to the exact simulated message hash (evaluate_tx), and the
   TEE credential backend. Today's gate is verdict-based (the diagram labels this honestly).
-- Catalog breadth: 4,500 projects listed, 4 wired deep. Non-Anchor generalization is
+- Catalog breadth: 4,534 projects listed, 8 wired, 4 differential-proven. Non-Anchor generalization is
   proven once (ORE); wider Steel/native coverage is open.
 - ORE `mine` (needs an off-chain drillx PoW solver — out of scope by decision) and ORE
   `checkpoint` (claim's precondition; its surface account set is short by two — declared,
