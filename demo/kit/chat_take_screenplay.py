@@ -10,6 +10,7 @@ addresses, and reveals the rows in the order they happened.
         --mcp-config mcp.json > run.jsonl
     uv run --with pillow python demo/kit/chat_take_screenplay.py run.jsonl out.mp4 "the prompt"
 """
+
 from __future__ import annotations
 
 import json
@@ -67,7 +68,9 @@ def chip_of(name: str, inp: dict) -> str:
         raw = str(v)
         # Serialized bytes are noise on screen: "AQAAAA…" tells a reader nothing.
         if len(raw) > 90 and " " not in raw:
-            bits.append(f"{k} {len(raw)} bytes" if len(inp) > 1 else f"{len(raw)} bytes")
+            bits.append(
+                f"{k} {len(raw)} bytes" if len(inp) > 1 else f"{len(raw)} bytes"
+            )
             continue
         raw = B58.sub(lambda m: m.group()[:6] + "…", raw)
         bits.append(raw if len(inp) == 1 else f"{k} {raw}")
@@ -96,7 +99,7 @@ def parse(path: Path):
             d = ev.get("event", {}).get("delta", {})
             if d.get("type") == "text_delta":
                 if answer and answer[-1] == "\x00":
-                    answer[-1] = " "          # a tool call ran between two sentences
+                    answer[-1] = " "  # a tool call ran between two sentences
                 answer.append(d.get("text", ""))
             elif d.get("type") == "thinking_delta":
                 think.append(d.get("thinking", ""))
@@ -106,7 +109,11 @@ def parse(path: Path):
                     if answer and answer[-1] != "\x00":
                         answer.append("\x00")
                     steps.append(
-                        {"label": label_of(b["name"]), "chip": chip_of(b["name"], b.get("input", {})), "fail": False}
+                        {
+                            "label": label_of(b["name"]),
+                            "chip": chip_of(b["name"], b.get("input", {})),
+                            "fail": False,
+                        }
                     )
         elif kind == "user":
             content = ev.get("message", {}).get("content")
@@ -152,9 +159,14 @@ def main() -> int:
         parts, i = [], 0
         for m in re.finditer(r"\*\*(.+?)\*\*|`(.+?)`", line):
             if m.start() > i:
-                parts.append((line[i:m.start()], ui, INK))
-            parts.append((m.group(1) or m.group(2), ui_b if m.group(1) else mono,
-                          INK if m.group(1) else CHIP))
+                parts.append((line[i : m.start()], ui, INK))
+            parts.append(
+                (
+                    m.group(1) or m.group(2),
+                    ui_b if m.group(1) else mono,
+                    INK if m.group(1) else CHIP,
+                )
+            )
             i = m.end()
         if i < len(line):
             parts.append((line[i:], ui, INK))
@@ -164,6 +176,7 @@ def main() -> int:
     def is_row(ln):
         t = ln.strip()
         return t.startswith("|") and t.endswith("|") and t.count("|") >= 3
+
     def cells(ln):
         return [c.strip() for c in ln.strip().strip("|").split("|")]
 
@@ -178,14 +191,14 @@ def main() -> int:
                 if not all(set(x) <= set("-: ") for x in c):
                     block.append([B58.sub(lambda m: m.group()[:6] + "…", x) for x in c])
                 i += 1
-            CAP = 9   # header + 8 rows; a 20-row menu owns the whole frame otherwise
+            CAP = 9  # header + 8 rows; a 20-row menu owns the whole frame otherwise
             if len(block) > CAP:
                 hidden = len(block) - CAP
                 block = block[:CAP] + [[f"… and {hidden} more", ""][: len(block[0])]]
             ans_lines.append(("table", block))
             continue
         clean = B58.sub(lambda m: m.group()[:6] + "…", ln)
-        for w_ in (wrap(clean, ui, (W - 130) * S) if ln.strip() else [""]):
+        for w_ in wrap(clean, ui, (W - 130) * S) if ln.strip() else [""]:
             ans_lines.append(("text", w_))
         i += 1
 
@@ -197,7 +210,13 @@ def main() -> int:
         blocks.append(("bubble", plines, len(plines) * 24 * S + 26 * S + 26 * S))
         if n_rows > 0:
             blocks.append(("hdr", None, 34 * S))
-            blocks.append(("rows", min(n_rows, len(steps)), min(n_rows, len(steps)) * ROW + 22 * S))
+            blocks.append(
+                (
+                    "rows",
+                    min(n_rows, len(steps)),
+                    min(n_rows, len(steps)) * ROW + 22 * S,
+                )
+            )
         if n_ans > 0:
             shown = ans_lines[:n_ans]
             h = 0
@@ -210,16 +229,27 @@ def main() -> int:
             if kind == "bubble":
                 wpx = max(scratch.textlength(l, font=ui) for l in data) + 44 * S
                 x0 = W * S - PAD - wpx
-                d.rounded_rectangle([x0, y, W * S - PAD, y + h - 26 * S], 16 * S, fill=BUBBLE)
+                d.rounded_rectangle(
+                    [x0, y, W * S - PAD, y + h - 26 * S], 16 * S, fill=BUBBLE
+                )
                 for j, l in enumerate(data):
                     d.text((x0 + 22 * S, y + 14 * S + j * 24 * S), l, font=ui, fill=INK)
             elif kind == "hdr":
-                d.text((PAD, y + 4 * S), "Loaded tools, used gecko-mcp integration  ⌄",
-                       font=small, fill=MUTED)
+                d.text(
+                    (PAD, y + 4 * S),
+                    "Loaded tools, used gecko-mcp integration  ⌄",
+                    font=small,
+                    fill=MUTED,
+                )
             elif kind == "rows":
                 top = y
-                d.rounded_rectangle([PAD, top, W * S - PAD, top + data * ROW], 8 * S,
-                                    fill=BOX, outline=RULE, width=S)
+                d.rounded_rectangle(
+                    [PAD, top, W * S - PAD, top + data * ROW],
+                    8 * S,
+                    fill=BOX,
+                    outline=RULE,
+                    width=S,
+                )
                 for i in range(data):
                     ry = top + i * ROW
                     if i:
@@ -241,24 +271,50 @@ def main() -> int:
                     if kind_ == "table":
                         ncol = max(len(r) for r in payload)
                         widths = [
-                            max(scratch.textlength((r[c] if c < len(r) else "").strip("`").replace("**", ""), font=ui_b) for r in payload) + 34 * S
+                            max(
+                                scratch.textlength(
+                                    (r[c] if c < len(r) else "")
+                                    .strip("`")
+                                    .replace("**", ""),
+                                    font=ui_b,
+                                )
+                                for r in payload
+                            )
+                            + 34 * S
                             for c in range(ncol)
                         ]
                         th = len(payload) * 30 * S
-                        d.rounded_rectangle([PAD, yy, PAD + sum(widths), yy + th], 8 * S,
-                                            fill=BOX, outline=RULE, width=S)
+                        d.rounded_rectangle(
+                            [PAD, yy, PAD + sum(widths), yy + th],
+                            8 * S,
+                            fill=BOX,
+                            outline=RULE,
+                            width=S,
+                        )
                         for ri, row in enumerate(payload):
                             ry = yy + ri * 30 * S
                             if ri:
-                                d.line([(PAD, ry), (PAD + sum(widths), ry)], fill=RULE, width=S)
+                                d.line(
+                                    [(PAD, ry), (PAD + sum(widths), ry)],
+                                    fill=RULE,
+                                    width=S,
+                                )
                             cx = PAD + 16 * S
                             for ci in range(ncol):
                                 txt = row[ci] if ci < len(row) else ""
-                                code = txt.startswith("`") and txt.endswith("`") and len(txt) > 1
+                                code = (
+                                    txt.startswith("`")
+                                    and txt.endswith("`")
+                                    and len(txt) > 1
+                                )
                                 txt = txt.strip("`").replace("**", "")
                                 fnt = ui_b if ri == 0 else (mono if code else ui)
-                                d.text((cx, ry + (7 if not code or ri == 0 else 9) * S), txt,
-                                       font=fnt, fill=INK if ri == 0 else CHIP)
+                                d.text(
+                                    (cx, ry + (7 if not code or ri == 0 else 9) * S),
+                                    txt,
+                                    font=fnt,
+                                    fill=INK if ri == 0 else CHIP,
+                                )
                                 cx += widths[ci]
                         yy += th + 18 * S
                     else:
@@ -290,11 +346,30 @@ def main() -> int:
         save(frame(len(steps), len(ans_lines)))
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS),
-                    "-i", str(tmp / "%05d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart", str(out)], check=True)
-    Image.open(tmp / f"{n-1:05d}.png").save(out.with_suffix(".thumb.png"))
-    print(f"wrote {out}  ({n/FPS:.0f}s, {len(steps)} tool rows, {len(ans_lines)} answer lines)")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-framerate",
+            str(FPS),
+            "-i",
+            str(tmp / "%05d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ],
+        check=True,
+    )
+    Image.open(tmp / f"{n - 1:05d}.png").save(out.with_suffix(".thumb.png"))
+    print(
+        f"wrote {out}  ({n / FPS:.0f}s, {len(steps)} tool rows, {len(ans_lines)} answer lines)"
+    )
     return 0
 
 

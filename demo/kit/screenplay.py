@@ -77,6 +77,7 @@ def run(
     pause: float = 1.2,
     timeout: int = 300,
     prompt: str = "$ ",
+    merge: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Type a command, then ACTUALLY RUN IT, streaming its real output to the cast.
 
@@ -92,6 +93,12 @@ def run(
 
     Returns the CompletedProcess so a screenplay can branch on the real result rather
     than assume one.
+
+    ``merge`` folds stderr into stdout. Installers and package managers write their
+    whole progress log to stderr, so without it the cast shows a tidy summary where a
+    learner's own terminal shows a minute of scrolling — the video would be quietly
+    easier than the thing it documents. Off by default: for most commands stderr is
+    noise, and the fallback below already surfaces it when stdout is empty.
     """
     for pattern in _SECRET_SHAPES:
         if pattern.search(command):
@@ -104,7 +111,8 @@ def run(
     try:
         completed = subprocess.run(
             shlex.split(command),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT if merge else subprocess.PIPE,
             text=True,
             timeout=timeout,
             check=False,
@@ -116,7 +124,8 @@ def run(
         put(f"{RED}✗ command not found{RESET}", pause)
         return subprocess.CompletedProcess(command, 127, "", "not found")
 
-    body = completed.stdout.rstrip() or completed.stderr.rstrip()
+    # `stderr` is None when it was merged into stdout, so it cannot be dereferenced.
+    body = completed.stdout.rstrip() or (completed.stderr or "").rstrip()
     if body:
         sys.stdout.write(body + "\n")
         sys.stdout.flush()
