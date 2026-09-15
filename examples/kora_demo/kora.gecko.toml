@@ -1,0 +1,231 @@
+# Kora relay config for the GeckoCoffee gasless leg — hardened.
+#
+# WHY THIS FILE EXISTS. Kora's shipped default does not start, and should not: run
+# `kora --config kora.toml config validate` against it and you get 1 hard error and
+# 35 SECURITY warnings from Kora's OWN validator. The loudest, in their words:
+#
+#     "Fee payer policy allows System transfers (allow_transfer). Risk: Users can make
+#      the fee payer transfer arbitrary SOL amounts. This can drain your fee payer
+#      account."
+#
+# That is not a hypothetical. The default has every `fee_payer_policy` flag set to
+# `true` AND the System Program in `allowed_programs`, with no authentication. A funded
+# relay on those defaults, reachable from the internet, is a faucet.
+#
+# This config exists to pay ONE kind of fee for ONE flow. Everything else is off.
+#
+# THE CAP THAT ACTUALLY BINDS. There is no global SOL budget in Kora.
+# `max_allowed_lamports` is per transaction; `[kora.usage_limit]` is per wallet. So the
+# real limit on what this relay can lose is HOW MUCH YOU FUND IT WITH. Treat the balance
+# as the budget, and fund it with what you can afford to lose — every failed transaction
+# is pure loss with no reimbursement.
+#
+# Validate before every deploy:
+#     kora --config examples/kora_demo/kora.gecko.toml config validate
+#     kora --config examples/kora_demo/kora.gecko.toml --signers-config <path> config validate-with-rpc
+
+[kora]
+rate_limit = 100
+
+[kora.auth]
+# NOT optional here. The default ships with both commented out, which means anyone who
+# finds the URL can ask the relay to pay. Read from the environment; never commit a key.
+api_key = "${KORA_API_KEY}"
+
+# Lighthouse adds balance assertions that abort the transaction if the fee payer's
+# balance moves more than expected. It is OFF by default and it is the single best
+# anti-drain control Kora ships.
+#
+# It only works on signTransaction / signBundle — NOT signAndSend, because modifying the
+# transaction invalidates signatures already collected. That constraint suits us exactly:
+# we never want Kora broadcasting, only signing bytes we then submit ourselves.
+[kora.lighthouse]
+enabled = true
+fail_if_transaction_size_overflow = true
+
+[kora.cache]
+enabled = false
+url = "redis://localhost:6379"
+default_ttl = 300
+account_ttl = 60
+price_ttl = 0
+
+# Only what the flow needs. `sign_and_send_transaction` and `transfer_transaction` are
+# OFF: the first would let the relay broadcast (and would silently disable lighthouse),
+# the second is a money-mover we have no use for. Gecko prepares, Kora signs as fee
+# payer, the buyer signs as authority, and WE submit.
+[kora.enabled_methods]
+liveness = true
+get_version = true
+get_config = true
+get_blockhash = true
+get_payer_signer = true
+get_supported_tokens = true
+estimate_transaction_fee = true
+sign_transaction = true
+sign_and_send_transaction = false
+transfer_transaction = false
+
+# Per-wallet limits. In-memory without `cache_url`; set a Redis URL to share the counter
+# across instances. `fallback_if_unavailable = false` means a cache outage DENIES rather
+# than waves traffic through — fail closed, the same rule the rest of this repo follows.
+[kora.usage_limit]
+enabled = true
+fallback_if_unavailable = false
+
+[[kora.usage_limit.rules]]
+type = "transaction"
+max = 20
+window_seconds = 3600
+
+[validation]
+max_allowed_lamports = 1000000   # per transaction, ~0.001 SOL
+max_signatures = 10
+price_source = "Mock"            # unused while [validation.price] type = "free"
+allow_durable_transactions = false
+cross_cluster_check = true       # refuse a transaction built for a different cluster
+
+allowed_programs = [
+    "11111111111111111111111111111111",              # System
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # Token
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",   # Token-2022 — USDG lives here
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated Token
+    "ComputeBudget111111111111111111111111111111",   # Compute Budget
+    "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95",   # Lighthouse — required when enabled
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",   # Orca Whirlpool — the convert leg
+    "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",  # let_me_buy — the espresso
+]
+
+# The mints this relay will sponsor a transaction for.
+allowed_tokens = [
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",  # USDG (Token-2022)
+]
+
+# Empty is correct ONLY because [validation.price] type = "free" below. With any paid
+# price type, an empty list is the hard error that stops Kora starting:
+#   "When fees are enabled, allowed_spl_paid_tokens cannot be empty"
+allowed_spl_paid_tokens = []
+disallowed_accounts = []
+
+# THE SECTION THAT MATTERS MOST. Every one of these is `true` in the shipped default.
+# This relay pays a network fee. It is not a sender, an authority, a minter, or a payer
+# for account creation. Anything it does not need is a way to drain it.
+[validation.fee_payer_policy]
+
+[validation.fee_payer_policy.system]
+allow_transfer = false        # the drain Kora's own validator warns about first
+allow_assign = false
+allow_create_account = false
+allow_allocate = false
+
+[validation.fee_payer_policy.system.nonce]
+allow_initialize = false
+allow_advance = false
+allow_authorize = false
+allow_withdraw = false
+
+[validation.fee_payer_policy.spl_token]
+allow_transfer = false
+allow_burn = false
+allow_close_account = false
+allow_approve = false
+allow_revoke = false
+allow_set_authority = false
+allow_mint_to = false
+allow_initialize_mint = false
+allow_initialize_account = false
+allow_initialize_multisig = false
+allow_freeze_account = false
+allow_thaw_account = false
+allow_withdraw_excess_lamports = false
+allow_unwrap_lamports = false
+
+[validation.fee_payer_policy.token_2022]
+allow_transfer = false
+allow_burn = false
+allow_close_account = false
+allow_approve = false
+allow_revoke = false
+allow_set_authority = false
+allow_mint_to = false
+allow_initialize_mint = false
+allow_initialize_account = false
+allow_initialize_multisig = false
+allow_freeze_account = false
+allow_thaw_account = false
+allow_withdraw_excess_lamports = false
+allow_unwrap_lamports = false
+
+[validation.fee_payer_policy.alt]
+allow_create = false
+allow_extend = false
+allow_freeze = false
+allow_deactivate = false
+allow_close = false
+
+# `free` for the first gasless run: we are the relay operator and we are paying the fee
+# ourselves, which IS the demo. Charging in token is a separate decision that needs a
+# real `price_source` (Mock is refused for production) and a populated
+# `allowed_spl_paid_tokens`.
+[validation.price]
+type = "free"
+
+# `deny_all`, not the default `deny_mutable_for_delayed_signing`. A mutable transfer-hook
+# authority can swap the hook program between signing and execution — and USDG is
+# Token-2022, so this is our mint family, not someone else's problem.
+[validation.token_2022]
+transfer_hook_policy = "deny_all"
+blocked_mint_extensions = [
+    "confidential_transfer_mint",
+    "confidential_mint_burn",
+    "transfer_fee_config",
+    "mint_close_authority",
+    "permanent_delegate",
+    "transfer_hook",
+    "pausable",
+]
+blocked_account_extensions = [
+    "confidential_transfer_account",
+    "non_transferable_account",
+    "transfer_hook_account",
+    "pausable_account",
+    "cpi_guard",
+]
+
+[metrics]
+enabled = true
+endpoint = "/metrics"
+port = 8080
+scrape_interval = 60
+
+# Watch the balance. This is the budget, so it is the number to alert on.
+[metrics.fee_payer_balance]
+enabled = true
+expiry_seconds = 30
+
+# ---------------------------------------------------------------------------
+# WHAT THIS CONFIG STILL DOES NOT PROTECT, measured by Kora's own validator.
+#
+#   "Program whirLbMi… in allowed_programs has no dedicated fee-payer instruction
+#    parser. Only inner instructions to standard programs (System, SPL Token,
+#    Token-2022, ALT) will be validated for fee-payer usage."
+#
+# The same for let_me_buy. So the `fee_payer_policy` above — the part that does the
+# real work — can only reason about what a CUSTOM program does with the fee payer
+# insofar as that program CPIs into a standard one. For Orca and let_me_buy
+# specifically, the policy is not the backstop.
+#
+# Lighthouse is. Its balance assertion aborts the transaction if the fee payer's
+# balance moved more than expected, and it does not care which program moved it.
+# That is why `[kora.lighthouse] enabled = true` is not optional here, and why
+# `sign_and_send_transaction` must stay off — lighthouse does not apply to it.
+#
+# Validator delta against the shipped default, same binary (kora-cli 2.2.0-beta.8):
+#
+#                       shipped   this
+#   validation           FAILS   PASSES
+#   hard errors              1        0
+#   SECURITY warnings       35        1     (the 1 is "free pricing", deliberate)
+#   total warnings          37        7     (the rest are informational)
+# ---------------------------------------------------------------------------
