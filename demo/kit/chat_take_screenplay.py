@@ -227,13 +227,15 @@ def main() -> int:
         y = 40 * S + min(0, (H - 80) * S - total)
         for kind, data, h in blocks:
             if kind == "bubble":
-                wpx = max(scratch.textlength(l, font=ui) for l in data) + 44 * S
+                wpx = max(scratch.textlength(line, font=ui) for line in data) + 44 * S
                 x0 = W * S - PAD - wpx
                 d.rounded_rectangle(
                     [x0, y, W * S - PAD, y + h - 26 * S], 16 * S, fill=BUBBLE
                 )
-                for j, l in enumerate(data):
-                    d.text((x0 + 22 * S, y + 14 * S + j * 24 * S), l, font=ui, fill=INK)
+                for j, line in enumerate(data):
+                    d.text(
+                        (x0 + 22 * S, y + 14 * S + j * 24 * S), line, font=ui, fill=INK
+                    )
             elif kind == "hdr":
                 d.text(
                     (PAD, y + 4 * S),
