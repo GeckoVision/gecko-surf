@@ -19,7 +19,9 @@ wrong — a seed that does not decode is a seed that did not take.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
@@ -40,6 +42,16 @@ def main() -> int:
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8899")
     parser.add_argument("--store", default="geckocoffee")
     parser.add_argument("--authority", default=GECKOCOFFEE_AUTHORITY)
+    parser.add_argument(
+        "--config",
+        default="",
+        help=(
+            "a JSON storefront to seed instead of a catalogue entry. This is how one "
+            "script seeds a whole cohort onto one fork: the bootcamp's "
+            "`shipit.storefront.to_seed_config` writes exactly this shape. Still no key "
+            "and still no signature -- the overlay path below is unchanged."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -51,10 +63,15 @@ def main() -> int:
         )
         return 2
 
-    config = to_store_config(args.store)
+    if args.config:
+        config = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        authority = config.get("authority") or args.authority
+    else:
+        config = to_store_config(args.store)
+        authority = args.authority
     overlay = surfnet_overlay(proof.rpc_url)
     try:
-        address = seed_store(proof, overlay, config, authority=args.authority)
+        address = seed_store(proof, overlay, config, authority=authority)
     except SeedError as error:
         print(f"seed failed: {error}", file=sys.stderr)
         return 3
