@@ -79,6 +79,43 @@ def _balances(rpc_url: str, owner: str) -> dict[str, Any]:
     return out
 
 
+def _settled_balances(
+    rpc_url: str,
+    owner: str,
+    before: dict[str, Any],
+    *,
+    tries: int = 12,
+    pause: float = 2.0,
+) -> tuple[dict[str, Any], bool]:
+    """Read balances until they stop agreeing with `before`, or give up saying so.
+
+    THE RACE THIS CLOSES, measured on a real mainnet run. Both legs settled — the swap
+    at slot 447328207 and the purchase at 447328217, both `err: None` — and the very
+    next balance read came back byte-identical to the opening one, so the script
+    announced NOTHING MOVED over a chain where 0.040409 USDG had just moved.
+
+    A confirmed transaction and an indexed account are different events. `getBalance`
+    and `getTokenAccountsByOwner` answer from whatever slot the node has processed, and
+    that can trail a confirmation by a second or two. Reading once, immediately, asks the
+    question before the node can answer it.
+
+    Returns `(balances, moved)`. `moved is False` after every attempt is an HONEST "the
+    ledger still shows nothing", which is a real failure worth reporting — it is only
+    indistinguishable from the race if you never wait.
+    """
+    import time
+
+    latest = before
+    for attempt in range(tries):
+        latest = _balances(rpc_url, owner)
+        if latest != before:
+            if attempt:
+                _say(f"    (ledger caught up after {attempt * pause:.0f}s)")
+            return latest, True
+        time.sleep(pause)
+    return latest, False
+
+
 def _say(line: str = "") -> None:
     print(line, flush=True)
 
@@ -223,6 +260,13 @@ def main(argv: list[str] | None = None) -> int:
                 "mainnet",
                 "--amount",
                 str(quote.get("amount_in")),
+                # THE DIRECTION IS NOT OPTIONAL. Left to the script's default this ran
+                # b-to-a — USDC into USDG, the exact opposite of the route the planner
+                # found — and the pre-flight refused it with `insufficient funds`
+                # because the wallet holds 0.01 USDC and was asked to spend 0.040409.
+                # The planner already knows which way round it is; pass it.
+                "--direction",
+                "a-to-b" if quote.get("direction") == "a_to_b" else "b-to-a",
                 *(["--send", "--keypair", args.keypair] if args.broadcast else []),
             ],
             dry=dry,
@@ -259,7 +303,11 @@ def main(argv: list[str] | None = None) -> int:
         return rc
 
     # 5. THE VERDICT: what MOVED. Not what any command returned.
-    after = _balances(args.rpc_url, args.buyer)
+    # Wait for the node to index what it just confirmed — see _settled_balances.
+    if dry:
+        after, moved = _balances(args.rpc_url, args.buyer), False
+    else:
+        after, moved = _settled_balances(args.rpc_url, args.buyer, before)
     _say("\n  wallet after")
     _say(
         f"    USDG  {after['usdg'] / 1e6:.6f}   ({(after['usdg'] - before['usdg']) / 1e6:+.6f})"
@@ -277,10 +325,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    moved = after["usdg"] != before["usdg"] or after["usdc"] != before["usdc"]
     if not moved:
-        _say("\n  NOTHING MOVED. Every leg returned 0 and the ledger disagrees — treat")
-        _say("  this as a failure, not a success, and read the leg output above.")
+        _say("\n  NOTHING MOVED, after waiting for the node to catch up. Every leg")
+        _say("  returned 0 and the ledger still disagrees — treat this as a failure,")
+        _say("  not a success, and read the leg output above.")
         return 1
     _say("\n  done — judged by what moved, not by an exit code.")
     return 0
