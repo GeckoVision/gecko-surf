@@ -928,7 +928,15 @@ class _Subject:
     policy: SpendPolicy
     decoded: DecodedMessage
     outflow_lamports: int
-    #: Per-mint outflows attributable to the FEE PAYER, in each mint's raw base units.
+    #: The account whose SPENDING this decision governs. It is the account the caller
+    #: TRACKED (``receipt.sol_delta_account``), falling back to the fee payer when nothing
+    #: was tracked — which is every self-paid flow, unchanged. Under a relay the two
+    #: differ: Kora is ``decoded.fee_payer`` and moves no tokens; the buyer is the
+    #: authority and moves all of them. Keying the caps on the fee payer, as this used to,
+    #: filtered the buyer's outflows to an empty set and every token cap passed a spend
+    #: of any size. Not a refusal: a silence.
+    authority: str
+    #: Per-mint outflows attributable to the AUTHORITY, in each mint's raw base units.
     #: Never lamports, never summed with ``outflow_lamports``.
     token_outflows: tuple[TokenOutflow, ...] = ()
 
@@ -981,11 +989,16 @@ def _check_destinations(subject: _Subject) -> SpendVerdict | None:
     be an exemption; exempting it once, where the stronger check lives, is a division of
     labour.
     """
-    payer = subject.decoded.fee_payer
+    # The fee payer is exempt because the signer checks it more strictly. The AUTHORITY is
+    # exempt because its own accounts are where funds LEAVE from, and a destination
+    # allowlist governs where they go. When the two coincide (every self-paid flow) this
+    # is one exemption, as before; under a relay the buyer's wallet stopped being the fee
+    # payer and became an "unlisted destination" for its own money.
+    exempt = {subject.decoded.fee_payer, subject.authority}
     unlisted = sorted(
         key
         for key in subject.decoded.writable_accounts
-        if key != payer and key not in subject.policy.allowed_destinations
+        if key not in exempt and key not in subject.policy.allowed_destinations
     )
     if unlisted:
         return _refuse(
@@ -1187,7 +1200,11 @@ class SpendPolicyGate:
             )
         outflow = -delta if delta < 0 else 0
 
-        resolved = _resolve_token_outflows(receipt, decoded)
+        # Whose spending this governs: the tracked account, else the fee payer. The
+        # fallback is what keeps every self-paid flow byte-for-byte unchanged.
+        authority = receipt.sol_delta_account or decoded.fee_payer
+
+        resolved = _resolve_token_outflows(receipt, decoded, authority)
         if isinstance(resolved, SpendVerdict):
             return resolved
 
@@ -1195,6 +1212,7 @@ class SpendPolicyGate:
             policy=policy,
             decoded=decoded,
             outflow_lamports=outflow,
+            authority=authority,
             token_outflows=resolved,
         )
         for predicate in (
@@ -1216,9 +1234,9 @@ class SpendPolicyGate:
 
 
 def _resolve_token_outflows(
-    receipt: Receipt, decoded: DecodedMessage
+    receipt: Receipt, decoded: DecodedMessage, authority: str
 ) -> tuple[TokenOutflow, ...] | SpendVerdict:
-    """What left the FEE PAYER, per mint — or the refusal that says why we cannot know.
+    """What left the AUTHORITY, per mint — or the refusal that says why we cannot know.
 
     The three states of ``Receipt.token_delta`` are kept apart here, because collapsing
     any two of them is the bug this cap exists for:
@@ -1231,8 +1249,10 @@ def _resolve_token_outflows(
       it is the same sentence.
     * ``measured`` — the amounts are read, and an empty set is an OBSERVED zero.
 
-    Only the fee payer's own outflows are charged; see the module docstring's residual on
-    delegated authority for what that does not cover.
+    Only the authority's own outflows are charged; see the module docstring's residual on
+    delegated authority for what that does not cover. This keyed on the fee payer until
+    2026-09-16, which was correct only while the payer and the spender were the same
+    account — under a relay the payer moves nothing and the filter emptied the cap.
     """
     report = receipt.token_delta
     if report is None:
@@ -1257,8 +1277,7 @@ def _resolve_token_outflows(
             f"the token leg of this simulation could not be measured ({exc}); there is "
             f"no amount to compare against a cap, and zero is not the answer",
         )
-    payer = decoded.fee_payer
-    return tuple(outflow for outflow in outflows if outflow.owner == payer)
+    return tuple(outflow for outflow in outflows if outflow.owner == authority)
 
 
 def _dedupe_key(transaction_base64: str | bytes) -> str | None:
