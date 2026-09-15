@@ -710,6 +710,7 @@ def prepare_purchase_result(
             store=store,
             product=product,
             buyer=buyer,
+            fee_payer=str(arguments.get("fee_payer") or "").strip() or None,
             table=table,
             network=network,
             rpc_url=rpc_url,
@@ -732,6 +733,7 @@ def _prepare(
     store: WiredStore,
     product: str,
     buyer: str,
+    fee_payer: str | None,
     table: int,
     network: Network,
     rpc_url: str,
@@ -740,6 +742,10 @@ def _prepare(
 ) -> dict[str, Any]:
     """Everything from the derived plan to the verified, unsigned bytes."""
     program = _program_spec()
+    # The relay pays the network fee; the BUYER still authorises the spend. `_plan_accounts`
+    # is handed the buyer and never sees `fee_payer`, so a relay cannot reach a signer slot
+    # from here — the separation that makes gasless safe rather than a donation.
+    payer = fee_payer or buyer
     accounts = _plan_accounts(store, buyer, program)
     instruction_args = {
         "store_name": store.store_name,
@@ -769,7 +775,7 @@ def _prepare(
         "build_url": build_url,
         "accounts": dict(accounts),
         "args": dict(instruction_args),
-        "feePayer": buyer,
+        "feePayer": payer,
     }
 
     # 3a. THE BUILD AND THE CLOCK, CONCURRENTLY. Measured against mainnet, this path spends
@@ -892,7 +898,32 @@ def _prepare(
             "store_note": store.note,
         },
         "args": instruction_args,
-        "fee_payer": buyer,
+        "fee_payer": payer,
+        # Absent when the buyer pays their own fee, following the rule `gecko.effects`
+        # sets: a missing key reads as "does not apply here", a null as "the answer is
+        # nothing". Present, it is the warning a caller cannot afford to miss — these
+        # bytes need TWO signatures, and a buyer-only signer refuses them by design
+        # (gecko/signer.py `fee-payer-not-controlled`), which without this reads as a
+        # bug in Gecko rather than the gate it is.
+        **(
+            {}
+            if payer == buyer
+            else {
+                "gasless": {
+                    "fee_payer": payer,
+                    "buyer_pays_network_fee": False,
+                    "signatures_required": [buyer, payer],
+                    "why": (
+                        "a relay pays the network fee so the buyer needs no SOL. The fee "
+                        "payer is account_keys[0], which sits INSIDE the hashed message "
+                        "body, so the binding below covers it: any later rewrite of the "
+                        "payer invalidates this binding rather than silently succeeding. "
+                        "The buyer remains the token authority; paying a fee grants no "
+                        "authority over funds."
+                    ),
+                }
+            }
+        ),
         "accounts": _account_plan(accounts, program),
         # WHAT THESE BYTES DO, before anybody signs them. `accounts` says what the
         # transaction touches; this says what it MOVES, composed from the message we
@@ -906,7 +937,14 @@ def _prepare(
             "signed": False,
             "encoding": "base64",
             "unsigned_transaction": handoff.transaction_base64,
-            "who_signs": "you do, in your own wallet — Gecko holds no key",
+            "who_signs": (
+                "you do, in your own wallet — Gecko holds no key"
+                if payer == buyer
+                else (
+                    f"TWO signatures: you ({buyer}) authorise the spend, and the fee "
+                    f"payer ({payer}) signs as account_keys[0] — Gecko holds neither key"
+                )
+            ),
         },
         # WHERE these bytes can be sent. Everything else in this result names what the
         # transaction IS; without this the one node that can accept it is missing from
@@ -1301,6 +1339,18 @@ PREPARE_PURCHASE_TOOL: dict[str, Any] = {
                 ),
             },
             "buyer": {"type": "string", "description": _BUYER_SUPPLIED},
+            "fee_payer": {
+                "type": "string",
+                "description": (
+                    "OPTIONAL. A relay that pays the network fee so the buyer needs no "
+                    "SOL (Kora and friends). Omit it and the buyer pays, which is what "
+                    "every flow does today. Supply it and the result carries a `gasless` "
+                    "block: the bytes then need TWO signatures — the buyer authorises "
+                    "the spend, the relay signs as account_keys[0] — and a buyer-only "
+                    "signer will REFUSE them, which is the gate working, not a bug. "
+                    "Paying the fee grants no authority over the buyer's funds."
+                ),
+            },
             "network": {
                 "type": "string",
                 "enum": sorted(APPROVABLE_NETWORKS),

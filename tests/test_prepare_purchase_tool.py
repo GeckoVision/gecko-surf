@@ -798,3 +798,102 @@ def test_the_paybox_sequence_verifies_before_it_submits() -> None:
         i for i, step in enumerate(steps) if step.startswith("submit_transaction")
     )
     assert verify < submit
+
+
+# --------------------------------------------------------------------------- #
+# A THIRD-PARTY FEE PAYER — the gasless leg
+#
+# A relay (Kora) pays the network fee so the buyer needs no SOL. That changes ONE
+# thing in the bytes and it is the load-bearing one: the fee payer is
+# `account_keys[0]`, which sits INSIDE the hashed message body, so it is covered by
+# the binding rather than sitting outside it like a signature does. The binding must
+# therefore be taken AFTER the payer is decided — it already is, because the build
+# comes first — and any relay-side rewrite of the payer invalidates a binding taken
+# upstream.
+#
+# The buyer stays the token authority throughout. `_plan_accounts(store, buyer, ...)`
+# never sees a payer, so the fee payer cannot reach a signer slot here.
+
+#: A valid, deterministic, obviously-not-a-wallet address: find_program_address over
+#: b"kora-fee-payer" under the System Program. `Pubkey.from_string` rejects a decorative
+#: placeholder, and the builder assembles a REAL message, so this has to be real base58.
+RELAY = "FswqktHwueHaC6Wd3EFHHdxbuvUUSZNp53Kkb2FCrHPN"
+
+
+def test_the_fee_payer_is_the_buyer_unless_someone_says_otherwise() -> None:
+    """Every flow shipped so far pays its own fee. That must not change by accident."""
+    builder = FakeBuilder()
+    out = _prepare(builder)
+    assert out["fee_payer"] == BUYER
+    assert builder.calls[0]["feePayer"] == BUYER
+
+
+def test_a_relay_can_pay_the_fee_and_it_reaches_the_bytes() -> None:
+    """Not just the report: the built message's account_keys[0] must be the relay, or
+    the buyer is still paying and the whole point is lost."""
+    builder = FakeBuilder()
+    out = _prepare(builder, fee_payer=RELAY)
+    assert builder.calls[0]["feePayer"] == RELAY, "the builder was told the wrong payer"
+    assert out["fee_payer"] == RELAY
+
+    from gecko.txbind import decode_message
+
+    decoded = decode_message(out["transaction"]["unsigned_transaction"])
+    assert decoded.fee_payer == RELAY, (
+        "account_keys[0] is the fee payer and is INSIDE the hashed body — if this is "
+        "the buyer, the bytes disagree with the report"
+    )
+
+
+def test_the_buyer_remains_the_token_authority_when_a_relay_pays() -> None:
+    """The drain this must never become: paying a fee is not authority over funds."""
+    builder = FakeBuilder()
+    out = _prepare(builder, fee_payer=RELAY)
+    accounts = builder.calls[0]["accounts"]
+    assert accounts["signer"] == BUYER, "the relay took the buyer's signer slot"
+    assert RELAY not in accounts.values(), (
+        "the relay appears in an ACCOUNT slot; it should only be the fee payer"
+    )
+    assert out["accounts"]
+
+
+def test_a_relay_paid_transaction_says_it_needs_two_signatures() -> None:
+    """A caller who does not know this hands the bytes to one signer and waits forever.
+    Worse, `gecko.signer` refuses them with `fee-payer-not-controlled` — correctly, by
+    design — and a caller with no warning reads that as a bug in Gecko."""
+    out = _prepare(fee_payer=RELAY)
+    gasless = out.get("gasless")
+    assert gasless, "a relay-paid transaction must disclose itself"
+    assert gasless["fee_payer"] == RELAY
+    assert gasless["buyer_pays_network_fee"] is False
+    assert BUYER in gasless["signatures_required"]
+    assert RELAY in gasless["signatures_required"]
+
+
+def test_a_self_paid_transaction_carries_no_gasless_block() -> None:
+    """Absent, never a null or a False — the rule `gecko.effects` already sets."""
+    assert "gasless" not in _prepare()
+
+
+def test_the_binding_covers_the_fee_payer_so_a_rewrite_cannot_be_silent() -> None:
+    """THE property that makes gasless safe rather than a hole.
+
+    A co-SIGNATURE sits outside the hashed body and changes no binding. The fee payer
+    does not: it is `account_keys[0]`, inside the message that gets hashed. So swapping
+    the payer must change the binding, which means a relay that rewrites the payer
+    invalidates the receipt instead of quietly landing different bytes than the ones we
+    attested. If these two hashes are ever equal, the payer has drifted outside the
+    hash and every gasless receipt is worthless.
+    """
+    self_paid = _prepare()
+    relay_paid = _prepare(fee_payer=RELAY)
+
+    def binding_of(out: dict[str, Any]) -> Any:
+        return out.get("binding") or out["transaction"].get("binding")
+
+    first, second = binding_of(self_paid), binding_of(relay_paid)
+    assert first and second, "both receipts must carry a binding at all"
+    assert first != second, (
+        "the binding did not move when the fee payer did — account_keys[0] is outside "
+        "the hash, and a relay could swap itself in without breaking the receipt"
+    )
