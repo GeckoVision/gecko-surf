@@ -2,7 +2,7 @@
 
 # Module index
 
-238 modules in `gecko/` (subpackages included), from their own docstrings.
+239 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -86,7 +86,7 @@ package depends on it, which is worth a look before you add a caller.
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 17 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +14 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 18 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +15 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `catalog`, `find_start`, `purchase_intent_eval` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
@@ -109,10 +109,10 @@ package depends on it, which is worth a look before you add a caller.
 | `pay_route` | Can this wallet buy this product — and if not, what is the shortest CHECKED route? | 2 · `providers.catalog_surface`, `providers.whirlpool` |
 | `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 3 · `catalog_mcp`, `paysh_watch`, `serve_mcp` |
 | `paysh_watch` | Hourly self-refresh + drift-watch for the aggregated pay.sh catalog surface. | 0 |
-| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 26 · `account_recipes`, `corpus`, `find_start` +23 |
+| `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 27 · `account_recipes`, `corpus`, `find_start` +24 |
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
 | `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 3 · `providers.meteora`, `providers.pumpfun`, `providers.whirlpool` |
-| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 9 · `providers.let_me_buy`, `providers.metadao`, `providers.metadao_landing` +6 |
+| `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 10 · `providers.let_me_buy`, `providers.metadao`, `providers.metadao_landing` +7 |
 | `peg_guard` | Is this asset holding its peg? A guard on converting, not a step in converting. | 2 · `pay_route`, `pegana` |
 | `pegana` | Ask Pegana about one mint, and report WHAT CAME BACK rather than what it implies. | 1 · `pay_route` |
 | `plan_refusals` | Plan-time refusals: the account-distinctness facts no artifact states. | 2 · `autonomous_purchase`, `prepare_purchase` |
@@ -136,7 +136,7 @@ package depends on it, which is worth a look before you add a caller.
 | `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 1 · `cli` |
 | `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
-| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 14 · `find_start`, `ingest_gate`, `orquestra_client` +11 |
+| `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 15 · `find_start`, `ingest_gate`, `orquestra_client` +12 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
 | `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 4 · `pay_route`, `providers.cli`, `providers.whirlpool` +1 |
@@ -144,7 +144,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
 | `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
 | `providers.jurassic_fi` | jurassic_fi (Jurassic Finance token sale) — the servable plan intent. | 1 · `providers.cli` |
-| `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 6 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +3 |
+| `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 7 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +4 |
 | `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 1 · `providers.cli` |
 | `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
 | `providers.metadao_landing` | The MetaDAO "fund-that-passes" orchestrator — the third program that RUNS. | 0 |
@@ -155,7 +155,8 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 9 · `providers.cli`, `providers.jupiter`, `providers.jurassic_fi` +6 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
-| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 2 · `providers.catalog_surface`, `providers.cli` |
+| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 3 · `providers.catalog_surface`, `providers.cli`, `providers.whirlpool_landing` |
+| `providers.whirlpool_landing` | The Orca Whirlpool ``swap_v2`` landing orchestrator — the program that already RAN. | 0 |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
 | `purchase_intent_eval` | Score intent -> (store, product) against the frozen purchase-intent set. | 0 |
 | `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 2 · `ingest_gate`, `providers.catalog_surface` |
@@ -178,7 +179,7 @@ package depends on it, which is worth a look before you add a caller.
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 43 · `autonomous_purchase`, `cli`, `drift_watch` +40 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 44 · `autonomous_purchase`, `cli`, `drift_watch` +41 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
@@ -209,7 +210,7 @@ package depends on it, which is worth a look before you add a caller.
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 24 · `autonomous_purchase`, `corpus`, `drift_watch` +21 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 25 · `autonomous_purchase`, `corpus`, `drift_watch` +22 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 2 · `autonomous_purchase`, `signer` |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
