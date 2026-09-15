@@ -130,6 +130,39 @@ jobs:
       # check would pass on precisely the failure this step exists to catch. The fixture
       # is the flagship GhostCommit payload — rendered pixels only, no metadata, no
       # trailing bytes — so nothing but a working OCR path can reach a verdict on it.
+      # THE REGRESSION THIS CATCHES SHIPPED TWICE. 0.10.1 was "gecko prove crashed in the
+      # published binary" and 0.10.2 was "the SECOND frozen-binary joinpath" — both the
+      # same root cause: inside PyInstaller the package resolves to a MultiplexedPath
+      # whose joinpath takes exactly ONE argument, so the multi-arg form blew up at
+      # runtime while every test passed from source (provider_config.py:493-500).
+      #
+      # None of the other smoke steps read a packaged config. --help does not, the OCR
+      # fixture does not, and `inspect` fetches a spec over https. `ingest-gate` is the
+      # cheapest command that does: fully offline, no RPC, no key, and its first act is
+      # to load gecko/providers/configs/orquestra/<api>.json through that exact path.
+      #
+      # NOT --strict: whirlpool legitimately WARNs, and the point is that the config was
+      # READ, not that it scored well.
+      - name: Smoke test (packaged provider configs load in the frozen binary)
+        shell: bash
+        run: |
+          rc=0
+          "out/${{ matrix.asset }}" ingest-gate whirlpool > gate_smoke.out 2>&1 || rc=$?
+          cat gate_smoke.out
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::ingest-gate exited $rc — the frozen binary could not read its own packaged provider config (the 0.10.1 / 0.10.2 joinpath regression)"
+            exit 1
+          fi
+          if ! grep -q "orquestra/whirlpool" gate_smoke.out; then
+            echo "::error::ingest-gate ran but never named the program — the packaged config was not loaded"
+            exit 1
+          fi
+          if ! grep -q "registry-consistency" gate_smoke.out; then
+            echo "::error::the gate produced no checks — the config parsed to nothing"
+            exit 1
+          fi
+          echo "packaged configs OK: whirlpool read from the bundle, checks ran"
+
       - name: Smoke test (the pixel channel is readable in the frozen binary)
         shell: bash
         run: |
