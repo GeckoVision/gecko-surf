@@ -81,12 +81,14 @@ def landing_table() -> dict[tuple[str, str], Any]:
         meteora_landing,
         ore_landing,
         pumpfun_landing,
+        whirlpool_landing,
     )
 
     return {
         ("pumpfun", "buy"): pumpfun_landing.simulate_buy_landing,
         ("pumpfun", "sell"): pumpfun_landing.simulate_sell_landing,
         ("meteora", "swap"): meteora_landing.simulate_swap_landing,
+        ("whirlpool", "swap_v2"): whirlpool_landing.simulate_swap_v2_landing,
         ("ore", "claim"): ore_landing.simulate_claim_landing,
         ("metadao_ico", "fund"): metadao_landing.simulate_fund_landing,
         ("jupiter", "route"): jupiter_landing.simulate_route_landing,

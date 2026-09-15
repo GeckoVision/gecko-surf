@@ -174,8 +174,11 @@ REGISTRY_SCORES = {
     # also has no golden rows yet (R6).
     "let_me_buy": (5, ["R5"]),
     "jurassic_fi": (5, ["R5"]),
+    # whirlpool 5 -> 6 on 2026-09-14: whirlpool_landing.py supplied the orchestrator and
+    # the drift key (R5). let_me_buy and jurassic_fi still carry the same debt, which is
+    # what keeps the spread below honest rather than collapsed.
     # 2 -> 5 on 2026-08-31: wiring plan_swap satisfied R3+R4; the D3 golden rows, R6.
-    "whirlpool": (5, ["R5"]),
+    "whirlpool": (6, []),
 }
 
 
@@ -243,7 +246,17 @@ def test_drift_dispatch_keys_are_parsed_from_source_not_called():
         ("ore", "claim"),
         ("metadao_ico", "fund"),
         ("jupiter", "route"),
+        # Added 2026-09-14 with gecko/providers/whirlpool_landing.py. whirlpool was the
+        # only program with real mainnet swaps behind it and no way to prove or watch
+        # them, which is precisely what R5 had been warning about since the gate shipped.
+        ("whirlpool", "swap_v2"),
     }
+    # The parse must never come back EMPTY. `_dispatch_keys` reads the function by NAME
+    # out of the source, so renaming or relocating `_default_simulator` would silently
+    # zero R5 for every program while the gate still said "warn" — and the only symptom
+    # would be REGISTRY_SCORES dropping, which reads like a config regression rather
+    # than a disarmed check.
+    assert keys, "the dispatch table parsed to nothing — R5 is disarmed, not passing"
 
 
 # --------------------------------------------------------------------------- #

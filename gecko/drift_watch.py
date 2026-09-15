@@ -225,6 +225,7 @@ def _default_simulator(
         meteora_landing,
         ore_landing,
         pumpfun_landing,
+        whirlpool_landing,
     )
 
     common: dict[str, Any] = {
@@ -240,6 +241,10 @@ def _default_simulator(
         ).landing_receipt
     if key == ("pumpfun", "sell"):
         return pumpfun_landing.simulate_sell_landing(
+            target.bindings, **common
+        ).landing_receipt
+    if key == ("whirlpool", "swap_v2"):
+        return whirlpool_landing.simulate_swap_v2_landing(
             target.bindings, **common
         ).landing_receipt
     if key == ("meteora", "swap"):
