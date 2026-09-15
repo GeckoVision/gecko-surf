@@ -46,7 +46,6 @@ program passes is not a gate, it is a comment.
 
 from __future__ import annotations
 
-import ast
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -313,30 +312,27 @@ _REGISTRIES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _dispatch_keys(module_path: Path, func_name: str) -> set[tuple[str, str]]:
-    """The ``(program, instruction)`` pairs a dispatch function can route, read from its
-    SOURCE with :mod:`ast`.
+def _dispatch_keys() -> set[tuple[str, str]]:
+    """The ``(program, instruction)`` pairs the watcher can route, read as DATA.
 
-    Read rather than called, because calling it routes to an orchestrator that opens an
-    RPC connection, and this module is offline by construction. Read with ``ast`` rather
-    than a regex, because a regex over source is a guess and a parse is not.
+    This used to ``ast.parse`` the source of ``drift_watch._default_simulator``, which
+    worked everywhere except the one place it most needed to: a PyInstaller bundle
+    carries compiled bytecode and no ``.py``, so ``read_text`` raised FileNotFoundError
+    and `gecko ingest-gate` crashed outright in every published binary. Nothing caught it
+    because no smoke test ran a packaged-config command against the frozen build.
+
+    Reading the table directly is also simply better. The ast walk matched any 2-tuple of
+    string constants anywhere inside the function, so an unrelated pair would have counted
+    as a dispatch key; and `drift_watch` now routes through this same table rather than a
+    duplicate if-chain, so there is one answer to "what can we simulate" instead of two
+    that drifted apart once already.
+
+    Importing the table does not open a connection: the orchestrators are imported, and
+    only CALLING one touches an RPC.
     """
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
-    keys: set[tuple[str, str]] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef) or node.name != func_name:
-            continue
-        for inner in ast.walk(node):
-            if not isinstance(inner, ast.Tuple) or len(inner.elts) != 2:
-                continue
-            parts = [
-                elt.value
-                for elt in inner.elts
-                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-            ]
-            if len(parts) == 2:
-                keys.add((parts[0], parts[1]))
-    return keys
+    from .prove import landing_table
+
+    return set(landing_table())
 
 
 def check_registry_consistency(
@@ -1271,7 +1267,6 @@ def gate(
         provider=provider,
         overlay_declared=tuple(overlay.get("intents") or ()),
     )
-    from . import drift_watch as _drift  # local: keeps solders off a plain import
 
     registries = check_registry_consistency(
         api_id,
@@ -1280,7 +1275,7 @@ def gate(
         has_program_block=program is not None,
         intents_reachable=reach.outcome == "ok",
         in_programs=api_id in PROGRAMS,
-        drift_keys=sorted(_dispatch_keys(Path(_drift.__file__), "_default_simulator")),
+        drift_keys=sorted(_dispatch_keys()),
         golden_rows=_golden_rows(provider, api_id),
     )
     fingerprint = check_framework_fingerprint(api_id, idl, idl_source=idl_source)
