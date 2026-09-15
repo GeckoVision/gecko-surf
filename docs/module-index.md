@@ -2,14 +2,14 @@
 
 # Module index
 
-235 modules in `gecko/` (subpackages included), from their own docstrings.
+238 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
 | module | what it is | used by |
 | --- | --- | --- |
 | `_ca_bundle` | Frozen-binary CA bundle — point OpenSSL at the certifi store PyInstaller ships. | 0 |
-| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 21 · `authcheck`, `binding`, `cli` +18 |
+| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 22 · `authcheck`, `binding`, `cli` +19 |
 | `account_recipes` | IDL -> the seed recipe that lets an account PROVE which account it is. | 2 · `read_accounts`, `value_sources` |
 | `agentnative` | Emit an ingested API's own agent-native discovery surface. | 6 · `comprehend_service`, `docsearch`, `http_server` +3 |
 | `arazzo` | Arazzo export — the derived plan as a portable handoff artifact. | 2 · `cli`, `mcp_server` |
@@ -22,12 +22,12 @@ package depends on it, which is worth a look before you add a caller.
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
 | `cards` | In-chat cards for Gecko tools — MCP Apps resources, PayBox-style. | 1 · `http_server` |
-| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 8 · `client`, `find_start`, `ingest_gate` +5 |
+| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 9 · `client`, `endpoint_score`, `find_start` +6 |
 | `catalog_mcp` | Aggregated MCP surface over the whole pay.sh catalog — one MCP, 70 providers. | 1 · `serve_mcp` |
 | `catalogue_export` | The semantic catalogue, serialised so a non-Python consumer can DERIVE it. | 0 |
 | `chain_eval` | Chain-FCC harness — the chain analogue of ``fcc_eval`` (§6, §12 Phase 1). | 0 |
 | `cli` | ``gecko`` CLI — an argparse subcommand dispatcher. Thin by design. | 0 |
-| `client` | AgentApiClient — the one object that makes an API agent-usable. | 31 · `agentnative`, `authcheck`, `binding` +28 |
+| `client` | AgentApiClient — the one object that makes an API agent-usable. | 32 · `agentnative`, `authcheck`, `binding` +29 |
 | `compose` | Cross-surface composition (§12 Phase 4, §13) — per-surface graphs composed at | 1 · `safechain` |
 | `comprehend_service` | Comprehend a submitted API — the shared core behind both 'submit your API' doors. | 3 · `http_server`, `mcp_server`, `preflight` |
 | `connect` | ``gecko connect <surface>`` — reach a GATED hosted surface with the Gecko key held | 0 |
@@ -49,8 +49,10 @@ package depends on it, which is worth a look before you add a caller.
 | `docsearch` | Virtualized-docs search — the self-heal ``query_docs`` engine. | 2 · `mcp_server`, `selfheal_eval` |
 | `drift` | The drift series — the compounding, honest V2 asset (D2 §5). | 2 · `cli`, `drift_watch` |
 | `drift_watch` | The drift scheduler — re-simulate a known-good plan until it stops being good. | 1 · `cli` |
+| `effects` | What this transaction will do, said before anybody signs it. | 1 · `prepare_purchase` |
 | `encdetect` | Encoding-aware decode + rescan for Skill Guard — closes the base64/hex/rot13 residual. | 0 |
-| `enforce` | Inline enforcement gate — promote the semantic risk SCORE to an ENFORCED | 7 · `http_server`, `jito_surface`, `mcp_server` +4 |
+| `endpoint_score` | One score per endpoint, and it answers two different people's questions. | 0 |
+| `enforce` | Inline enforcement gate — promote the semantic risk SCORE to an ENFORCED | 8 · `http_server`, `jito_surface`, `kora_surface` +5 |
 | `enrich` | S0 enrich-before-embed — one situating blurb per Operation (the cheapest lever). | 3 · `catalog`, `corrections`, `surfacedoc` |
 | `entitlements` | Entitlements — which customer may access which surface, and how. | 2 · `binding`, `x402_pay` |
 | `error_overlay` | What to DO about a program error — Gecko's knowledge, and labelled as ours. | 1 · `prepare_instruction` |
@@ -63,7 +65,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
 | `feebump` | Priority-fee injection for a builder's unsigned transaction — a VERIFIED rebuild. | 1 · `autonomous_purchase` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 15 · `ingest_gate`, `prove`, `providers.catalog_surface` +12 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 16 · `endpoint_score`, `ingest_gate`, `prove` +13 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -83,13 +85,14 @@ package depends on it, which is worth a look before you add a caller.
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
+| `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
 | `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 17 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +14 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `catalog`, `find_start`, `purchase_intent_eval` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
 | `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
 | `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 3 · `orquestra_build`, `partner_delta`, `providers.catalog_surface` |
-| `mcp_server` | MCP surface — what an agent actually installs. | 15 · `binding`, `catalog_mcp`, `examples.colosseum` +12 |
+| `mcp_server` | MCP surface — what an agent actually installs. | 16 · `binding`, `catalog_mcp`, `examples.colosseum` +13 |
 | `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 1 · `providers.metadao` |
 | `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 3 · `providers.meteora`, `providers.meteora_landing`, `whirlpool_math` |
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
@@ -206,7 +209,7 @@ package depends on it, which is worth a look before you add a caller.
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 23 · `autonomous_purchase`, `corpus`, `drift_watch` +20 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 24 · `autonomous_purchase`, `corpus`, `drift_watch` +21 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 2 · `autonomous_purchase`, `signer` |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
@@ -225,8 +228,8 @@ package depends on it, which is worth a look before you add a caller.
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 29 · `agentnative`, `catalog`, `chain_eval` +26 |
-| `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 30 · `agentnative`, `catalog`, `chain_eval` +27 |
+| `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
 | `value_sources` | Where a missing seed value can be READ from — the hop between two of our own tools. | 1 · `prepare_instruction` |
