@@ -83,6 +83,7 @@ CHECKS: tuple[str, ...] = (
     "registry-consistency",
     "framework-fingerprint",
     "cardinality",
+    "seed-endianness",
     "discrimination",
 )
 
@@ -1286,9 +1287,8 @@ def gate(
     # The RAW packaged seed rows, through the same loader every other packaged read uses.
     # Deliberately not `program.pdas`: PdaNode is a parsed recipe and this check is about
     # what the config DECLARES — encodings and `source` included, which the parse folds in.
-    raw_pdas = (_read_json(provider, f"{api_id}.json").get("program") or {}).get(
-        "pdas"
-    ) or {}
+    raw_program = _read_json(provider, f"{api_id}.json").get("program") or {}
+    raw_pdas = raw_program.get("pdas") or {}
     cardinality = check_cardinality(
         api_id,
         raw_pdas,
@@ -1296,8 +1296,12 @@ def gate(
         program_id=program.program_id if program else "",
         provider=provider,
     )
+    # Judged on what is ALREADY ingested. `precheck_config` asks the same question of a
+    # candidate; this asks it of the packaged config, where a later edit can reintroduce
+    # an assumed byte order that nothing else would notice.
+    endianness = check_seed_endianness(api_id, raw_program)
     discrimination = check_discrimination(api_id)
-    checks = (reach, registries, fingerprint, cardinality, discrimination)
+    checks = (reach, registries, fingerprint, cardinality, endianness, discrimination)
     outcome = _worst(c.outcome for c in checks)
     verdict = {
         "refuse": "REFUSE — do not ingest",
