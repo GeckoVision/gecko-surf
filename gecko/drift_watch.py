@@ -219,14 +219,10 @@ def _default_simulator(
     Each orchestrator already records its own categorical row when ``record_to`` is set,
     so the scheduler never writes to the corpus itself — one writer, one contract.
     """
-    from .providers import (  # local import: keeps solders off the import path until used
-        jupiter_landing,
-        metadao_landing,
-        meteora_landing,
-        ore_landing,
-        pumpfun_landing,
-        whirlpool_landing,
-    )
+    # ONE table, shared with `gecko.prove`. It used to be duplicated here as an if-chain,
+    # and the two spellings had already drifted apart once. A second copy of "which
+    # programs can we simulate" is a second place for the answer to be wrong.
+    from .prove import landing_table
 
     common: dict[str, Any] = {
         "rpc_url": rpc_url,
@@ -235,35 +231,10 @@ def _default_simulator(
         "include_derive_only": False,  # the baseline is the story; the watch is the plan
     }
     key = (target.program.lower(), target.instruction.lower())
-    if key == ("pumpfun", "buy"):
-        return pumpfun_landing.simulate_buy_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("pumpfun", "sell"):
-        return pumpfun_landing.simulate_sell_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("whirlpool", "swap_v2"):
-        return whirlpool_landing.simulate_swap_v2_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("meteora", "swap"):
-        return meteora_landing.simulate_swap_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("ore", "claim"):
-        return ore_landing.simulate_claim_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("metadao_ico", "fund"):
-        return metadao_landing.simulate_fund_landing(
-            target.bindings, **common
-        ).landing_receipt
-    if key == ("jupiter", "route"):
-        return jupiter_landing.simulate_route_landing(
-            target.bindings, **common
-        ).landing_receipt
-    raise WatchError(f"no orchestrator for {target.program}/{target.instruction}")
+    runner = landing_table().get(key)
+    if runner is None:
+        raise WatchError(f"no orchestrator for {target.program}/{target.instruction}")
+    return runner(target.bindings, **common).landing_receipt
 
 
 def _read_series(corpus_path: Path) -> list[SimulatedOutcome]:

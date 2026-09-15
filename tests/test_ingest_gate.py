@@ -233,12 +233,16 @@ def test_metadao_drift_key_matches_the_api_id(reports):
     assert [f for f in check.findings if "drift_watch" in f.location] == []
 
 
-def test_drift_dispatch_keys_are_parsed_from_source_not_called():
-    """The dispatch routes to an orchestrator that opens an RPC connection, so the keys
-    are read with ast. Pinned against the real table in gecko/drift_watch.py."""
-    import gecko.drift_watch as drift_watch
+def test_drift_dispatch_keys_are_read_as_data_not_parsed_from_source():
+    """R5's keyset comes from the TABLE, not from parsing drift_watch's source.
 
-    keys = ingest_gate._dispatch_keys(Path(drift_watch.__file__), "_default_simulator")
+    It used to `ast.parse` the source of `_default_simulator`. That worked everywhere
+    except the one place it mattered most: a PyInstaller bundle carries compiled
+    bytecode and no `.py`, so `read_text` raised FileNotFoundError and
+    `gecko ingest-gate` crashed outright in every published binary. Nothing caught it
+    until a release smoke test ran a packaged-config command against the frozen build.
+    """
+    keys = ingest_gate._dispatch_keys()
     assert keys == {
         ("pumpfun", "buy"),
         ("pumpfun", "sell"),
@@ -246,17 +250,22 @@ def test_drift_dispatch_keys_are_parsed_from_source_not_called():
         ("ore", "claim"),
         ("metadao_ico", "fund"),
         ("jupiter", "route"),
-        # Added 2026-09-14 with gecko/providers/whirlpool_landing.py. whirlpool was the
-        # only program with real mainnet swaps behind it and no way to prove or watch
-        # them, which is precisely what R5 had been warning about since the gate shipped.
         ("whirlpool", "swap_v2"),
     }
-    # The parse must never come back EMPTY. `_dispatch_keys` reads the function by NAME
-    # out of the source, so renaming or relocating `_default_simulator` would silently
-    # zero R5 for every program while the gate still said "warn" — and the only symptom
-    # would be REGISTRY_SCORES dropping, which reads like a config regression rather
-    # than a disarmed check.
-    assert keys, "the dispatch table parsed to nothing — R5 is disarmed, not passing"
+    # Never EMPTY. Whatever supplies this, R5 reading `False` for every program while
+    # the gate still says "warn" is a disarmed check wearing a passing result, and the
+    # only symptom would be REGISTRY_SCORES dropping — which reads like a config
+    # regression rather than a gate that stopped working.
+    assert keys, "the dispatch table is empty — R5 is disarmed, not passing"
+
+
+def test_the_watcher_and_the_prover_route_the_same_programs():
+    """ONE table. drift_watch used to carry its own if-chain, and the two spellings had
+    already drifted apart once. A program you can prove but never watch is a surface
+    change that lands unobserved."""
+    from gecko.prove import landing_table
+
+    assert ingest_gate._dispatch_keys() == set(landing_table())
 
 
 # --------------------------------------------------------------------------- #
