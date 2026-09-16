@@ -60,6 +60,10 @@ from gecko.spend_policy import (
 )
 from gecko.txbind import message_binding
 
+# The seam now refuses an echo of the unsigned bytes (`backend-left-its-slot-empty`),
+# so the fake fills its own slot with a throwaway signature, exactly as the real ones do.
+from tests.test_signer import _fill_slot
+
 _SIGNER_SOURCE = Path(__file__).resolve().parent.parent / "gecko" / "signer.py"
 
 PAYER = "DLkcqeNNX8nRQgD87DN7LjHkcLQd9K2wuqaCbhkERJxL"
@@ -219,7 +223,7 @@ class _FakeBackend:
         self, unsigned_transaction: bytes, attestation: SigningAttestation
     ) -> bytes:
         self.calls.append(attestation)
-        return unsigned_transaction
+        return _fill_slot(unsigned_transaction, self.pubkey)
 
 
 def _policy(**overrides: Any) -> SpendPolicy:

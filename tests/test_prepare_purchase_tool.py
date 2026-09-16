@@ -270,7 +270,15 @@ def test_a_clean_prepare_returns_an_unsigned_transaction_bound_exactly() -> None
         "the store must be read before anything else"
     )
     assert rpc.calls[-1] == "simulateTransaction", "the simulate must be last"
-    assert sorted(rpc.calls[1:-1]) == ["getBlockHeight", "getLatestBlockhash"]
+    # The second `getAccountInfo` is the BUYER's pre-balance: `simulate` reads it because
+    # the purchase now tracks the buyer, so the receipt can say whose lamports moved
+    # (and, under a relay, that none of the buyer's did). It sits inside `simulate`, so
+    # it is after every input to the bytes exists and before the simulate itself.
+    assert sorted(rpc.calls[1:-1]) == [
+        "getAccountInfo",
+        "getBlockHeight",
+        "getLatestBlockhash",
+    ]
     assert out["expires"]["blocks_remaining"] == 149
     assert out["expires"]["seconds_remaining_estimate"] == 60
 
@@ -897,3 +905,13 @@ def test_the_binding_covers_the_fee_payer_so_a_rewrite_cannot_be_silent() -> Non
         "the binding did not move when the fee payer did — account_keys[0] is outside "
         "the hash, and a relay could swap itself in without breaking the receipt"
     )
+
+
+def test_the_receipt_is_taken_with_the_buyer_tracked() -> None:
+    """Whose lamports the receipt counts. Self-paid it is the fee; relay-paid it is the
+    number that must read zero for "gasless" to be measured rather than claimed. Either
+    way the spend gate keys the token caps on this account, so a receipt tracking nobody
+    is refused by every signer for want of a subject."""
+    rpc = FakeRpc()
+    _prepare(rpc=rpc)
+    assert rpc.reads[-1] == BUYER, "the buyer's pre-balance is the last account read"

@@ -828,6 +828,12 @@ def _prepare(
         replace_blockhash=False,
         network_label=f"simulated against {network} (read-only, unsigned)",
         network=network,
+        # WHOSE lamports the receipt counts: the buyer's, in both flows. Self-paid, the
+        # buyer is the payer and this is the fee. Relay-paid, it is the number that has
+        # to be zero for "gasless" to be a measured sentence rather than a claim, and it
+        # is the account the spend gate keys the token caps on. A receipt that tracks
+        # nobody is refused by every signer for want of a subject (signer.py, N1).
+        track=[buyer],
     )
     if receipt.status != "pass":
         diagnosis = _diagnose_failed_purchase(

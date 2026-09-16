@@ -206,6 +206,10 @@ class SignerHandoff:
     #: The network the RECEIPT was taken on — carried beside the prose label so a caller
     #: can show the compared fact, not the sentence about it.
     network: str = UNKNOWN_NETWORK
+    #: Every required signer, in slot order, read from the approved bytes. Slot 0 is the
+    #: fee payer. A caller routing a relay-paid transaction to two parties reads this
+    #: rather than re-decoding; empty on a refusal and when the bytes could not be read.
+    signature_slots: tuple[str, ...] = ()
 
     @property
     def receipt_line(self) -> str:
@@ -417,7 +421,20 @@ def verify_handoff(
         network_label=receipt.network_label,
         logs_tail=receipt.logs_tail,
         network=receipt.network,
+        signature_slots=_slots_of(payload),
     )
+
+
+def _slots_of(payload: str | None) -> tuple[str, ...]:
+    """The required signers of approved bytes; empty when there are none to read."""
+    if payload is None:
+        return ()
+    from .cosign import CosignRefused, signature_slots
+
+    try:
+        return signature_slots(payload)
+    except CosignRefused:
+        return ()
 
 
 def _lazy_default_build() -> BuildCall:

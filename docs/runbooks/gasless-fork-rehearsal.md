@@ -226,20 +226,54 @@ if those two hashes ever match, every gasless receipt is worthless.
 
 ---
 
-## 8. Two signatures, in this order
+## 8. Two signatures, in this order, and why the order is forced
 
-The bytes now need both, and **order matters for Lighthouse**.
+The bytes need both. **Kora signs first**, and not as a courtesy: with Lighthouse enabled
+Kora **appends** a balance assertion to the message before it signs
+(`crates/lib/src/lighthouse/assertion.rs`, `add_fee_payer_assertion`, skipped only when
+Kora itself sends). So the transaction that comes back is not the one you sent. It is your
+instruction plus one Lighthouse `AssertAccountInfo` on the relay's own balance, and every
+byte-identical check in this repo refuses it. Correctly.
 
-1. **Kora signs as fee payer** via `signTransaction` (never `signAndSend` — it is disabled
-   here, and Lighthouse does not apply to it).
-2. **The buyer signs as token authority.**
-3. **We submit.** Kora never broadcasts.
+That is why the sequence is what it is, and why it lives in one function,
+`gecko.autonomous_purchase.settle_sponsored`:
 
-Expect `gecko/signer.py` to refuse these bytes if you hand them to a buyer-only signer:
-code `fee-payer-not-controlled`. **That is the gate working, not a bug** — the tool schema
-says so out loud, and a caller who does not know it reads it as our failure.
+1. **Relay signs** (`signTransaction`, never `signAndSend`). `gecko.relay.accept_relay_signature`
+   then checks the answer by name: same payer, same blockhash, same signers, every
+   instruction we authored byte-identical, and the addition is Lighthouse, read-only,
+   introducing no writable account, with a signature in slot 0 that verifies.
+2. **The answer is a NEW subject.** Re-simulated with the buyer tracked, re-verified at
+   `exact`. The receipt over the original attests nothing about a message with one more
+   instruction in it.
+3. **The buyer signs, in the `authority` role**, over the extended bytes. That role refuses
+   `authority-is-the-fee-payer`, `signer-not-a-required-signer` and, the one that makes
+   "gasless" a measured word, `authority-lamports-moved` when the buyer's own delta is not
+   zero. The spend gate runs inside and keys the token caps on the buyer, because the
+   receipt tracks the buyer. The policy must allowlist the Lighthouse instruction
+   (`default_spend_policy(sponsored=True)`), otherwise the gate refuses the relay's
+   addition, which is the gate doing its job.
+4. **Merge** through `gecko.cosign.merge_signatures` over the relay's message; both
+   signatures verify against it or nothing is sent.
+5. **We submit.** Kora never broadcasts.
 
----
+The runner does all of it:
+
+```bash
+export KORA_RPC_URL=http://127.0.0.1:8080
+export KORA_API_KEY=fork-rehearsal-not-a-secret
+
+# dry run: prepares and verifies, never asks the relay
+uv run python scripts/gasless_purchase.py --network fork --rpc-url http://127.0.0.1:8899 \
+    --buyer-keypair ~/.gecko/wallets/usdg-nosol-buyer.json --product Espresso
+
+# the real thing, on the fork
+uv run python scripts/gasless_purchase.py --network fork --rpc-url http://127.0.0.1:8899 \
+    --buyer-keypair ~/.gecko/wallets/usdg-nosol-buyer.json --product Espresso --broadcast
+```
+
+A buyer-only signer in the default `fee-payer` role still refuses these bytes with
+`fee-payer-not-controlled`. **That is the gate working, not a bug.** The role is authored
+out loud on the profile (`signing_as="authority"`), never inferred from the bytes.
 
 ## 9. Judge by what moved, not by what returned
 
