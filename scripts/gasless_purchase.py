@@ -45,7 +45,7 @@ from gecko.autonomous_purchase import (  # noqa: E402
 )
 from gecko.networks import coerce_network  # noqa: E402
 from gecko.prepare_purchase import prepare_purchase_result  # noqa: E402
-from gecko.rpc import default_rpc_call  # noqa: E402
+from gecko.rpc import default_rpc_call, validate_rpc_url  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
@@ -131,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
             "table": args.table,
             "network": network,
             "rpc_url": args.rpc_url,
-        }
+        },
+        # The tool's default guard refuses loopback because the hosted surface is an
+        # unauthenticated proxy. This runner is the operator's own process on the
+        # operator's own machine, and a fork lives on loopback by construction, so on a
+        # fork the guard is the scheme check alone. Mainnet keeps the public-only guard.
+        url_guard=validate_rpc_url if network == "fork" else None,
     )
     if out.get("error"):
         print(f"STOP: {out['error']}")
@@ -153,9 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # 3. SETTLE: relay -> re-verify -> buyer (authority) -> merge -> send.
+    plan = out["accounts"]
+    entries = plan.values() if isinstance(plan, dict) else plan
     writable = frozenset(
         entry["address"]
-        for entry in out["accounts"].values()
+        for entry in entries
         if entry.get("writable") and entry["address"] != buyer.pubkey
     )
     gate = SpendPolicyGate(

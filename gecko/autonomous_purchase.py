@@ -480,6 +480,14 @@ def run_purchase(
             # never be signed, so the untouched builder bytes proceed unpriced.
             priced = base64_tx
             fee = 0
+    # The builder ships a one-slot signature array under a two-signer header when the
+    # payer is a relay (measured; gecko.cosign.normalize_signature_slots). The message
+    # is not touched; the array outside it is made to match its own header.
+    from .cosign import normalize_signature_slots
+
+    priced = base64.b64encode(
+        normalize_signature_slots(base64.b64decode(priced))
+    ).decode()
     subject = _with_fresh_blockhash(BuiltTx(tx=priced, encoding="base64"), blockhash)
 
     # 4. SIMULATE THE SUBJECT — the exact bytes that will be signed, nothing re-assembled.

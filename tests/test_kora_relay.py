@@ -50,17 +50,50 @@ def test_open_pins_the_payer_the_node_names_and_satisfies_the_protocol() -> None
     assert SECRET not in repr(relay)
 
 
-def test_sign_sends_named_params_and_returns_the_answer_untouched() -> None:
+def _two_signer_tx() -> tuple[str, str]:
+    """A relay-paid shape: slot 0 the relay, slot 1 the buyer. Returns (base64, buyer)."""
+    import base64
+
+    from solders.hash import Hash
+    from solders.instruction import AccountMeta, Instruction
+    from solders.keypair import Keypair
+    from solders.message import Message
+    from solders.pubkey import Pubkey
+    from solders.transaction import Transaction
+
+    buyer = Keypair()
+    ix = Instruction(
+        Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+        b"x",
+        [AccountMeta(buyer.pubkey(), True, True)],
+    )
+    message = Message.new_with_blockhash(
+        [ix], Pubkey.from_string(RELAY), Hash.default()
+    )
+    return (
+        base64.b64encode(bytes(Transaction.new_unsigned(message))).decode(),
+        str(buyer.pubkey()),
+    )
+
+
+def test_sign_sends_named_params_with_the_buyer_as_user_id() -> None:
+    """Kora refuses signTransaction without `user_id` under free pricing with usage
+    tracking (measured on the fork). The id is the buyer, read from the bytes."""
     relay, transport = _open(
         signTransaction={
             "result": {"signed_transaction": "QUJD", "signer_pubkey": RELAY}
         }
     )
-    assert relay.sign_as_fee_payer("dW5zaWduZWQ=") == "QUJD"
+    unsigned, buyer = _two_signer_tx()
+    assert relay.sign_as_fee_payer(unsigned) == "QUJD"
     _url, request, _headers = transport.seen[-1]
     assert request.method == "signTransaction"
     assert isinstance(request.params, Mapping), "Kora refuses a positional list"
-    assert request.params == {"transaction": "dW5zaWduZWQ=", "signer_key": RELAY}
+    assert request.params == {
+        "transaction": unsigned,
+        "signer_key": RELAY,
+        "user_id": buyer,
+    }
 
 
 def test_an_answer_from_another_signer_is_refused() -> None:
@@ -70,13 +103,13 @@ def test_an_answer_from_another_signer_is_refused() -> None:
         }
     )
     with pytest.raises(KoraRelayError, match="other than the pinned payer"):
-        relay.sign_as_fee_payer("dW5zaWduZWQ=")
+        relay.sign_as_fee_payer(_two_signer_tx()[0])
 
 
 def test_a_reply_without_bytes_is_refused() -> None:
     relay, _ = _open(signTransaction={"result": {"signer_pubkey": RELAY}})
     with pytest.raises(KoraRelayError, match="no signed_transaction"):
-        relay.sign_as_fee_payer("dW5zaWduZWQ=")
+        relay.sign_as_fee_payer(_two_signer_tx()[0])
 
 
 def test_a_json_rpc_error_carries_only_its_code() -> None:
@@ -84,7 +117,7 @@ def test_a_json_rpc_error_carries_only_its_code() -> None:
         signTransaction={"error": {"code": -32000, "message": f"key {SECRET} bad"}}
     )
     with pytest.raises(KoraRelayError) as err:
-        relay.sign_as_fee_payer("dW5zaWduZWQ=")
+        relay.sign_as_fee_payer(_two_signer_tx()[0])
     assert "code=-32000" in str(err.value)
     assert SECRET not in str(err.value)
 

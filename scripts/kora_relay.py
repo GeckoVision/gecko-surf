@@ -46,6 +46,7 @@ from typing import Any, Callable, Mapping
 
 sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
+from gecko.cosign import CosignRefused, signature_slots  # noqa: E402
 from gecko.rpc import user_agent, validate_rpc_url  # noqa: E402
 
 #: The signing method. Named once. ``signAndSendTransaction`` is deliberately absent.
@@ -149,6 +150,13 @@ class KoraRelay:
 
         ``signer_key`` pins which of the node's signers answers, so a multi-signer pool
         cannot hand back a signature from an account the bytes do not name.
+
+        ``user_id`` is REQUIRED by Kora when usage tracking is on and pricing is free
+        (measured 2026-09-16: ``ValidationError("user_id is required when usage tracking
+        is enabled and pricing is free")``). It is the account Kora's per-wallet limit
+        counts against, so it is read from the bytes rather than asked of the caller:
+        the first required signer that is not the fee payer, the buyer who authorises
+        the spend. A single-signer transaction names the payer itself.
         """
         reply = _call(
             self.transport,
@@ -159,6 +167,7 @@ class KoraRelay:
                 {
                     "transaction": unsigned_transaction_base64,
                     "signer_key": self._pubkey,
+                    "user_id": _authority_of(unsigned_transaction_base64),
                 },
             ),
         )
@@ -171,6 +180,19 @@ class KoraRelay:
                 "signTransaction was answered by a signer other than the pinned payer"
             )
         return signed
+
+
+def _authority_of(unsigned_transaction_base64: str) -> str:
+    """The signer Kora's usage limit is charged to: the first non-payer signer."""
+    try:
+        slots = signature_slots(unsigned_transaction_base64)
+    except CosignRefused as exc:
+        raise KoraRelayError(
+            f"the transaction's signers could not be read ({exc.code})"
+        ) from None
+    if not slots:
+        raise KoraRelayError("the transaction names no signer")
+    return slots[1] if len(slots) > 1 else slots[0]
 
 
 def _call(

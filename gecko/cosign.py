@@ -42,6 +42,7 @@ __all__ = [
     "CosignRefused",
     "Contribution",
     "merge_signatures",
+    "normalize_signature_slots",
     "signature_slots",
     "take_signature",
     "unfilled_slots",
@@ -116,6 +117,44 @@ def signature_slots(tx: str | bytes) -> tuple[str, ...]:
     message = transaction.message
     required = int(message.header.num_required_signatures)
     return tuple(str(key) for key in list(message.account_keys)[:required])
+
+
+def normalize_signature_slots(raw: bytes) -> bytes:
+    """The same message, with a signature array as long as its header says.
+
+    MEASURED, not assumed (fork, 2026-09-08 and again 2026-09-16): the Orquestra builder,
+    asked for ``feePayer != signer``, emits a header saying ``num_required_signatures=2``
+    over a signature array with ONE slot. The runtime answers ``SanitizeFailure`` before
+    a single instruction runs, and the simulation reports a revert with zero units that
+    no diagnosis can explain. So the bytes were never "a transaction" in the first place.
+
+    This repairs the ARRAY and touches nothing else: the message is re-serialised from
+    the decoded one, and the message is what every binding covers, so an ``exact``
+    binding taken before and after is identical. A caller that wants proof compares the
+    two. Returns ``raw`` untouched when the array already matches.
+    """
+    from solders.message import Message
+    from solders.signature import Signature
+    from solders.transaction import Transaction, VersionedTransaction
+
+    for kind in (Transaction, VersionedTransaction):
+        try:
+            transaction = kind.from_bytes(raw)
+        except Exception:  # noqa: BLE001 - try the other shape before refusing
+            continue
+        message = transaction.message
+        required = int(message.header.num_required_signatures)
+        if len(list(transaction.signatures)) == required:
+            return raw
+        if isinstance(message, Message):
+            return bytes(Transaction.new_unsigned(message))
+        return bytes(
+            VersionedTransaction.populate(message, [Signature.default()] * required)
+        )
+    raise CosignRefused(
+        "undecodable-transaction",
+        "these bytes are neither a legacy nor a versioned transaction",
+    )
 
 
 def unfilled_slots(tx: str | bytes) -> tuple[str, ...]:

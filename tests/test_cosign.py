@@ -284,3 +284,29 @@ def test_undecodable_bytes_refuse_by_name() -> None:
     with pytest.raises(CosignRefused) as err:
         signature_slots("not-base64-at-all!!")
     assert err.value.code == "undecodable-transaction"
+
+
+# --- the builder's one-slot array under a two-signer header -------------------------
+
+
+def test_a_one_slot_array_under_a_two_signer_header_is_made_consistent() -> None:
+    """Measured on the fork: the builder emits this shape whenever feePayer != signer,
+    and the runtime answers SanitizeFailure before any instruction runs."""
+    from solders.transaction import Transaction
+
+    from gecko.cosign import normalize_signature_slots
+    from gecko.txbind import message_binding
+
+    _relay, _buyer, message, unsigned = _parts()
+    raw = base64.b64decode(unsigned)
+    # The builder's shape: same message, ONE signature slot.
+    broken = bytes([1]) + bytes(64) + bytes(message)
+    with pytest.raises(Exception):
+        Transaction.from_bytes(broken).sanitize()  # what the runtime would say
+
+    fixed = normalize_signature_slots(broken)
+    assert fixed == raw, "the repaired bytes are exactly the honest two-slot encoding"
+    assert message_binding(fixed, strength="exact") == message_binding(
+        raw, strength="exact"
+    ), "the message, and so the binding, is untouched"
+    assert normalize_signature_slots(raw) == raw, "a consistent array is returned as is"
