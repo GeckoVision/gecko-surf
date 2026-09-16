@@ -186,6 +186,7 @@ from .txbind import (
 )
 
 __all__ = [
+    "AUTHORITY_ROLE",
     "DEFAULT_SIGNER_PROFILE_NAME",
     "DEVELOPER_KEYPAIR_FILE_PROFILE_NAME",
     "EXTERNAL_SIGNER_PROFILE_NAME",
@@ -195,10 +196,24 @@ __all__ = [
     "SignerProfile",
     "SignerProfileName",
     "SignerRefused",
+    "SignerRole",
     "SigningAttestation",
     "SigningBackend",
     "TransactionSigner",
+    "FEE_PAYER_ROLE",
 ]
+
+#: WHICH signature this signer contributes. A transaction has one fee payer and may have
+#: further required signers; under a relay the buyer is one of the further ones. The role
+#: is a TYPE rather than a flag because the two roles refuse for different reasons: a fee
+#: payer refuses bytes that pay from an account it does not control, an authority refuses
+#: bytes in which its own lamports moved. A boolean "also sign for others" would make both
+#: refusals weaker; two roles make each one exact. Read at
+#: :meth:`TransactionSigner.sign` and carried on :class:`SigningAttestation`, so an
+#: external backend can enforce the same distinction on its own machine.
+SignerRole = Literal["fee-payer", "authority"]
+FEE_PAYER_ROLE: SignerRole = "fee-payer"
+AUTHORITY_ROLE: SignerRole = "authority"
 
 #: Where the material lives, as a NAME — never as a location. The profile says which
 #: custody shape is in play; the process that holds the key knows the rest.
@@ -239,6 +254,11 @@ RefusalCode = Literal[
     "receipt-too-old",
     "undecodable-transaction",
     "fee-payer-not-controlled",
+    # THE ROLE, when this signer is the authority rather than the payer. Each is a
+    # different mistake: the profile said one thing and the bytes said another.
+    "authority-is-the-fee-payer",
+    "signer-not-a-required-signer",
+    "authority-lamports-moved",
     # N1 — WHOSE lamports the receipt counted. "The receipt did not say" and "it said
     # somebody else" are different answers and never share a code.
     "receipt-lamport-subject-missing",
@@ -250,6 +270,9 @@ RefusalCode = Literal[
     "backend-unavailable",
     "backend-returned-nothing",
     "backend-changed-the-message",
+    # A backend that echoes the unsigned bytes re-binds perfectly: the binding covers the
+    # message and a signature lives outside it. This is the check `_rebind` cannot make.
+    "backend-left-its-slot-empty",
 ]
 
 
@@ -298,6 +321,10 @@ class SignerProfile:
     #: WHICH key, as an opaque handle. ``None`` when the backend needs no reference from
     #: us (an external signer knows its own key).
     key: KeyHandle | None = None
+    #: WHICH signature this profile contributes. The default is the one every self-paid
+    #: flow has always meant; ``authority`` is authored out loud, for a relay-paid flow,
+    #: and changes which refusals apply rather than removing any.
+    signing_as: SignerRole = FEE_PAYER_ROLE
 
 
 @dataclass(frozen=True)
@@ -319,6 +346,12 @@ class SigningAttestation:
     current_slot: int
     units_consumed: int | None
     profile: SignerProfileName
+    #: The role this signature is being asked for. A backend that will only ever pay, or
+    #: only ever authorise, can refuse the other role here without reading the bytes.
+    signing_as: SignerRole = FEE_PAYER_ROLE
+    #: Every required signer, in slot order, as decoded from the bytes. The backend's own
+    #: pubkey is one of them; under a relay it is not the first.
+    required_signers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -335,6 +368,13 @@ class SignedTransaction:
     #: to ask the gate a second time to learn what it decided — a second consultation
     #: reserves the budget twice and silently halves every rolling cap.
     spend_verdict: SpendVerdict | None = None
+    #: Are ALL required signatures present? ``False`` for the authority's contribution to
+    #: a relay-paid transaction, which still needs the fee payer's. A caller that submits
+    #: on ``signed_transaction_base64`` alone, without reading this, submits something the
+    #: network rejects; a caller that reads it merges through :mod:`gecko.cosign`.
+    complete: bool = False
+    #: Which slots are still empty, by pubkey. Empty exactly when ``complete``.
+    unfilled: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -462,36 +502,73 @@ class TransactionSigner:
 
         self._check_receipt_age(receipt, current_slot)
         raw, fee_payer = _decode_fee_payer(verified.transaction_base64)
-        if fee_payer != backend.pubkey:
-            raise SignerRefused(
-                "the fee payer on these bytes is not this signer's own account; refusing "
-                "to sign for an account it does not control",
-                code="fee-payer-not-controlled",
-            )
+        required = _required_signers(verified.transaction_base64)
+        role = profile.signing_as
+        if role == FEE_PAYER_ROLE:
+            if fee_payer != backend.pubkey:
+                raise SignerRefused(
+                    "the fee payer on these bytes is not this signer's own account; "
+                    "refusing to sign for an account it does not control",
+                    code="fee-payer-not-controlled",
+                )
+        else:
+            # THE AUTHORITY ROLE. The profile says this key authorises a spend that
+            # somebody else pays the fee for. So the bytes must agree on both halves:
+            # this key is a required signer, and it is NOT the payer. A profile that says
+            # "authority" over bytes that make it pay is a mis-wiring, and signing anyway
+            # would quietly downgrade the role to the one with weaker refusals.
+            if fee_payer == backend.pubkey:
+                raise SignerRefused(
+                    "this profile signs as the authority, but these bytes make its "
+                    "account the fee payer; the role and the bytes disagree, and the "
+                    "role is not downgraded silently",
+                    code="authority-is-the-fee-payer",
+                )
+            if backend.pubkey not in required:
+                raise SignerRefused(
+                    f"this signer's account is not one of the {len(required)} required "
+                    f"signers of these bytes, so its signature would be a signature the "
+                    f"network never asked for",
+                    code="signer-not-a-required-signer",
+                )
         # N1 — ONE THREE-WAY EQUALITY, and it belongs here because this is where
         # `fee_payer` exists as a fact DECODED FROM THE BYTES rather than as a claim. The
-        # line above proved `fee_payer == backend.pubkey`; these two prove
-        # `receipt.sol_delta_account == fee_payer`, and the chain closes.
+        # branch above proved which account this signature is FOR; these two prove
+        # `receipt.sol_delta_account` is that same account, and the chain closes.
         #
         # Without it the amount the spend policy charges is an amount with no owner.
         # `simulate` measures `track[0]`, the caller picks `track`, and a receipt whose
         # `track[0]` was the RECIPIENT carries a POSITIVE `sol_delta` — which the gate's
         # `outflow = -delta if delta < 0 else 0` reads as zero. Every lamport cap then
         # passes a drain of any size, silently.
+        #
+        # Under the authority role the subject is the AUTHORITY, not the payer: the fee
+        # payer's lamports are the relay's business and the relay guards them itself
+        # (Kora appends a Lighthouse balance assertion). What this signature must be
+        # able to say is that the authority's OWN lamports did not move, which is the
+        # sentence "gasless" means, and it is checked right after.
+        lamport_subject = fee_payer if role == FEE_PAYER_ROLE else backend.pubkey
         lamport_account = receipt.sol_delta_account
         if lamport_account is None:
             raise SignerRefused(
                 "the receipt does not say whose lamports its sol_delta counted, so the "
-                "amount cannot be attributed to the paying account; 'we could not tell' "
+                "amount cannot be attributed to the signing account; 'we could not tell' "
                 "is never 'it was the payer'",
                 code="receipt-lamport-subject-missing",
             )
-        if lamport_account != fee_payer:
+        if lamport_account != lamport_subject:
             raise SignerRefused(
-                "the receipt's sol_delta was measured on an account that is not the fee "
-                "payer of these bytes, so it is not this signature's outflow; re-simulate "
-                "with the paying account tracked first",
+                "the receipt's sol_delta was measured on an account that is not the one "
+                "this signature is for, so it is not this signature's outflow; "
+                "re-simulate with the signing account tracked first",
                 code="receipt-lamport-subject-mismatch",
+            )
+        if role == AUTHORITY_ROLE and receipt.sol_delta != 0:
+            raise SignerRefused(
+                f"these bytes move {receipt.sol_delta} lamports on the authority's own "
+                f"account; a relay-paid transaction in which the authority still pays is "
+                f"not the transaction this role was authored for",
+                code="authority-lamports-moved",
             )
 
         attested = receipt.message_binding
@@ -524,6 +601,8 @@ class TransactionSigner:
             current_slot=current_slot,
             units_consumed=receipt.units_consumed,
             profile=profile.name,
+            signing_as=role,
+            required_signers=required,
         )
 
         # AUTHORIZATION, last and immediately before the key holder is asked. Everything
@@ -556,6 +635,7 @@ class TransactionSigner:
 
         signed_raw = _ask_backend(backend, raw, attestation)
         _rebind(signed_raw, attested, strength)
+        unfilled = _own_slot_filled(signed_raw, backend.pubkey)
 
         return SignedTransaction(
             signed_transaction_base64=base64.b64encode(signed_raw).decode(),
@@ -564,6 +644,8 @@ class TransactionSigner:
             strength=strength,
             network=receipt.network,
             spend_verdict=verdict,
+            complete=not unfilled,
+            unfilled=unfilled,
         )
 
     def _configuration(self) -> tuple[SigningBackend, SignerProfile]:
@@ -643,6 +725,45 @@ def _decode_fee_payer(transaction_base64: str) -> tuple[bytes, str]:
             code="undecodable-transaction",
         )
     return raw, str(keys[0])
+
+
+def _required_signers(transaction_base64: str) -> tuple[str, ...]:
+    """Every required signer, in slot order, decoded from the bytes."""
+    from .cosign import CosignRefused, signature_slots
+
+    try:
+        return signature_slots(transaction_base64)
+    except CosignRefused as exc:
+        raise SignerRefused(
+            f"the transaction's signer slots could not be read ({exc.code})",
+            code="undecodable-transaction",
+        ) from None
+
+
+def _own_slot_filled(signed_raw: bytes, pubkey: str) -> tuple[str, ...]:
+    """Did the backend actually sign, and which slots remain? Refuses an echo.
+
+    ``_rebind`` proves the MESSAGE came back unchanged and is blind to whether anything
+    was signed, because a signature lives outside the message. So this reads the slots.
+    A backend that returns its own slot empty said no without saying so, and that must
+    not reach a caller labelled signed.
+    """
+    from .cosign import CosignRefused, unfilled_slots
+
+    try:
+        unfilled = unfilled_slots(signed_raw)
+    except CosignRefused as exc:
+        raise SignerRefused(
+            f"the signed transaction's slots could not be read ({exc.code})",
+            code="backend-changed-the-message",
+        ) from None
+    if pubkey in unfilled:
+        raise SignerRefused(
+            "the backend returned the transaction with its own signature slot still "
+            "empty; an echo of the unsigned bytes is not a signature",
+            code="backend-left-its-slot-empty",
+        )
+    return unfilled
 
 
 def _ask_backend(

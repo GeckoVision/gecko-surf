@@ -243,9 +243,14 @@ class _FakeBackend:
     the seam's job is deciding whether to call this at all.
     """
 
-    def __init__(self, pubkey: str = PAYER, swap_to: str | None = None) -> None:
+    def __init__(
+        self, pubkey: str = PAYER, swap_to: str | None = None, *, echo: bool = False
+    ) -> None:
         self._pubkey = pubkey
         self._swap_to = swap_to
+        #: Return the unsigned bytes untouched — the stubbed-endpoint shape the seam
+        #: must catch. Off by default so every other test exercises the happy shape.
+        self._echo = echo
         self.calls: list[SigningAttestation] = []
 
     @property
@@ -258,7 +263,33 @@ class _FakeBackend:
         self.calls.append(attestation)
         if self._swap_to is not None:
             return base64.b64decode(_tx(self._swap_to))
-        return unsigned_transaction
+        if self._echo:
+            return unsigned_transaction
+        return _fill_slot(unsigned_transaction, self._pubkey)
+
+
+def _fill_slot(unsigned_transaction: bytes, pubkey: str) -> bytes:
+    """Put a throwaway signature in ``pubkey``'s slot, leaving the message untouched.
+
+    The seam now reads the slots after the backend answers, so an echo of the unsigned
+    bytes refuses as ``backend-left-its-slot-empty``. Which KEY signed is not the seam's
+    question (that is the network's, at submit); that the slot is no longer empty is.
+    """
+    from solders.keypair import Keypair
+    from solders.signature import Signature
+    from solders.transaction import Transaction
+
+    transaction = Transaction.from_bytes(unsigned_transaction)
+    message = transaction.message
+    required = int(message.header.num_required_signatures)
+    slots = [str(key) for key in list(message.account_keys)[:required]]
+    signatures = list(transaction.signatures)
+    signatures[slots.index(pubkey)] = Keypair().sign_message(bytes(message))
+    signatures = [
+        sig if isinstance(sig, Signature) else Signature.from_bytes(bytes(sig))
+        for sig in signatures
+    ]
+    return bytes(Transaction.populate(message, signatures))
 
 
 def _profile(network: str = "mainnet", **kw: Any) -> SignerProfile:
@@ -726,7 +757,7 @@ def test_an_external_signer_satisfies_the_protocol() -> None:
             self, unsigned_transaction: bytes, attestation: SigningAttestation
         ) -> bytes:
             assert attestation.strength == "exact"
-            return unsigned_transaction
+            return _fill_slot(unsigned_transaction, PAYER)
 
     assert isinstance(_Custody(), SigningBackend)
     tx = _tx()
@@ -941,3 +972,160 @@ def test_the_signer_module_never_broadcasts() -> None:
     source = (Path(__file__).resolve().parents[1] / "gecko" / "signer.py").read_text()
     assert "sendTransaction" not in source
     assert "Keypair" not in source
+
+
+# --- the ROLE: fee payer or authority, and what each refuses ----------------------
+
+
+AUTHORITY = FOREIGN
+
+
+def _two_signer_tx(payer: str = PAYER, authority: str = AUTHORITY) -> str:
+    """A relay-shaped transaction: ``payer`` pays, ``authority`` is a second signer."""
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    program = Pubkey.from_string(MEMO_PROGRAM)
+    metas = [
+        AccountMeta(
+            pubkey=Pubkey.from_string(authority), is_signer=True, is_writable=True
+        ),
+        AccountMeta(
+            pubkey=Pubkey.from_string(USDC), is_signer=False, is_writable=False
+        ),
+    ]
+    return assemble_unsigned_tx(
+        [Instruction(program, b"gecko", metas)], payer, blockhash=REAL_BLOCKHASH
+    ).tx
+
+
+def _authority_signer(backend: _FakeBackend | None = None) -> TransactionSigner:
+    return _signer(
+        backend if backend is not None else _FakeBackend(pubkey=AUTHORITY),
+        profile=_profile(signing_as="authority"),
+    )
+
+
+def test_the_default_role_is_the_fee_payer_and_a_lone_signer_is_complete() -> None:
+    """Nothing about a self-paid flow changed: same role by default, and the result now
+    also says out loud that no slot is left to fill."""
+    assert SignerProfile(name=DEFAULT_SIGNER_PROFILE_NAME).signing_as == "fee-payer"
+    tx = _tx()
+    receipt = _receipt(tx)
+    signed = _signer().sign(_handoff(tx, receipt), receipt=receipt, current_slot=SLOT)
+    assert signed.complete is True
+    assert signed.unfilled == ()
+
+
+def test_the_authority_role_signs_a_relay_paid_transaction_and_reports_it_incomplete() -> (
+    None
+):
+    """The gasless shape. The backend is slot 1; slot 0 (the relay) stays empty and the
+    result says so, which is what stops a caller submitting one signature of two."""
+    tx = _two_signer_tx()
+    receipt = _receipt(tx, sol_delta=0, sol_delta_account=AUTHORITY)
+    backend = _FakeBackend(pubkey=AUTHORITY)
+
+    signed = _authority_signer(backend).sign(
+        _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+    )
+
+    assert signed.signer_pubkey == AUTHORITY
+    assert signed.complete is False
+    assert signed.unfilled == (PAYER,)
+    assert len(backend.calls) == 1
+    attestation = backend.calls[0]
+    assert attestation.signing_as == "authority"
+    assert attestation.fee_payer == PAYER
+    assert attestation.required_signers == (PAYER, AUTHORITY)
+
+
+def test_the_authority_role_over_bytes_that_make_it_the_payer_refuses() -> None:
+    """The profile says authority; the bytes say payer. Not downgraded, refused."""
+    tx = _tx()  # PAYER is the lone signer and the fee payer
+    receipt = _receipt(tx)
+    backend = _FakeBackend(pubkey=PAYER)
+    with pytest.raises(SignerRefused) as err:
+        _authority_signer(backend).sign(
+            _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+        )
+    assert err.value.code == "authority-is-the-fee-payer"
+    assert backend.calls == []
+
+
+def test_an_authority_that_is_not_a_required_signer_refuses() -> None:
+    from solders.keypair import Keypair
+
+    tx = _two_signer_tx()
+    receipt = _receipt(tx, sol_delta=0, sol_delta_account=AUTHORITY)
+    stranger = _FakeBackend(pubkey=str(Keypair().pubkey()))
+    with pytest.raises(SignerRefused) as err:
+        _authority_signer(stranger).sign(
+            _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+        )
+    assert err.value.code == "signer-not-a-required-signer"
+    assert stranger.calls == []
+
+
+def test_an_authority_whose_own_lamports_moved_refuses() -> None:
+    """ "Gasless" is a measured sentence: the authority's delta is zero, or this is not
+    the transaction the role was authored for."""
+    tx = _two_signer_tx()
+    receipt = _receipt(tx, sol_delta=-5_000, sol_delta_account=AUTHORITY)
+    backend = _FakeBackend(pubkey=AUTHORITY)
+    with pytest.raises(SignerRefused) as err:
+        _authority_signer(backend).sign(
+            _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+        )
+    assert err.value.code == "authority-lamports-moved"
+    assert backend.calls == []
+
+
+def test_an_authority_receipt_measured_on_the_payer_refuses() -> None:
+    """N1 under the other role: the subject is the authority, and a receipt that counted
+    the relay's lamports says nothing about the authority's."""
+    tx = _two_signer_tx()
+    receipt = _receipt(tx, sol_delta=-5_000, sol_delta_account=PAYER)
+    backend = _FakeBackend(pubkey=AUTHORITY)
+    with pytest.raises(SignerRefused) as err:
+        _authority_signer(backend).sign(
+            _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+        )
+    assert err.value.code == "receipt-lamport-subject-mismatch"
+    assert backend.calls == []
+
+
+def test_the_fee_payer_role_on_a_two_signer_transaction_is_incomplete_not_refused() -> (
+    None
+):
+    """The relay's own signer sees the same shape from the other side."""
+    tx = _two_signer_tx()
+    receipt = _receipt(tx, sol_delta=-5_000, sol_delta_account=PAYER)
+    # From the payer's side the authority is a writable account it does not own, and
+    # the gate refuses it unless the policy names it: correct, and not this test's
+    # subject, so the policy names it.
+    permissive = _spend_gate()
+    gate = SpendPolicyGate(
+        policy=replace(
+            permissive.policy, allowed_destinations=frozenset({USDC, AUTHORITY})
+        ),
+        ledger=InMemorySpendLedger(),
+    )
+    signed = _signer(_FakeBackend(pubkey=PAYER), spend_gate=gate).sign(
+        _handoff(tx, receipt), receipt=receipt, current_slot=SLOT
+    )
+    assert signed.complete is False
+    assert signed.unfilled == (AUTHORITY,)
+
+
+def test_a_backend_that_echoes_the_unsigned_bytes_refuses_after_being_called() -> None:
+    """The check `_rebind` cannot make: the message is intact and nothing was signed.
+    A stubbed endpoint, a policy that declined silently, a proxy that echoed — all the
+    same answer, and none of them may reach a caller labelled signed."""
+    tx = _tx()
+    receipt = _receipt(tx)
+    backend = _FakeBackend(echo=True)
+    with pytest.raises(SignerRefused) as err:
+        _signer(backend).sign(_handoff(tx, receipt), receipt=receipt, current_slot=SLOT)
+    assert err.value.code == "backend-left-its-slot-empty"
+    assert len(backend.calls) == 1, "this refusal is AFTER the call, by construction"
