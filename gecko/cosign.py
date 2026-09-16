@@ -44,6 +44,7 @@ __all__ = [
     "merge_signatures",
     "signature_slots",
     "take_signature",
+    "unfilled_slots",
 ]
 
 #: Every way this can refuse, as a closed set. A caller branching on a string is a caller
@@ -115,6 +116,18 @@ def signature_slots(tx: str | bytes) -> tuple[str, ...]:
     message = transaction.message
     required = int(message.header.num_required_signatures)
     return tuple(str(key) for key in list(message.account_keys)[:required])
+
+
+def unfilled_slots(tx: str | bytes) -> tuple[str, ...]:
+    """Which required signers have NOT signed yet, in slot order.
+
+    Empty means submittable, as far as signatures go. A caller that reports a
+    partially-signed transaction as signed is the mistake this exists to make visible.
+    """
+    transaction = _decode(tx)
+    slots = signature_slots(tx)
+    signatures = list(transaction.signatures)
+    return tuple(name for name, sig in zip(slots, signatures) if _is_empty(sig))
 
 
 def take_signature(

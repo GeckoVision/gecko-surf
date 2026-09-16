@@ -129,7 +129,9 @@ def _built_tx(recipient: str = STORE_TOKEN) -> BuiltTx:
     return BuiltTx(tx=base64.b64encode(raw).decode(), encoding="base64")
 
 
-def _token_rows(pre_raw: int, post_raw: int) -> dict[str, list[dict[str, Any]]]:
+def _token_rows(
+    pre_raw: int, post_raw: int, owner: str = BUYER
+) -> dict[str, list[dict[str, Any]]]:
     """Mainnet-SHAPED balance rows. Surfpool returns null here; see the module docstring."""
 
     def row(index: int, owner: str, amount: int) -> dict[str, Any]:
@@ -147,9 +149,9 @@ def _token_rows(pre_raw: int, post_raw: int) -> dict[str, list[dict[str, Any]]]:
         }
 
     return {
-        "preTokenBalances": [row(4, BUYER, pre_raw), row(5, STORE_AUTHORITY, 0)],
+        "preTokenBalances": [row(4, owner, pre_raw), row(5, STORE_AUTHORITY, 0)],
         "postTokenBalances": [
-            row(4, BUYER, post_raw),
+            row(4, owner, post_raw),
             row(5, STORE_AUTHORITY, PRICE_RAW),
         ],
     }
@@ -163,7 +165,14 @@ class FakeRpc:
     units: int = 42_494
     consumed_units: int = 42_494
     pre_raw: int = 10_000_000
+    #: The tracked account's lamports before and after. The default is the self-paid
+    #: fee; a relay test sets them equal, because that is the sentence "gasless" means.
+    pre_lamports: int = 5_000_000_000
+    post_lamports: int = 4_999_995_000
+    #: Whose token rows the simulation reports. The buyer, whichever account that is.
+    token_owner: str = BUYER
     calls: list[str] = field(default_factory=list)
+    sent: list[str] = field(default_factory=list)
 
     def __call__(self, url: str, method: str, params: list[Any]) -> dict[str, Any]:
         self.calls.append(method)
@@ -178,7 +187,9 @@ class FakeRpc:
             }
         if method == "getAccountInfo":
             return {
-                "result": {"value": {"lamports": 5_000_000_000, "data": ["", "base64"]}}
+                "result": {
+                    "value": {"lamports": self.pre_lamports, "data": ["", "base64"]}
+                }
             }
         if method == "getRecentPrioritizationFees":
             return {"result": [{"slot": 1, "prioritizationFee": 1_000}]}
@@ -187,13 +198,16 @@ class FakeRpc:
                 "err": self.sim_err,
                 "logs": ["Program BUYux... success"],
                 "unitsConsumed": self.units,
-                "accounts": [{"lamports": 4_999_995_000, "data": ["", "base64"]}],
+                "accounts": [{"lamports": self.post_lamports, "data": ["", "base64"]}],
             }
-            value.update(_token_rows(self.pre_raw, self.pre_raw - PRICE_RAW))
+            value.update(
+                _token_rows(self.pre_raw, self.pre_raw - PRICE_RAW, self.token_owner)
+            )
             return {"result": {"context": {"slot": 438_746_259}, "value": value}}
         if method == "getSlot":
             return {"result": 438_746_260}
         if method == "sendTransaction":
+            self.sent.append(str(params[0]))
             return {"result": SIGNATURE}
         if method == "getSignatureStatuses":
             return {

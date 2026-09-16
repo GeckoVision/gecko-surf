@@ -837,3 +837,33 @@ def test_the_quarantine_refusal_is_still_an_exception_and_still_precedes_the_bui
             rpc_call=_rpc(),
             network="mainnet",
         )
+
+
+# --------------------------------------------------------------------- signature slots
+
+
+def test_an_approved_handoff_names_every_required_signer_in_slot_order() -> None:
+    """A caller routing a relay-paid transaction to two parties reads this rather than
+    re-decoding. Slot 0 is the fee payer, always."""
+    prepared = _prepared(_memo_tx(b"buy water"))
+    assert prepared.simulated_transaction_base64 is not None
+    verdict = verify_handoff(
+        prepared.simulated_transaction_base64,
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
+    )
+    assert verdict.approved
+    assert verdict.signature_slots == (PAYER,)
+
+
+def test_a_refused_handoff_names_no_signers() -> None:
+    prepared = _prepared(_memo_tx(b"buy water"))
+    verdict = verify_handoff(
+        _memo_tx(b"drain wallet"),
+        prepared.receipt,
+        require="structural",
+        expected_network="mainnet",
+    )
+    assert not verdict.approved
+    assert verdict.signature_slots == ()
