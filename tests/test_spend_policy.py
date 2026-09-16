@@ -1040,9 +1040,11 @@ def test_the_digest_is_derived_from_the_bytes_and_not_from_the_receipt() -> None
         and isinstance(node.value, ast.Name)
         and node.value.id == "receipt"
     }
+    # ``sol_delta_account`` is the amount's SUBJECT (N1), argued for in the test above.
     assert read & {field.name for field in fields(Receipt)} == {
         "sol_delta",
         "token_delta",
+        "sol_delta_account",
     }
     assert "message_binding" not in read
 
@@ -1173,7 +1175,13 @@ def test_the_gate_reads_no_verification_field_off_the_receipt() -> None:
     }
     # The AMOUNT fields, and ONLY those. ``token_delta`` joined ``sol_delta`` when cap 5
     # landed: it is what the transaction MOVES, not a claim about whether it will land.
-    amount_fields = {"sol_delta", "token_delta"}
+    # ``sol_delta_account`` joined on 2026-09-16, and it is argued for here as this test
+    # demands: it is N1, WHOSE lamports ``sol_delta`` counted — the subject of the amount,
+    # not a claim about the transaction. Reading an amount without knowing whose it was is
+    # the bug that let a relay-paid spend pass every token cap: the gate had been using
+    # the FEE PAYER as a stand-in for the spender, and under a relay those differ. It
+    # still says nothing about binding, strength, status or network, which stay forbidden.
+    amount_fields = {"sol_delta", "token_delta", "sol_delta_account"}
     assert amount_fields <= read_attributes, "the gate must still read what it charges"
 
     # Closed against the dataclass, not against a hand-kept list of six names. The list
@@ -1213,3 +1221,106 @@ def test_no_new_file_can_sign_or_broadcast() -> None:
         source = path.read_text(encoding="utf-8")
         for token in _BANNED_TOKENS:
             assert token not in source, f"{path.name} names {token}"
+
+
+# --------------------------------------------------------------------------------------
+# A THIRD-PARTY FEE PAYER — the spending authority is not the fee payer
+#
+# Found 2026-09-16 while planning the gasless leg. The gate used `decoded.fee_payer` as a
+# proxy for "us" in two places. Under a relay (Kora pays the network fee; the buyer
+# authorises the spend) those are different parties, and each site broke differently:
+#
+#   _resolve_token_outflows   kept only outflows whose owner == fee payer. The relay moves
+#                             no tokens, so the filter returned EMPTY and every per-mint
+#                             cap passed a spend of any size. Not a refusal: a silence.
+#   _check_destinations       exempted the fee payer from the destination allowlist. Under
+#                             a relay the exemption covered the relay (which needs none)
+#                             and the buyer's OWN wallet became an unlisted writable.
+#
+# The authority is the account the caller TRACKED — `receipt.sol_delta_account` — falling
+# back to the fee payer, so every self-paid flow is byte-for-byte unchanged.
+# --------------------------------------------------------------------------------------
+
+RELAY = Pubkey.from_string("SysvarEpochSchedu1e111111111111111111111111")
+
+
+def _relay_tx(
+    *,
+    data: bytes = TRANSFER_DISC + b"\x10" * 8,
+    writable: tuple[Pubkey, ...] = (DEST,),
+) -> str:
+    """Two required signers: the RELAY as fee payer (slot 0), the BUYER as authority."""
+    metas = [
+        AccountMeta(RELAY, is_signer=True, is_writable=True),
+        AccountMeta(PAYER, is_signer=True, is_writable=True),
+    ]
+    metas += [AccountMeta(key, is_signer=False, is_writable=True) for key in writable]
+    message = Message.new_with_blockhash(
+        [Instruction(PROGRAM, data, metas)], RELAY, Hash.default()
+    )
+    return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
+
+
+def _relay_receipt(*, delta_raw: int) -> Receipt:
+    """The BUYER was tracked (zero lamports moved, the whole point) and moved tokens."""
+    base = _receipt(
+        sol_delta=0,
+        token_delta=_measured(_movement(owner=str(PAYER), delta_raw=delta_raw)),
+    )
+    return Receipt(**{**base.__dict__, "sol_delta_account": str(PAYER)})
+
+
+def test_a_relay_paid_spend_over_the_token_cap_is_REFUSED_not_silently_passed() -> None:
+    """THE bug. 25 USDC out of the buyer against a 1 USDC per-transaction cap.
+
+    Before the fix this was AUTHORIZED: the outflow filter keyed on the fee payer, the
+    relay moved nothing, the token set was empty, and `_check_token_caps` iterated over
+    nothing. That is not a refusal that fired late; it is a cap that stopped existing.
+    """
+    # The buyer's wallet is allowlisted here ON PURPOSE. Before the fix, cap 4 refused a
+    # relay-paid tx as `destination-not-allowlisted` (the buyer's own wallet), and the
+    # obvious "fix" is to allowlist it — at which point cap 5 silently stopped existing.
+    # This models that edit so the test reaches cap 5 and proves it holds.
+    policy = _policy(allowed_destinations=frozenset({str(DEST), str(PAYER)}))
+    verdict = _gate(policy).authorize(
+        _relay_tx(), _relay_receipt(delta_raw=-TWENTY_FIVE_USDC), now=1_000.0
+    )
+    assert verdict.authorized is False, "a relay must not void the token caps"
+    assert verdict.code == "over-per-transaction-token-cap", verdict.reason
+
+
+def test_a_relay_paid_spend_under_the_cap_is_authorized() -> None:
+    """The other half: the buyer's own wallet must not read as an unlisted destination.
+
+    The buyer is a writable signer and is not the fee payer, so before the fix
+    `_check_destinations` refused it as `destination-not-allowlisted`. The buyer's own
+    accounts are where funds LEAVE from; a destination allowlist is about where they go.
+    """
+    verdict = _gate().authorize(
+        _relay_tx(), _relay_receipt(delta_raw=-500_000), now=1_000.0
+    )
+    assert verdict.authorized is True, f"{verdict.code}: {verdict.reason}"
+
+
+def test_self_paid_behaviour_is_unchanged_when_no_account_was_tracked() -> None:
+    """The fallback. `sol_delta_account` unset means the authority is the fee payer,
+    exactly what every shipped flow relied on. Over cap still refuses, by the same code."""
+    verdict = _gate().authorize(
+        _tx(),
+        _receipt(token_delta=_measured(_movement(delta_raw=-TWENTY_FIVE_USDC))),
+        now=1_000.0,
+    )
+    assert verdict.authorized is False
+    assert verdict.code == "over-per-transaction-token-cap"
+
+
+def test_the_relays_own_movements_are_not_charged_to_the_buyer() -> None:
+    """Symmetry. A token the RELAY moved is the relay's business, not the buyer's cap.
+    Charging it here would refuse the buyer for something they did not spend."""
+    receipt = _receipt(
+        sol_delta=0,
+        token_delta=_measured(_movement(owner=str(RELAY), delta_raw=-TWENTY_FIVE_USDC)),
+    )
+    receipt = Receipt(**{**receipt.__dict__, "sol_delta_account": str(PAYER)})
+    verdict = _gate().authorize(_relay_tx(), receipt, now=1_000.0)
+    assert verdict.authorized is True, f"{verdict.code}: {verdict.reason}"
