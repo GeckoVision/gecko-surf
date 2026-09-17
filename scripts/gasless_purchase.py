@@ -46,15 +46,24 @@ from gecko.autonomous_purchase import (  # noqa: E402
 from gecko.networks import coerce_network  # noqa: E402
 from gecko.prepare_purchase import prepare_purchase_result  # noqa: E402
 from gecko.rpc import default_rpc_call, validate_rpc_url  # noqa: E402
+from gecko.sandbox import ephemeral_signer, prove_surfnet  # noqa: E402
+from gecko.sandbox.cheatcodes import fund_sol  # noqa: E402
+from gecko.sandbox.rehearse import rehearse_purchase  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+    EXTERNAL_SIGNER_PROFILE_NAME,
     SignerProfile,
     SigningAttestation,
     TransactionSigner,
 )
 from gecko.spend_policy import InMemorySpendLedger, SpendPolicyGate  # noqa: E402
+from gecko.trace import Trace  # noqa: E402
 from scripts.kora_relay import KoraRelay, KoraRelayError  # noqa: E402
+from scripts.paybox_backend import (  # noqa: E402
+    PayboxAuthorityBackend,
+    PayboxBackendError,
+)
 
 
 class AuthorityKeypairBackend:
@@ -94,16 +103,133 @@ def _balance(rpc_url: str, account: str) -> int:
     return int(value) if isinstance(value, int) else 0
 
 
+def _emit_trace(args: argparse.Namespace, trace: Trace) -> None:
+    """Write the trace, and the graph drawn from it, when asked. Never on the hot path."""
+    if args.trace is None:
+        return
+    trace.write(args.trace)
+    print(f"  trace      {args.trace}  ({len(trace.rows)} steps)")
+    if args.graph is not None:
+        from scripts.trace_to_graph import render, spec_from_trace
+
+        spec_path = args.graph.with_suffix(".sequence.json")
+        spec_path.write_text(json.dumps(spec_from_trace(trace), indent=2) + "\n")
+        receipt = render(spec_path, args.graph)
+        if receipt.get("rendered"):
+            print(f"  graph      {args.graph}")
+        else:
+            print(
+                f"  graph      NOT rendered: "
+                f"{receipt.get('reason') or receipt.get('stderr')}"
+            )
+
+
+def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
+    """The fork lane: `gecko.sandbox.rehearse`, judged by what moved.
+
+    Not the spend-gate path. A fork cannot report a token leg (surfpool nulls the
+    balance arrays), so the gate would refuse every purchase here for a reason that is
+    about the node, not the bytes. The sandbox lane lands the transaction and reads the
+    ledger afterwards, which is the only measurement a fork supports. The buyer is an
+    ephemeral key that exists only because the endpoint proved it is a fork; it is funded
+    with the price and NO SOL, so "gasless" is measured, not assumed.
+    """
+    proof = prove_surfnet(args.rpc_url)
+    buyer = ephemeral_signer(proof)
+    print(f"  fork proven        {proof.rpc_url}")
+    print(f"  relay (fee payer)  {relay.pubkey}")
+    print(f"  buyer (ephemeral)  {buyer.pubkey}   funded with tokens only")
+    relay_sol = _balance(args.rpc_url, relay.pubkey)
+    if relay_sol < 10_000_000:
+        # The relay's key is the operator's; on a fork its balance is a cheatcode away.
+        fund_sol(proof, relay.pubkey, 50_000_000)
+        print("  relay funded on the fork by cheatcode (0.05 SOL)")
+    if not args.broadcast:
+        print(
+            "\nDRY RUN: on a fork the rehearsal is the run; add --broadcast to land it."
+        )
+        return 0
+
+    trace = Trace(lane="rehearsal", network="fork")
+    result = rehearse_purchase(
+        proof,
+        buyer=buyer,
+        store=args.store,
+        product=args.product,
+        table_number=args.table,
+        relay=relay,
+        trace=trace,
+    )
+    _emit_trace(args, trace)
+    for refusal in result.refusals:
+        print(f"  REFUSED at {refusal.step}: {refusal.reason}")
+    if not result.landed:
+        return 1
+    print(f"\n  LANDED   {result.signature}")
+    print(
+        f"  CU       simulated {result.simulated_units}  charged {result.units_consumed}"
+    )
+    print(f"  signers  {result.signatures}  fee payer {result.fee_payer}")
+    buyer_sol = result.buyer_sol
+    relay_delta = result.relay_sol
+    print(
+        f"  buyer SOL  {buyer_sol.before if buyer_sol else None} -> "
+        f"{buyer_sol.after if buyer_sol else None}   (None = account never existed)"
+    )
+    print(
+        f"  relay SOL  moved {relay_delta.moved if relay_delta else None}   "
+        f"(fee {result.fee_lamports})"
+    )
+    bt, st = result.buyer_token, result.store_token
+    print(
+        f"  buyer tok  moved {bt.moved if bt else None}   store tok moved {st.moved if st else None}"
+    )
+    if result.receipt is not None:
+        print(
+            f"  receipt    row #{result.receipt.receipt_id} "
+            f"{result.receipt.product_name!r} price {result.receipt.price_raw}"
+        )
+    for line in result.discrepancies:
+        print(f"  DISCREPANCY  {line}")
+    print(f"  reset      {len(result.reset)} accounts restored")
+    if result.discrepancies:
+        return 1
+    print("GASLESS: the buyer's SOL did not move; the relay paid; the ledger balances.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--network", choices=["fork", "mainnet"], required=True)
     parser.add_argument("--rpc-url", required=True)
-    parser.add_argument("--buyer-keypair", type=Path, required=True)
+    parser.add_argument("--buyer-keypair", type=Path, default=None)
+    parser.add_argument(
+        "--signer",
+        choices=["keypair", "paybox"],
+        default="keypair",
+        help="mainnet only: who holds the buyer's key. paybox = the SDK CLI, "
+        "PAYBOX_TOKEN + PAYBOX_SIGNIN_KEY in the environment, an autonomous wallet",
+    )
+    parser.add_argument(
+        "--paybox-credential", default=None, help="pin one PayBox wallet credential id"
+    )
     parser.add_argument("--store", default="geckocoffee")
     parser.add_argument("--product", required=True)
     parser.add_argument("--table", type=int, default=1)
     parser.add_argument("--max-spend-usdc", type=float, default=1.0)
     parser.add_argument("--broadcast", action="store_true")
+    parser.add_argument(
+        "--trace",
+        type=Path,
+        default=None,
+        help="write the run's trace (JSONL, control plane only) here",
+    )
+    parser.add_argument(
+        "--graph",
+        type=Path,
+        default=None,
+        help="also render the trace as an archify sequence HTML here",
+    )
     args = parser.parse_args(argv)
     network = coerce_network(args.network)
 
@@ -112,7 +238,23 @@ def main(argv: list[str] | None = None) -> int:
     except KoraRelayError as exc:
         print(f"STOP: relay not reachable: {exc}")
         return 2
-    buyer = AuthorityKeypairBackend(args.buyer_keypair)
+    if network == "fork":
+        return _rehearse_on_fork(args, relay)
+    buyer: AuthorityKeypairBackend | PayboxAuthorityBackend
+    if args.signer == "paybox":
+        try:
+            buyer = PayboxAuthorityBackend.open(credential=args.paybox_credential)
+        except PayboxBackendError as exc:
+            print(f"STOP: PayBox signer not usable: {exc}")
+            return 2
+        print(
+            f"  paybox wallet      {buyer.wallet.name} ({buyer.wallet.approval_mode})"
+        )
+    else:
+        if args.buyer_keypair is None:
+            print("STOP: --buyer-keypair is required with --signer keypair on mainnet")
+            return 2
+        buyer = AuthorityKeypairBackend(args.buyer_keypair)
     print(f"  relay (fee payer)  {relay.pubkey}")
     print(f"  buyer (authority)  {buyer.pubkey}")
 
@@ -176,13 +318,18 @@ def main(argv: list[str] | None = None) -> int:
     signer = TransactionSigner(
         backend=buyer,
         profile=SignerProfile(
-            name=DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+            name=(
+                EXTERNAL_SIGNER_PROFILE_NAME
+                if args.signer == "paybox"
+                else DEVELOPER_KEYPAIR_FILE_PROFILE_NAME
+            ),
             network=network,
             authorized=True,
             signing_as=AUTHORITY_ROLE,
         ),
         spend_gate=gate,
     )
+    trace = Trace(lane="settle", network=str(network))
     outcome = settle_sponsored(
         unsigned,
         network=network,
@@ -191,7 +338,9 @@ def main(argv: list[str] | None = None) -> int:
         signer=signer,
         authority=buyer.pubkey,
         last_valid_block_height=int(out["expires"]["last_valid_block_height"]),
+        trace=trace,
     )
+    _emit_trace(args, trace)
     if not isinstance(outcome, PurchaseSettled):
         print(f"\nREFUSED [{outcome.code}]: {outcome.reason}")
         return 1
