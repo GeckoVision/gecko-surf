@@ -64,11 +64,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from ..cosign import Contribution, CosignRefused, merge_signatures, signature_slots
 from ..landing import RPC_COMMITMENT, TOKEN_PROGRAM_ID
 from ..netguard import UnsafeUrlError
 from ..prepare_purchase import UrlGuard, prepare_purchase_result
+from ..relay import FeePayerRelay, RelayAccepted, RelayRefused, sponsor
 from ..rpc import RpcCall, default_rpc_call
-from ..simulate import BuildCall
+from ..simulate import BuildCall, BuiltTx, simulate
 from ..store_accounts import derive_ata, receipts_pda, resolve_store
 from ..store_directory import StoreDecodeError, _Cursor
 from .cheatcodes import (
@@ -207,6 +209,12 @@ class Rehearsal:
     store_token: TokenDelta | None = None
     buyer_sol: LamportDelta | None = None
     receipt: WrittenReceipt | None = None
+    #: The relay-paid variant. ``fee_payer`` is the relay when one signed; ``relay_sol``
+    #: is its SOL across the transaction, the fee it paid instead of the buyer. Under a
+    #: relay ``buyer_sol.moved`` must be exactly zero, and the judgement says so.
+    fee_payer: str | None = None
+    relay_sol: LamportDelta | None = None
+    signatures: int = 1
     #: ``expires.blocks_remaining`` as the production path computed it, recorded because
     #: on a fork it is NOT the window a real buyer races (see the module docstring).
     window_blocks: int | None = None
@@ -238,8 +246,18 @@ def rehearse_purchase(
     fee_lamports: int = DEFAULT_FEE_LAMPORTS,
     rpc_call: RpcCall | None = None,
     build_call: BuildCall | None = None,
+    relay: FeePayerRelay | None = None,
 ) -> Rehearsal:
     """Fund, prepare, sign, land, judge and reset — one purchase, on a proven surfnet.
+
+    ``relay`` makes the purchase RELAY-PAID: the buyer is funded with the price and NO
+    SOL, the production path prepares with the relay as fee payer, the relay signs first
+    (and may append its Lighthouse assertion; :mod:`gecko.relay` accepts exactly that and
+    nothing else), the ephemeral buyer signs its own slot over the relay's bytes, the two
+    signatures are merged, and the judgement adds one line: the buyer's SOL moved by
+    exactly zero. This is the fork's only measurement of a gasless purchase — the spend
+    gate cannot read a token leg on a fork (``gecko.simulate.parse_token_deltas``), so it
+    is exercised on mainnet; here the ledger is read after landing instead.
 
     ``buyer`` is an :class:`~gecko.sandbox.surfnet.EphemeralSigner`, not a pubkey: the
     address that pays and the key that signs must be the same thing, and passing a string
@@ -300,6 +318,7 @@ def rehearse_purchase(
             call=rpc_call or default_rpc_call,
             rpc_call=rpc_call,
             build_call=build_call,
+            relay=relay,
         )
     finally:
         # Measured: this reverts TRANSACTION writes too, not only cheatcode overrides —
@@ -321,13 +340,17 @@ def _run(
     call: RpcCall,
     rpc_call: RpcCall | None,
     build_call: BuildCall | None,
+    relay: FeePayerRelay | None = None,
 ) -> Rehearsal:
     """Steps 1 to 5. Split out so RESET can be a ``finally`` around the whole of it."""
     _, buyer_ata, store_ata, receipts = touched
 
     # 1. FUND — exactly the price, so an over- or under-transfer cannot hide in slack.
+    #    Under a relay the buyer gets NO SOL: zero before is what makes zero after a
+    #    measurement rather than a coincidence.
     fund_token(proof, buyer.pubkey, listed_mint, blank.price_raw, rpc_call=rpc_call)
-    fund_sol(proof, buyer.pubkey, fee_lamports, rpc_call=rpc_call)
+    if relay is None:
+        fund_sol(proof, buyer.pubkey, fee_lamports, rpc_call=rpc_call)
 
     # 2. PREPARE — the production path, unchanged.
     prepared = prepare_purchase_result(
@@ -338,6 +361,7 @@ def _run(
             "network": "fork",
             "rpc_url": proof.rpc_url,
             "table": table_number,
+            **({"fee_payer": relay.pubkey} if relay is not None else {}),
         },
         rpc_call=rpc_call,
         build_call=build_call,
@@ -373,11 +397,65 @@ def _run(
             "destined for an endpoint that has proved nothing"
         )
 
-    # 3. SIGN.
-    signed, _signature = _sign(unsigned, buyer)
+    # 3. SIGN. Self-paid: the buyer alone. Relay-paid: the relay first, then the buyer
+    #    over the relay's bytes, then one merge — the same order the mainnet path keeps
+    #    (gecko.autonomous_purchase.settle_sponsored) and for the same reason.
+    simulated_units_after_relay: int | None = None
+    if relay is None:
+        signed, _signature = _sign(unsigned, buyer)
+    else:
+        try:
+            accepted = sponsor(unsigned, relay)
+        except RelayRefused as refusal:
+            return _with(
+                blank,
+                fee_payer=relay.pubkey,
+                refusals=(Refusal("sponsor", f"[{refusal.code}] {refusal.reason}"),),
+            )
+        # THE RELAY'S BYTES ARE A NEW SUBJECT. The production path simulated the
+        # original message; the relay may have appended its assertion, which costs
+        # compute. Re-simulate so "simulated == charged" is judged over the bytes that
+        # actually land, not over the ones the relay was sent.
+        resimulated = simulate(
+            {},
+            rpc_url=proof.rpc_url,
+            rpc_call=rpc_call,
+            build_call=lambda _plan: BuiltTx(
+                tx=accepted.transaction_base64, encoding="base64"
+            ),
+            replace_blockhash=False,
+            network_label="re-simulated after the relay signed (fork, read-only)",
+            network="fork",
+            track=[buyer.pubkey],
+        )
+        if resimulated.status != "pass":
+            return _with(
+                blank,
+                fee_payer=relay.pubkey,
+                refusals=(
+                    Refusal(
+                        "sponsor",
+                        f"the relay-signed bytes did not pass simulation "
+                        f"(status={resimulated.status}, class={resimulated.revert_class}); "
+                        f"the relay appended {list(accepted.appended_programs) or 'nothing'}",
+                    ),
+                ),
+            )
+        simulated_units_after_relay = resimulated.units_consumed
+        try:
+            signed, _signature = _cosign(accepted, buyer)
+        except CosignRefused as refusal:
+            return _with(
+                blank,
+                fee_payer=relay.pubkey,
+                refusals=(Refusal("sign", f"[{refusal.code}] {refusal.reason}"),),
+            )
 
     # The BEFORE half of the judgement, taken at the last possible moment before landing.
     before = _ledger(call, proof.rpc_url, buyer.pubkey, buyer_ata, store_ata, receipts)
+    relay_before = (
+        _lamports(_account(call, proof.rpc_url, relay.pubkey)) if relay else None
+    )
 
     # 4. LAND.
     sent = call(
@@ -420,19 +498,32 @@ def _run(
 
     # 5. JUDGE — what actually moved.
     after = _ledger(call, proof.rpc_url, buyer.pubkey, buyer_ata, store_ata, receipts)
+    relay_sol = None
+    if relay is not None:
+        relay_sol = LamportDelta(
+            address=relay.pubkey,
+            before=relay_before,
+            after=_lamports(_account(call, proof.rpc_url, relay.pubkey)),
+        )
     return _judge(
         blank,
         signature=landed_signature,
         before=before,
         after=after,
         meta=_transaction_meta(call, proof.rpc_url, landed_signature),
-        simulated_units=prepared.get("units_consumed"),
+        simulated_units=(
+            simulated_units_after_relay
+            if relay is not None
+            else prepared.get("units_consumed")
+        ),
         window_blocks=(prepared.get("expires") or {}).get("blocks_remaining"),
         buyer_ata=buyer_ata,
         store_ata=store_ata,
         buyer=buyer.pubkey,
         authority=authority,
         mint=listed_mint,
+        relay_sol=relay_sol,
+        fee_payer=relay.pubkey if relay is not None else buyer.pubkey,
     )
 
 
@@ -483,6 +574,40 @@ def _sign(unsigned_base64: str, buyer: EphemeralSigner) -> tuple[str, str]:
     signature = Signature.from_bytes(buyer.sign(bytes(message)))
     signed = Transaction.populate(message, [signature])
     return base64.b64encode(bytes(signed)).decode(), str(signature)
+
+
+def _cosign(accepted: RelayAccepted, buyer: EphemeralSigner) -> tuple[str, str]:
+    """(merged base64, buyer signature base58) over the RELAY's bytes.
+
+    The relay signed first and may have appended its assertion, so the message the buyer
+    signs is the one the relay returned, never the one the production path handed out.
+    The buyer's slot is found by name; the fee payer's slot already carries the relay's
+    signature, and the merge verifies both against this one message before anything is
+    sent.
+    """
+    from solders.signature import Signature
+
+    slots = signature_slots(accepted.transaction_base64)
+    if buyer.pubkey not in slots or slots[0] == buyer.pubkey:
+        raise RehearsalError(
+            f"the relay's transaction names signers {slots}, and the ephemeral buyer "
+            f"{buyer.pubkey} is not one of them after the fee payer — refusing to sign "
+            "bytes that do not ask this key for a signature"
+        )
+    from base64 import b64decode
+
+    from solders.transaction import Transaction
+
+    message = Transaction.from_bytes(b64decode(accepted.transaction_base64)).message
+    signature = Signature.from_bytes(buyer.sign(bytes(message)))
+    merged = merge_signatures(
+        accepted.transaction_base64,
+        [
+            Contribution(accepted.fee_payer, accepted.relay_signature),
+            Contribution(buyer.pubkey, bytes(signature)),
+        ],
+    )
+    return merged, str(signature)
 
 
 @dataclass(frozen=True)
@@ -682,6 +807,8 @@ def _judge(
     buyer: str,
     authority: str,
     mint: str,
+    relay_sol: LamportDelta | None = None,
+    fee_payer: str | None = None,
 ) -> Rehearsal:
     """Turn two readings into deltas, and the deltas into a verdict that can say NO.
 
@@ -738,9 +865,28 @@ def _judge(
         problems.append(
             f"the receipt the program wrote records {receipt.price_raw}, not {price}"
         )
+    sponsored = relay_sol is not None
+    if relay_sol is not None:
+        # THE GASLESS SENTENCE, as arithmetic. Zero before is by construction; zero after
+        # is the claim. An absent buyer account on both sides IS zero: the buyer never
+        # existed as a lamport holder, which is exactly the wallet gasless is for.
+        buyer_moved = (buyer_sol.after or 0) - (buyer_sol.before or 0)
+        if buyer_moved != 0:
+            problems.append(
+                f"the buyer's SOL moved {buyer_moved}; a relay-paid purchase in which "
+                f"the buyer still pays is not gasless"
+            )
+        if relay_sol.moved is None or relay_sol.moved >= 0:
+            problems.append(
+                f"the relay's SOL moved {relay_sol.moved!r}; the fee payer must be the "
+                f"account that paid the fee"
+            )
     return _with(
         partial,
         landed=True,
+        fee_payer=fee_payer,
+        relay_sol=relay_sol,
+        signatures=2 if sponsored else 1,
         signature=signature,
         simulated_units=simulated_units if isinstance(simulated_units, int) else None,
         units_consumed=_int_or_none(meta, "computeUnitsConsumed"),

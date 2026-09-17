@@ -277,19 +277,47 @@ out loud on the profile (`signing_as="authority"`), never inferred from the byte
 
 ## 9. Judge by what moved, not by what returned
 
+**Measured 2026-09-16, surfpool 1.1.1 fork at slot 447438514, kora-cli 2.2.0-beta.8 with
+`examples/kora_demo/kora.gecko.toml`, two runs of `scripts/gasless_purchase.py --network
+fork --product Espresso --broadcast`:**
+
 ```
-  buyer SOL before : 0
-  buyer SOL after  : 0          <- the claim. If this moved, it was not gasless.
-  relay SOL before : 50000000
-  relay SOL after  : 50000000 - (base fee + priority)
-  buyer USDG       : down by the espresso price + the swap
-  buyer USDC       : the swap output, less what the store took
+  relay (fee payer)  7UkWfQwjVRKWWxQgfGVa5bGDfGykh769asYQNMic3yTE   funded 0.05 SOL
+  buyer (ephemeral)  3c71Qu73axHuksDMRcNhciwvQ5DSophM8phRf6gopLkT   funded with tokens only
+
+  LANDED   2BPVWkXPxiUCdGRYkXoKRr3VRZfLJ3aLhyd7gfXHrMgZ7JkHRNLGeSS8egYibG77qoyVeV3efTSLHBsTAWU5JMCn
+  CU       simulated 55325  charged 55325
+  signers  2  fee payer 7UkWfQwj…
+  buyer SOL  None -> None   (None = account never existed)
+  relay SOL  moved -10000   (fee 10000)
+  buyer tok  moved -100000   store tok moved 100000
+  receipt    row #57 'Espresso' price 100000
+  reset      4 accounts restored
+GASLESS: the buyer's SOL did not move; the relay paid; the ledger balances.
 ```
 
-**The assertion that matters is `buyer SOL after == buyer SOL before == 0`.** Everything
-else is the purchase working; that line is the gasless part working.
+The first run (signature `4TatoNV4…`) reported `simulated 54647 charged 55325`: the
+production path had simulated the ORIGINAL bytes, and the relay's appended assertion
+costs 678 CU. The lane now re-simulates the relay's bytes before the buyer signs, and the
+second run agrees to the unit.
 
----
+**The assertion that matters is the buyer's SOL line.** `None -> None` is stronger than
+`0 -> 0`: the buyer's account never existed as a lamport holder, before or after.
+Everything else is the purchase working; that line is the gasless part working.
+
+**Why this lane and not the spend gate.** surfpool nulls `preTokenBalances`,
+`postTokenBalances` AND the `accounts` snapshot on every simulation (measured 2026-08-30,
+`gecko/simulate.py`), so the spend gate refuses `amount-unresolvable` here for a reason
+about the node, not the bytes. The fork's one measurement is `gecko.sandbox.rehearse`:
+land, then read the ledger. That is what `--network fork` runs. `--network mainnet` runs
+`gecko.autonomous_purchase.settle_sponsored`, where the arrays exist and the gate decides.
+
+**Three things the rehearsal found that the offline tests could not** (all fixed on the
+way, see the commit log): the Orquestra builder ships a two-signer header over a one-slot
+signature array whenever the payer is a relay (`SanitizeFailure`, repaired by
+`cosign.normalize_signature_slots`); Kora refuses `signTransaction` without a `user_id`
+under free pricing with usage tracking (the client sends the buyer); and the failure
+diagnosis blamed the zero-SOL buyer for a fee it was never going to pay.
 
 ## 10. Tear down
 

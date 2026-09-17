@@ -46,6 +46,9 @@ from gecko.autonomous_purchase import (  # noqa: E402
 from gecko.networks import coerce_network  # noqa: E402
 from gecko.prepare_purchase import prepare_purchase_result  # noqa: E402
 from gecko.rpc import default_rpc_call, validate_rpc_url  # noqa: E402
+from gecko.sandbox import ephemeral_signer, prove_surfnet  # noqa: E402
+from gecko.sandbox.cheatcodes import fund_sol  # noqa: E402
+from gecko.sandbox.rehearse import rehearse_purchase  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
@@ -94,11 +97,82 @@ def _balance(rpc_url: str, account: str) -> int:
     return int(value) if isinstance(value, int) else 0
 
 
+def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
+    """The fork lane: `gecko.sandbox.rehearse`, judged by what moved.
+
+    Not the spend-gate path. A fork cannot report a token leg (surfpool nulls the
+    balance arrays), so the gate would refuse every purchase here for a reason that is
+    about the node, not the bytes. The sandbox lane lands the transaction and reads the
+    ledger afterwards, which is the only measurement a fork supports. The buyer is an
+    ephemeral key that exists only because the endpoint proved it is a fork; it is funded
+    with the price and NO SOL, so "gasless" is measured, not assumed.
+    """
+    proof = prove_surfnet(args.rpc_url)
+    buyer = ephemeral_signer(proof)
+    print(f"  fork proven        {proof.rpc_url}")
+    print(f"  relay (fee payer)  {relay.pubkey}")
+    print(f"  buyer (ephemeral)  {buyer.pubkey}   funded with tokens only")
+    relay_sol = _balance(args.rpc_url, relay.pubkey)
+    if relay_sol < 10_000_000:
+        # The relay's key is the operator's; on a fork its balance is a cheatcode away.
+        fund_sol(proof, relay.pubkey, 50_000_000)
+        print("  relay funded on the fork by cheatcode (0.05 SOL)")
+    if not args.broadcast:
+        print(
+            "\nDRY RUN: on a fork the rehearsal is the run; add --broadcast to land it."
+        )
+        return 0
+
+    result = rehearse_purchase(
+        proof,
+        buyer=buyer,
+        store=args.store,
+        product=args.product,
+        table_number=args.table,
+        relay=relay,
+    )
+    for refusal in result.refusals:
+        print(f"  REFUSED at {refusal.step}: {refusal.reason}")
+    if not result.landed:
+        return 1
+    print(f"\n  LANDED   {result.signature}")
+    print(
+        f"  CU       simulated {result.simulated_units}  charged {result.units_consumed}"
+    )
+    print(f"  signers  {result.signatures}  fee payer {result.fee_payer}")
+    buyer_sol = result.buyer_sol
+    relay_delta = result.relay_sol
+    print(
+        f"  buyer SOL  {buyer_sol.before if buyer_sol else None} -> "
+        f"{buyer_sol.after if buyer_sol else None}   (None = account never existed)"
+    )
+    print(
+        f"  relay SOL  moved {relay_delta.moved if relay_delta else None}   "
+        f"(fee {result.fee_lamports})"
+    )
+    bt, st = result.buyer_token, result.store_token
+    print(
+        f"  buyer tok  moved {bt.moved if bt else None}   store tok moved {st.moved if st else None}"
+    )
+    if result.receipt is not None:
+        print(
+            f"  receipt    row #{result.receipt.receipt_id} "
+            f"{result.receipt.product_name!r} price {result.receipt.price_raw}"
+        )
+    for line in result.discrepancies:
+        print(f"  DISCREPANCY  {line}")
+    print(f"  reset      {len(result.reset)} accounts restored")
+    if result.discrepancies:
+        return 1
+    print("GASLESS: the buyer's SOL did not move; the relay paid; the ledger balances.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--network", choices=["fork", "mainnet"], required=True)
     parser.add_argument("--rpc-url", required=True)
-    parser.add_argument("--buyer-keypair", type=Path, required=True)
+    parser.add_argument("--buyer-keypair", type=Path, default=None)
     parser.add_argument("--store", default="geckocoffee")
     parser.add_argument("--product", required=True)
     parser.add_argument("--table", type=int, default=1)
@@ -111,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
         relay = KoraRelay.from_env()
     except KoraRelayError as exc:
         print(f"STOP: relay not reachable: {exc}")
+        return 2
+    if network == "fork":
+        return _rehearse_on_fork(args, relay)
+    if args.buyer_keypair is None:
+        print("STOP: --buyer-keypair is required on mainnet")
         return 2
     buyer = AuthorityKeypairBackend(args.buyer_keypair)
     print(f"  relay (fee payer)  {relay.pubkey}")
