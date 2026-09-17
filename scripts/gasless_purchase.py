@@ -52,6 +52,7 @@ from gecko.sandbox.rehearse import rehearse_purchase  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+    EXTERNAL_SIGNER_PROFILE_NAME,
     SignerProfile,
     SigningAttestation,
     TransactionSigner,
@@ -59,6 +60,10 @@ from gecko.signer import (  # noqa: E402
 from gecko.spend_policy import InMemorySpendLedger, SpendPolicyGate  # noqa: E402
 from gecko.trace import Trace  # noqa: E402
 from scripts.kora_relay import KoraRelay, KoraRelayError  # noqa: E402
+from scripts.paybox_backend import (  # noqa: E402
+    PayboxAuthorityBackend,
+    PayboxBackendError,
+)
 
 
 class AuthorityKeypairBackend:
@@ -198,6 +203,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--network", choices=["fork", "mainnet"], required=True)
     parser.add_argument("--rpc-url", required=True)
     parser.add_argument("--buyer-keypair", type=Path, default=None)
+    parser.add_argument(
+        "--signer",
+        choices=["keypair", "paybox"],
+        default="keypair",
+        help="mainnet only: who holds the buyer's key. paybox = the SDK CLI, "
+        "PAYBOX_TOKEN + PAYBOX_SIGNIN_KEY in the environment, an autonomous wallet",
+    )
+    parser.add_argument(
+        "--paybox-credential", default=None, help="pin one PayBox wallet credential id"
+    )
     parser.add_argument("--store", default="geckocoffee")
     parser.add_argument("--product", required=True)
     parser.add_argument("--table", type=int, default=1)
@@ -225,10 +240,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if network == "fork":
         return _rehearse_on_fork(args, relay)
-    if args.buyer_keypair is None:
-        print("STOP: --buyer-keypair is required on mainnet")
-        return 2
-    buyer = AuthorityKeypairBackend(args.buyer_keypair)
+    buyer: AuthorityKeypairBackend | PayboxAuthorityBackend
+    if args.signer == "paybox":
+        try:
+            buyer = PayboxAuthorityBackend.open(credential=args.paybox_credential)
+        except PayboxBackendError as exc:
+            print(f"STOP: PayBox signer not usable: {exc}")
+            return 2
+        print(
+            f"  paybox wallet      {buyer.wallet.name} ({buyer.wallet.approval_mode})"
+        )
+    else:
+        if args.buyer_keypair is None:
+            print("STOP: --buyer-keypair is required with --signer keypair on mainnet")
+            return 2
+        buyer = AuthorityKeypairBackend(args.buyer_keypair)
     print(f"  relay (fee payer)  {relay.pubkey}")
     print(f"  buyer (authority)  {buyer.pubkey}")
 
@@ -292,7 +318,11 @@ def main(argv: list[str] | None = None) -> int:
     signer = TransactionSigner(
         backend=buyer,
         profile=SignerProfile(
-            name=DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
+            name=(
+                EXTERNAL_SIGNER_PROFILE_NAME
+                if args.signer == "paybox"
+                else DEVELOPER_KEYPAIR_FILE_PROFILE_NAME
+            ),
             network=network,
             authorized=True,
             signing_as=AUTHORITY_ROLE,
