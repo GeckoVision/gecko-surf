@@ -1647,6 +1647,27 @@ def _context_slot(result: Any) -> int | None:
     return slot
 
 
+def _lamports_or_absent(result: Any) -> int | None:
+    """The tracked account's lamports before the run, with ABSENT read as zero.
+
+    ``getAccountInfo`` answers ``{"value": null}`` for an account that does not exist,
+    and an account that does not exist holds zero lamports by the runtime's own rule,
+    not by ours. Reading that as ``None`` made every zero-SOL buyer's receipt carry no
+    ``sol_delta``, which the spend gate refuses as unresolvable, so a relay-paid purchase
+    by exactly the wallet gasless exists for was refused before it was judged.
+
+    Only the explicit null is zero. A missing ``value`` key, a non-object, or an object
+    without ``lamports`` stays ``None``: "the node did not say" is not "the node said
+    zero", and the gate's refusal on ``None`` is the right answer to it.
+    """
+    if not isinstance(result, dict) or "value" not in result:
+        return None
+    value = result["value"]
+    if value is None:
+        return 0
+    return _tracked_lamports(value)
+
+
 def _tracked_lamports(value: Any) -> int | None:
     """Pull ``lamports`` out of a getAccountInfo/simulate account object, if present."""
     if isinstance(value, dict):
@@ -1761,7 +1782,7 @@ def simulate(
     pre_lamports: int | None = None
     if tracked:
         pre = call(rpc_url, "getAccountInfo", [tracked[0], {"encoding": "base64"}])
-        pre_lamports = _tracked_lamports((pre.get("result") or {}).get("value"))
+        pre_lamports = _lamports_or_absent(pre.get("result"))
 
     # The tx carries its own encoding (Orquestra returns base58); getAccountInfo is a
     # separate read and stays base64. Passing the tx's own encoding avoids a silent
@@ -1828,7 +1849,11 @@ def simulate(
     sol_delta: int | None = None
     post_accounts = value.get("accounts")
     if tracked and isinstance(post_accounts, list) and post_accounts:
-        post_lamports = _tracked_lamports(post_accounts[0])
+        # The node answers `null` for an account that does not exist after the run, the
+        # same way `getAccountInfo` does before it. See `_lamports_or_absent`.
+        post_lamports = (
+            0 if post_accounts[0] is None else _tracked_lamports(post_accounts[0])
+        )
         if pre_lamports is not None and post_lamports is not None:
             sol_delta = post_lamports - pre_lamports
 

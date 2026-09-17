@@ -37,6 +37,18 @@ THE ORDER, AND WHY EACH STEP IS WHERE IT IS:
    ``None`` inside the signer: that argument exists to be refused.
 8. Send, confirm, and report predicted CU beside consumed CU.
 
+THE RELAY-PAID VARIANT, when ``relay`` is given. Steps 1-5 run unchanged over bytes whose
+fee payer is the relay, so nothing that reverts or binds wrongly is ever shown to a party
+that signs. Then :func:`settle_sponsored` takes over: the relay signs FIRST, and what it
+returns is a NEW subject, because Kora appends a Lighthouse balance assertion to the
+message before signing it (:mod:`gecko.relay` says why that is right and what it may not
+do). So the new bytes are re-simulated, re-verified at ``exact``, and only then handed to
+the buyer's signer, which runs in the ``authority`` role: it refuses if the buyer's own
+lamports moved, and the spend gate keys the token caps on the buyer because the receipt
+tracks the buyer. The two signatures are merged through :mod:`gecko.cosign`, which
+refuses anything not byte-identical to the re-verified message, and THAT is what gets
+sent. The buyer's signature covers the relay's assertion; the relay's covers ours.
+
 WHAT THIS MODULE DOES NOT DO. It holds no key: the signature comes from a
 :class:`~gecko.signer.SigningBackend` implemented outside ``gecko/``. It decides no policy:
 the caps are authored out of band by a human. It infers no network. And it is not a
@@ -60,13 +72,21 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .handoff import verify_handoff
+from .cosign import Contribution, CosignRefused, merge_signatures, take_signature
 from .feebump import FeebumpError, with_priority_fee
 from .landing import RPC_COMMITMENT, latest_blockhash
 from .landing import priority_fee_microlamports as estimate_priority_fee
 from .networks import Network
 from .plan_refusals import PlanRefused, check_plan_accounts
+from .relay import (
+    LIGHTHOUSE_ASSERT_ACCOUNT_INFO,
+    LIGHTHOUSE_PROGRAM,
+    FeePayerRelay,
+    RelayRefused,
+    sponsor,
+)
 from .rpc import RpcCall, default_rpc_call
-from .signer import SignerRefused, TransactionSigner
+from .signer import AUTHORITY_ROLE, SignerRefused, TransactionSigner
 from .simulate import BuildCall, BuiltTx, Receipt, simulate
 from .spend_policy import (
     AllowedInstruction,
@@ -97,6 +117,7 @@ __all__ = [
     "USDC_MINT",
     "default_spend_policy",
     "run_purchase",
+    "settle_sponsored",
 ]
 
 
@@ -136,6 +157,7 @@ DEFAULT_USDC_DAILY_RAW = 20_000_000  # 20.00 USDC
 def default_spend_policy(
     *,
     allowed_destinations: frozenset[str],
+    sponsored: bool = False,
     usdc_per_transaction_raw: int = DEFAULT_USDC_PER_TRANSACTION_RAW,
     usdc_hourly_raw: int = DEFAULT_USDC_HOURLY_RAW,
     usdc_daily_raw: int = DEFAULT_USDC_DAILY_RAW,
@@ -155,6 +177,11 @@ def default_spend_policy(
 
     ``authorized=True`` is set here because constructing this function's result IS the act
     of authoring a policy. The human's decision is the call site, not a later mutation.
+
+    ``sponsored`` allowlists the ONE instruction a Kora relay appends before it signs:
+    Lighthouse ``AssertAccountInfo`` (discriminator 5), which asserts the relay's own
+    balance and writes nothing. Off by default: a self-paid purchase that carries it is a
+    purchase somebody else assembled.
     """
     if not allowed_destinations:
         raise PurchaseConfigurationError(
@@ -181,6 +208,16 @@ def default_spend_policy(
                 AllowedInstruction(
                     program_id=COMPUTE_BUDGET_PROGRAM,
                     discriminator=b"\x03",
+                ),
+                *(
+                    [
+                        AllowedInstruction(
+                            program_id=LIGHTHOUSE_PROGRAM,
+                            discriminator=LIGHTHOUSE_ASSERT_ACCOUNT_INFO,
+                        )
+                    ]
+                    if sponsored
+                    else []
                 ),
             }
         ),
@@ -212,6 +249,9 @@ PurchaseRefusalCode = Literal[
     "binding-refused",
     "spend-refused",
     "signer-refused",
+    # The relay-paid path. Each names the party whose answer was refused.
+    "relay-refused",
+    "cosign-refused",
 ]
 
 
@@ -262,6 +302,14 @@ class PurchasePlan:
     accounts: Mapping[str, str]
     args: Mapping[str, Any]
     fee_payer: str
+    #: Who authorises the spend when that is NOT the fee payer: the relay-paid shape.
+    #: ``None`` means the fee payer is the buyer, which is every self-paid purchase.
+    authority: str | None = None
+
+    @property
+    def buyer(self) -> str:
+        """The account whose tokens leave, and whose lamports the receipt tracks."""
+        return self.authority or self.fee_payer
 
     def build_request(self) -> dict[str, Any]:
         """The builder's wire shape. Kept here so the loop never hand-assembles one."""
@@ -287,6 +335,11 @@ class PurchaseSettled:
     blockhash: str
     last_valid_block_height: int
     priority_fee_microlamports: int
+    #: Who paid the fee and who authorised the spend. Equal when self-paid. Under a relay
+    #: they differ, and ``signatures`` counts two.
+    fee_payer: str = ""
+    authority: str = ""
+    signatures: int = 1
     settled: Literal[True] = True
 
     @property
@@ -344,8 +397,14 @@ def run_purchase(
     poll_interval_seconds: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    relay: FeePayerRelay | None = None,
 ) -> PurchaseOutcome:
     """Prepare, verify, authorise, sign and settle one purchase. Fail-closed at every step.
+
+    ``relay`` makes the purchase relay-paid: ``plan.fee_payer`` must be the relay's own
+    account, ``plan.authority`` the buyer, and ``signer`` must sign in the ``authority``
+    role. A plan that names an authority with no relay, or a relay with a signer in the
+    wrong role, is a mis-wiring and raises rather than refuses.
 
     Returns a typed :data:`PurchaseOutcome`. An EXPECTED refusal — a plan that violates a
     distinctness rule, a simulation that reverts, a policy that says no — comes back as
@@ -369,6 +428,7 @@ def run_purchase(
             "the spend gate passed here is not the one the signer holds; one purchase is "
             "decided by one policy, and two gates make that whichever ran last"
         )
+    _check_relay_wiring(plan, signer, relay)
 
     # 1. THE PLAN, before the builder is asked. See the module docstring for why judging
     #    the builder's response instead is too late.
@@ -420,6 +480,14 @@ def run_purchase(
             # never be signed, so the untouched builder bytes proceed unpriced.
             priced = base64_tx
             fee = 0
+    # The builder ships a one-slot signature array under a two-signer header when the
+    # payer is a relay (measured; gecko.cosign.normalize_signature_slots). The message
+    # is not touched; the array outside it is made to match its own header.
+    from .cosign import normalize_signature_slots
+
+    priced = base64.b64encode(
+        normalize_signature_slots(base64.b64decode(priced))
+    ).decode()
     subject = _with_fresh_blockhash(BuiltTx(tx=priced, encoding="base64"), blockhash)
 
     # 4. SIMULATE THE SUBJECT — the exact bytes that will be signed, nothing re-assembled.
@@ -431,7 +499,9 @@ def run_purchase(
         replace_blockhash=False,
         network_label=f"simulated against {network} (read-only, unsigned)",
         network=network,
-        track=[plan.fee_payer],
+        # The BUYER's lamports, not the payer's: equal when self-paid, and under a relay
+        # the number that has to read zero (signer.py, `authority-lamports-moved`).
+        track=[plan.buyer],
         mint_extensions=mint_extensions,
     )
     if receipt.status != "pass":
@@ -459,6 +529,24 @@ def run_purchase(
             network=network,
             receipt=receipt,
             predicted_units=receipt.units_consumed,
+        )
+
+    if relay is not None:
+        return settle_sponsored(
+            handoff.transaction_base64,
+            network=network,
+            rpc_url=rpc_url,
+            relay=relay,
+            signer=signer,
+            authority=plan.buyer,
+            rpc_call=call,
+            mint_extensions=mint_extensions,
+            last_valid_block_height=last_valid_block_height,
+            priority_fee_microlamports=fee,
+            confirm_timeout_seconds=confirm_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
         )
 
     # 6+7. AUTHORISE AND SIGN — ONE consultation, not two.
@@ -505,6 +593,22 @@ def run_purchase(
             predicted_units=receipt.units_consumed,
         )
 
+    if not signed.complete:
+        # Unreachable while the wiring check above holds a self-paid plan to one
+        # signer; kept as a refusal because "one of two signatures" submitted as if
+        # whole is the mistake `SignedTransaction.complete` exists to make visible.
+        return PurchaseRefused(
+            code="signer-refused",
+            reason=(
+                f"the signature is incomplete; still unsigned: "
+                f"{', '.join(signed.unfilled)}"
+            ),
+            network=network,
+            receipt=receipt,
+            verdict=verdict,
+            predicted_units=receipt.units_consumed,
+        )
+
     # 8. SEND, CONFIRM, REPORT.
     signature = _send(call, rpc_url, signed.signed_transaction_base64)
     consumed = _confirm(
@@ -526,6 +630,211 @@ def run_purchase(
         blockhash=blockhash,
         last_valid_block_height=last_valid_block_height,
         priority_fee_microlamports=fee,
+        fee_payer=plan.fee_payer,
+        authority=plan.buyer,
+        signatures=1,
+    )
+
+
+def _check_relay_wiring(
+    plan: PurchasePlan, signer: TransactionSigner, relay: FeePayerRelay | None
+) -> None:
+    """A relay, an authority and the signer's role come as a set, or not at all."""
+    role = signer.profile.signing_as if signer.profile is not None else None
+    if relay is None:
+        if plan.authority is not None and plan.authority != plan.fee_payer:
+            raise PurchaseConfigurationError(
+                "the plan names an authority other than the fee payer but no relay was "
+                "given; somebody has to pay the fee, and it is not the buyer"
+            )
+        if role == AUTHORITY_ROLE:
+            raise PurchaseConfigurationError(
+                "the signer is in the authority role but there is no relay to pay the "
+                "fee; an authority signature alone never lands"
+            )
+        return
+    if plan.fee_payer != relay.pubkey:
+        raise PurchaseConfigurationError(
+            "the plan's fee payer is not the relay's account; the relay signs only for "
+            "itself, so this transaction would never be complete"
+        )
+    if plan.authority is None or plan.authority == plan.fee_payer:
+        raise PurchaseConfigurationError(
+            "a relay-paid plan must name the buyer as its authority, distinct from the "
+            "relay; otherwise the relay would be authorising the spend"
+        )
+    if role != AUTHORITY_ROLE:
+        raise PurchaseConfigurationError(
+            "a relay-paid purchase needs the buyer's signer in the authority role; a "
+            "fee-payer profile refuses relay-paid bytes by design"
+        )
+
+
+def settle_sponsored(
+    unsigned_transaction_base64: str,
+    *,
+    network: Network,
+    rpc_url: str,
+    relay: FeePayerRelay,
+    signer: TransactionSigner,
+    authority: str,
+    rpc_call: RpcCall | None = None,
+    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    last_valid_block_height: int = 0,
+    priority_fee_microlamports: int = 0,
+    confirm_timeout_seconds: float = 60.0,
+    poll_interval_seconds: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> PurchaseOutcome:
+    """The relay-paid tail: relay signs, we re-verify, buyer signs, we merge and send.
+
+    Public because it is also the tail of a purchase PREPARED elsewhere: the
+    ``prepare_purchase`` tool hands back unsigned bytes whose fee payer is a relay, and
+    this is the one function that turns them into a landed transaction without any
+    caller re-implementing the order. ``unsigned_transaction_base64`` is expected to be
+    already verified against a passing receipt; it is re-verified here anyway, after the
+    relay has had it, because the relay's answer is a new subject.
+
+    ``signer`` must hold the gate and sign in the ``authority`` role, and ``authority``
+    is the buyer, the account the receipt tracks. Nothing here holds a key.
+    """
+    call = rpc_call or default_rpc_call
+    role = signer.profile.signing_as if signer.profile is not None else None
+    if role != AUTHORITY_ROLE:
+        raise PurchaseConfigurationError(
+            "settle_sponsored needs the buyer's signer in the authority role"
+        )
+
+    # THE RELAY SIGNS FIRST, and what comes back is a NEW subject.
+    try:
+        accepted = sponsor(unsigned_transaction_base64, relay)
+    except RelayRefused as refusal:
+        return PurchaseRefused(
+            code="relay-refused",
+            reason=f"[{refusal.code}] {refusal.reason}",
+            network=network,
+        )
+    subject = accepted.transaction_base64
+
+    # RE-SIMULATE THE NEW SUBJECT. The receipt taken over the original attests nothing
+    # about a message with one more instruction in it; this one does.
+    receipt = simulate(
+        {},
+        rpc_url=rpc_url,
+        rpc_call=call,
+        build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
+        replace_blockhash=False,
+        network_label=f"simulated against {network} (relay-signed, buyer unsigned)",
+        network=network,
+        track=[authority],
+        mint_extensions=mint_extensions,
+    )
+    if receipt.status != "pass":
+        return PurchaseRefused(
+            code="receipt-failed",
+            reason=(
+                f"the relay-signed transaction did not pass simulation "
+                f"(status={receipt.status}, class={receipt.revert_class}); the relay "
+                f"appended {list(accepted.appended_programs) or 'nothing'}, and a "
+                f"transaction that reverts is refused rather than paid for"
+            ),
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+    handoff = verify_handoff(
+        subject, receipt, require="exact", expected_network=network, encoding="base64"
+    )
+    if not handoff.approved or handoff.transaction_base64 is None:
+        return PurchaseRefused(
+            code="binding-refused",
+            reason=f"the receipt does not attest the relay-signed bytes: {handoff.reason}",
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+
+    # THE BUYER SIGNS, in the authority role, over the bytes that carry the relay's
+    # assertion. The gate runs inside, keyed on the buyer because the receipt tracks it.
+    current_slot = _current_slot(call, rpc_url)
+    try:
+        signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
+    except SignerRefused as refusal:
+        spend_refusal = refusal.code == "spend-not-authorized"
+        return PurchaseRefused(
+            code="spend-refused" if spend_refusal else "signer-refused",
+            reason=f"[{refusal.code}] {refusal.reason}",
+            network=network,
+            receipt=receipt,
+            verdict=refusal.verdict,
+            predicted_units=receipt.units_consumed,
+        )
+    verdict = signed.spend_verdict
+    if verdict is None:
+        return PurchaseRefused(
+            code="signer-refused",
+            reason=(
+                "the signer produced a signature but published no spend verdict; "
+                "a settled purchase must be able to say what authorised it"
+            ),
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+
+    # MERGE. `subject` is the authority on the message; both signatures are placed into
+    # ITS array and verified against it. Neither party's copy of the bytes is sent.
+    from .cosign import _decode as _decode_transaction
+
+    try:
+        expected_message = bytes(_decode_transaction(subject).message)
+        buyer_signature = take_signature(
+            signed.signed_transaction_base64,
+            expect_message=expected_message,
+            signer=authority,
+        )
+        merged = merge_signatures(
+            subject,
+            [
+                Contribution(relay.pubkey, accepted.relay_signature),
+                Contribution(authority, buyer_signature),
+            ],
+        )
+    except CosignRefused as refusal:
+        return PurchaseRefused(
+            code="cosign-refused",
+            reason=f"[{refusal.code}] {refusal.reason}",
+            network=network,
+            receipt=receipt,
+            verdict=verdict,
+            predicted_units=receipt.units_consumed,
+        )
+
+    signature = _send(call, rpc_url, merged)
+    consumed = _confirm(
+        call,
+        rpc_url,
+        signature,
+        timeout_seconds=confirm_timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        sleep=sleep,
+        monotonic=monotonic,
+    )
+    message, _version = _message_of(base64.b64decode(subject))
+    return PurchaseSettled(
+        signature=signature,
+        network=network,
+        receipt=receipt,
+        verdict=verdict,
+        predicted_units=receipt.units_consumed,
+        consumed_units=consumed,
+        blockhash=str(message.recent_blockhash),
+        last_valid_block_height=last_valid_block_height,
+        priority_fee_microlamports=priority_fee_microlamports,
+        fee_payer=relay.pubkey,
+        authority=authority,
+        signatures=2,
     )
 
 

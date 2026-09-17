@@ -60,6 +60,8 @@ logs, no node response body, no credentials, and nothing is written anywhere.
 
 from __future__ import annotations
 
+import base64
+
 from .tools import tool_annotations
 
 from collections.abc import Callable, Mapping
@@ -444,11 +446,34 @@ def _plan_accounts(
     }
 
 
+def _with_signature_slots(built: BuiltTx) -> BuiltTx:
+    """The builder's bytes with a signature array that matches their own header.
+
+    Under a relay the builder says "two signers" and ships one slot (see
+    :func:`gecko.cosign.normalize_signature_slots`, where the measurement lives). The
+    message is untouched, so nothing a binding covers changes; only the bytes OUTSIDE
+    the message, which no signature and no receipt ever attested, are made consistent.
+    """
+    from .cosign import normalize_signature_slots
+    from .txbind import _b58decode
+
+    raw = (
+        base64.b64decode(built.tx, validate=True)
+        if built.encoding == "base64"
+        else _b58decode(built.tx)
+    )
+    fixed = normalize_signature_slots(raw)
+    if fixed == raw:
+        return built
+    return BuiltTx(tx=base64.b64encode(fixed).decode(), encoding="base64")
+
+
 def _diagnose_failed_purchase(
     accounts: Mapping[str, str],
     network: str,
     rpc_url: str,
     rpc_call: RpcCall,
+    payer: str | None = None,
 ) -> str | None:
     """Best-effort: name WHY a purchase simulation reverted, in terms the agent can act on.
 
@@ -463,18 +488,23 @@ def _diagnose_failed_purchase(
         sender = accounts.get("sender_token_account")
         if not buyer or not sender:
             return None
+        # WHO PAYS THE FEE is the account whose absence explains a fee failure. Under a
+        # relay that is the relay, and a zero-SOL buyer is the whole point; blaming the
+        # buyer there sent a reader to fund the one account that must stay empty.
+        who_pays = payer or buyer
         value = (
             rpc_call(
                 rpc_url,
                 "getMultipleAccounts",
-                [[buyer, sender], {"encoding": "base64"}],
+                [[who_pays, sender], {"encoding": "base64"}],
             ).get("result")
             or {}
         ).get("value") or [None, None]
         buyer_info, sender_info = (value + [None, None])[:2]
         if buyer_info is None:
+            role = "fee payer" if who_pays != buyer else "buyer"
             return (
-                f"the buyer {buyer} does not exist on {network} (0 SOL) — it cannot "
+                f"the {role} {who_pays} does not exist on {network} (0 SOL) — it cannot "
                 "pay the transaction fee; fund it with SOL first"
             )
         if sender_info is None:
@@ -817,7 +847,7 @@ def _prepare(
     #    The builder stamps one from its own RPC and it has been observed ~4,500 blocks
     #    stale, which is dead on arrival; patching 32 bytes leaves every account and every
     #    byte of instruction data exactly as the builder emitted them.
-    subject = _with_fresh_blockhash(built, blockhash)
+    subject = _with_fresh_blockhash(_with_signature_slots(built), blockhash)
 
     # 5. SIMULATE THE SUBJECT — the exact bytes handed back, nothing re-assembled.
     receipt = simulate(
@@ -828,10 +858,16 @@ def _prepare(
         replace_blockhash=False,
         network_label=f"simulated against {network} (read-only, unsigned)",
         network=network,
+        # WHOSE lamports the receipt counts: the buyer's, in both flows. Self-paid, the
+        # buyer is the payer and this is the fee. Relay-paid, it is the number that has
+        # to be zero for "gasless" to be a measured sentence rather than a claim, and it
+        # is the account the spend gate keys the token caps on. A receipt that tracks
+        # nobody is refused by every signer for want of a subject (signer.py, N1).
+        track=[buyer],
     )
     if receipt.status != "pass":
         diagnosis = _diagnose_failed_purchase(
-            accounts, network, rpc_url, rpc_call or default_rpc_call
+            accounts, network, rpc_url, rpc_call or default_rpc_call, payer=payer
         )
         reason = (
             "the simulation did not pass, so no transaction is returned: a transaction "

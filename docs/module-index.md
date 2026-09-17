@@ -34,7 +34,7 @@ package depends on it, which is worth a look before you add a caller.
 | `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 12 · `cli`, `drift`, `drift_watch` +9 |
 | `corrections` | Args-side of the correctness corpus — captured corrections that raise first-call-correct | 1 · `fcc_eval` |
 | `correlate` | The correlation engine (§13 Phase 2) — the confidence, done honestly. | 5 · `catalog_mcp`, `metrics`, `provider_matrix` +2 |
-| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 0 |
+| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 3 · `autonomous_purchase`, `handoff`, `signer` |
 | `credentials` | Local credential resolver — fetch the user's provider key at call time. | 10 · `access`, `authcheck`, `connect` +7 |
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |

@@ -418,3 +418,56 @@ def test_the_network_is_never_read_off_the_rpc_url() -> None:
     )
 
     assert receipt.network == UNKNOWN_NETWORK
+
+
+# --- an absent account holds zero lamports, by the runtime's rule ----------------
+
+
+def _absent_then(post: Any) -> Receipt:
+    value = {
+        "err": None,
+        "unitsConsumed": 100,
+        "logs": ["Program success"],
+        "accounts": [post],
+    }
+    return simulate(
+        PLAN,
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=_sim_rpc(value, pre_lamports=None),
+        build_call=_build_ok,
+        track=[TRACKED],
+        network=UNKNOWN_NETWORK,
+    )
+
+
+def test_a_tracked_account_that_does_not_exist_before_or_after_moved_zero() -> None:
+    """The zero-SOL buyer. `getAccountInfo` answers null, the simulation answers null;
+    reading either as "unknown" made every gasless receipt unresolvable at the gate."""
+    receipt = _absent_then(None)
+    assert receipt.sol_delta == 0
+    assert receipt.sol_delta_account == TRACKED
+
+
+def test_an_absent_account_that_the_run_funds_shows_the_credit() -> None:
+    receipt = _absent_then({"lamports": 890_880})
+    assert receipt.sol_delta == 890_880
+
+
+def test_a_node_that_omits_the_value_key_still_resolves_nothing() -> None:
+    """Only the explicit null is zero. "The node did not say" stays None."""
+    value = {"err": None, "unitsConsumed": 1, "logs": [], "accounts": [{"lamports": 5}]}
+
+    def rpc(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        if method == "getAccountInfo":
+            return {"result": {}}
+        return {"result": {"value": value}}
+
+    receipt = simulate(
+        PLAN,
+        rpc_url="http://127.0.0.1:8899",
+        rpc_call=rpc,
+        build_call=_build_ok,
+        track=[TRACKED],
+        network=UNKNOWN_NETWORK,
+    )
+    assert receipt.sol_delta is None
