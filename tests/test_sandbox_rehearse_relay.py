@@ -17,6 +17,7 @@ from gecko.cosign import unfilled_slots
 from gecko.sandbox import ephemeral_signer
 from gecko.sandbox.rehearse import rehearse_purchase
 from gecko.simulate import BuiltTx
+from gecko.trace import Trace
 from tests.test_relay import kora_extend
 from tests.test_sandbox_rehearse import (
     USDC,
@@ -223,6 +224,7 @@ def test_a_relay_paid_rehearsal_lands_two_signatures_and_the_buyer_pays_no_sol()
     relay = FakeRelay(relay_kp)
     buyer = ephemeral_signer(proof)
 
+    trace = Trace(lane="rehearsal", network="fork")
     result = rehearse_purchase(
         proof,
         buyer=buyer,
@@ -231,10 +233,25 @@ def test_a_relay_paid_rehearsal_lands_two_signatures_and_the_buyer_pays_no_sol()
         rpc_call=fork,
         build_call=_builder,
         relay=relay,
+        trace=trace,
     )
 
     assert result.landed, result.refusals
     assert result.signatures == 2
+    # The run wrote its own graph's input: every step, in order, all ok.
+    assert [row.step for row in trace.rows] == [
+        "fund",
+        "prepare",
+        "sponsor",
+        "resimulate",
+        "cosign",
+        "land",
+        "judge",
+        "reset",
+    ]
+    assert trace.refused is None
+    assert [row.party for row in trace.rows][2:5] == ["relay", "node", "buyer"]
+    assert trace.rows[2].note == "appended L2TExMFK"
     assert result.fee_payer == relay.pubkey
     # The buyer never held a lamport and still holds none.
     assert result.buyer_sol is not None

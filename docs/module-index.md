@@ -2,7 +2,7 @@
 
 # Module index
 
-240 modules in `gecko/` (subpackages included), from their own docstrings.
+241 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -34,7 +34,7 @@ package depends on it, which is worth a look before you add a caller.
 | `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 12 · `cli`, `drift`, `drift_watch` +9 |
 | `corrections` | Args-side of the correctness corpus — captured corrections that raise first-call-correct | 1 · `fcc_eval` |
 | `correlate` | The correlation engine (§13 Phase 2) — the confidence, done honestly. | 5 · `catalog_mcp`, `metrics`, `provider_matrix` +2 |
-| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 3 · `autonomous_purchase`, `handoff`, `signer` |
+| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 6 · `autonomous_purchase`, `handoff`, `prepare_purchase` +3 |
 | `credentials` | Local credential resolver — fetch the user's provider key at call time. | 10 · `access`, `authcheck`, `connect` +7 |
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
@@ -176,6 +176,7 @@ package depends on it, which is worth a look before you add a caller.
 | `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |
 | `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 1 · `registry.wiring` |
 | `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
+| `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 2 · `autonomous_purchase`, `sandbox.rehearse` |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |

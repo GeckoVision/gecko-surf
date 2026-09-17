@@ -88,6 +88,7 @@ from .relay import (
 from .rpc import RpcCall, default_rpc_call
 from .signer import AUTHORITY_ROLE, SignerRefused, TransactionSigner
 from .simulate import BuildCall, BuiltTx, Receipt, simulate
+from .trace import Trace, short
 from .spend_policy import (
     AllowedInstruction,
     SpendPolicy,
@@ -398,8 +399,11 @@ def run_purchase(
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     relay: FeePayerRelay | None = None,
+    trace: Trace | None = None,
 ) -> PurchaseOutcome:
     """Prepare, verify, authorise, sign and settle one purchase. Fail-closed at every step.
+
+    ``trace`` records each step's party, outcome and duration (:mod:`gecko.trace`).
 
     ``relay`` makes the purchase relay-paid: ``plan.fee_payer`` must be the relay's own
     account, ``plan.authority`` the buyer, and ``signer`` must sign in the ``authority``
@@ -429,11 +433,13 @@ def run_purchase(
             "decided by one policy, and two gates make that whichever ran last"
         )
     _check_relay_wiring(plan, signer, relay)
+    log = trace or Trace(lane="settle", network=str(network))
 
     # 1. THE PLAN, before the builder is asked. See the module docstring for why judging
     #    the builder's response instead is too late.
     try:
-        check_plan_accounts(plan.api_id, plan.instruction, plan.accounts)
+        with log.step("plan", "gecko"):
+            check_plan_accounts(plan.api_id, plan.instruction, plan.accounts)
     except PlanRefused as refusal:
         return PurchaseRefused(
             code="plan-refused",
@@ -442,7 +448,10 @@ def run_purchase(
         )
 
     # 2. BUILD, exactly once.
-    built = build_call(plan.build_request())
+    with log.step("build", "builder") as facts:
+        built = build_call(plan.build_request())
+        if not built.tx:
+            facts["outcome"] = "build-returned-nothing"
     if not built.tx:
         return PurchaseRefused(
             code="build-returned-nothing",
@@ -491,19 +500,24 @@ def run_purchase(
     subject = _with_fresh_blockhash(BuiltTx(tx=priced, encoding="base64"), blockhash)
 
     # 4. SIMULATE THE SUBJECT — the exact bytes that will be signed, nothing re-assembled.
-    receipt = simulate(
-        {},
-        rpc_url=rpc_url,
-        rpc_call=call,
-        build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
-        replace_blockhash=False,
-        network_label=f"simulated against {network} (read-only, unsigned)",
-        network=network,
-        # The BUYER's lamports, not the payer's: equal when self-paid, and under a relay
-        # the number that has to read zero (signer.py, `authority-lamports-moved`).
-        track=[plan.buyer],
-        mint_extensions=mint_extensions,
-    )
+    with log.step("simulate", "node") as facts:
+        receipt = simulate(
+            {},
+            rpc_url=rpc_url,
+            rpc_call=call,
+            build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
+            replace_blockhash=False,
+            network_label=f"simulated against {network} (read-only, unsigned)",
+            network=network,
+            # The BUYER's lamports, not the payer's: equal when self-paid, and under a
+            # relay the number that has to read zero (`authority-lamports-moved`).
+            track=[plan.buyer],
+            mint_extensions=mint_extensions,
+        )
+        facts["units"] = receipt.units_consumed
+        facts["binding_prefix"] = short(receipt.message_binding)
+        if receipt.status != "pass":
+            facts["outcome"] = f"receipt-{receipt.status}"
     if receipt.status != "pass":
         return PurchaseRefused(
             code="receipt-failed",
@@ -519,9 +533,16 @@ def run_purchase(
 
     # 5. THE BINDING, at `exact`. A structural binding is blockhash-blind, so accepting one
     #    here would approve a message carrying a blockhash nobody simulated.
-    handoff = verify_handoff(
-        subject, receipt, require="exact", expected_network=network, encoding="base64"
-    )
+    with log.step("verify", "gecko") as facts:
+        handoff = verify_handoff(
+            subject,
+            receipt,
+            require="exact",
+            expected_network=network,
+            encoding="base64",
+        )
+        if not handoff.approved:
+            facts["outcome"] = "binding-refused"
     if not handoff.approved or handoff.transaction_base64 is None:
         return PurchaseRefused(
             code="binding-refused",
@@ -547,6 +568,7 @@ def run_purchase(
             poll_interval_seconds=poll_interval_seconds,
             sleep=sleep,
             monotonic=monotonic,
+            trace=log,
         )
 
     # 6+7. AUTHORISE AND SIGN — ONE consultation, not two.
@@ -562,7 +584,8 @@ def run_purchase(
     #  now publishes its answer on the result and on the refusal.
     current_slot = _current_slot(call, rpc_url)
     try:
-        signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
+        with log.step("sign", "buyer"):
+            signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
     except SignerRefused as refusal:
         # A spend refusal keeps its own typed code and carries the gate's finer verdict;
         # every other refusal is the signer's own and has no spend decision to report.
@@ -610,16 +633,19 @@ def run_purchase(
         )
 
     # 8. SEND, CONFIRM, REPORT.
-    signature = _send(call, rpc_url, signed.signed_transaction_base64)
-    consumed = _confirm(
-        call,
-        rpc_url,
-        signature,
-        timeout_seconds=confirm_timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-        sleep=sleep,
-        monotonic=monotonic,
-    )
+    with log.step("send", "node"):
+        signature = _send(call, rpc_url, signed.signed_transaction_base64)
+    with log.step("confirm", "node") as facts:
+        consumed = _confirm(
+            call,
+            rpc_url,
+            signature,
+            timeout_seconds=confirm_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+        facts["units"] = consumed
     return PurchaseSettled(
         signature=signature,
         network=network,
@@ -686,6 +712,7 @@ def settle_sponsored(
     poll_interval_seconds: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    trace: Trace | None = None,
 ) -> PurchaseOutcome:
     """The relay-paid tail: relay signs, we re-verify, buyer signs, we merge and send.
 
@@ -706,9 +733,13 @@ def settle_sponsored(
             "settle_sponsored needs the buyer's signer in the authority role"
         )
 
+    log = trace or Trace(lane="settle", network=str(network))
+
     # THE RELAY SIGNS FIRST, and what comes back is a NEW subject.
     try:
-        accepted = sponsor(unsigned_transaction_base64, relay)
+        with log.step("sponsor", "relay") as facts:
+            accepted = sponsor(unsigned_transaction_base64, relay)
+            facts["note"] = "appended" if accepted.extended else "unchanged"
     except RelayRefused as refusal:
         return PurchaseRefused(
             code="relay-refused",
@@ -719,17 +750,22 @@ def settle_sponsored(
 
     # RE-SIMULATE THE NEW SUBJECT. The receipt taken over the original attests nothing
     # about a message with one more instruction in it; this one does.
-    receipt = simulate(
-        {},
-        rpc_url=rpc_url,
-        rpc_call=call,
-        build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
-        replace_blockhash=False,
-        network_label=f"simulated against {network} (relay-signed, buyer unsigned)",
-        network=network,
-        track=[authority],
-        mint_extensions=mint_extensions,
-    )
+    with log.step("resimulate", "node") as facts:
+        receipt = simulate(
+            {},
+            rpc_url=rpc_url,
+            rpc_call=call,
+            build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
+            replace_blockhash=False,
+            network_label=f"simulated against {network} (relay-signed, buyer unsigned)",
+            network=network,
+            track=[authority],
+            mint_extensions=mint_extensions,
+        )
+        facts["units"] = receipt.units_consumed
+        facts["binding_prefix"] = short(receipt.message_binding)
+        if receipt.status != "pass":
+            facts["outcome"] = f"receipt-{receipt.status}"
     if receipt.status != "pass":
         return PurchaseRefused(
             code="receipt-failed",
@@ -743,9 +779,16 @@ def settle_sponsored(
             receipt=receipt,
             predicted_units=receipt.units_consumed,
         )
-    handoff = verify_handoff(
-        subject, receipt, require="exact", expected_network=network, encoding="base64"
-    )
+    with log.step("verify", "gecko") as facts:
+        handoff = verify_handoff(
+            subject,
+            receipt,
+            require="exact",
+            expected_network=network,
+            encoding="base64",
+        )
+        if not handoff.approved:
+            facts["outcome"] = "binding-refused"
     if not handoff.approved or handoff.transaction_base64 is None:
         return PurchaseRefused(
             code="binding-refused",
@@ -759,7 +802,8 @@ def settle_sponsored(
     # assertion. The gate runs inside, keyed on the buyer because the receipt tracks it.
     current_slot = _current_slot(call, rpc_url)
     try:
-        signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
+        with log.step("sign", "buyer"):
+            signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
     except SignerRefused as refusal:
         spend_refusal = refusal.code == "spend-not-authorized"
         return PurchaseRefused(
@@ -788,19 +832,20 @@ def settle_sponsored(
     from .cosign import _decode as _decode_transaction
 
     try:
-        expected_message = bytes(_decode_transaction(subject).message)
-        buyer_signature = take_signature(
-            signed.signed_transaction_base64,
-            expect_message=expected_message,
-            signer=authority,
-        )
-        merged = merge_signatures(
-            subject,
-            [
-                Contribution(relay.pubkey, accepted.relay_signature),
-                Contribution(authority, buyer_signature),
-            ],
-        )
+        with log.step("merge", "gecko"):
+            expected_message = bytes(_decode_transaction(subject).message)
+            buyer_signature = take_signature(
+                signed.signed_transaction_base64,
+                expect_message=expected_message,
+                signer=authority,
+            )
+            merged = merge_signatures(
+                subject,
+                [
+                    Contribution(relay.pubkey, accepted.relay_signature),
+                    Contribution(authority, buyer_signature),
+                ],
+            )
     except CosignRefused as refusal:
         return PurchaseRefused(
             code="cosign-refused",
@@ -811,16 +856,19 @@ def settle_sponsored(
             predicted_units=receipt.units_consumed,
         )
 
-    signature = _send(call, rpc_url, merged)
-    consumed = _confirm(
-        call,
-        rpc_url,
-        signature,
-        timeout_seconds=confirm_timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-        sleep=sleep,
-        monotonic=monotonic,
-    )
+    with log.step("send", "node"):
+        signature = _send(call, rpc_url, merged)
+    with log.step("confirm", "node") as facts:
+        consumed = _confirm(
+            call,
+            rpc_url,
+            signature,
+            timeout_seconds=confirm_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+        facts["units"] = consumed
     message, _version = _message_of(base64.b64decode(subject))
     return PurchaseSettled(
         signature=signature,

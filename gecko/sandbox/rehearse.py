@@ -70,6 +70,7 @@ from ..netguard import UnsafeUrlError
 from ..prepare_purchase import UrlGuard, prepare_purchase_result
 from ..relay import FeePayerRelay, RelayAccepted, RelayRefused, sponsor
 from ..rpc import RpcCall, default_rpc_call
+from ..trace import Trace, short
 from ..simulate import BuildCall, BuiltTx, simulate
 from ..store_accounts import derive_ata, receipts_pda, resolve_store
 from ..store_directory import StoreDecodeError, _Cursor
@@ -247,8 +248,12 @@ def rehearse_purchase(
     rpc_call: RpcCall | None = None,
     build_call: BuildCall | None = None,
     relay: FeePayerRelay | None = None,
+    trace: Trace | None = None,
 ) -> Rehearsal:
     """Fund, prepare, sign, land, judge and reset — one purchase, on a proven surfnet.
+
+    ``trace`` records each step, its party, its outcome and its duration
+    (:mod:`gecko.trace`), so the run can draw its own graph. Control plane only.
 
     ``relay`` makes the purchase RELAY-PAID: the buyer is funded with the price and NO
     SOL, the production path prepares with the relay as fee payer, the relay signs first
@@ -319,11 +324,14 @@ def rehearse_purchase(
             rpc_call=rpc_call,
             build_call=build_call,
             relay=relay,
+            trace=trace or Trace(lane="rehearsal", network="fork"),
         )
     finally:
         # Measured: this reverts TRANSACTION writes too, not only cheatcode overrides —
         # the receipts vec went back to 20 rows and total_purchases 128 -> 127.
         cleaned = _reset_all(proof, touched, rpc_call)
+        if trace is not None:
+            trace.record("reset", "gecko", note=f"{len(cleaned)} accounts")
     return _with(result, reset=cleaned)
 
 
@@ -341,6 +349,7 @@ def _run(
     rpc_call: RpcCall | None,
     build_call: BuildCall | None,
     relay: FeePayerRelay | None = None,
+    trace: Trace,
 ) -> Rehearsal:
     """Steps 1 to 5. Split out so RESET can be a ``finally`` around the whole of it."""
     _, buyer_ata, store_ata, receipts = touched
@@ -348,25 +357,34 @@ def _run(
     # 1. FUND — exactly the price, so an over- or under-transfer cannot hide in slack.
     #    Under a relay the buyer gets NO SOL: zero before is what makes zero after a
     #    measurement rather than a coincidence.
-    fund_token(proof, buyer.pubkey, listed_mint, blank.price_raw, rpc_call=rpc_call)
-    if relay is None:
-        fund_sol(proof, buyer.pubkey, fee_lamports, rpc_call=rpc_call)
+    with trace.step("fund", "gecko") as facts:
+        fund_token(proof, buyer.pubkey, listed_mint, blank.price_raw, rpc_call=rpc_call)
+        if relay is None:
+            fund_sol(proof, buyer.pubkey, fee_lamports, rpc_call=rpc_call)
+        facts["note"] = "tokens only" if relay is not None else "tokens + SOL"
 
     # 2. PREPARE — the production path, unchanged.
-    prepared = prepare_purchase_result(
-        {
-            "store": blank.store,
-            "product": blank.product,
-            "buyer": buyer.pubkey,
-            "network": "fork",
-            "rpc_url": proof.rpc_url,
-            "table": table_number,
-            **({"fee_payer": relay.pubkey} if relay is not None else {}),
-        },
-        rpc_call=rpc_call,
-        build_call=build_call,
-        url_guard=_only_this_surfnet(proof),
-    )
+    with trace.step("prepare", "gecko") as facts:
+        prepared = prepare_purchase_result(
+            {
+                "store": blank.store,
+                "product": blank.product,
+                "buyer": buyer.pubkey,
+                "network": "fork",
+                "rpc_url": proof.rpc_url,
+                "table": table_number,
+                **({"fee_payer": relay.pubkey} if relay is not None else {}),
+            },
+            rpc_call=rpc_call,
+            build_call=build_call,
+            url_guard=_only_this_surfnet(proof),
+        )
+        facts["units"] = prepared.get("units_consumed")
+        facts["binding_prefix"] = short(prepared.get("binding"))
+        if prepared.get("error"):
+            facts["outcome"] = "error"
+        elif prepared.get("refused"):
+            facts["outcome"] = str(prepared.get("code"))
     error = prepared.get("error")
     if error:
         return _with(
@@ -402,10 +420,18 @@ def _run(
     #    (gecko.autonomous_purchase.settle_sponsored) and for the same reason.
     simulated_units_after_relay: int | None = None
     if relay is None:
-        signed, _signature = _sign(unsigned, buyer)
+        with trace.step("sign", "buyer"):
+            signed, _signature = _sign(unsigned, buyer)
     else:
         try:
-            accepted = sponsor(unsigned, relay)
+            with trace.step("sponsor", "relay") as facts:
+                accepted = sponsor(unsigned, relay)
+                facts["note"] = (
+                    "appended "
+                    + ", ".join(short(p) or "" for p in accepted.appended_programs)
+                    if accepted.extended
+                    else "unchanged"
+                )
         except RelayRefused as refusal:
             return _with(
                 blank,
@@ -416,18 +442,23 @@ def _run(
         # original message; the relay may have appended its assertion, which costs
         # compute. Re-simulate so "simulated == charged" is judged over the bytes that
         # actually land, not over the ones the relay was sent.
-        resimulated = simulate(
-            {},
-            rpc_url=proof.rpc_url,
-            rpc_call=rpc_call,
-            build_call=lambda _plan: BuiltTx(
-                tx=accepted.transaction_base64, encoding="base64"
-            ),
-            replace_blockhash=False,
-            network_label="re-simulated after the relay signed (fork, read-only)",
-            network="fork",
-            track=[buyer.pubkey],
-        )
+        with trace.step("resimulate", "node") as facts:
+            resimulated = simulate(
+                {},
+                rpc_url=proof.rpc_url,
+                rpc_call=rpc_call,
+                build_call=lambda _plan: BuiltTx(
+                    tx=accepted.transaction_base64, encoding="base64"
+                ),
+                replace_blockhash=False,
+                network_label="re-simulated after the relay signed (fork, read-only)",
+                network="fork",
+                track=[buyer.pubkey],
+            )
+            facts["units"] = resimulated.units_consumed
+            facts["binding_prefix"] = short(resimulated.message_binding)
+            if resimulated.status != "pass":
+                facts["outcome"] = f"receipt-{resimulated.status}"
         if resimulated.status != "pass":
             return _with(
                 blank,
@@ -443,7 +474,8 @@ def _run(
             )
         simulated_units_after_relay = resimulated.units_consumed
         try:
-            signed, _signature = _cosign(accepted, buyer)
+            with trace.step("cosign", "buyer"):
+                signed, _signature = _cosign(accepted, buyer)
         except CosignRefused as refusal:
             return _with(
                 blank,
@@ -458,32 +490,18 @@ def _run(
     )
 
     # 4. LAND.
-    sent = call(
-        proof.rpc_url,
-        "sendTransaction",
-        [
-            signed,
-            {
-                "encoding": "base64",
-                # The blockhash was issued at `confirmed`; sendTransaction's preflight
-                # defaults to the STRICTER `finalized` and rejects these bytes every time
-                # with a BlockhashNotFound that names neither cause nor remedy. The
-                # production path says so in `submit.preflight_commitment`; this reads it
-                # from there rather than restating the value.
-                "preflightCommitment": submit.get(
-                    "preflight_commitment", RPC_COMMITMENT
-                ),
-                "maxRetries": 3,
-            },
-        ],
-    )
-    landed_signature = (sent or {}).get("result")
+    with trace.step("land", "node") as landing:
+        sent, landed_signature, confirmed = _land(call, proof.rpc_url, signed, submit)
+        if not isinstance(landed_signature, str):
+            landing["outcome"] = "no-signature"
+        elif not confirmed:
+            landing["outcome"] = "not-confirmed"
     if not isinstance(landed_signature, str):
         return _with(
             blank,
             refusals=(Refusal("land", f"the node returned no signature: {sent!r}"),),
         )
-    if not _confirm(call, proof.rpc_url, landed_signature):
+    if not confirmed:
         return _with(
             blank,
             signature=landed_signature,
@@ -497,7 +515,12 @@ def _run(
         )
 
     # 5. JUDGE — what actually moved.
-    after = _ledger(call, proof.rpc_url, buyer.pubkey, buyer_ata, store_ata, receipts)
+    with trace.step("judge", "gecko") as facts:
+        after = _ledger(
+            call, proof.rpc_url, buyer.pubkey, buyer_ata, store_ata, receipts
+        )
+        meta = _transaction_meta(call, proof.rpc_url, landed_signature)
+        facts["units"] = _int_or_none(meta, "computeUnitsConsumed")
     relay_sol = None
     if relay is not None:
         relay_sol = LamportDelta(
@@ -510,7 +533,7 @@ def _run(
         signature=landed_signature,
         before=before,
         after=after,
-        meta=_transaction_meta(call, proof.rpc_url, landed_signature),
+        meta=meta,
         simulated_units=(
             simulated_units_after_relay
             if relay is not None
@@ -574,6 +597,35 @@ def _sign(unsigned_base64: str, buyer: EphemeralSigner) -> tuple[str, str]:
     signature = Signature.from_bytes(buyer.sign(bytes(message)))
     signed = Transaction.populate(message, [signature])
     return base64.b64encode(bytes(signed)).decode(), str(signature)
+
+
+def _land(
+    call: RpcCall, rpc_url: str, signed: str, submit: Mapping[str, Any]
+) -> tuple[Any, Any, bool]:
+    """Send at the proven endpoint, then wait for it. (reply, signature, confirmed)."""
+    sent = call(
+        rpc_url,
+        "sendTransaction",
+        [
+            signed,
+            {
+                "encoding": "base64",
+                # The blockhash was issued at `confirmed`; sendTransaction's preflight
+                # defaults to the STRICTER `finalized` and rejects these bytes every time
+                # with a BlockhashNotFound that names neither cause nor remedy. The
+                # production path says so in `submit.preflight_commitment`; this reads it
+                # from there rather than restating the value.
+                "preflightCommitment": submit.get(
+                    "preflight_commitment", RPC_COMMITMENT
+                ),
+                "maxRetries": 3,
+            },
+        ],
+    )
+    landed_signature = (sent or {}).get("result")
+    if not isinstance(landed_signature, str):
+        return sent, None, False
+    return sent, landed_signature, _confirm(call, rpc_url, landed_signature)
 
 
 def _cosign(accepted: RelayAccepted, buyer: EphemeralSigner) -> tuple[str, str]:

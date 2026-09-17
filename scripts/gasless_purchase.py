@@ -57,6 +57,7 @@ from gecko.signer import (  # noqa: E402
     TransactionSigner,
 )
 from gecko.spend_policy import InMemorySpendLedger, SpendPolicyGate  # noqa: E402
+from gecko.trace import Trace  # noqa: E402
 from scripts.kora_relay import KoraRelay, KoraRelayError  # noqa: E402
 
 
@@ -97,6 +98,27 @@ def _balance(rpc_url: str, account: str) -> int:
     return int(value) if isinstance(value, int) else 0
 
 
+def _emit_trace(args: argparse.Namespace, trace: Trace) -> None:
+    """Write the trace, and the graph drawn from it, when asked. Never on the hot path."""
+    if args.trace is None:
+        return
+    trace.write(args.trace)
+    print(f"  trace      {args.trace}  ({len(trace.rows)} steps)")
+    if args.graph is not None:
+        from scripts.trace_to_graph import render, spec_from_trace
+
+        spec_path = args.graph.with_suffix(".sequence.json")
+        spec_path.write_text(json.dumps(spec_from_trace(trace), indent=2) + "\n")
+        receipt = render(spec_path, args.graph)
+        if receipt.get("rendered"):
+            print(f"  graph      {args.graph}")
+        else:
+            print(
+                f"  graph      NOT rendered: "
+                f"{receipt.get('reason') or receipt.get('stderr')}"
+            )
+
+
 def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
     """The fork lane: `gecko.sandbox.rehearse`, judged by what moved.
 
@@ -123,6 +145,7 @@ def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
         )
         return 0
 
+    trace = Trace(lane="rehearsal", network="fork")
     result = rehearse_purchase(
         proof,
         buyer=buyer,
@@ -130,7 +153,9 @@ def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
         product=args.product,
         table_number=args.table,
         relay=relay,
+        trace=trace,
     )
+    _emit_trace(args, trace)
     for refusal in result.refusals:
         print(f"  REFUSED at {refusal.step}: {refusal.reason}")
     if not result.landed:
@@ -178,6 +203,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table", type=int, default=1)
     parser.add_argument("--max-spend-usdc", type=float, default=1.0)
     parser.add_argument("--broadcast", action="store_true")
+    parser.add_argument(
+        "--trace",
+        type=Path,
+        default=None,
+        help="write the run's trace (JSONL, control plane only) here",
+    )
+    parser.add_argument(
+        "--graph",
+        type=Path,
+        default=None,
+        help="also render the trace as an archify sequence HTML here",
+    )
     args = parser.parse_args(argv)
     network = coerce_network(args.network)
 
@@ -262,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         spend_gate=gate,
     )
+    trace = Trace(lane="settle", network=str(network))
     outcome = settle_sponsored(
         unsigned,
         network=network,
@@ -270,7 +308,9 @@ def main(argv: list[str] | None = None) -> int:
         signer=signer,
         authority=buyer.pubkey,
         last_valid_block_height=int(out["expires"]["last_valid_block_height"]),
+        trace=trace,
     )
+    _emit_trace(args, trace)
     if not isinstance(outcome, PurchaseSettled):
         print(f"\nREFUSED [{outcome.code}]: {outcome.reason}")
         return 1
