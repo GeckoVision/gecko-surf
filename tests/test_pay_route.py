@@ -765,3 +765,48 @@ def test_a_second_venue_can_be_offered_without_touching_assess_payment() -> None
     leg = report.to_dict()["route"]
     assert leg["quote"]["venue"] == "raydium"
     assert leg["quote"]["curve"] == "cpmm"
+
+
+# --- latency: one IDL per plan_payment, pegs read concurrently ------------------------
+
+WSOL = "So11111111111111111111111111111111111111112"
+
+
+def test_the_finder_fetches_the_idl_once_across_candidates(monkeypatch) -> None:
+    """Eight candidates used to cost eight IDL fetches (1.8 s each). One per call now."""
+    from gecko.providers import catalog_surface
+
+    fetches = _Counter(lambda program: {"idl": program})
+    monkeypatch.setattr(catalog_surface, "orquestra_seams", lambda: (fetches, None))
+    monkeypatch.setattr(
+        pay_route, "orquestra_seams", lambda: (fetches, None), raising=False
+    )
+    from gecko import whirlpool_venue
+
+    monkeypatch.setattr(
+        whirlpool_venue, "whirlpool_layout", lambda idl: {"layout": idl}
+    )
+    monkeypatch.setattr(whirlpool_venue, "find_venues", lambda *a, **k: [])
+
+    finder = pay_route._venue_finder(
+        "http://127.0.0.1:8899", lambda *a: {"result": None}
+    )
+    for mint in (USDG, WSOL, USDC):
+        assert finder(held_mint=mint, needed_mint=USDC, target_out=100_000) == []
+    assert fetches.n == 1
+
+
+def test_candidate_pegs_are_read_once_per_mint_and_all_of_them() -> None:
+    import threading
+
+    seen: list[str] = []
+    lock = threading.Lock()
+
+    def reader(mint: str):
+        with lock:
+            seen.append(mint)
+        return recorded_peg_reader({USDG: PEGGED, WSOL: PEGGED, USDC: PEGGED})(mint)
+
+    readings = pay_route._read_pegs_concurrently(reader, [USDG, WSOL, USDG, USDC])
+    assert set(readings) == {USDG, WSOL, USDC}
+    assert sorted(seen) == sorted({USDG, WSOL, USDC}), "each mint read exactly once"
