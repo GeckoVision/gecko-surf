@@ -275,6 +275,28 @@ A buyer-only signer in the default `fee-payer` role still refuses these bytes wi
 `fee-payer-not-controlled`. **That is the gate working, not a bug.** The role is authored
 out loud on the profile (`signing_as="authority"`), never inferred from the bytes.
 
+## 8b. The buyer's key in PayBox, measured
+
+**2026-09-17, fork, kora-cli built from PR #675, PayBox `sol-default` wallet on `autonomous`,
+`scripts/paybox_backend.py` over the SDK CLI. Nothing submitted: the bytes carried a fork
+blockhash, which mainnet rejects.**
+
+```
+1. prepared: 54,647 CU, binding a1cd0206…, slots [(relay, EMPTY), (GpaLFMwQ, EMPTY)]
+2. relay signed: appended ['L2TExMFK'] (Lighthouse), unfilled now ['GpaLFMwQ']
+3. PayBox signed in 2537 ms
+   - message byte-identical to the relay's: True
+   - unfilled slots after PayBox: ()
+   - relay signature preserved in slot 0: True
+   - both signatures verify over the message: True
+```
+
+The one thing this answers that no document does: **PayBox's MPC signs its own slot and
+leaves a co-signature already in slot 0 untouched.** So the order relay -> PayBox -> submit
+holds with a real custodian, not only with the ephemeral key of section 8. 2.5 s for the
+signature is inside the blockhash window with room; `open()` refuses a wallet on
+`always_approve`, which is the mode that would not be.
+
 ## 9. Judge by what moved, not by what returned
 
 **Measured 2026-09-16, surfpool 1.1.1 fork at slot 447438514, kora-cli 2.2.0-beta.8 with
