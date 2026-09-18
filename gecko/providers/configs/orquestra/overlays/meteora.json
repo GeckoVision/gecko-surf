@@ -2,7 +2,7 @@
   "intents": [
     "plan_swap"
   ],
-  "notes": "Meteora DLMM. The swap's bin_array PDAs travel as remaining_accounts the IDL never names: seed ['bin_array', lb_pair, index(i64 LE)] (MeteoraAg/dlmm-sdk commons/src/pda.rs::derive_bin_array_pda + seeds.rs BIN_ARRAY), index = floor(bin_id / 70) (bin_array.rs::bin_id_to_bin_array_index, MAX_BIN_PER_ARRAY=70). Which indexes a swap needs comes from lb_pair.active_id + the pool's liquidity bitmap (quote.rs::get_bin_array_pubkeys_for_swap) — a LIVE STATE read, not geometry; plan_swap performs it. The index is SIGNED (negative below price 1.0). bin_array_bitmap_extension = ['bitmap', lb_pair] (optional swap account; holds liquidity flags beyond array index +/-512).",
+  "notes": "Meteora DLMM. The swap's bin_array PDAs travel as remaining_accounts the IDL never names: seed ['bin_array', lb_pair, index(i64 LE)] (MeteoraAg/dlmm-sdk commons/src/pda.rs::derive_bin_array_pda + seeds.rs BIN_ARRAY), index = floor(bin_id / 70) (bin_array.rs::bin_id_to_bin_array_index, MAX_BIN_PER_ARRAY=70). Which indexes a swap needs comes from lb_pair.active_id + the pool's liquidity bitmap (quote.rs::get_bin_array_pubkeys_for_swap) \u2014 a LIVE STATE read, not geometry; plan_swap performs it. The index is SIGNED (negative below price 1.0). bin_array_bitmap_extension = ['bitmap', lb_pair] (optional swap account; holds liquidity flags beyond array index +/-512).",
   "include": [
     "lb_pair",
     "reserve",
@@ -35,9 +35,33 @@
           "encoding": "pubkey"
         }
       ]
+    },
+    "bin_array": {
+      "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+      "seeds": [
+        {
+          "kind": "constant",
+          "value": "bin_array",
+          "encoding": "utf8"
+        },
+        {
+          "kind": "variable",
+          "name": "lb_pair",
+          "source": "account",
+          "encoding": "pubkey"
+        },
+        {
+          "kind": "variable",
+          "name": "index",
+          "source": "argument",
+          "encoding": "le",
+          "width": 8
+        }
+      ]
     }
   },
   "why": {
-    "user_token": "an ATA of the user under the SPL Associated Token program — not a PDA of this program, so it appears on neither the IDL nor the program source; hand-modelled so plans can name the user's token accounts"
+    "user_token": "an ATA of the user under the SPL Associated Token program \u2014 not a PDA of this program, so it appears on neither the IDL nor the program source; hand-modelled so plans can name the user's token accounts",
+    "bin_array": "index is i64 LITTLE-endian, measured 2026-09-18 on pool 5rCf1DM8\u2026 (active_id -5646, slot 447969721): index -81 derives HQH5fsUp\u2026 under le, which exists on mainnet, and HdSrqcyp\u2026 under be, which does not; -82 and -80 agree. tests/test_providers_meteora.py::test_bin_array_byte_order_is_le_not_be_against_live_accounts"
   }
 }

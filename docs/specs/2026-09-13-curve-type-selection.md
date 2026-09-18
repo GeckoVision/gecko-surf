@@ -52,8 +52,10 @@ the same two zero bytes.*
 **Rung 3 — BONK → USDC on Meteora (DLMM).** A thin book, where price impact is real and the
 bin structure is the reason to choose it: zero slippage inside a bin. This is the rung that
 proves the agent is reasoning about liquidity shape rather than reading a leaderboard.
-*Weak: `bin_array` carries an assumed byte order the IDL cannot state. One live address
-reproduces it or refutes it.*
+*Was weak: `bin_array` carried an assumed byte order the IDL cannot state. Reproduced
+2026-09-18 on pool `5rCf1DM8…` index −81: `le` derives `HQH5fsUp…`, which exists; `be`
+derives `HdSrqcyp…`, which does not. The recipe is declared in the overlay with the
+measurement (origin `manual`); the rung is **ok**.*
 
 **Rung 4 — buy the espresso on `let_me_buy`.** *`make_purchase` is `ok`.*
 
@@ -88,8 +90,8 @@ in the story is the one part not yet real.
 second venue is callable, "the agent picks the right path" means "the agent picks the only
 path."
 
-**3. Rung 3's byte order.** `meteora.bin_array`, assumed `le8`. Derive both ways against a
-live account, keep the one that exists, record it as `recovered`.
+**3. Rung 3's byte order.** Done 2026-09-18: `meteora.bin_array` derived both ways against
+a live account, `le` exists, `be` does not, declared in the overlay with the measurement.
 
 **4. Rung 2's venue.** Wire Raydium CPMM. The seed is proven; this is the provider module,
 the cards, and the intents.

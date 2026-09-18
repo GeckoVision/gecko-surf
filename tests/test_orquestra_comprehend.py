@@ -56,7 +56,7 @@ CASES: dict[str, tuple[str, Path | None]] = {
 # shrinking it (more auto-derived) is progress; growing it silently is a
 # regression in either the generator or our honesty.
 EXPECTED_MANUAL: dict[str, tuple[str, ...]] = {
-    "meteora": ("user_token",),
+    "meteora": ("bin_array", "user_token"),
     # `bonding_curve` joined this list when the extractor stopped answering an account
     # its IDL declares two derivable ways: 14 instructions seed it on `mint` and 4 v2
     # instructions on `base_mint`, no instruction carries both names, and nothing on the
@@ -218,7 +218,10 @@ def test_provenance_tiers_meteora() -> None:
     assert tiers["lb_pair"] == "recovered"
     assert tiers["reserve"] == "recovered"
     assert tiers["oracle"] == "extracted"
-    assert tiers["bin_array"] == "extracted"
+    # bin_array is IDL-shaped but its byte order is not: the IDL cannot state one, so
+    # the recipe is declared in the overlay with the live measurement that fixed it
+    # (2026-09-18), which is what `manual` means here.
+    assert tiers["bin_array"] == "manual"
     assert tiers["user_token"] == "manual"
     assert result.flagged == ()
 

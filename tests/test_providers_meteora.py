@@ -503,3 +503,71 @@ def test_plan_swap_over_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
 
     plan = json.loads(anyio.run(_connect, app, body))
     assert plan["derived"]["lb_pair"] == CURRENT_POOL
+
+
+# --- bin_array byte order: measured, not assumed ----------------------------------------
+
+#: A deep SOL/USDC DLMM pool whose bin arrays sit far from index 0, so the index bytes
+#: differ between the two byte orders (index −1 is ff×8 both ways and proves nothing).
+DEEP_POOL = "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
+#: Captured 2026-09-18 at slot 447969721: active_id −5646, so the active bin array is
+#: index −81. Derived both ways; `getMultipleAccounts` said which one exists.
+DEEP_ACTIVE_INDEX = -81
+BIN_ARRAY_LE = "HQH5fsUpWdDtV5m4EaJo6TNcbLq5HxFzYzGXBptgJDD3"  # exists
+BIN_ARRAY_BE = "HdSrqcypiYASFxgoPk9zdnZ1rxEh2s5Zv2ZHUNSFmoP3"  # does not exist
+#: The neighbours agreed: −82 -> DFhnWu6R… (le, exists) / 8tMkAXHL… (be, absent);
+#: −80 -> 6MeamjT3… (le, exists) / JAK2XCjd… (be, absent).
+
+
+def _bin_array_node(encoding: str):
+    from gecko.provider_config import node_from_spec
+
+    return node_from_spec(
+        "bin_array",
+        {
+            "program_id": METEORA_PROGRAM_ID,
+            "seeds": [
+                {"kind": "constant", "value": "bin_array", "encoding": "utf8"},
+                {
+                    "kind": "variable",
+                    "name": "lb_pair",
+                    "source": "account",
+                    "encoding": "pubkey",
+                },
+                {
+                    "kind": "variable",
+                    "name": "index",
+                    "source": "argument",
+                    "encoding": encoding,
+                    "width": 8,
+                },
+            ],
+        },
+    )
+
+
+def test_bin_array_byte_order_is_le_not_be_against_live_accounts() -> None:
+    """The recovery the curve-type spec asked for: derive both ways against a live
+    account, keep the one that exists. `le` derives the account mainnet holds; `be`
+    derives one it does not; and the two differ, so the index is not symmetric."""
+    from gecko.pda import derive_pda
+
+    bindings = {"lb_pair": DEEP_POOL, "index": DEEP_ACTIVE_INDEX}
+    le = derive_pda(_bin_array_node("le"), bindings).address
+    be = derive_pda(_bin_array_node("be"), bindings).address
+    assert le == BIN_ARRAY_LE
+    assert be == BIN_ARRAY_BE
+    assert le != be, "an index that encodes the same both ways proves nothing"
+
+
+def test_the_shipped_recipe_is_the_measured_byte_order() -> None:
+    """What ships must be what was measured, not merely what a test file says."""
+    s = build_meteora_surface()
+    out = s.call_tool(
+        "derive_pda",
+        {
+            "account": "bin_array",
+            "bindings": {"lb_pair": DEEP_POOL, "index": DEEP_ACTIVE_INDEX},
+        },
+    )
+    assert out["address"] == BIN_ARRAY_LE
