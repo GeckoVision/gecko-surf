@@ -52,3 +52,7 @@ docs/superpowers/
 
 # Graphify's on-device code graph — regenerable, never committed.
 graphify-out/
+
+# Demo kit: screenplays, casts and rendered videos stay local (founder, 2026-09-18).
+# The pattern and the honesty rules live in the repo history; media is not source.
+demo/kit/
