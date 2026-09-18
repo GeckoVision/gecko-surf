@@ -74,7 +74,7 @@ derivation is real. That sentence is the product:
 ## What blocks it, in the order it must be fixed
 
 **0. The signer-slot trap — fund safety, before anything gasless.**
-`gecko/prepare_instruction.py:161-165` pours `payer` into an instruction's lone open signer
+`gecko/prepare_instruction.py:172-187` pours `payer` into an instruction's lone open signer
 slot. Name Kora as payer on a swap whose lone open signer is the token authority and **Kora
 receives the swap authority.** This must close first. It is not a Kora task; it is a
 correctness bug that Kora would weaponise.
@@ -83,7 +83,7 @@ correctness bug that Kora would weaponise.
 `"feePayer": buyer`. Every coffee transaction we have landed paid its own SOL. The best line
 in the story is the one part not yet real.
 
-**2. One venue is not a choice.** `gecko/pay_route.py:512` hardcodes
+**2. One venue is not a choice.** `gecko/pay_route.py:828-840` hardcodes
 `idl_fetch("whirlpool")`. Its outcomes express *whether* to convert, never *where*. Until a
 second venue is callable, "the agent picks the right path" means "the agent picks the only
 path."

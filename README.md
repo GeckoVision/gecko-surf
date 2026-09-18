@@ -9,14 +9,15 @@
   one command maps any API — messy, paywalled, or on-chain — into a call graph your agent<br>
   <b>checks instead of guesses from</b>, and anything that spends is simulated to a
   <b>receipt</b> first.<br>
-  No wallet, no payment rail, no key held — fifteen mainnet transactions, fifteen exact
-  cost predictions.
+  No wallet, no payment rail, no key held — 59 mainnet transactions, 44 with a cost
+  predicted before signing, 43 of those exact to the unit (re-read from the chain,
+  2026-09-18).
 </p>
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/surface-MCP-D97757.svg" alt="MCP"></a>
-  <a href="#development"><img src="https://img.shields.io/badge/tests-4939%20passing-2E7D32.svg" alt="tests"></a>
+  <a href="#development"><img src="https://img.shields.io/badge/tests-5043%20passing-2E7D32.svg" alt="tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-5C6BC0.svg" alt="Apache 2.0"></a>
   <a href="https://x402.org/"><img src="https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg" alt="x402"></a>
 </p>
@@ -136,7 +137,7 @@ And the depth is measured, not asserted:
 - **Seven security layers, fail-closed:** spec sanitizer · per-tool quarantine · image
   Skill Guard · SSRF netguard · out-of-band auth anchoring · verdict signing gate · an
   AST-enforced never-sign boundary.
-- **The numbers:** 4,939 tests · 8 Solana programs wired, 4 differential-proven · 2
+- **The numbers:** 5,043 tests · 59 mainnet transactions, 43/44 predictions exact · 8 Solana programs wired, 4 differential-proven · 2
   live receipt-pairs · −77%/−89% measured context cuts · a 4,534-program catalog listed ·
   0 auth headers exposed across 14 real specs.
 
