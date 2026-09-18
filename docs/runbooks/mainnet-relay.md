@@ -94,6 +94,15 @@ adds: the key lives in SSM and reaches the container as an environment variable 
 the container has no shell access from outside, and `aws ecs update-service
 --desired-count 0` is the off switch.
 
+**Measured 2026-09-18.** `./infra/push-relay-params.sh` put the three parameters (version 1
+each); `./infra/deploy-relay.sh` built Kora from `../kora` at the #675 branch head (the pinned
+tag plus `lighthouse_assertion_added`), pushed `gecko-relay`, and the stack update reached a
+steady state with the target healthy. The six probes against
+`https://mcp.geckovision.tech:8443/`: liveness 200, `getPayerSigner` 200, `getSupportedTokens`
+200, `signAndSendTransaction` 405, `transferTransaction` 405, no key 401. The signer is
+`6Q5Ki322q5tRxyzfU9uAeAXsN3DzoMV8W9C8xAVTtiq9`, unfunded at that point; the balance metric
+warns until it holds SOL, which is the expected state before §1's funding step.
+
 ## 3. Probe the wire before the first coin
 
 A config is a claim; 401 and 405 are evidence. Same six probes as the fork runbook, against
