@@ -485,11 +485,29 @@ def assess_payment(
             ),
         )
 
-    # 3. The DESTINATION's peg, always recorded.
-    destination_verdict = verdict_from_reading(priced_mint, peg_reader(priced_mint))
+    # 3. The DESTINATION's peg, always recorded. When a conversion is needed the
+    #    candidates' pegs are needed too, and all of them are read at once: each reading
+    #    is two HTTP round trips (~2 s), and reading the destination first and the
+    #    candidates after was one whole reading of wall clock for nothing.
     held_priced = holdings.get(priced_mint, (0, TOKEN_PROGRAM_ID))[0]
     conversion_required = held_priced < price_raw
     conversion_known = conversion_required  # noqa: F841 - read by report() via closure
+    candidates = (
+        sorted(
+            (
+                (m, amt)
+                for m, (amt, _) in holdings.items()
+                if m != priced_mint and amt > 0
+            ),
+            key=lambda pair: -pair[1],
+        )[:max_candidates]
+        if conversion_required
+        else []
+    )
+    readings = _read_pegs_concurrently(
+        peg_reader, [priced_mint, *(m for m, _ in candidates)]
+    )
+    destination_verdict = verdict_from_reading(priced_mint, readings[priced_mint])
     checks: list[PegCheck] = [
         # `binds` scopes the verdict to THIS request: with no conversion, a blocking
         # destination reading is information, not a refusal — and saying so in the
@@ -522,10 +540,6 @@ def assess_payment(
             peg_checks=tuple(checks),
         )
 
-    candidates = sorted(
-        ((m, amt) for m, (amt, _) in holdings.items() if m != priced_mint and amt > 0),
-        key=lambda pair: -pair[1],
-    )[:max_candidates]
     if not candidates:
         return report(
             "no_candidates",
@@ -538,7 +552,7 @@ def assess_payment(
     peg_refused = 0
 
     for held_mint, held_raw in candidates:
-        verdict = verdict_from_reading(held_mint, peg_reader(held_mint))
+        verdict = verdict_from_reading(held_mint, readings[held_mint])
         checks.append(PegCheck.of(verdict, "candidate"))
         # The SAME downgrade the destination gets, on the mint we would sell. Applying it
         # to one side only is what produced "every mint this wallet could convert from has
@@ -796,6 +810,21 @@ def _default_peg_reader() -> PegReader:
     return pegana_reader()
 
 
+def _read_pegs_concurrently(
+    peg_reader: PegReader, mints: Sequence[str]
+) -> dict[str, Any]:
+    """One reading per distinct mint, all in flight at once. Exceptions propagate as
+    they would have from the serial loop, from the first mint that raised."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    distinct = list(dict.fromkeys(mints))
+    if len(distinct) <= 1:
+        return {mint: peg_reader(mint) for mint in distinct}
+    with ThreadPoolExecutor(max_workers=min(8, len(distinct))) as pool:
+        futures = {mint: pool.submit(peg_reader, mint) for mint in distinct}
+        return {mint: future.result() for mint, future in futures.items()}
+
+
 def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
     """Bind the venue search to this call's transport, and size each pool's input.
 
@@ -820,12 +849,22 @@ def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
     if program is None:  # pragma: no cover - the packaged config always carries it
         raise PayRouteError("the packaged whirlpool config declares no program")
     recipe = dict(program.pdas)["whirlpool"]
+    # ONE IDL fetch per program per plan_payment. The finder runs once per candidate
+    # mint (up to eight), and an IDL fetch is 1.8 s of network; fetching it inside the
+    # loop was most of the wall clock. Memoised per finder, so a new plan_payment still
+    # sees a fresh IDL and a drifted one cannot outlive the call that fetched it.
+    layouts: dict[str, Any] = {}
+
+    def layout_for(program_id: str) -> Any:
+        if program_id not in layouts:
+            layouts[program_id] = whirlpool_layout(idl_fetch(program_id))
+        return layouts[program_id]
 
     def finder(*, held_mint: str, needed_mint: str, target_out: int) -> list[Quote]:
         # The IDL is fetched HERE, by the finder that knows which program it needs.
         # Threading a generic `idl` down from `assess_payment` is what welded every
         # route to Orca: the parameter was named for any program and only ever held one.
-        layout = whirlpool_layout(idl_fetch(WHIRLPOOL_PROGRAM))
+        layout = layout_for(WHIRLPOOL_PROGRAM)
         venues = _find(
             rpc_url,
             held_mint,
