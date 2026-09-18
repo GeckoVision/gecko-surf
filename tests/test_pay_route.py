@@ -8,8 +8,6 @@ that runs too late is a check that already spent something.
 import pytest
 
 from gecko import pay_route
-from gecko.peg_guard import PegReading
-from gecko.pegana import recorded_peg_reader
 from gecko.store_accounts import TOKEN_PROGRAM_ID, derive_ata
 from gecko.store_directory import StoreProduct
 
@@ -19,13 +17,6 @@ USDG = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
 BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
 BUYER = "5cjBs5VE8WVVctG2EoUkYiRkW92sXkoT4YsNxszWC9CE"
 AUTHORITY = "3i92aBEYCPTVYT8bMYcLdEjcJRP1UBmvPHnUdRDvMrs1"
-
-PEGGED = PegReading(
-    tracked=True, symbol="X", state_body={"state": "PEGGED", "stale": False}
-)
-DEPEGGED = PegReading(
-    tracked=True, symbol="X", state_body={"state": "DEPEG", "stale": False}
-)
 
 
 class _Store:
@@ -55,13 +46,13 @@ class _Counter:
         return self._fn(*a, **k)
 
 
-def _assess(
-    *, store, holdings, peg=None, mint_owner=None, idl=None, venues=None, buyer=BUYER
-):
+def _assess(*, store, holdings, mint_owner=None, idl=None, venues=None, buyer=BUYER):
     """`idl` is accepted and ignored: `assess_payment` no longer fetches one (2026-09-13),
     the venue finder owns its own. The parameter stays so the many callers below read
     unchanged, and the returned counter stays at 0 to prove nothing fetches behind them."""
-    peg_reader = _Counter(peg or recorded_peg_reader({}))
+    # The oracle counter that sat here left with the Pegana peg gate (2026-09-18). The
+    # slot stays in the returned tuple so callers read unchanged; it must stay at 0.
+    no_oracle = _Counter(lambda mint: None)
     idl_fetch = _Counter(idl or (lambda program: {}))
     find_venues = _Counter(venues or (lambda **k: []))
     report = pay_route.assess_payment(
@@ -69,10 +60,9 @@ def _assess(
         buyer=buyer,
         holdings=holdings,
         mint_owner=mint_owner or (lambda m: TOKEN_PROGRAM_ID),
-        peg_reader=peg_reader,
         find_venues=find_venues,
     )
-    return report, peg_reader, idl_fetch, find_venues
+    return report, no_oracle, idl_fetch, find_venues
 
 
 # --- the order of refusals ------------------------------------------------------------
@@ -119,83 +109,6 @@ def test_the_self_purchase_comparison_uses_one_program_basis() -> None:
     assert report.outcome in {"pinned_program_mismatch", "self_purchase"}
 
 
-# --- the peg gate, on BOTH sides of the conversion ------------------------------------
-
-
-def test_a_depegged_priced_mint_is_never_a_route_destination() -> None:
-    """The mint being converted INTO is checked too. Quoting a route into a broken peg
-    while reporting blocked:false is the failure this whole module exists to prevent."""
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: DEPEGGED, USDG: PEGGED}),
-    )
-    assert report.outcome == "peg_blocked"
-    assert report.blocks is True
-    assert report.route is None
-    assert USDC in report.reason
-
-
-def test_payable_now_reports_the_priced_mint_verdict_without_blocking() -> None:
-    """Holding enough means no conversion happens, so a depeg is information rather than
-    a refusal — we are not asking anyone to acquire the asset."""
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: DEPEGGED}),
-    )
-    assert report.outcome == "payable_now"
-    assert report.blocks is False
-    assert any(c.mint == USDC for c in report.peg_checks)
-
-
-def test_an_unreachable_oracle_blocks_the_route() -> None:
-    store = _Store(mint=USDC)
-    report, *_ = _assess(store=store, holdings={USDG: (10**9, TOKEN_PROGRAM_ID)})
-    assert report.blocks is True
-    assert report.outcome == "peg_blocked"
-
-
-def test_a_peg_refusal_on_one_mint_does_not_abandon_the_wallet() -> None:
-    """A blocked candidate is skipped, not fatal — the wallet may hold another mint that
-    is fine, and refusing the whole request would be a blanket denial."""
-    store = _Store(mint=USDC)
-    venue = pay_route.Quote(
-        venue="whirlpool",
-        curve="clmm",
-        pool="pool111",
-        amount_in=200_000,
-        direction="a_to_b",
-        liquidity=10**9,
-        tick_spacing=64,
-        fee_rate=300,
-    )
-    report, *_ = _assess(
-        store=store,
-        holdings={BONK: (10**9, TOKEN_PROGRAM_ID), USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, BONK: DEPEGGED, USDG: PEGGED}),
-        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
-    )
-    assert report.outcome == "route_found"
-    assert report.route is not None
-    assert report.route.held_mint == USDG
-    # every evaluated mint is reported, including the one that blocked
-    assert {c.mint for c in report.peg_checks} == {USDC, BONK, USDG}
-    assert any(c.blocks for c in report.peg_checks)
-
-
-def test_peg_checks_covers_every_evaluated_mint_including_the_destination() -> None:
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
-    )
-    assert USDC in {c.mint for c in report.peg_checks}
-
-
 # --- the ordinary answers -------------------------------------------------------------
 
 
@@ -204,7 +117,6 @@ def test_holding_enough_is_payable_now() -> None:
     report, _, idl, venues = _assess(
         store=store,
         holdings={USDC: (100_000, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
     )
     assert report.outcome == "payable_now"
     assert report.blocks is False
@@ -213,9 +125,7 @@ def test_holding_enough_is_payable_now() -> None:
 
 def test_an_empty_wallet_is_no_candidates_not_no_route() -> None:
     store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store, holdings={}, peg=recorded_peg_reader({USDC: PEGGED})
-    )
+    report, *_ = _assess(store=store, holdings={})
     assert report.outcome == "no_candidates"
     assert report.blocks is True
 
@@ -225,7 +135,6 @@ def test_a_pair_with_no_pool_is_no_route() -> None:
     report, *_ = _assess(
         store=store,
         holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [],
     )
     assert report.outcome == "no_route"
@@ -248,7 +157,6 @@ def test_a_route_that_costs_more_than_is_held_is_rejected_and_recorded() -> None
     report, *_ = _assess(
         store=store,
         holdings={USDG: (1000, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [too_big],
     )
     assert report.outcome == "no_route"
@@ -261,13 +169,11 @@ def test_a_report_crosses_the_boundary_as_data() -> None:
     report, *_ = _assess(
         store=store,
         holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
     )
     d = report.to_dict()
     assert d["outcome"] == "payable_now"
     assert d["blocked"] is False
-    assert "peg_evidence_as_of" in d
-    assert isinstance(d["peg_checks"], list)
+    assert "holdings_as_of" in d
 
 
 def test_blocks_is_true_for_every_outcome_that_is_not_an_answer() -> None:
@@ -276,7 +182,6 @@ def test_blocks_is_true_for_every_outcome_that_is_not_an_answer() -> None:
             "pinned_program_mismatch",
             "self_purchase",
             "no_candidates",
-            "peg_blocked",
             "no_route",
         }
     )
@@ -393,7 +298,6 @@ def test_conversion_required_is_stated_not_inferred() -> None:
     payable, *_ = _assess(
         store=store,
         holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
     )
     assert payable.conversion_required is False
     assert payable.to_dict()["conversion_required"] is False
@@ -401,7 +305,6 @@ def test_conversion_required_is_stated_not_inferred() -> None:
     routed, *_ = _assess(
         store=store,
         holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [
             pay_route.Quote(
                 venue="whirlpool",
@@ -430,7 +333,6 @@ def test_route_found_names_its_execution_tool() -> None:
     routed, *_ = _assess(
         store=_Store(mint=USDC),
         holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [
             pay_route.Quote(
                 venue="whirlpool",
@@ -448,36 +350,8 @@ def test_route_found_names_its_execution_tool() -> None:
     payable, *_ = _assess(
         store=_Store(mint=USDC),
         holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
     )
     assert payable.to_dict()["next_tool"] is None
-
-
-def test_a_non_binding_block_says_so_in_the_check_itself() -> None:
-    """payable_now beside a blocking destination reading is CORRECT and read as a
-    contradiction — `binds: false` is the check saying 'I would stop a conversion, and
-    this request does not convert'."""
-    report, *_ = _assess(
-        store=_Store(mint=USDC),
-        holdings={USDC: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: DEPEGGED}),
-    )
-    assert report.outcome == "payable_now"
-    (check,) = report.peg_checks
-    assert check.blocks is True
-    assert check.binds is False
-    assert report.to_dict()["peg_checks"][0]["binds"] is False
-
-
-def test_a_binding_block_still_binds() -> None:
-    report, *_ = _assess(
-        store=_Store(mint=USDC),
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: DEPEGGED, USDG: PEGGED}),
-    )
-    assert report.outcome == "peg_blocked"
-    dest = [c for c in report.peg_checks if c.side == "destination"][0]
-    assert dest.blocks is True and dest.binds is True
 
 
 # --- the next_steps rail (both good outcomes; the payable_now half was missing) --------
@@ -491,7 +365,6 @@ def test_payable_now_carries_the_prepare_rail() -> None:
     report, *_ = _assess(
         store=store,
         holdings={USDC: (100_000, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
     )
     rendered = report.to_dict()
     assert rendered["outcome"] == "payable_now"
@@ -519,7 +392,6 @@ def test_route_found_carries_the_two_step_rail_with_the_argument_joins() -> None
     report, *_ = _assess(
         store=store,
         holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
     )
     assert report.outcome == "route_found"
@@ -537,148 +409,14 @@ def test_a_blocked_report_has_no_next_steps() -> None:
     """A refusal's next step lives in its reason; a tool rail on a refusal would be an
     invitation to route around it."""
     store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store, holdings={}, peg=recorded_peg_reader({USDC: PEGGED})
-    )
+    report, *_ = _assess(store=store, holdings={})
     assert report.blocks is True
     assert report.to_dict()["next_steps"] is None
 
 
 #: Tracked, read, and OLD — the shape USDG and USDC actually returned. Absence of a
 #: fresh opinion, not a bad one.
-STALE = PegReading(
-    tracked=True,
-    symbol="X",
-    state_body={"state": "UNKNOWN", "stale": True, "state_reason": "stale_source"},
-)
 #: Old AND bad. Staleness must not launder a real verdict into a warning.
-STALE_AND_DEPEGGED = PegReading(
-    tracked=True, symbol="X", state_body={"state": "DEPEG", "stale": True}
-)
-
-
-def test_a_stale_reading_warns_on_a_read_only_plan_instead_of_blocking_it() -> None:
-    """`plan_payment` builds nothing, so a seven-day-old reading must not withhold the
-    answer. Measured: a blind tester on 2026-09-02 got `peg_blocked` with empty holdings
-    because Pegana's USDC reading was stale, and had to open a second MCP session just
-    to discover a mint address."""
-    store = _Store(mint=USDC)
-    venue = pay_route.Quote(
-        venue="whirlpool",
-        curve="clmm",
-        pool="pool111",
-        amount_in=200_000,
-        direction="a_to_b",
-        liquidity=10**9,
-        tick_spacing=64,
-        fee_rate=300,
-    )
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: STALE, USDG: PEGGED}),
-        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
-    )
-    assert report.outcome == "route_found_peg_unverified"
-    assert report.route is not None, "the caller gets the plan"
-    assert report.blocks is False
-    assert "stale" in report.reason, "and is told, in the outcome and in the reason"
-
-
-def test_the_caveated_route_still_points_at_the_next_tool() -> None:
-    """A route the caller may act on knowingly must not be a dead end."""
-    store = _Store(mint=USDC)
-    venue = pay_route.Quote(
-        venue="whirlpool",
-        curve="clmm",
-        pool="pool111",
-        amount_in=200_000,
-        direction="a_to_b",
-        liquidity=10**9,
-        tick_spacing=64,
-        fee_rate=300,
-    )
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: STALE, USDG: PEGGED}),
-        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
-    )
-    assert report.to_dict()["next_tool"] == "plan_swap"
-
-
-def test_a_real_depeg_still_refuses_even_when_the_reading_is_also_stale() -> None:
-    """Staleness downgrades ABSENCE of a signal, never a signal. A DEPEG that happens to
-    be old is still Pegana telling us something."""
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: STALE_AND_DEPEGGED, USDG: PEGGED}),
-    )
-    assert report.outcome == "peg_blocked"
-    assert report.route is None
-
-
-def test_an_unreachable_oracle_still_refuses() -> None:
-    """Silence is not an old reading, it is no reading. `undetermined` is never
-    downgraded — that distinction is why the four-value vocabulary exists."""
-    unreachable = PegReading(tracked=None, error="ConnectionError")
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: unreachable, USDG: PEGGED}),
-    )
-    assert report.outcome == "peg_blocked"
-    assert report.route is None
-
-
-def test_a_stale_candidate_is_downgraded_too_not_only_a_stale_destination() -> None:
-    """The 2026-09-08 case, measured against live Pegana: BOTH mints read stale.
-
-    `_staleness_only` was applied to the destination and never to the candidates, so a
-    wallet whose only holding had an old reading got `peg_blocked` — "every mint this
-    wallet could convert from has a peg verdict that blocks" — while the destination's
-    identical staleness was correctly waved through. One rule, applied on one side.
-
-    A real depeg on the candidate still refuses; that is the next test.
-    """
-    store = _Store(mint=USDC)
-    venue = pay_route.Quote(
-        venue="whirlpool",
-        curve="clmm",
-        pool="pool111",
-        amount_in=200_000,
-        direction="a_to_b",
-        liquidity=10**9,
-        tick_spacing=64,
-        fee_rate=300,
-    )
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: STALE, USDG: STALE}),
-        venues=lambda **k: [venue] if k.get("held_mint") == USDG else [],
-    )
-    assert report.outcome == "route_found_peg_unverified", report.reason
-    assert report.route is not None, (
-        "an old reading on the source is still not a signal"
-    )
-    assert report.blocks is False
-
-
-def test_a_depegged_candidate_still_refuses_even_when_the_destination_is_fine() -> None:
-    """The downgrade is for ABSENCE of a signal. A DEPEG on the mint we would SELL is a
-    signal, and selling into it is the loss the guard exists to prevent."""
-    store = _Store(mint=USDC)
-    report, *_ = _assess(
-        store=store,
-        holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: STALE_AND_DEPEGGED}),
-    )
-    assert report.outcome == "peg_blocked"
-    assert report.route is None
 
 
 # --- venue identity: the report must be able to say WHICH venue, and why ---------------
@@ -757,11 +495,10 @@ def test_a_second_venue_can_be_offered_without_touching_assess_payment() -> None
         buyer=BUYER,
         holdings={USDG: (10**9, TOKEN_PROGRAM_ID)},
         mint_owner=lambda m: TOKEN_PROGRAM_ID,
-        peg_reader=recorded_peg_reader({USDG: PEGGED, USDC: PEGGED}),
         find_venues=raydium_finder,
     )
     assert "idl" not in seen, "the finder is asked for a route, not handed an IDL"
-    assert report.outcome in {"route_found", "route_found_peg_unverified"}
+    assert report.outcome == "route_found"
     leg = report.to_dict()["route"]
     assert leg["quote"]["venue"] == "raydium"
     assert leg["quote"]["curve"] == "cpmm"
@@ -794,19 +531,3 @@ def test_the_finder_fetches_the_idl_once_across_candidates(monkeypatch) -> None:
     for mint in (USDG, WSOL, USDC):
         assert finder(held_mint=mint, needed_mint=USDC, target_out=100_000) == []
     assert fetches.n == 1
-
-
-def test_candidate_pegs_are_read_once_per_mint_and_all_of_them() -> None:
-    import threading
-
-    seen: list[str] = []
-    lock = threading.Lock()
-
-    def reader(mint: str):
-        with lock:
-            seen.append(mint)
-        return recorded_peg_reader({USDG: PEGGED, WSOL: PEGGED, USDC: PEGGED})(mint)
-
-    readings = pay_route._read_pegs_concurrently(reader, [USDG, WSOL, USDG, USDC])
-    assert set(readings) == {USDG, WSOL, USDC}
-    assert sorted(seen) == sorted({USDG, WSOL, USDC}), "each mint read exactly once"

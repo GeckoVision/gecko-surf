@@ -11,15 +11,13 @@ The shape of the problem, and why three surfaces have to agree:
   * the AMM has a pool that converts one into the other, if it can prove it is that pool
   * the PEG ORACLE has an opinion about both mints, and no opinion is not permission
 
-They join on ONE value: the mint. That is the cross-API join — a peg oracle, an AMM and a
+They join on ONE value: the mint. That is the cross-API join — an AMM and a
 storefront program, addressed by the same key, with no symbol translation anywhere.
 """
 
 import pytest
 
 from gecko.pay_route import Quote, assess_payment
-from gecko.peg_guard import PegReading
-from gecko.pegana import recorded_peg_reader
 from gecko.store_accounts import TOKEN_PROGRAM_ID, derive_ata
 from gecko.store_directory import StoreProduct
 
@@ -31,18 +29,6 @@ AUTHORITY = "3i92aBEYCPTVYT8bMYcLdEjcJRP1UBmvPHnUdRDvMrs1"
 
 #: 0.1 USDC — the real price of the espresso at geckocoffee.
 PRICE_RAW = 100_000
-
-PEGGED = PegReading(
-    tracked=True, symbol="X", state_body={"state": "PEGGED", "stale": False}
-)
-DEPEGGED = PegReading(
-    tracked=True, symbol="USDG", state_body={"state": "DEPEG", "stale": False}
-)
-STALE = PegReading(
-    tracked=True,
-    symbol="USDG",
-    state_body={"state": "PEGGED", "stale": True, "updated_at": "2026-08-01T00:00:00Z"},
-)
 
 
 class _Espresso:
@@ -75,13 +61,12 @@ def _pool(amount_in: int) -> Quote:
     )
 
 
-def _run(*, holdings, peg, venues):
+def _run(*, holdings, venues):
     return assess_payment(
         store=_Espresso(),
         buyer=BUYER,
         holdings=holdings,
         mint_owner=lambda m: TOKEN_2022 if m == USDG else TOKEN_PROGRAM_ID,
-        peg_reader=peg,
         find_venues=venues,
     )
 
@@ -90,7 +75,6 @@ def test_the_whole_point_a_usdg_wallet_gets_a_checked_route_to_an_espresso() -> 
     """The headline. One call in, a two-step route out, and every leg checked."""
     report = _run(
         holdings={USDG: (5_000_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [_pool(101_500)],
     )
 
@@ -103,73 +87,13 @@ def test_the_whole_point_a_usdg_wallet_gets_a_checked_route_to_an_espresso() -> 
     assert report.route.quote.amount_in == 101_500
     assert report.route.quote.amount_in <= 5_000_000  # affordable
 
-    # BOTH sides of the conversion were checked, not just the one being sold
-    assert {c.mint for c in report.peg_checks} == {USDC, USDG}
-    assert {c.side for c in report.peg_checks} == {"destination", "candidate"}
-    assert not any(c.blocks for c in report.peg_checks)
-
     # and it crosses a boundary as data an agent can act on
     out = report.to_dict()
     assert out["blocked"] is False
     assert (
         out["route"]["quote"]["pool"] == "7qbRF6YsyGuLUVs6Y1q64bdVrfe4ZcUUz1JRdoVNUJnm"
     )
-    assert out["peg_evidence_as_of"]
-
-
-@pytest.mark.parametrize(
-    "reading,why",
-    [
-        (DEPEGGED, "a depegged source"),
-        (PegReading(tracked=None, error="URLError"), "an unreachable oracle"),
-        (PegReading(tracked=None, status=429), "a rate-limited oracle"),
-        (PegReading(tracked=None, status=200), "a degraded 200 that is not a card"),
-    ],
-)
-def test_the_same_wallet_is_refused_when_the_peg_cannot_vouch(reading, why) -> None:
-    """The identical request, refused for four different reasons — and the last three are
-    the oracle SAYING NOTHING. Silence is not consent: this is the defect that shipped in
-    the script, where an unreachable Pegana read as permission to convert."""
-    report = _run(
-        holdings={USDG: (5_000_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: reading}),
-        venues=lambda **k: [_pool(101_500)],
-    )
-    assert report.outcome == "peg_blocked", why
-    assert report.blocks is True
-    assert report.route is None
-
-
-def test_a_stale_source_warns_and_still_routes() -> None:
-    """STALE moved OUT of the refusal list on 2026-09-08, and the line it moved across is
-    the one that matters: staleness downgrades the ABSENCE of a signal, never a signal.
-
-    An old reading is a statement about the past; an unreachable oracle is no statement at
-    all. The four cases above keep refusing because three of them are silence and one is a
-    real DEPEG. This one says "we have a reading and it is out of date" — so the caller
-    gets the route WITH the caveat attached, rather than being told no by a feed that
-    stopped updating on 2026-08-26 and is not coming back."""
-    report = _run(
-        holdings={USDG: (5_000_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: STALE}),
-        venues=lambda **k: [_pool(101_500)],
-    )
-    assert report.outcome == "route_found_peg_unverified"
-    assert report.blocks is False
-    assert report.route is not None, "the caller gets the plan"
-    assert "stale" in report.reason, "and is told why it is unverified"
-
-
-def test_a_depegged_destination_refuses_even_with_a_healthy_wallet() -> None:
-    """The symmetric half. Checking only what you SELL quotes a route INTO a broken peg
-    and reports blocked:false beside it."""
-    report = _run(
-        holdings={USDG: (5_000_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: DEPEGGED, USDG: PEGGED}),
-        venues=lambda **k: [_pool(101_500)],
-    )
-    assert report.outcome == "peg_blocked"
-    assert USDC in report.reason
+    assert out["holdings_as_of"]
 
 
 def test_a_pool_that_cannot_prove_itself_leaves_no_route() -> None:
@@ -178,7 +102,6 @@ def test_a_pool_that_cannot_prove_itself_leaves_no_route() -> None:
     a plausible one."""
     report = _run(
         holdings={USDG: (5_000_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [],
     )
     assert report.outcome == "no_route"
@@ -189,7 +112,6 @@ def test_a_pool_that_cannot_prove_itself_leaves_no_route() -> None:
 def test_a_wallet_that_cannot_afford_the_swap_says_so_with_the_numbers() -> None:
     report = _run(
         holdings={USDG: (50_000, TOKEN_2022)},
-        peg=recorded_peg_reader({USDC: PEGGED, USDG: PEGGED}),
         venues=lambda **k: [_pool(101_500)],
     )
     assert report.outcome == "no_route"
@@ -202,7 +124,6 @@ def test_a_wallet_that_cannot_afford_the_swap_says_so_with_the_numbers() -> None
 def test_holding_the_usdc_already_skips_the_conversion_entirely() -> None:
     report = _run(
         holdings={USDC: (PRICE_RAW, TOKEN_PROGRAM_ID)},
-        peg=recorded_peg_reader({USDC: PEGGED}),
         venues=lambda **k: pytest.fail(
             "no venue should be sought when no swap is needed"
         ),
@@ -222,7 +143,6 @@ def test_an_espresso_priced_in_token_2022_is_refused_before_the_oracle_is_asked(
         buyer=BUYER,
         holdings={USDG: (5_000_000, TOKEN_2022)},
         mint_owner=lambda m: TOKEN_2022,
-        peg_reader=lambda m: pytest.fail("the oracle must not be asked"),
         # "the IDL must not be fetched" used to be asserted through its own seam. The
         # finder now owns its venue's IDL, so the line below subsumes it: no venue
         # sought means no IDL fetched, and there is no longer a way to fetch one behind

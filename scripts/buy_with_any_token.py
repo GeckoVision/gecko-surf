@@ -33,8 +33,6 @@ sys.path.insert(0, str(ROOT))
 
 from gecko.networks import NETWORKS  # noqa: E402
 from gecko.pay_route import plan_payment_result  # noqa: E402
-from gecko.peg_guard import PegReading, verdict_from_reading  # noqa: E402
-from gecko.pegana import pegana_reader  # noqa: E402
 
 
 def _run(argv: list[str]) -> tuple[int, str]:
@@ -97,17 +95,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--keypair", required=True, help="signs both legs")
     p.add_argument("--table", type=int, default=1)
     p.add_argument(
-        "--accept-stale-peg",
-        action="store_true",
-        help=(
-            "Proceed when the ONLY thing blocking the route is a peg oracle whose "
-            "reading is STALE — the operator asserting the peg on their own authority. "
-            "Narrow on purpose: a DEPEG, CRITICAL or any non-stale refusal still stops, "
-            "flag or no flag. The live verdicts are printed either way, so the override "
-            "is visible in the artifact rather than smoothed into an 'ok'."
-        ),
-    )
-    p.add_argument(
         "--max-usdc-raw",
         type=int,
         default=200_000,
@@ -118,46 +105,6 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 70)
     print("  ASK — what does Gecko say this wallet should do?")
     print("=" * 70)
-    peg_reader = None
-    if args.accept_stale_peg:
-        # Decided from STRUCTURED verdict fields, never by parsing a reason string —
-        # prose must not be load-bearing. It fabricates nothing silently either: each
-        # live reading is fetched and PRINTED first; only a verdict that is
-        # refuse-BECAUSE-STALE (state UNKNOWN, stale=True) is replaced, and the
-        # replacement's state_reason names the override and the flag, so the plan's own
-        # peg_checks carry the acknowledgment into the record. Anything else — a DEPEG,
-        # a CRITICAL, an unreachable oracle — passes through and still blocks.
-        live = pegana_reader()
-
-        def _acknowledged(mint: str) -> PegReading:
-            reading = live(mint)
-            verdict = verdict_from_reading(mint, reading)
-            print(
-                f"  live peg  {mint[:10]}…  {verdict.outcome:12} "
-                f"state={verdict.state} stale={verdict.stale}"
-            )
-            if verdict.blocks and verdict.stale and verdict.state in (None, "UNKNOWN"):
-                print(
-                    "            ^ STALE-ONLY refusal — overridden by the operator "
-                    "(--accept-stale-peg)"
-                )
-                return PegReading(
-                    tracked=True,
-                    symbol=reading.symbol,
-                    state_body={
-                        "state": "PEGGED",
-                        "stale": False,
-                        "state_reason": (
-                            "operator-override --accept-stale-peg: the oracle reading "
-                            "is stale and the operator asserted the peg on their own "
-                            "authority"
-                        ),
-                    },
-                )
-            return reading
-
-        peg_reader = _acknowledged
-
     plan = plan_payment_result(
         {
             "store": args.store,
@@ -166,7 +113,6 @@ def main(argv: list[str] | None = None) -> int:
             "network": args.network,
             "rpc_url": args.rpc_url,
         },
-        peg_reader=peg_reader,
     )
     if "error" in plan:
         print(f"  ERROR  {plan['error']}")
@@ -174,11 +120,6 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"  outcome   {plan['outcome']}   blocked={plan['blocked']}")
     print(f"  reason    {plan['reason']}")
-    for check in plan.get("peg_checks", []):
-        print(
-            f"  peg       {check['side']:11} {check['mint'][:10]}…  "
-            f"{check['outcome']:12} blocks={check['blocks']}"
-        )
 
     if plan["blocked"]:
         print("\n  STOPPED — Gecko refused, so this driver refuses. The refusal IS the")

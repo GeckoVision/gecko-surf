@@ -80,7 +80,7 @@ def test_the_refusal_renders_as_prominently_as_success() -> None:
     assert html is not None
     assert "REFUSED" in html
     assert "blocked" in html
-    assert "peg" in html.lower()
+    assert "holdings as of" in html
 
 
 def test_no_tool_is_stamped_but_the_card_stays_served() -> None:

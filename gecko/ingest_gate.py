@@ -10,9 +10,9 @@ hypothetical. ``gecko/providers/configs/orquestra/whirlpool.json`` declares
 at ``gecko/providers/cli.py:68`` and again at ``gecko/find_start.py:966``. It shipped. The
 whole value of this module is saying no BEFORE that happens again.
 
-THREE OUTCOMES PLUS A DEGRADE, BECAUSE "NO DATA" IS NOT "GOOD DATA". :mod:`gecko.peg_guard`
-already models the split and this module follows its shape, adding the one distinction an
-ingest decision needs that a peg reading does not — *broken now* is a different fact from
+THREE OUTCOMES PLUS A DEGRADE, BECAUSE "NO DATA" IS NOT "GOOD DATA". The peg guard that
+once lived beside this module modelled the same split; this one adds the one distinction an
+ingest decision needs that a peg reading did not — *broken now* is a different fact from
 *breaks later*:
 
 * ``ok``      — measured, and the measurement says go.
@@ -68,7 +68,7 @@ __all__ = [
     "render",
 ]
 
-#: ``warn`` is the member :mod:`gecko.peg_guard` does not need. A peg either holds or it
+#: ``warn`` is the member a peg guard does not need. A peg either holds or it
 #: does not; an ingest can be correct at 8 accounts and wrong at 80.
 Outcome = Literal["ok", "refuse", "warn", "unknown"]
 

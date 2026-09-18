@@ -81,13 +81,6 @@ def _print_report(report: dict, store: str, product: str) -> None:
     if not holdings:
         print("  (no token balances)")
 
-    for check in report.get("peg_checks") or ():
-        mark = {"ok": "holding", "refuse": "NOT HOLDING", "unknown": "not tracked"}.get(
-            check.get("outcome", "unknown"), check.get("outcome", "?")
-        )
-        label = check.get("symbol") or (check.get("mint") or "")[:8]
-        print(f"  peg check    {label}: {mark} — {check.get('reason', '')}")
-
     print()
     outcome = report["outcome"]
 

@@ -16,7 +16,7 @@ THE RULES THE CARD LIVES UNDER, and they are the same rules as everything else h
   ``structuredContent`` (the same dict every non-rendering client gets as JSON text).
   Nothing new crosses the control-plane boundary because the card exists.
 * THE REFUSAL IS THE CENTREPIECE. ``blocked`` renders as prominently as success, with
-  the reason and every peg verdict visible — a card that made refusals look like
+  the reason and every refusal visible — a card that made refusals look like
   failures would be selling against the product.
 
 Clients that do not speak MCP Apps ignore ``_meta.ui`` and see exactly what they see
@@ -156,10 +156,6 @@ _PLAN_PAYMENT_HTML = """<!DOCTYPE html>
     var n = Number(raw);
     return isFinite(n) ? (n / 1e6).toFixed(n % 1e6 === 0 ? 2 : 6).replace(/0+$/, "").replace(/\\.$/, ".00") : esc(raw);
   }
-  function pegClass(check) {
-    if (check.blocks) return "v-bad";
-    return check.outcome === "ok" ? "v-ok" : "v-unk";
-  }
   function render(data) {
     var out = document.getElementById("out");
     var html = "";
@@ -186,18 +182,6 @@ _PLAN_PAYMENT_HTML = """<!DOCTYPE html>
             " @ " + esc(data.store || "?") + '</span><span class="v">' +
             esc(ui(data.price_raw)) + "</span></div></div>";
 
-    var checks = data.peg_checks || [];
-    if (checks.length) {
-      html += '<div class="sect"><h4>Peg checks</h4>';
-      for (var i = 0; i < checks.length; i++) {
-        var c = checks[i];
-        html += '<div class="chip"><span class="m">' + esc(c.side) + " \\u00b7 " +
-                esc(short(c.mint)) + '</span><span class="' + pegClass(c) + '">' +
-                esc(c.outcome) + (c.blocks ? " \\u00b7 blocks" : "") + "</span></div>";
-      }
-      html += "</div>";
-    }
-
     var holdings = data.holdings || {};
     var mints = Object.keys(holdings);
     if (mints.length) {
@@ -211,8 +195,8 @@ _PLAN_PAYMENT_HTML = """<!DOCTYPE html>
     out.className = "";
     out.innerHTML = html;
     var asof = document.getElementById("asof");
-    if (data.peg_evidence_as_of) {
-      asof.textContent = "peg evidence " + String(data.peg_evidence_as_of).slice(0, 16) + "Z";
+    if (data.holdings_as_of) {
+      asof.textContent = "holdings as of " + String(data.holdings_as_of).slice(0, 16) + "Z";
     }
     notify("ui/notifications/size-changed", {
       width: document.body.scrollWidth, height: document.body.scrollHeight + 16
