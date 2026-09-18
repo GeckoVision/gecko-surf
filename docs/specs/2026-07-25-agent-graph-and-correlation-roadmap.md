@@ -136,7 +136,7 @@ correlation **verdict object** exposed; (3) no provider **resolve** step (contex
   `solana-token-mint` on both sides → it jumps to **tier 3** and `cross_plan` recovers the
   cross-API chain **first-plan-correct**. Two asserts; falsified if a bare-name match reaches
   high confidence without DECLARED.
-- **4.2 The demo** (`demo/kit`, honesty rules = law): "evaluate the APIs you're using → divide
+- **4.2 The demo** (the demo kit, kept out of the repo since 2026-09-18; honesty rules = law): "evaluate the APIs you're using → divide
   by **category** (value-domain) → show which link and which don't, with confidence + basis."
   Two real APIs, the graph of each, the cross-API correlation with its provenance explain, and
   the agent making a first-plan-correct chained call across both. This is the "GraphRAG for
