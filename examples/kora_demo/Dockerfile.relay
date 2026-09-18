@@ -1,0 +1,16 @@
+# The Gecko fee-payer relay: Kora, with our config baked in.
+#
+# Two stages by name, one per concern. KORA_BASE is Kora built from ../kora at a pinned tag
+# (infra/deploy-relay.sh builds it as gecko-kora-base:<tag>); this file only adds the two
+# files the relay needs and the one-line command. No key is ever in this image: the signer
+# config points at the KORA_RELAY_KEY environment variable, which ECS injects from SSM.
+ARG KORA_BASE=gecko-kora-base:kora-cli-v2.2.0-beta.8
+FROM ${KORA_BASE}
+
+COPY kora.gecko.toml /app/kora.toml
+COPY signers.memory.toml.example /app/signers.toml
+
+# `--rpc-url` is a CLI argument in Kora (no env var), so a shell reads $RPC_URL for it.
+# `set -eu` so a missing RPC_URL fails the container loudly instead of starting an RPC
+# client aimed at an empty string.
+CMD ["sh", "-c", "set -eu; exec kora --config /app/kora.toml --rpc-url \"$RPC_URL\" rpc start --signers-config /app/signers.toml"]
