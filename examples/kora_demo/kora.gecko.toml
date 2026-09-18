@@ -189,14 +189,19 @@ type = "free"
 # is the same trust you take by holding USDG at all. The default here stays closed;
 # change it on purpose, in your own copy, and say so in the runbook.
 [validation.token_2022]
-transfer_hook_policy = "deny_all"
+# FOUNDER DECISION 2026-09-18: allow_all. USDG (Paxos) carries a transfer hook whose
+# authority is MUTABLE, so `deny_all` refuses every USDG transfer and the USDG route
+# cannot be relay-paid. `allow_all` means the relay pays the fee for transactions that
+# call whatever hook program Paxos points the mint at, today and after any change; the
+# caps below (max_allowed_lamports per transaction, the per-wallet usage limit, and the
+# balance itself) bound what that trust can cost. Fork-proven with this exact setting on
+# 2026-09-16 and 2026-09-18 (docs/runbooks/gasless-fork-rehearsal.md §9b).
+transfer_hook_policy = "allow_all"
 blocked_mint_extensions = [
     "confidential_transfer_mint",
     "confidential_mint_burn",
     "transfer_fee_config",
     "mint_close_authority",
-    "permanent_delegate",
-    "transfer_hook",
     "pausable",
 ]
 blocked_account_extensions = [

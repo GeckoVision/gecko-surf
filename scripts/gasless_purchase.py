@@ -42,7 +42,9 @@ sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 from gecko.autonomous_purchase import (  # noqa: E402
     PurchaseSettled,
     default_spend_policy,
+    settle_route,
     settle_sponsored,
+    swap_spend_policy,
 )
 from gecko.networks import coerce_network  # noqa: E402
 from gecko.prepare_purchase import prepare_purchase_result  # noqa: E402
@@ -212,6 +214,219 @@ def _rehearse_route_on_fork(
     return 1
 
 
+def _token_balance(rpc_url: str, owner: str, mint: str) -> int:
+    """Raw balance of ``mint`` held by ``owner`` across its token accounts, at `confirmed`."""
+    reply = default_rpc_call(
+        rpc_url,
+        "getTokenAccountsByOwner",
+        [owner, {"mint": mint}, {"encoding": "jsonParsed", "commitment": "confirmed"}],
+    )
+    total = 0
+    for entry in (reply.get("result") or {}).get("value") or []:
+        info = entry["account"]["data"]["parsed"]["info"]["tokenAmount"]
+        total += int(info["amount"])
+    return total
+
+
+def _settle_route_on_mainnet(
+    args: argparse.Namespace,
+    network: Any,
+    relay: KoraRelay,
+    buyer: Any,
+    buyer_sol_before: int,
+    relay_sol_before: int,
+) -> int:
+    """USDG -> USDC on Orca, then the purchase; the relay pays both fees; the buyer's
+    wallet signs both legs and never holds SOL. The mainnet sibling of the fork route.
+    Dry run prepares and simulates both legs; --broadcast settles them in order."""
+    from gecko.landing import latest_blockhash
+    from gecko.orquestra_build import orquestra_seams
+    from gecko.prepare_instruction import prepare_instruction_result
+    from gecko.providers.whirlpool import WHIRLPOOL_PROGRAM, plan_swap
+    from gecko.simulate import BuiltTx, simulate
+
+    held = _token_balance(args.rpc_url, buyer.pubkey, USDG_MINT)
+    print(f"  buyer USDG         {held}   (converting {args.convert_amount})")
+    if held < args.convert_amount:
+        print(
+            f"STOP: the buyer holds {held} USDG and the convert leg needs "
+            f"{args.convert_amount}; nothing here guesses a smaller amount for you"
+        )
+        return 2
+
+    idl_fetch, build_call = orquestra_seams()
+    plan = plan_swap(
+        {
+            "input_mint": USDG_MINT,
+            "output_mint": USDC_MINT,
+            "user": buyer.pubkey,
+            "amount_in": args.convert_amount,
+        },
+        rpc_url=args.rpc_url,
+        idl_fetch=idl_fetch,
+    )
+    if plan.get("refused"):
+        print(f"REFUSED at plan_swap [{plan.get('code')}]: {plan.get('reason')}")
+        return 1
+    quote = plan.get("quote") or {}
+    print(
+        f"  convert    {args.convert_amount} USDG -> USDC on {str(plan.get('pool'))[:8]}…  "
+        f"min out {quote.get('min_amount_out')}"
+    )
+    prepared = prepare_instruction_result(
+        {
+            "program_id": WHIRLPOOL_PROGRAM,
+            "instruction": "swap_v2",
+            "payer": buyer.pubkey,
+            "fee_payer": relay.pubkey,
+            "values": dict(plan["values"]),
+        },
+        idl_fetch=idl_fetch,
+        build_call=build_call,
+        rpc_url=args.rpc_url,
+    )
+    if prepared.get("refused"):
+        print(
+            f"REFUSED at prepare (convert) [{prepared.get('code')}]: {prepared.get('reason')}"
+        )
+        return 1
+    convert_unsigned = str(prepared["transaction_base64"])
+    receipt = simulate(
+        {},
+        rpc_url=args.rpc_url,
+        build_call=lambda _plan: BuiltTx(tx=convert_unsigned, encoding="base64"),
+        replace_blockhash=False,
+        network_label=f"simulated against {network} (convert leg, unsigned)",
+        network=network,
+        track=[buyer.pubkey],
+    )
+    print(
+        f"\n  CONVERT  {receipt.status.upper()}  {receipt.units_consumed or 0:,} CU  "
+        f"signers {(prepared.get('gasless') or {}).get('signatures_required')}"
+    )
+    if receipt.status != "pass":
+        print(f"REFUSED: the convert leg does not simulate ({receipt.revert_class})")
+        return 1
+
+    def prepare_purchase() -> dict[str, Any]:
+        return prepare_purchase_result(
+            {
+                "store": args.store,
+                "product": args.product,
+                "buyer": buyer.pubkey,
+                "fee_payer": relay.pubkey,
+                "table": args.table,
+                "network": network,
+                "rpc_url": args.rpc_url,
+            }
+        )
+
+    # The purchase is prepared for real only AFTER the convert leg lands (settle_route
+    # does that); this dry prepare names the accounts the shop's gate may write, and
+    # says whether the purchase already simulates on the wallet as it stands.
+    dry = prepare_purchase()
+    if dry.get("refused"):
+        print(
+            f"  PURCHASE (dry) refused now [{dry.get('code')}]: {str(dry.get('reason'))[:120]}"
+        )
+        print(
+            "             (expected when the wallet lacks the priced mint until the convert leg lands)"
+        )
+    else:
+        print(f"  PURCHASE (dry) {dry['status'].upper()}  {dry['units_consumed']:,} CU")
+
+    if not args.broadcast:
+        print("\nDRY RUN: both legs prepared; the relay was not asked to sign.")
+        print("Re-run with --broadcast to convert, then buy, relay-paid.")
+        return 0
+
+    convert_gate = SpendPolicyGate(
+        policy=swap_spend_policy(
+            allowed_destinations=frozenset(
+                a for a in dict(prepared["accounts"]).values() if a != buyer.pubkey
+            ),
+            input_mint=USDG_MINT,
+            input_decimals=6,
+            input_per_transaction_raw=args.convert_amount,
+        ),
+        ledger=InMemorySpendLedger(),
+    )
+    plan_accounts = dry.get("accounts") or {}
+    entries = (
+        plan_accounts.values() if isinstance(plan_accounts, dict) else plan_accounts
+    )
+    purchase_gate = SpendPolicyGate(
+        policy=default_spend_policy(
+            allowed_destinations=frozenset(
+                e["address"]
+                for e in entries
+                if e.get("writable") and e["address"] != buyer.pubkey
+            ),
+            sponsored=True,
+            usdc_per_transaction_raw=int(round(args.max_spend_usdc * 1_000_000)),
+        ),
+        ledger=InMemorySpendLedger(),
+    )
+    profile_name = (
+        EXTERNAL_SIGNER_PROFILE_NAME
+        if args.signer == "paybox"
+        else DEVELOPER_KEYPAIR_FILE_PROFILE_NAME
+    )
+
+    def signer_with(gate: SpendPolicyGate) -> TransactionSigner:
+        return TransactionSigner(
+            backend=buyer,
+            profile=SignerProfile(
+                name=profile_name,
+                network=network,
+                authorized=True,
+                signing_as=AUTHORITY_ROLE,
+            ),
+            spend_gate=gate,
+        )
+
+    _, last_valid = latest_blockhash(args.rpc_url, default_rpc_call)
+    trace = Trace(lane="route", network=str(network))
+    route = settle_route(
+        convert_unsigned,
+        prepare_purchase=prepare_purchase,
+        network=network,
+        rpc_url=args.rpc_url,
+        relay=relay,
+        convert_signer=signer_with(convert_gate),
+        purchase_signer=signer_with(purchase_gate),
+        authority=buyer.pubkey,
+        convert_last_valid_block_height=int(last_valid),
+        trace=trace,
+    )
+    _emit_trace(args, trace)
+    for label, leg in (("leg 1", route.convert), ("leg 2", route.purchase)):
+        if leg is None:
+            print(f"  {label}      not attempted")
+        elif isinstance(leg, PurchaseSettled):
+            print(
+                f"  {label}      LANDED {leg.signature}  CU predicted {leg.predicted_units} "
+                f"charged {leg.consumed_units}"
+            )
+        else:
+            print(f"  {label}      REFUSED [{leg.code}]: {leg.reason}")
+    buyer_sol_after = _balance(args.rpc_url, buyer.pubkey)
+    relay_sol_after = _balance(args.rpc_url, relay.pubkey)
+    print(f"\n  buyer SOL after    {buyer_sol_after}   (before {buyer_sol_before})")
+    print(f"  relay SOL after    {relay_sol_after}   (before {relay_sol_before})")
+    for line in route.objections:
+        print(f"  OBJECTION  {line}")
+    if buyer_sol_after != buyer_sol_before:
+        print("NOT GASLESS: the buyer's SOL moved.")
+        return 1
+    if route.landed:
+        print(
+            "GASLESS ROUTE: converted and bought on mainnet; the buyer's SOL never moved."
+        )
+        return 0
+    return 1
+
+
 def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
     """The fork lane: `gecko.sandbox.rehearse`, judged by what moved.
 
@@ -367,6 +582,11 @@ def main(argv: list[str] | None = None) -> int:
     relay_sol_before = _balance(args.rpc_url, relay.pubkey)
     print(f"  buyer SOL before   {buyer_sol_before}")
     print(f"  relay SOL before   {relay_sol_before}")
+
+    if args.convert_from:
+        return _settle_route_on_mainnet(
+            args, network, relay, buyer, buyer_sol_before, relay_sol_before
+        )
 
     # 1. PREPARE, with the relay as payer. Every refusal the tool makes, this makes.
     out = prepare_purchase_result(
