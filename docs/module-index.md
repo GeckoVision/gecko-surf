@@ -2,7 +2,7 @@
 
 # Module index
 
-244 modules in `gecko/` (subpackages included), from their own docstrings.
+242 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -98,7 +98,7 @@ package depends on it, which is worth a look before you add a caller.
 | `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 3 · `providers.meteora`, `providers.meteora_landing`, `whirlpool_math` |
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
 | `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
-| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 24 · `access`, `caller`, `cli` +21 |
+| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 23 · `access`, `caller`, `cli` +20 |
 | `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 14 · `autonomous_purchase`, `corpus`, `fork_preflight` +11 |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
@@ -114,8 +114,6 @@ package depends on it, which is worth a look before you add a caller.
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
 | `pda_resolve` | The Sprint-2 resolution engine — fill resolver seeds by control-plane reads. | 3 · `providers.meteora`, `providers.pumpfun`, `providers.whirlpool` |
 | `pda_testkit` | Verify recovered PDA recipes against REAL deployed state on a surfpool fork — $0. | 10 · `providers.let_me_buy`, `providers.metadao`, `providers.metadao_landing` +7 |
-| `peg_guard` | Is this asset holding its peg? A guard on converting, not a step in converting. | 2 · `pay_route`, `pegana` |
-| `pegana` | Ask Pegana about one mint, and report WHAT CAME BACK rather than what it implies. | 1 · `pay_route` |
 | `plan_refusals` | Plan-time refusals: the account-distinctness facts no artifact states. | 2 · `autonomous_purchase`, `prepare_purchase` |
 | `planner` | Intent → plan wiring (§5, §12 Phase 1) — the seam that makes ``graph.plan()`` | 1 · `client` |
 | `plugin_export` | Package it — export a provider-branded Agent Plugin from a comprehended surface. | 1 · `cli` |

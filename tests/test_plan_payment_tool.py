@@ -30,10 +30,10 @@ def test_the_schema_declares_what_the_answer_actually_needs() -> None:
 
 def test_the_description_does_not_promise_the_evidence_never_expires() -> None:
     """`list_stores` may say 'expires never' — it reads a menu. This wraps a POINT-IN-TIME
-    peg verdict, and the conversion happens later in the caller's own wallet."""
+    plan, and the conversion happens later in the caller's own wallet."""
     tool = next(t for t in _surface().list_tools() if t["name"] == "plan_payment")
     assert "expires never" not in tool["description"]
-    assert "peg_evidence_as_of" in tool["description"]
+    assert "holdings_as_of" in tool["description"]
 
 
 def test_the_surface_routes_the_tool() -> None:

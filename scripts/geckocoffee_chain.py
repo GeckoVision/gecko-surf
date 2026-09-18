@@ -202,7 +202,6 @@ def main(argv: list[str] | None = None) -> int:
     if outcome in {
         "no_route",
         "no_candidates",
-        "peg_blocked",
         "self_purchase",
         "pinned_program_mismatch",
     }:

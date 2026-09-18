@@ -17,19 +17,21 @@ something:
 
   1. the priced mint's token program vs the one let_me_buy PINS   (no I/O at all)
   2. self-purchase                                                (no I/O at all)
-  3. the DESTINATION mint's peg                                   (one oracle read)
-  4. each candidate's peg, before its venue is looked up          (oracle before RPC)
+  3. the holdings against the price, then each candidate's venue  (chain reads only)
 
 (1) is first because no balance and no swap can make it payable: `make_purchase` pins
 classic SPL Token in its IDL, so a Token-2022 priced mint has no path through the program
 at all. Discovering that after quoting a swap is how a wallet gets funded three times to
 buy from a store that structurally cannot be paid.
 
-(3) exists because the thesis is symmetric. Checking only what you SELL and not what you
-BUY quotes a route into a broken peg and reports it as fine.
+A peg gate once sat between (2) and (3): every mint on both sides of the conversion was
+read from Pegana's oracle and a bad or unreachable reading refused the route. Pegana
+went offline on 2026-09-18 (the project was discontinued), and the gate went with it: a
+plan is now made on chain facts alone, and nothing here vouches for any mint's peg. If a
+peg oracle returns, it re-enters here as an injected reader, the same seam the old one used.
 
-Control plane: peg bodies and holdings are in-memory pass-through of public chain and
-oracle state. Nothing is persisted, and no exception message carries a URL or a value.
+Control plane: holdings are in-memory pass-through of public chain state. Nothing is
+persisted, and no exception message carries a URL or a value.
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 from .networks import APPROVABLE_NETWORKS
-from .peg_guard import PegReader, PegVerdict, verdict_from_reading
 from .store_accounts import TOKEN_PROGRAM_ID, derive_ata
 from .whirlpool_venue import Direction
 
@@ -53,7 +54,6 @@ __all__ = [
     "PayRouteError",
     "SWAP_SLIPPAGE_BPS",
     "PayabilityReport",
-    "PegCheck",
     "Quote",
     "assess_payment",
     "validate_swap_bound",
@@ -77,34 +77,22 @@ TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 #: again silently.
 SWAP_SLIPPAGE_BPS = 100
 
-#: States where Pegana is telling us something, as opposed to failing to tell us
-#: anything. A block carrying one of these is never downgraded to a warning.
-_PEG_BAD_STATES: frozenset[str] = frozenset(
-    {"DRIFT", "DEPEG", "CRITICAL", "BLACK_SWAN"}
-)
-
 PayOutcome = Literal[
     "payable_now",
     "route_found",
-    "route_found_peg_unverified",
     "pinned_program_mismatch",
     "self_purchase",
     "no_candidates",
-    "peg_blocked",
     "no_route",
 ]
 
 #: Everything that is not an actionable answer. Stated as a set rather than "not in
 #: {payable_now, route_found}" so a new outcome must be classified deliberately.
-#: `route_found_peg_unverified` is deliberately NOT here: a route WAS found and the caller
-#: may act on it knowingly. The caveat rides in the outcome NAME rather than only in a
-#: nested field, because a caller skimming one field must not read it as a clean route.
 BLOCKING: frozenset[str] = frozenset(
     {
         "pinned_program_mismatch",
         "self_purchase",
         "no_candidates",
-        "peg_blocked",
         "no_route",
     }
 )
@@ -219,51 +207,6 @@ class Leg:
 
 
 @dataclass(frozen=True)
-class PegCheck:
-    """One mint's peg verdict, and which side of the conversion it sits on.
-
-    ``blocks`` is the VERDICT (would this reading stop a conversion); ``binds`` is the
-    SCOPE (is there a conversion in this request for it to stop). The first Claude web
-    session hit the gap between them: ``payable_now, blocked: false`` beside a
-    destination check with ``blocks: true`` — both correct, since the block scopes to a
-    conversion and none was needed, but a caller skimming either field alone read a
-    contradiction. The pair says it outright: ``blocks=true, binds=false`` is "this
-    reading WOULD stop a conversion, and this request does not convert".
-    """
-
-    mint: str
-    side: Literal["destination", "candidate"]
-    outcome: str
-    blocks: bool
-    reason: str
-    #: Whether this check can stop THIS request. False exactly when the verdict has
-    #: nothing to bind to (no conversion happens). Defaults True: every check is
-    #: binding unless the decision that made it non-binding says so.
-    binds: bool = True
-
-    @classmethod
-    def of(cls, verdict: PegVerdict, side: str, *, binds: bool = True) -> "PegCheck":
-        return cls(
-            mint=verdict.mint,
-            side=side,  # type: ignore[arg-type]
-            outcome=verdict.outcome,
-            blocks=verdict.blocks,
-            reason=verdict.reason,
-            binds=binds,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "mint": self.mint,
-            "side": self.side,
-            "outcome": self.outcome,
-            "blocks": self.blocks,
-            "binds": self.binds,
-            "reason": self.reason,
-        }
-
-
-@dataclass(frozen=True)
 class PayabilityReport:
     """The whole answer, including the facts gathered before a short-circuit."""
 
@@ -276,14 +219,14 @@ class PayabilityReport:
     pinned_program: str
     priced_program: str
     buyer: str
-    peg_evidence_as_of: str
+    #: When the holdings were read. A plan is point-in-time; the conversion happens later.
+    holdings_as_of: str
     route: Leg | None = None
     #: Whether PAYING requires a conversion at all — stated outright rather than left
     #: to be inferred from ``route is None``, because the first web session watched an
     #: agent steamroll exactly that inference and swap anyway. None when the question
     #: never arose (refused before holdings were compared).
     conversion_required: bool | None = None
-    peg_checks: tuple[PegCheck, ...] = ()
     rejected_legs: tuple[Leg, ...] = ()
     no_pool_for: tuple[str, ...] = ()
     holdings: Mapping[str, int] = field(default_factory=dict)
@@ -358,17 +301,13 @@ class PayabilityReport:
             "pinned_program": self.pinned_program,
             "priced_program": self.priced_program,
             "buyer": self.buyer,
-            "peg_evidence_as_of": self.peg_evidence_as_of,
+            "holdings_as_of": self.holdings_as_of,
             "conversion_required": self.conversion_required,
             # The execution pointer the first web session lacked: with no breadcrumb at
             # the moment of "how do I run this route", the only swap path carrying
             # instructions was the wallet's own aggregator — which consults no venue
-            # check and no peg gate. route_found now names the tool.
-            "next_tool": (
-                "plan_swap"
-                if self.outcome in ("route_found", "route_found_peg_unverified")
-                else None
-            ),
+            # check. route_found now names the tool.
+            "next_tool": "plan_swap" if self.outcome == "route_found" else None,
             # The FULL rail, for BOTH good outcomes. next_tool above only ever named
             # plan_swap, so payable_now — the most common good outcome — left the agent
             # pointerless one step from success (the exact failure class again, one
@@ -376,7 +315,6 @@ class PayabilityReport:
             # the one format a live web session demonstrably followed to the letter.
             "next_steps": self._next_steps(),
             "route": self.route.to_dict() if self.route else None,
-            "peg_checks": [c.to_dict() for c in self.peg_checks],
             "rejected_legs": [leg.to_dict() for leg in self.rejected_legs],
             "no_pool_for": list(self.no_pool_for),
             "holdings": {m: str(v) for m, v in self.holdings.items()},
@@ -393,42 +331,12 @@ Curve = Literal["cpmm", "clmm", "dlmm", "bonding_curve", "aggregator", "orchestr
 VenueFinder = Callable[..., Sequence[Any]]
 
 
-def _staleness_only(verdict: PegVerdict) -> bool:
-    """Does this verdict block because the reading is OLD, rather than because it is BAD?
-
-    The peg guard folds both into `refuse`, and for a CONVERSION that is right: an
-    out-of-date reading and a depeg are equally poor grounds on which to move money.
-
-    But `plan_payment` moves nothing. It reads a wallet, picks a venue and returns a plan
-    — and blocking that on a seven-day-old reading, which is exactly what happened to a
-    blind tester on 2026-09-02, denies the caller an answer without protecting anything,
-    because there is nothing yet to protect. The refusal belongs where bytes are built,
-    and it still lives there.
-
-    The line is ABSENCE versus SIGNAL, and only absence is downgraded:
-
-      * stale, and the state is not one of the bad ones — we HAVE a reading and it is
-        old. Warn, and let the plan through.
-      * DRIFT / DEPEG / CRITICAL / BLACK_SWAN — Pegana is telling us something. Keep
-        refusing, stale or not.
-      * ``undetermined`` — we could not reach the oracle at all. NOT downgraded: silence
-        is not an old reading, it is no reading, and that distinction is the whole reason
-        the four-value vocabulary exists.
-    """
-    if not verdict.blocks or verdict.outcome != "refuse":
-        return False  # `undetermined` is silence, not staleness
-    if verdict.state in _PEG_BAD_STATES:
-        return False
-    return verdict.stale
-
-
 def assess_payment(
     *,
     store: _StoreLike,
     buyer: str,
     holdings: Mapping[str, tuple[int, str]],
     mint_owner: MintOwner,
-    peg_reader: PegReader,
     find_venues: VenueFinder,
     max_candidates: int = 8,
 ) -> PayabilityReport:
@@ -453,7 +361,7 @@ def assess_payment(
             pinned_program=TOKEN_PROGRAM_ID,
             priced_program=priced_program,
             buyer=buyer,
-            peg_evidence_as_of=checked_at,
+            holdings_as_of=checked_at,
             holdings={m: amt for m, (amt, _) in holdings.items()},
             **kw,
         )
@@ -485,85 +393,30 @@ def assess_payment(
             ),
         )
 
-    # 3. The DESTINATION's peg, always recorded. When a conversion is needed the
-    #    candidates' pegs are needed too, and all of them are read at once: each reading
-    #    is two HTTP round trips (~2 s), and reading the destination first and the
-    #    candidates after was one whole reading of wall clock for nothing.
+    # 3. The holdings against the price. Holding enough means NO conversion happens.
     held_priced = holdings.get(priced_mint, (0, TOKEN_PROGRAM_ID))[0]
     conversion_required = held_priced < price_raw
     conversion_known = conversion_required  # noqa: F841 - read by report() via closure
-    candidates = (
-        sorted(
-            (
-                (m, amt)
-                for m, (amt, _) in holdings.items()
-                if m != priced_mint and amt > 0
-            ),
-            key=lambda pair: -pair[1],
-        )[:max_candidates]
-        if conversion_required
-        else []
-    )
-    readings = _read_pegs_concurrently(
-        peg_reader, [priced_mint, *(m for m, _ in candidates)]
-    )
-    destination_verdict = verdict_from_reading(priced_mint, readings[priced_mint])
-    checks: list[PegCheck] = [
-        # `binds` scopes the verdict to THIS request: with no conversion, a blocking
-        # destination reading is information, not a refusal — and saying so in the
-        # check itself is what stops `payable_now` + `blocks: true` reading as a
-        # contradiction to anyone skimming one field.
-        PegCheck.of(destination_verdict, "destination", binds=conversion_required)
-    ]
-
-    # 4. Holding enough means NO conversion happens, so the destination peg is
-    #    information rather than a refusal — nobody is being asked to acquire the asset.
     if not conversion_required:
         return report(
             "payable_now",
             f"the wallet holds {held_priced} of {priced_mint}; the price is {price_raw}.",
-            peg_checks=tuple(checks),
         )
 
-    # 5. A conversion INTO a broken peg is refused, whatever the wallet holds — unless
-    #    the only thing wrong is that the reading is OLD. This call builds nothing, so a
-    #    stale opinion is a caveat to carry, not a reason to withhold the answer. A real
-    #    verdict (DRIFT/DEPEG/CRITICAL/BLACK_SWAN) or an unreachable oracle still refuses.
-    destination_stale_only = _staleness_only(destination_verdict)
-    if checks[0].blocks and not destination_stale_only:
-        return report(
-            "peg_blocked",
-            (
-                f"a conversion would end in {priced_mint}, and its peg cannot be relied "
-                f"on: {checks[0].reason}"
-            ),
-            peg_checks=tuple(checks),
-        )
-
+    candidates = sorted(
+        ((m, amt) for m, (amt, _) in holdings.items() if m != priced_mint and amt > 0),
+        key=lambda pair: -pair[1],
+    )[:max_candidates]
     if not candidates:
         return report(
             "no_candidates",
             "the wallet holds no other token to convert from.",
-            peg_checks=tuple(checks),
         )
 
     rejected: list[Leg] = []
     no_pool: list[str] = []
-    peg_refused = 0
 
     for held_mint, held_raw in candidates:
-        verdict = verdict_from_reading(held_mint, readings[held_mint])
-        checks.append(PegCheck.of(verdict, "candidate"))
-        # The SAME downgrade the destination gets, on the mint we would sell. Applying it
-        # to one side only is what produced "every mint this wallet could convert from has
-        # a peg verdict that blocks" on 2026-09-08, when both readings were merely old.
-        candidate_stale_only = _staleness_only(verdict)
-        if verdict.blocks and not candidate_stale_only:
-            # Skip THIS mint, not the wallet — another holding may be sound.
-            peg_refused += 1
-            rejected.append(Leg(held_mint, held_raw, None, verdict.reason))
-            continue
-
         venues = find_venues(
             held_mint=held_mint,
             needed_mint=priced_mint,
@@ -584,46 +437,21 @@ def assess_payment(
                 )
             )
             continue
-        unverified = [
-            mint
-            for mint, is_stale in (
-                (priced_mint, destination_stale_only),
-                (held_mint, candidate_stale_only),
-            )
-            if is_stale
-        ]
         return report(
-            "route_found_peg_unverified" if unverified else "route_found",
+            "route_found",
             (
                 f"convert {quote.amount_in} of {held_mint} into {priced_mint} at pool "
                 f"{quote.pool}, then purchase."
-                + (
-                    f" The peg reading for {' and '.join(unverified)} is stale, so "
-                    "nothing here vouches for it being on peg right now — check it "
-                    "before converting."
-                    if unverified
-                    else ""
-                )
             ),
             route=Leg(held_mint, held_raw, quote),
-            peg_checks=tuple(checks),
             rejected_legs=tuple(rejected),
             no_pool_for=tuple(no_pool),
         )
 
-    if peg_refused and peg_refused == len(candidates):
-        return report(
-            "peg_blocked",
-            "every mint this wallet could convert from has a peg verdict that blocks.",
-            peg_checks=tuple(checks),
-            rejected_legs=tuple(rejected),
-            no_pool_for=tuple(no_pool),
-        )
     return report(
         "no_route",
         "no proven venue converts anything this wallet holds into the priced mint at a "
         "size the wallet can afford.",
-        peg_checks=tuple(checks),
         rejected_legs=tuple(rejected),
         no_pool_for=tuple(no_pool),
     )
@@ -648,14 +476,13 @@ PLAN_PAYMENT_TOOL: dict[str, Any] = {
         "IT CAN REFUSE, AND A REFUSAL IS THE ANSWER. `blocked: true` means do not "
         "proceed: the product may be priced in a mint let_me_buy structurally cannot "
         "debit (its IDL pins classic SPL Token, so a Token-2022 price has no path and no "
-        "swap fixes it), the buyer's token account may BE the store's own, or a peg "
-        "verdict may block. Read `reason` and tell the buyer; do not retry around it. "
-        "PEG EVIDENCE IS POINT-IN-TIME. It costs nothing and starts no blockhash clock, "
-        "but the verdicts are as of `peg_evidence_as_of` and the conversion happens later "
-        "in the caller's own wallet — re-run before converting. A mint whose oracle could "
-        "not be REACHED blocks: silence is not consent. A mint the oracle provably does "
-        "not track does not block, and is reported as unknown. "
-        "`peg_checks` covers every mint evaluated INCLUDING the destination. "
+        "swap fixes it), or the buyer's token account may BE the store's own. Read "
+        "`reason` and tell the buyer; do not retry around it. "
+        "THE PLAN IS POINT-IN-TIME. It costs nothing and starts no blockhash clock, but "
+        "the holdings are as of `holdings_as_of` and the conversion happens later in the "
+        "caller's own wallet — re-run before converting. NOTHING HERE VOUCHES FOR A PEG: "
+        "no oracle is consulted; whether a stablecoin is on peg is the caller's question "
+        "to ask elsewhere before converting into it. "
         "LIMITS, stated rather than discovered: a route is a pointer, not an executed "
         "swap; sizing uses the pool's spot price and models no price impact; `no_route` "
         "means no PROVEN venue was affordable, not that none exists. Read-only; nothing "
@@ -698,7 +525,6 @@ def plan_payment_result(
     arguments: Any,
     *,
     rpc_call: Any = None,
-    peg_reader: PegReader | None = None,
     idl_fetch: Callable[[str], Mapping[str, Any]] | None = None,
     url_guard: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -750,7 +576,6 @@ def plan_payment_result(
             buyer=str(buyer),
             holdings=read_holdings(rpc_url, str(buyer), rpc_call=call),
             mint_owner=lambda mint: read_mint_owner(rpc_url, mint, rpc_call=call),
-            peg_reader=peg_reader or _default_peg_reader(),
             find_venues=_venue_finder(rpc_url, call),
         )
     except Exception as exc:  # noqa: BLE001 - redacted to a class at the transport edge
@@ -802,27 +627,6 @@ def read_mint_owner(rpc_url: str, mint: str, *, rpc_call: Any) -> str:
     if not value or not value.get("owner"):
         raise PayRouteError(f"mint {mint} does not exist on this network")
     return str(value["owner"])
-
-
-def _default_peg_reader() -> PegReader:
-    from .pegana import pegana_reader
-
-    return pegana_reader()
-
-
-def _read_pegs_concurrently(
-    peg_reader: PegReader, mints: Sequence[str]
-) -> dict[str, Any]:
-    """One reading per distinct mint, all in flight at once. Exceptions propagate as
-    they would have from the serial loop, from the first mint that raised."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    distinct = list(dict.fromkeys(mints))
-    if len(distinct) <= 1:
-        return {mint: peg_reader(mint) for mint in distinct}
-    with ThreadPoolExecutor(max_workers=min(8, len(distinct))) as pool:
-        futures = {mint: pool.submit(peg_reader, mint) for mint in distinct}
-        return {mint: future.result() for mint, future in futures.items()}
 
 
 def _venue_finder(rpc_url: str, rpc_call: Any) -> VenueFinder:
