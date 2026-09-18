@@ -2,7 +2,7 @@
 
 # Module index
 
-242 modules in `gecko/` (subpackages included), from their own docstrings.
+244 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -87,7 +87,7 @@ package depends on it, which is worth a look before you add a caller.
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 18 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +15 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 19 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +16 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `catalog`, `find_start`, `purchase_intent_eval` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
@@ -150,7 +150,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
 | `providers.metadao_landing` | The MetaDAO "fund-that-passes" orchestrator — the third program that RUNS. | 0 |
 | `providers.meteora` | Meteora DLMM — the first Orquestra provider instance (the touchable Berkay demo). | 2 · `providers.cli`, `providers.meteora_landing` |
-| `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 0 |
+| `providers.meteora_landing` | The Meteora DLMM "swap-that-passes" orchestrator — the second program that RUNS. | 1 · `sandbox.rehearse_swap` |
 | `providers.ore` | ORE V3 ``claimOre`` — the fourth Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.ore_landing` |
 | `providers.ore_landing` | The ORE "claim-that-passes" orchestrator — the fourth program that RUNS. | 0 |
 | `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 9 · `providers.cli`, `providers.jupiter`, `providers.jurassic_fi` +6 |
@@ -176,21 +176,23 @@ package depends on it, which is worth a look before you add a caller.
 | `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |
 | `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 1 · `registry.wiring` |
 | `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
-| `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 3 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_instruction` |
+| `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 4 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +1 |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 45 · `autonomous_purchase`, `cli`, `drift_watch` +42 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 47 · `autonomous_purchase`, `cli`, `drift_watch` +44 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
-| `sandbox.cheatcodes` | Surfpool cheatcodes, with the parameter shapes MEASURED against a running fork. | 4 · `sandbox.deliver`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +1 |
+| `sandbox.cheatcodes` | Surfpool cheatcodes, with the parameter shapes MEASURED against a running fork. | 5 · `sandbox.deliver`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +2 |
 | `sandbox.deliver` | A delivery, rehearsed on a fork — and the transaction that SUCCEEDS while doing nothing. | 1 · `sandbox.agents` |
 | `sandbox.probe` | Probe sandbox — offline validation that answers with the API's OWN error shape. | 0 |
-| `sandbox.rehearse` | The whole purchase, rehearsed on a fork — and JUDGED by what actually moved. | 6 · `fork_lane`, `sandbox.agents`, `sandbox.deliver` +3 |
-| `sandbox.rehearse_instruction` | Rehearse ANY instruction on a proven local fork — and report what moved. | 0 |
-| `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 8 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +5 |
+| `sandbox.rehearse` | The whole purchase, rehearsed on a fork — and JUDGED by what actually moved. | 8 · `fork_lane`, `sandbox.agents`, `sandbox.deliver` +5 |
+| `sandbox.rehearse_instruction` | Rehearse ANY instruction on a proven local fork — and report what moved. | 1 · `sandbox.rehearse_route` |
+| `sandbox.rehearse_route` | Two legs, one buyer who never holds SOL: convert, then buy, judged as one route. | 0 |
+| `sandbox.rehearse_swap` | A Meteora DLMM swap, landed on a proven surfnet and judged by what moved. | 0 |
+| `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 10 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +7 |
 | `sandbox.try_purchase` | ``try_purchase`` — the rehearsal, as a tool an agent can reach, beside the real one. | 1 · `providers.catalog_surface` |
 | `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 11 · `client`, `corpus`, `enrich` +8 |
 | `scale` | Below-scale surface sizing — the "don't truncate when you don't have to" rule. | 1 · `client` |
@@ -212,7 +214,7 @@ package depends on it, which is worth a look before you add a caller.
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 25 · `autonomous_purchase`, `corpus`, `drift_watch` +22 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 26 · `autonomous_purchase`, `corpus`, `drift_watch` +23 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 2 · `autonomous_purchase`, `signer` |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
@@ -232,7 +234,7 @@ package depends on it, which is worth a look before you add a caller.
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
 | `tools` | Question-shaped tool generator — the comprehension payload. | 30 · `agentnative`, `catalog`, `chain_eval` +27 |
-| `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 2 · `autonomous_purchase`, `sandbox.rehearse` |
+| `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 3 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_route` |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
