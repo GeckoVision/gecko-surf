@@ -9,9 +9,9 @@ landing, video, tweet — draws its message from this file.
 ## The 2026-08-13 layer — the stack, founder-chosen
 
 The enemy line below is unchanged. Two pieces sit with it now, chosen after agents
-started spending real money through the engine (fifteen mainnet transactions, fifteen
-exact compute predictions, the last four signed in an enclave with no key on the
-planning machine):
+started spending real money through the engine (59 mainnet transactions; of the 44 with
+a compute prediction made before signing, 43 matched the chain to the unit; the enclave
+and PayBox-signed ones never had a key on the planning machine):
 
 > **Tagline:** Check the call before it counts.
 
@@ -32,8 +32,8 @@ comprehension, never the offering.
 > wallet is yours — we compose with Privy, Phantom, whatever signs for you. The rail is
 > x402's. What we own is the step everyone skips: *is this call, this transaction, the
 > right one?* We turn the API's surface into a call graph, verify the exact bytes
-> against a simulation, and hand your wallet something checked. Fifteen mainnet
-> transactions, fifteen exact cost predictions — and in every one, the key was never
+> against a simulation, and hand your wallet something checked. 59 mainnet
+> transactions, 43 of 44 cost predictions exact — and in every one, the key was never
 > ours.
 
 **The 30-second pitch** (spoken, ~80 words — pause after the first line, stop after the
