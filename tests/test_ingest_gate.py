@@ -1147,6 +1147,15 @@ def test_every_wired_program_is_judged_on_its_byte_orders(reports) -> None:
         assert "seed-endianness" in named, f"{api_id} was never asked"
 
 
+def test_meteora_bin_array_is_established_by_a_reproduced_address(reports) -> None:
+    """The recovery leaves the warning list AND passes the check, in the same run."""
+    check = next(c for c in reports["meteora"].checks if c.name == "seed-endianness")
+    assert check.outcome == "ok", check.detail
+    assert not [
+        s for s in check.measured.get("assumed_seeds", ()) if s.startswith("bin_array")
+    ]
+
+
 def test_the_known_assumed_byte_orders_are_reported_as_warnings(reports) -> None:
     """The four measured on 2026-09-11, by name.
 
@@ -1160,7 +1169,9 @@ def test_the_known_assumed_byte_orders_are_reported_as_warnings(reports) -> None
         # (docs/specs/2026-09-11-all-calls-working.md §C). It belongs here because the
         # check found it, not because anyone decided about it yet.
         "whirlpool": {"fee_tier", "adaptive_fee_tier", "bundled_position"},
-        "meteora": {"bin_array"},
+        # meteora.bin_array left this list on 2026-09-18: derived both ways against a
+        # live account, `le` exists, `be` does not; declared in the overlay, whose
+        # `why` names the pool and the test.
         "jurassic_fi": {"launch"},
     }
     for api_id, accounts in expected.items():

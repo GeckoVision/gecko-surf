@@ -64,7 +64,7 @@
       "lb_pair": "recovered",
       "reserve": "recovered",
       "oracle": "extracted",
-      "bin_array": "extracted",
+      "bin_array": "manual",
       "bin_array_bitmap_extension": "extracted",
       "event_authority": "extracted",
       "user_token": "manual"
