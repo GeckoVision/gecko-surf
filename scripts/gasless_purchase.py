@@ -35,6 +35,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
@@ -124,6 +125,89 @@ def _emit_trace(args: argparse.Namespace, trace: Trace) -> None:
             )
 
 
+USDG_MINT = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
+TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+
+def _rehearse_route_on_fork(
+    args: argparse.Namespace, proof: Any, buyer: Any, relay: KoraRelay
+) -> int:
+    """Convert on Orca, then buy; the relay pays both fees; the buyer never holds SOL."""
+    from gecko.orquestra_build import orquestra_seams
+    from gecko.providers.whirlpool import WHIRLPOOL_PROGRAM, plan_swap
+    from gecko.sandbox.rehearse_route import RouteLeg, rehearse_gasless_route
+
+    idl_fetch, build_call = orquestra_seams()
+    plan = plan_swap(
+        {
+            "input_mint": USDG_MINT,
+            "output_mint": USDC_MINT,
+            "user": buyer.pubkey,
+            "amount_in": args.convert_amount,
+        },
+        rpc_url=args.rpc_url,
+        idl_fetch=idl_fetch,
+    )
+    if plan.get("refused"):
+        print(f"REFUSED at plan_swap [{plan.get('code')}]: {plan.get('reason')}")
+        return 1
+    quote = plan.get("quote") or {}
+    print(
+        f"  convert    {args.convert_amount} USDG -> USDC on {str(plan.get('pool'))[:8]}…  "
+        f"min out {quote.get('min_amount_out')}"
+    )
+    trace = Trace(lane="route", network="fork")
+    route = rehearse_gasless_route(
+        proof,
+        buyer=buyer,
+        relay=relay,
+        convert=RouteLeg(
+            program_id=WHIRLPOOL_PROGRAM,
+            instruction="swap_v2",
+            values=plan["values"],
+            # swap_v2 creates no token accounts: the USDC one must exist, empty.
+            fund_tokens=[(USDG_MINT, args.convert_amount, TOKEN_2022), (USDC_MINT, 0)],
+            idl_fetch=idl_fetch,
+            build_call=build_call,
+        ),
+        store=args.store,
+        product=args.product,
+        table_number=args.table,
+        trace=trace,
+    )
+    _emit_trace(args, trace)
+    c = route.convert
+    print(
+        f"  leg 1      {'LANDED' if c.landed else 'NOT LANDED'} {c.signature or ''}  "
+        f"CU {c.compute_units}  relay SOL {c.relay_sol.moved if c.relay_sol else None}"
+    )
+    for refusal in c.refusals:
+        print(f"             refused at {refusal.step}: {refusal.reason}")
+    for delta in c.token_deltas:
+        print(f"             {delta.mint[:8]}… {delta.before} -> {delta.after}")
+    p = route.purchase
+    if p is not None:
+        print(
+            f"  leg 2      {'LANDED' if p.landed else 'NOT LANDED'} {p.signature or ''}  "
+            f"CU simulated {p.simulated_units} charged {p.units_consumed}  "
+            f"relay SOL {p.relay_sol.moved if p.relay_sol else None}"
+        )
+        for refusal in p.refusals:
+            print(f"             refused at {refusal.step}: {refusal.reason}")
+    print(
+        f"  buyer SOL  {route.buyer_sol.before} -> {route.buyer_sol.after}   "
+        f"(None = account never existed)"
+    )
+    print(f"  relay SOL  moved {route.relay_sol.moved} across both legs")
+    for line in route.objections:
+        print(f"  OBJECTION  {line}")
+    if route.landed and not route.objections:
+        print("GASLESS ROUTE: converted and bought; the buyer's SOL never moved.")
+        return 0
+    return 1
+
+
 def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
     """The fork lane: `gecko.sandbox.rehearse`, judged by what moved.
 
@@ -149,6 +233,9 @@ def _rehearse_on_fork(args: argparse.Namespace, relay: KoraRelay) -> int:
             "\nDRY RUN: on a fork the rehearsal is the run; add --broadcast to land it."
         )
         return 0
+
+    if args.convert_from:
+        return _rehearse_route_on_fork(args, proof, buyer, relay)
 
     trace = Trace(lane="rehearsal", network="fork")
     result = rehearse_purchase(
@@ -217,6 +304,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--product", required=True)
     parser.add_argument("--table", type=int, default=1)
     parser.add_argument("--max-spend-usdc", type=float, default=1.0)
+    parser.add_argument(
+        "--convert-from",
+        choices=["USDG"],
+        default=None,
+        help="fork only: start from this token instead of the product's; converts on "
+        "Orca first, relay-paid, then buys. The USDG story, end to end, gasless",
+    )
+    parser.add_argument(
+        "--convert-amount",
+        type=int,
+        default=110_000,
+        help="base units of --convert-from to swap (default 0.11, enough for a 0.10 "
+        "product at the measured USDG/USDC rate)",
+    )
     parser.add_argument("--broadcast", action="store_true")
     parser.add_argument(
         "--trace",

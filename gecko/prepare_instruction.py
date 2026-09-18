@@ -258,6 +258,23 @@ def plan_accounts(
     return resolved, origins, missing
 
 
+def _with_signature_slots(transaction_base64: str) -> str:
+    """The builder's bytes with a signature array that matches their own header.
+
+    Refuses nothing: bytes that do not decode are handed back untouched, and the binding
+    step below reports them as unbindable in its own words.
+    """
+    import base64 as _b64
+
+    from .cosign import CosignRefused, normalize_signature_slots
+
+    try:
+        raw = _b64.b64decode(transaction_base64, validate=True)
+        return _b64.b64encode(normalize_signature_slots(raw)).decode()
+    except (CosignRefused, ValueError):
+        return transaction_base64
+
+
 def _why_fee_payer_is_not_an_actor(account: Any) -> str:
     """Why the lone open signer was left open when the payer only pays.
 
@@ -392,6 +409,10 @@ def prepare_instruction_result(
     instruction = str(args.get("instruction") or "").strip()
     values: Mapping[str, Any] = args.get("values") or {}
     payer = str(args.get("payer") or "").strip()
+    # WHO PAYS THE FEE, when that is not the actor. The relay never reaches
+    # `plan_accounts`: it fills no signer slot and owns nothing. It is handed to the
+    # builder alone, as `account_keys[0]`, the same separation prepare_purchase keeps.
+    fee_payer = str(args.get("fee_payer") or "").strip() or None
 
     if not program_id:
         return _refuse("program-unknown", "no program_id was given")
@@ -485,7 +506,7 @@ def prepare_instruction_result(
             "instruction": instruction,
             "accounts": resolved,
             "args": {name: values[name] for name in declared_args},
-            "payer": payer,
+            "payer": fee_payer or payer,
         }
         if blockhash:
             build_kwargs["blockhash"] = blockhash
@@ -501,6 +522,11 @@ def prepare_instruction_result(
         return _refuse(
             "build-failed", f"the builder refused: {type(exc).__name__}: {exc}"
         )
+    if fee_payer and fee_payer != payer:
+        # The builder ships a one-slot signature array under a two-signer header when
+        # the payer is not the actor (measured; gecko.cosign.normalize_signature_slots).
+        # The message is untouched; only the array outside it is made consistent.
+        transaction = _with_signature_slots(transaction)
 
     # THE BINDING IS WHAT MAKES `verify_signed_transaction` REACHABLE HERE.
     #
@@ -528,6 +554,25 @@ def prepare_instruction_result(
         "signed": False,
         "instruction": instruction,
         "program_id": program_id,
+        "fee_payer": fee_payer or payer,
+        # Absent when the actor pays its own fee. Present, it is the warning a caller
+        # cannot afford to miss: these bytes need TWO signatures, the relay's first.
+        **(
+            {}
+            if not fee_payer or fee_payer == payer
+            else {
+                "gasless": {
+                    "fee_payer": fee_payer,
+                    "signatures_required": [payer, fee_payer],
+                    "why": (
+                        "a relay pays the network fee so the actor needs no SOL; the "
+                        "relay is account_keys[0], inside the hashed message, so the "
+                        "binding covers it. It signs first; the actor signs the bytes "
+                        "the relay returns."
+                    ),
+                }
+            }
+        ),
         "accounts": resolved,
         "account_origins": origins,
         "derivation_order": list(target.derivation_order),
@@ -675,7 +720,15 @@ PREPARE_INSTRUCTION_TOOL = {
             },
             "payer": {
                 "type": "string",
-                "description": "base58 address that pays the fee and signs",
+                "description": "base58 address that acts: signs as the authority",
+            },
+            "fee_payer": {
+                "type": "string",
+                "description": (
+                    "optional: a different base58 address that pays the network fee (a "
+                    "relay). It signs as account_keys[0] and is placed in no other slot; "
+                    "the result then carries a `gasless` block naming both signers"
+                ),
             },
             "values": {
                 "type": "object",

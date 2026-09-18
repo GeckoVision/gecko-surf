@@ -44,6 +44,8 @@ from .rehearse import (
     _sign,
     _transaction_meta,
 )
+from ..relay import FeePayerRelay, RelayRefused, sponsor
+from .rehearse import _cosign
 from .surfnet import EphemeralSigner, SurfnetProof
 
 __all__ = [
@@ -71,6 +73,11 @@ class InstructionRehearsal:
     token_deltas: Sequence[TokenDelta] = field(default_factory=tuple)
     logs: Sequence[str] = field(default_factory=tuple)
     refusals: Sequence[Refusal] = field(default_factory=tuple)
+    #: The relay-paid variant: who paid the fee, and its SOL across the call. Under a
+    #: relay the signer's own SOL is expected to move by nothing.
+    fee_payer: str | None = None
+    relay_sol: LamportDelta | None = None
+    signer_sol: LamportDelta | None = None
 
     @property
     def moved_anything(self) -> bool:
@@ -111,18 +118,27 @@ def rehearse_instruction(
     values: Mapping[str, Any],
     idl_fetch: Any,
     build_call: Any,
-    fund_tokens: Sequence[tuple[str, int]] = (),
+    fund_tokens: Sequence[tuple[str, int] | tuple[str, int, str]] = (),
     fee_lamports: int = DEFAULT_FEE_LAMPORTS,
     rpc_call: RpcCall | None = None,
+    relay: FeePayerRelay | None = None,
 ) -> InstructionRehearsal:
     """Fund, prepare, sign, land and observe — one instruction, on a proven surfnet.
+
+    ``relay`` makes the call RELAY-PAID: the signer is funded with tokens only, the
+    relay is the builder's payer, it signs first (its Lighthouse addition accepted by
+    :mod:`gecko.relay`), the signer signs its own slot over the relay's bytes, and the
+    result records the relay's SOL beside the signer's.
 
     ``signer`` is an :class:`~gecko.sandbox.surfnet.EphemeralSigner` rather than a pubkey,
     for the same reason the purchase rehearsal insists on one: the address that pays and
     the key that signs must be the same object, and a string would let them drift.
 
-    ``fund_tokens`` is ``[(mint, raw_amount), …]`` — the balances to place on the signer
-    before the call, by cheatcode. Stated by the caller because only they know what the
+    ``fund_tokens`` is ``[(mint, raw_amount), …]`` or ``[(mint, raw_amount,
+    token_program), …]`` — the balances to place on the signer before the call, by
+    cheatcode. Name the token program for a Token-2022 mint (USDG): the cheatcode writes
+    the ATA under whichever program it is told, and the classic ATA is not the one the
+    swap reads. Stated by the caller because only they know what the
     instruction needs; this function will not guess a funding plan from an IDL.
 
     Raises :class:`RehearsalError` only for a binding that does not hold. Everything
@@ -136,10 +152,20 @@ def rehearse_instruction(
     call = rpc_call or default_rpc_call
     refusals: list[Refusal] = []
 
-    fund_sol(proof, signer.pubkey, fee_lamports, rpc_call=call)
+    if relay is None:
+        fund_sol(proof, signer.pubkey, fee_lamports, rpc_call=call)
     watched: list[str] = []
-    for mint, amount in fund_tokens:
-        funded = fund_token(proof, signer.pubkey, mint, amount, rpc_call=call)
+    for entry in fund_tokens:
+        mint, amount = entry[0], entry[1]
+        program = entry[2] if len(entry) > 2 else None
+        funded = fund_token(
+            proof,
+            signer.pubkey,
+            mint,
+            amount,
+            rpc_call=call,
+            **({"token_program": program} if program else {}),
+        )
         watched.append(funded.token_account)
 
     prepared = prepare_instruction_result(
@@ -148,6 +174,7 @@ def rehearse_instruction(
             "instruction": instruction,
             "payer": signer.pubkey,
             "values": dict(values),
+            **({"fee_payer": relay.pubkey} if relay is not None else {}),
         },
         idl_fetch=idl_fetch,
         build_call=build_call,
@@ -187,8 +214,30 @@ def rehearse_instruction(
     # send cannot be redirected at anything else, mainnet included.
     _only_this_surfnet(proof)
 
-    # `_sign` answers (signed base64, signature base58) — in that order.
-    signed_base64, signature = _sign(prepared["transaction_base64"], signer)
+    signer_before = _lamports(_account(call, proof.rpc_url, signer.pubkey))
+    relay_before = (
+        _lamports(_account(call, proof.rpc_url, relay.pubkey)) if relay else None
+    )
+    # `_sign` answers (signed base64, signature base58) — in that order. Under a relay
+    # the relay signs first and the signer co-signs the relay's bytes.
+    if relay is None:
+        signed_base64, signature = _sign(prepared["transaction_base64"], signer)
+    else:
+        try:
+            accepted = sponsor(prepared["transaction_base64"], relay)
+        except RelayRefused as refusal:
+            refusals.append(Refusal("sponsor", f"[{refusal.code}] {refusal.reason}"))
+            return InstructionRehearsal(
+                program_id=program_id,
+                instruction=instruction,
+                rpc_url=proof.rpc_url,
+                signer=signer.pubkey,
+                accounts=accounts,
+                account_origins=tuple(prepared["account_origins"]),
+                refusals=tuple(refusals),
+                fee_payer=relay.pubkey,
+            )
+        signed_base64, signature = _cosign(accepted, signer)
     sent = call(
         proof.rpc_url,
         "sendTransaction",
@@ -240,6 +289,20 @@ def rehearse_instruction(
         for a in accounts.values()
         if before_sol.get(a) != after_sol.get(a)
     ]
+    signer_sol = LamportDelta(
+        address=signer.pubkey,
+        before=signer_before,
+        after=_lamports(_account(call, proof.rpc_url, signer.pubkey)),
+    )
+    relay_sol = (
+        LamportDelta(
+            address=relay.pubkey,
+            before=relay_before,
+            after=_lamports(_account(call, proof.rpc_url, relay.pubkey)),
+        )
+        if relay is not None
+        else None
+    )
 
     return InstructionRehearsal(
         program_id=program_id,
@@ -256,4 +319,7 @@ def rehearse_instruction(
         token_deltas=tuple(token_deltas),
         logs=tuple((meta or {}).get("logMessages") or ())[-15:],
         refusals=tuple(refusals),
+        fee_payer=relay.pubkey if relay is not None else signer.pubkey,
+        relay_sol=relay_sol,
+        signer_sol=signer_sol,
     )
