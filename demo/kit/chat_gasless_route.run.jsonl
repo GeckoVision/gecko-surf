@@ -1,0 +1,10 @@
+{"lane": "route", "network": "fork", "started": 1789760096.409034}
+{"binding_prefix": null, "ms": 6245, "note": null, "outcome": "ok", "party": "gecko", "seq": 0, "step": "convert", "units": 50973}
+{"binding_prefix": null, "ms": 0, "note": "prefunded by the previous leg", "outcome": "ok", "party": "gecko", "seq": 1, "step": "fund", "units": null}
+{"binding_prefix": "5a70f24a", "ms": 1602, "note": null, "outcome": "ok", "party": "gecko", "seq": 2, "step": "prepare", "units": 54647}
+{"binding_prefix": null, "ms": 233, "note": "appended L2TExMFK", "outcome": "ok", "party": "relay", "seq": 3, "step": "sponsor", "units": null}
+{"binding_prefix": "68ecc927", "ms": 602, "note": null, "outcome": "ok", "party": "node", "seq": 4, "step": "resimulate", "units": 55325}
+{"binding_prefix": null, "ms": 0, "note": null, "outcome": "ok", "party": "buyer", "seq": 5, "step": "cosign", "units": null}
+{"binding_prefix": null, "ms": 150, "note": null, "outcome": "ok", "party": "node", "seq": 6, "step": "land", "units": null}
+{"binding_prefix": null, "ms": 222, "note": null, "outcome": "ok", "party": "gecko", "seq": 7, "step": "judge", "units": 55325}
+{"binding_prefix": null, "ms": 0, "note": "4 accounts", "outcome": "ok", "party": "gecko", "seq": 8, "step": "reset", "units": null}
