@@ -156,6 +156,10 @@ class FakeChain:
             )
             return {"result": {"value": [status]}}
         if method == "getTransaction":
+            if not self.confirmed:
+                # An unconfirmed transaction has no landed record either; the fallback
+                # `_confirm` now makes must not be able to invent one.
+                return {"result": None}
             return {
                 "result": {
                     "meta": {
@@ -349,3 +353,96 @@ def test_an_unconfirmed_send_never_claims_to_have_landed(
 
     assert result.landed is False
     assert any(r.step == "confirm" for r in result.refusals)
+
+
+# ------------------------------------------------------------- relay-paid
+
+
+def make_relay_builder(actor: str) -> Any:
+    """The relay-paid build: the relay pays, the actor is the instruction's signer.
+
+    Emits the ONE-slot signature array under a two-signer header that the real builder
+    emits when payer != actor, so the repair in prepare_instruction is exercised too.
+    """
+
+    def build(**kwargs: Any) -> str:
+        from solders.hash import Hash
+        from solders.instruction import AccountMeta, Instruction
+        from solders.message import Message
+        from solders.pubkey import Pubkey
+
+        payer = Pubkey.from_string(kwargs["payer"])
+        instruction = Instruction(
+            Pubkey.from_string(PROGRAM),
+            b"\x00" * 8,
+            [AccountMeta(Pubkey.from_string(actor), True, True)],
+        )
+        message = Message.new_with_blockhash([instruction], payer, Hash.default())
+        return base64.b64encode(bytes([1]) + bytes(64) + bytes(message)).decode()
+
+    return build
+
+
+class KoraShapedRelay:
+    """Signs slot 0 and appends its Lighthouse assertion, as Kora does."""
+
+    def __init__(self) -> None:
+        from solders.keypair import Keypair
+
+        self._kp = Keypair()
+        self.asked: list[str] = []
+
+    @property
+    def pubkey(self) -> str:
+        return str(self._kp.pubkey())
+
+    def sign_as_fee_payer(self, unsigned_transaction_base64: str) -> str:
+        from tests.test_relay import kora_extend
+
+        self.asked.append(unsigned_transaction_base64)
+        return kora_extend(unsigned_transaction_base64, self._kp)
+
+
+def test_a_relay_paid_instruction_lands_with_two_signatures_and_no_sol_on_the_signer() -> (
+    None
+):
+    from solders.transaction import Transaction
+
+    chain = FakeChain()
+    signer = signer_on(chain)
+    relay = KoraShapedRelay()
+    chain.lamports[relay.pubkey] = 50_000_000
+
+    sent_bytes: list[str] = []
+    original_call = chain.__call__
+
+    def recording(url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        if method == "sendTransaction":
+            sent_bytes.append(params[0])
+        return original_call(url, method, params)
+
+    result = rehearse_instruction(
+        prove_surfnet(FORK, rpc_call=chain),
+        signer=signer,
+        program_id=PROGRAM,
+        instruction="contribute",
+        values={"amount": 250_000, "payment_vault": VAULT},
+        idl_fetch=idl_fetch,
+        build_call=make_relay_builder(signer.pubkey),
+        rpc_call=recording,
+        relay=relay,
+    )
+
+    assert result.landed, result.refusals
+    assert result.fee_payer == relay.pubkey
+    assert (
+        "surfnet_setAccount"
+        not in [m for m in chain.calls if m == "surfnet_setAccount"]
+        or signer.pubkey not in chain.lamports
+    ), "the signer is never funded with SOL"
+    assert len(relay.asked) == 1
+    tx = Transaction.from_bytes(base64.b64decode(sent_bytes[0]))
+    assert all(tx.verify_with_results()), "relay's and signer's signatures both verify"
+    assert len(tx.message.instructions) == 2, "ours, then the relay's assertion"
+    assert str(tx.message.account_keys[0]) == relay.pubkey
+    assert result.signer_sol is not None and result.signer_sol.before is None

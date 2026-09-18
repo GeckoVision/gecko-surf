@@ -2,7 +2,7 @@
 
 # Module index
 
-241 modules in `gecko/` (subpackages included), from their own docstrings.
+242 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -34,7 +34,7 @@ package depends on it, which is worth a look before you add a caller.
 | `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 12 · `cli`, `drift`, `drift_watch` +9 |
 | `corrections` | Args-side of the correctness corpus — captured corrections that raise first-call-correct | 1 · `fcc_eval` |
 | `correlate` | The correlation engine (§13 Phase 2) — the confidence, done honestly. | 5 · `catalog_mcp`, `metrics`, `provider_matrix` +2 |
-| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 6 · `autonomous_purchase`, `handoff`, `prepare_purchase` +3 |
+| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
 | `credentials` | Local credential resolver — fetch the user's provider key at call time. | 10 · `access`, `authcheck`, `connect` +7 |
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
@@ -176,7 +176,7 @@ package depends on it, which is worth a look before you add a caller.
 | `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |
 | `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 1 · `registry.wiring` |
 | `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
-| `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 2 · `autonomous_purchase`, `sandbox.rehearse` |
+| `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 3 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_instruction` |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
@@ -232,6 +232,7 @@ package depends on it, which is worth a look before you add a caller.
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
 | `tools` | Question-shaped tool generator — the comprehension payload. | 30 · `agentnative`, `catalog`, `chain_eval` +27 |
+| `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 2 · `autonomous_purchase`, `sandbox.rehearse` |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |

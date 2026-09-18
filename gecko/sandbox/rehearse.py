@@ -249,8 +249,13 @@ def rehearse_purchase(
     build_call: BuildCall | None = None,
     relay: FeePayerRelay | None = None,
     trace: Trace | None = None,
+    prefunded: bool = False,
 ) -> Rehearsal:
     """Fund, prepare, sign, land, judge and reset — one purchase, on a proven surfnet.
+
+    ``prefunded`` skips the token cheatcode: the buyer already holds the price, because a
+    previous leg produced it (a convert). The judgement is unchanged; what changes is that
+    an under-funded buyer now refuses at prepare instead of being topped up silently.
 
     ``trace`` records each step, its party, its outcome and its duration
     (:mod:`gecko.trace`), so the run can draw its own graph. Control plane only.
@@ -325,6 +330,7 @@ def rehearse_purchase(
             build_call=build_call,
             relay=relay,
             trace=trace or Trace(lane="rehearsal", network="fork"),
+            prefunded=prefunded,
         )
     finally:
         # Measured: this reverts TRANSACTION writes too, not only cheatcode overrides —
@@ -350,6 +356,7 @@ def _run(
     build_call: BuildCall | None,
     relay: FeePayerRelay | None = None,
     trace: Trace,
+    prefunded: bool = False,
 ) -> Rehearsal:
     """Steps 1 to 5. Split out so RESET can be a ``finally`` around the whole of it."""
     _, buyer_ata, store_ata, receipts = touched
@@ -358,10 +365,17 @@ def _run(
     #    Under a relay the buyer gets NO SOL: zero before is what makes zero after a
     #    measurement rather than a coincidence.
     with trace.step("fund", "gecko") as facts:
-        fund_token(proof, buyer.pubkey, listed_mint, blank.price_raw, rpc_call=rpc_call)
+        if not prefunded:
+            fund_token(
+                proof, buyer.pubkey, listed_mint, blank.price_raw, rpc_call=rpc_call
+            )
         if relay is None:
             fund_sol(proof, buyer.pubkey, fee_lamports, rpc_call=rpc_call)
-        facts["note"] = "tokens only" if relay is not None else "tokens + SOL"
+        facts["note"] = (
+            "prefunded by the previous leg"
+            if prefunded
+            else ("tokens only" if relay is not None else "tokens + SOL")
+        )
 
     # 2. PREPARE — the production path, unchanged.
     with trace.step("prepare", "gecko") as facts:
@@ -659,7 +673,10 @@ def _cosign(accepted: RelayAccepted, buyer: EphemeralSigner) -> tuple[str, str]:
             Contribution(buyer.pubkey, bytes(signature)),
         ],
     )
-    return merged, str(signature)
+    # THE TRANSACTION ID IS SLOT 0, the relay's signature, not the buyer's. Polling the
+    # buyer's signature asked the node about a transaction that does not exist while the
+    # real one had already moved the tokens (measured 2026-09-18, 30 s of "not confirmed").
+    return merged, str(Signature.from_bytes(accepted.relay_signature))
 
 
 @dataclass(frozen=True)
@@ -818,6 +835,12 @@ def _confirm(call: RpcCall, rpc_url: str, signature: str) -> bool:
                 return False
             if status.get("confirmationStatus") in {"confirmed", "finalized"}:
                 return True
+        # surfpool answers null here for a transaction it has already executed (measured
+        # 2026-09-18: the swap's token deltas were on chain while this said nothing for
+        # 30 s). The landed transaction itself is the stronger answer, so ask for it.
+        meta = _transaction_meta(call, rpc_url, signature)
+        if meta is not None:
+            return meta.get("err") is None
         time.sleep(0.5)
     return False
 

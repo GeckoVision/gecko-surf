@@ -155,7 +155,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--signer",
         required=True,
-        help="your base58 pubkey; pays fees AND is token_authority",
+        help="your base58 pubkey; token_authority, and the fee payer unless --fee-payer",
+    )
+    parser.add_argument(
+        "--fee-payer",
+        default=None,
+        help=(
+            "a relay that pays the network fee instead of --signer (gasless). It becomes "
+            "account_keys[0] and no other slot; the bytes then need the relay's signature "
+            "FIRST (gecko.relay.sponsor), so --send is refused together with this"
+        ),
     )
     parser.add_argument("--rpc-url", default="https://api.mainnet-beta.solana.com")
     parser.add_argument(
@@ -329,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
             "program_id": WHIRLPOOL_PROGRAM,
             "instruction": "swap_v2",
             "payer": args.signer,
+            **({"fee_payer": args.fee_payer} if args.fee_payer else {}),
             "values": {
                 "whirlpool": args.pool,
                 "token_mint_a": mint_a,
@@ -379,6 +389,14 @@ def main(argv: list[str] | None = None) -> int:
     if not binding:
         return _stop(
             "no binding could be computed for these bytes; the handoff cannot be checked"
+        )
+
+    if args.send and args.fee_payer:
+        return _stop(
+            "--send signs with --keypair as the fee payer, and --fee-payer names a relay.\n"
+            "  Relay-paid bytes need the relay's signature first: run\n"
+            "  scripts/gasless_purchase.py or gecko.relay.sponsor, then co-sign as the\n"
+            "  authority (gecko.sandbox.rehearse_instruction on a fork)."
         )
 
     if args.send:

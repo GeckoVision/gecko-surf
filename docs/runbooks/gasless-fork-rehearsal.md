@@ -341,6 +341,41 @@ signature array whenever the payer is a relay (`SanitizeFailure`, repaired by
 under free pricing with usage tracking (the client sends the buyer); and the failure
 diagnosis blamed the zero-SOL buyer for a fee it was never going to pay.
 
+## 9b. The whole USDG story, gasless, measured
+
+**2026-09-18, surfpool 1.1.1 fork, kora-cli built from PR #675, ephemeral buyer holding
+0.11 USDG and nothing else, `scripts/gasless_purchase.py --network fork --product Espresso
+--convert-from USDG --broadcast`:**
+
+```
+  convert    110000 USDG -> USDC on 9RqDTfwC…  min out 108893
+  leg 1      LANDED 4kMU5pCH…  CU 50873   relay SOL -10000
+  leg 2      LANDED 2Q8EwH8X…  CU simulated 55325 charged 55325   relay SOL -10000
+  buyer SOL  None -> None   (None = account never existed)
+  relay SOL  moved -20000 across both legs
+GASLESS ROUTE: converted and bought; the buyer's SOL never moved.
+```
+
+Both legs relay-paid: Kora signed first each time, `gecko.relay` accepted its Lighthouse
+addition, the buyer co-signed its own slot, `cosign` merged, the ledger judged. The trace
+graph of the run has nine steps.
+
+**Three things this run found, all fixed on the way:**
+
+1. The swap builder tags its transaction with a Memo instruction; the relay refused the
+   whole swap for it. Memo moves nothing; it is now in `allowed_programs`.
+2. **The relay's own Token-2022 policy refuses USDG.** `transfer_hook_policy = "deny_all"`
+   and `transfer_hook` / `permanent_delegate` in `blocked_mint_extensions` reject a mint
+   whose hook authority is mutable, and USDG's is (Paxos). `signTransaction` counts as
+   delayed signing, so Kora's default would refuse it too. Only `allow_all` lets the
+   convert leg through. The committed config stays closed; the run above used a relaxed
+   copy, and the note in `kora.gecko.toml` says what you accept if you relax it on
+   mainnet: Paxos's authorities over the two mints you already chose to hold.
+3. The transaction id is slot 0, the relay's signature. The co-sign step reported the
+   buyer's signature and the confirmation poll asked the node about a transaction that
+   does not exist, for 30 s, while the tokens had already moved. Fixed in `_cosign`;
+   `_confirm` also reads the landed transaction itself when the status query says nothing.
+
 ## 10. Tear down
 
 ```bash

@@ -94,6 +94,9 @@ allowed_programs = [
     "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95",   # Lighthouse — required when enabled
     "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",   # Orca Whirlpool — the convert leg
     "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya",  # let_me_buy — the espresso
+    # Memo moves nothing and touches no account; the swap builder tags its transaction
+    # with one, and Kora refused the whole swap for it (measured 2026-09-18).
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",  # Memo
 ]
 
 # The mints this relay will sponsor a transaction for.
@@ -174,6 +177,17 @@ type = "free"
 # `deny_all`, not the default `deny_mutable_for_delayed_signing`. A mutable transfer-hook
 # authority can swap the hook program between signing and execution — and USDG is
 # Token-2022, so this is our mint family, not someone else's problem.
+#
+# MEASURED 2026-09-18, and it is a decision, not a bug: with this block as written the
+# relay REFUSES to pay for a USDG swap ("Mutable transfer-hook authority found on mint
+# account 2u1tszSe…"). USDG declares a transfer hook and a permanent delegate whose
+# authorities are Paxos's, and `signTransaction` is a delayed-signing flow, so only
+# `allow_all` lets the convert leg through. On the fork, with `transfer_hook_policy =
+# "allow_all"` and `permanent_delegate`/`transfer_hook` removed from the list below, the
+# whole USDG -> USDC -> espresso route landed relay-paid (runbook section 9b). To run that
+# on mainnet you accept Paxos's authorities for the two mints in `allowed_tokens`, which
+# is the same trust you take by holding USDG at all. The default here stays closed;
+# change it on purpose, in your own copy, and say so in the runbook.
 [validation.token_2022]
 transfer_hook_policy = "deny_all"
 blocked_mint_extensions = [

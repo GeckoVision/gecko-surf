@@ -435,3 +435,47 @@ def test_the_mirror_spelling_binds_too() -> None:
     assert seed_aliases(node, {"params.launch_id": 100}) == {
         "launch_id": ("params.launch_id", 100)
     }
+
+
+# ------------------------------------------------------------- a relay pays the fee
+
+
+def test_a_fee_payer_reaches_the_builder_and_no_signer_slot() -> None:
+    """Gasless: the relay is the builder's payer and nothing else. The actor keeps every
+    slot it had, and the result says two signatures are needed, the relay's first."""
+    builder = RecordingBuilder()
+    relay = "KoRAFeePayer1111111111111111111111111111111"
+    result = prepare_instruction_result(
+        {
+            "program_id": PROGRAM,
+            "instruction": "contribute",
+            "payer": BUYER,
+            "fee_payer": relay,
+            "values": VALUES,
+        },
+        idl_fetch=idl_fetch,
+        build_call=builder,
+    )
+    assert result["refused"] is False
+    assert builder.calls[0]["payer"] == relay
+    assert builder.calls[0]["accounts"]["contributor"] == BUYER
+    assert relay not in builder.calls[0]["accounts"].values()
+    assert result["fee_payer"] == relay
+    assert result["gasless"]["signatures_required"] == [BUYER, relay]
+
+
+def test_without_a_fee_payer_nothing_changes_and_no_gasless_block_appears() -> None:
+    builder = RecordingBuilder()
+    result = prepare_instruction_result(
+        {
+            "program_id": PROGRAM,
+            "instruction": "contribute",
+            "payer": BUYER,
+            "values": VALUES,
+        },
+        idl_fetch=idl_fetch,
+        build_call=builder,
+    )
+    assert builder.calls[0]["payer"] == BUYER
+    assert result["fee_payer"] == BUYER
+    assert "gasless" not in result
