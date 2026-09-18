@@ -1,0 +1,11 @@
+# One in-memory signer: the relay's hot key, read from the environment at start.
+# Base58 of the 64-byte keypair (what `str(Keypair)` prints), never a JSON byte list.
+# Generate it OFF this box, fund it with what you can afford to lose, rotate when done.
+[signer_pool]
+strategy = "round_robin"
+
+[[signers]]
+name = "gecko-relay"
+type = "memory"
+private_key_env = "KORA_RELAY_KEY"
+weight = 1

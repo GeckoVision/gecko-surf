@@ -1,0 +1,13 @@
+# The relay key held in Privy's enclave instead of on this box. Same policy, same config;
+# only the signer block changes. Costs a Privy signature per transaction.
+# Setup: create a Privy app, create a SERVER wallet, note its wallet id.
+[signer_pool]
+strategy = "round_robin"
+
+[[signers]]
+name = "gecko-relay-privy"
+type = "privy"
+app_id_env = "PRIVY_APP_ID"
+app_secret_env = "PRIVY_APP_SECRET"
+wallet_id_env = "PRIVY_WALLET_ID"
+weight = 1

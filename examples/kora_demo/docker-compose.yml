@@ -1,0 +1,34 @@
+# The Gecko fee-payer relay: Kora, our hardened config, one signer, no key in the image.
+#
+#   cp .env.example .env            # fill RPC_URL, KORA_API_KEY, KORA_RELAY_KEY
+#   cp signers.memory.toml.example signers.toml
+#   docker compose up -d --build
+#
+# The binary is built from the Kora repo at a pinned tag (KORA_REF). There is no published
+# image; building it yourself is also how you know what is running. The config and the
+# signer file are mounted read-only; the key reaches the container only through the
+# environment, from a .env that never enters git (examples/kora_demo/.gitignore).
+#
+# Port 8080 is bound to loopback. The relay is reached by Gecko's settle path on the same
+# host (or over a private network), never from the internet: signTransaction spends the
+# fee payer's SOL, and kora.gecko.toml gates it behind an API key for the same reason.
+services:
+  kora:
+    build:
+      context: ${KORA_SRC:-../../../kora}
+      dockerfile: Dockerfile
+    image: gecko-relay:${KORA_REF:-kora-cli-v2.2.0-beta.8}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./kora.gecko.toml:/app/kora.toml:ro
+      - ./signers.toml:/app/signers.toml:ro
+    env_file: .env
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    command: >
+      kora --config /app/kora.toml --rpc-url ${RPC_URL}
+           rpc start --signers-config /app/signers.toml
+    # No healthcheck: the runtime image carries no curl. Liveness is the probe in
+    # docs/runbooks/mainnet-relay.md step 3, run from the host after every start.
