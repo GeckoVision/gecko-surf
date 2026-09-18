@@ -1,0 +1,8 @@
+{"lane": "settle", "network": "mainnet", "started": 1789774731.4217987}
+{"binding_prefix": null, "ms": 755, "note": "appended", "outcome": "ok", "party": "relay", "seq": 0, "step": "sponsor", "units": null}
+{"binding_prefix": "8c36aef4", "ms": 755, "note": null, "outcome": "ok", "party": "node", "seq": 1, "step": "resimulate", "units": 49230}
+{"binding_prefix": null, "ms": 0, "note": null, "outcome": "ok", "party": "gecko", "seq": 2, "step": "verify", "units": null}
+{"binding_prefix": null, "ms": 2108, "note": null, "outcome": "ok", "party": "buyer", "seq": 3, "step": "sign", "units": null}
+{"binding_prefix": null, "ms": 0, "note": null, "outcome": "ok", "party": "gecko", "seq": 4, "step": "merge", "units": null}
+{"binding_prefix": null, "ms": 271, "note": null, "outcome": "ok", "party": "node", "seq": 5, "step": "send", "units": null}
+{"binding_prefix": null, "ms": 4394, "note": null, "outcome": "ok", "party": "node", "seq": 6, "step": "confirm", "units": 49230}

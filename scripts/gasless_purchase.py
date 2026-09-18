@@ -99,7 +99,11 @@ class AuthorityKeypairBackend:
 
 
 def _balance(rpc_url: str, account: str) -> int:
-    reply = default_rpc_call(rpc_url, "getBalance", [account])
+    # `confirmed`, the commitment the landing is confirmed at: the default (finalized)
+    # read "relay SOL after == before" on 2026-09-18 while the chain already showed the fee.
+    reply = default_rpc_call(
+        rpc_url, "getBalance", [account, {"commitment": "confirmed"}]
+    )
     value = (reply.get("result") or {}).get("value")
     return int(value) if isinstance(value, int) else 0
 

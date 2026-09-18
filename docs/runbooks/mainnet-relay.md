@@ -150,6 +150,27 @@ uv run python scripts/gasless_purchase.py --network mainnet \
 Per `CLAUDE.md` the broadcast is founder-typed. The ledger row it writes carries `payer` =
 the relay; the graph it draws is the evidence for the runbook.
 
+**Measured 2026-09-18, the first one.** Founder-authorized in chat, step by step: the store
+wallet funded the relay (0.01 SOL) and the PayBox wallet (0.20 USDC); the dry run passed
+(receipt PASS, 48,552 CU, exact binding, two signers); then one broadcast.
+
+```
+LANDED   4fjGFCpRS2GR86DiL5LbhndPT8gJ637HM8yLm5FndgYf8tzwDVFsnZvWnq6Xx8Ujtu32x4Xcd1egaSnAy54fzeWW
+CU       predicted 49230  charged 49230        (slot 448234184)
+signers  2  payer 6Q5Ki322…  authority GpaLFMwQ…
+buyer    SOL 22,865,000 -> 22,865,000   USDC 0.20031 -> 0.10031
+relay    SOL 10,000,000 -> 9,990,000    (fee 10,000 lamports: two signatures)
+store    USDC 4.580028 -> 4.680028
+```
+
+Read back from the chain, not from the runner: the transaction carries two programs, the
+shop's and Lighthouse's assertion the relay appended, and the buyer's SOL did not move.
+Trace and graph: `docs/assets/gasless-mainnet-first-run.trace.jsonl` and
+`docs/assets/gasless-mainnet-first-run.html` (steps: sponsor 755 ms, resimulate 755 ms,
+verify, sign 2,108 ms by PayBox, merge, send 271 ms, confirm 4,394 ms). The runner's own
+"relay SOL after" line read the balance before the fee was visible at the default commitment;
+fixed in the same change by reading at `confirmed`.
+
 ## 5. Watch the balance
 
 Kora exports Prometheus at `/metrics` on the same port (`[metrics]` in the config), with the
