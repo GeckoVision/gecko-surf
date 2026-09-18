@@ -150,52 +150,41 @@ def _fill_optional_account_slots(
     return {**instruction, "accounts": filled}
 
 
-def simulate_swap_landing(
+@dataclass(frozen=True)
+class SwapLandingBundle:
+    """Everything a landing needs, assembled once: the plan, the built swap with its
+    bin arrays, and the prelude/postlude around it. Simulated by
+    :func:`simulate_swap_landing`; landed by the sandbox rehearsal. Nothing here is
+    signed or sent."""
+
+    plan: Mapping[str, Any]
+    accounts: Mapping[str, str]
+    bin_arrays: list[str]
+    bin_array_indexes: list[int]
+    swap_ix: Any
+    swap_ix_complete: Any
+    prelude_ixs: list[Any]
+    postlude_ixs: list[Any]
+
+    @property
+    def instructions(self) -> list[Any]:
+        """The ordered bundle, without the compute budget the caller sizes."""
+        return [*self.prelude_ixs, self.swap_ix_complete, *self.postlude_ixs]
+
+
+def assemble_swap_landing(
     bindings: Mapping[str, Any],
     *,
-    rpc_url: str = LOCAL_RPC,
+    rpc_url: str,
     rpc_call: RpcCall | None = None,
     slippage_bps: int = DEFAULT_SLIPPAGE_BPS,
-    unit_price_microlamports: int = 0,
-    include_derive_only: bool = True,
     fetch_swap_instruction: FetchSwapInstruction | None = None,
-    network_label: str | None = None,
-    record_to: str | Path | None = None,
-) -> SwapLandingResult:
-    """Assemble the Meteora swap landing bundle and simulate it → a
-    :class:`SwapLandingResult`.
-
-    ``bindings`` needs ``input_mint``, ``output_mint``, ``bin_step``, ``base_factor``,
-    ``user``, ``amount_in`` (``min_amount_out`` is quoted from the pool state, NOT
-    taken as input). Reads are control-plane only; the unsigned bundle is simulated,
-    never sent. Both the RPC and the Orquestra build are injectable, so the whole path
-    is falsifiable offline.
-
-    ``record_to`` is the D2 corpus opt-in — OFF by default (None = today's behavior,
-    nothing persisted). When set, ONE categorical ``SimulatedOutcome`` row for the
-    landing Receipt is appended to the path's segregated ``simulated.jsonl`` sibling
-    (:func:`gecko.providers.landing_record.record_landing_outcome`): status / revert
-    family / units / slot / network category + a values-free structural ``recipe_hash``
-    — never a pubkey, amount, or log line.
-    """
-    required = (
-        "input_mint",
-        "output_mint",
-        "bin_step",
-        "base_factor",
-        "user",
-        "amount_in",
-    )
-    missing = [k for k in required if k not in bindings]
-    if missing:
-        raise SwapLandingError(f"simulate_swap_landing needs bindings {missing}")
-
+) -> SwapLandingBundle:
+    """Plan the swap, build it, and wrap it in its prelude and postlude. No simulation."""
     input_mint = str(bindings["input_mint"])
     output_mint = str(bindings["output_mint"])
     user = str(bindings["user"])
     amount_in = int(bindings["amount_in"])
-
-    # (1) the full declared plan: ONE pool-state read → accounts, bin_arrays, quote.
     plan = plan_swap(
         bindings, rpc_url=rpc_url, rpc_call=rpc_call, slippage_bps=slippage_bps
     )
@@ -250,6 +239,76 @@ def simulate_swap_landing(
         ]
         postlude_ixs.append(close_account_ix(wsol_ata, user, user))
 
+    return SwapLandingBundle(
+        plan=plan,
+        accounts=accounts,
+        bin_arrays=bin_arrays,
+        bin_array_indexes=bin_array_indexes,
+        swap_ix=swap_ix,
+        swap_ix_complete=swap_ix_complete,
+        prelude_ixs=list(prelude_ixs),
+        postlude_ixs=list(postlude_ixs),
+    )
+
+
+def simulate_swap_landing(
+    bindings: Mapping[str, Any],
+    *,
+    rpc_url: str = LOCAL_RPC,
+    rpc_call: RpcCall | None = None,
+    slippage_bps: int = DEFAULT_SLIPPAGE_BPS,
+    unit_price_microlamports: int = 0,
+    include_derive_only: bool = True,
+    fetch_swap_instruction: FetchSwapInstruction | None = None,
+    network_label: str | None = None,
+    record_to: str | Path | None = None,
+) -> SwapLandingResult:
+    """Assemble the Meteora swap landing bundle and simulate it → a
+    :class:`SwapLandingResult`.
+
+    ``bindings`` needs ``input_mint``, ``output_mint``, ``bin_step``, ``base_factor``,
+    ``user``, ``amount_in`` (``min_amount_out`` is quoted from the pool state, NOT
+    taken as input). Reads are control-plane only; the unsigned bundle is simulated,
+    never sent. Both the RPC and the Orquestra build are injectable, so the whole path
+    is falsifiable offline.
+
+    ``record_to`` is the D2 corpus opt-in — OFF by default (None = today's behavior,
+    nothing persisted). When set, ONE categorical ``SimulatedOutcome`` row for the
+    landing Receipt is appended to the path's segregated ``simulated.jsonl`` sibling
+    (:func:`gecko.providers.landing_record.record_landing_outcome`): status / revert
+    family / units / slot / network category + a values-free structural ``recipe_hash``
+    — never a pubkey, amount, or log line.
+    """
+    required = (
+        "input_mint",
+        "output_mint",
+        "bin_step",
+        "base_factor",
+        "user",
+        "amount_in",
+    )
+    missing = [k for k in required if k not in bindings]
+    if missing:
+        raise SwapLandingError(f"simulate_swap_landing needs bindings {missing}")
+
+    user = str(bindings["user"])
+
+    # (1) the full declared plan: ONE pool-state read → accounts, bin_arrays, quote.
+    bundle = assemble_swap_landing(
+        bindings,
+        rpc_url=rpc_url,
+        rpc_call=rpc_call,
+        slippage_bps=slippage_bps,
+        fetch_swap_instruction=fetch_swap_instruction,
+    )
+    plan = bundle.plan
+    accounts = bundle.accounts
+    bin_arrays = bundle.bin_arrays
+    bin_array_indexes = bundle.bin_array_indexes
+    swap_ix = bundle.swap_ix
+    swap_ix_complete = bundle.swap_ix_complete
+    prelude_ixs = bundle.prelude_ixs
+    postlude_ixs = bundle.postlude_ixs
     landing_receipt, unit_limit = _simulate_landing_bundle(
         swap_ix_complete,
         prelude_ixs,
