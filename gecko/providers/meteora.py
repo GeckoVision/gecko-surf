@@ -286,6 +286,19 @@ def plan_swap(
     }
 
     # (4) the Class-1 remaining accounts: bin_arrays from the live bitmap walk.
+    # The bitmap extension is OPTIONAL in the IDL and REQUIRED by the program whenever
+    # the pool has one (measured 2026-09-18 on the SOL/USDC bin_step-5 pool: omitting it
+    # reverts with 6036 BitmapExtensionAccountIsNotProvided before any bin is read). So
+    # derive it, read once whether it exists, and pass it only then. A pool without one
+    # keeps the omitted-optional shape the thin pools use.
+    extension = derive_pda(
+        pdas["bin_array_bitmap_extension"], {"lb_pair": lb_pair}
+    ).address
+    omitted = ["bin_array_bitmap_extension", "host_fee_in"]
+    if _account_exists(extension, rpc_url=rpc_url, rpc_call=rpc_call):
+        accounts["bin_array_bitmap_extension"] = extension
+        omitted.remove("bin_array_bitmap_extension")
+
     indexes = swap_bin_array_indexes(state, input_mint, _BIN_ARRAY_TAKE_COUNT)
     bin_arrays = [
         {
@@ -311,7 +324,7 @@ def plan_swap(
         # bin_array_bitmap_extension and host_fee_in are OPTIONAL swap accounts,
         # honestly omitted: no host fee is charged, and the extension only matters for
         # liquidity beyond array index ±512 (the bitmap walk notes the same limit).
-        "optional_accounts_omitted": ["bin_array_bitmap_extension", "host_fee_in"],
+        "optional_accounts_omitted": omitted,
         "remaining_accounts": bin_arrays,
         "args": {"amount_in": amount_in, "min_amount_out": min_amount_out},
         "feePayer": user,
@@ -335,6 +348,23 @@ def plan_swap(
         # Gecko emits the plan, never a signed/broadcast tx.
         "landing_plan": _landing_plan(accounts, str_bindings, bin_arrays),
     }
+
+
+def _account_exists(address: str, *, rpc_url: str, rpc_call: RpcCall | None) -> bool:
+    """One control-plane read: does this account exist on the node? Absent, null or an
+    unreadable answer all read as "no", which keeps the omitted-optional shape."""
+    from ..rpc import default_rpc_call
+
+    try:
+        reply = (rpc_call or default_rpc_call)(
+            rpc_url, "getAccountInfo", [address, {"encoding": "base64"}]
+        )
+    except Exception:  # noqa: BLE001 - a read that fails is "not seen", never "present"
+        return False
+    value = (
+        (reply.get("result") or {}).get("value") if isinstance(reply, dict) else None
+    )
+    return isinstance(value, dict)
 
 
 def _swap_plan(
