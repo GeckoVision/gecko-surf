@@ -48,10 +48,27 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Existing private subnets for the Fargate tasks (egress via the VPC's NAT).
 
+  # ── The fee-payer relay (Kora), optional ─────────────────────
+  # Empty (the default) creates nothing: the MCP deploy is unchanged. infra/deploy-relay.sh
+  # passes the relay image and the stack grows a second Fargate service behind the SAME ALB
+  # and certificate, on its own HTTPS port — the cert names one host, and a second hostname
+  # would mean a new cert and DNS this account does not own. See docs/runbooks/mainnet-relay.md.
+  RelayImage:
+    Type: String
+    Default: ''
+    Description: ECR image of the Kora relay (examples/kora_demo/Dockerfile.relay). Empty = no relay.
+
+  RelayListenerPort:
+    Type: Number
+    Default: 8443
+    Description: HTTPS port on the existing ALB that fronts the relay (mcp.geckovision.tech:8443).
+
 Conditions:
   UseDefaultExecutionRole: !Equals [!Ref ExecutionRoleArn, '']
   UseDefaultTaskRole:      !Equals [!Ref TaskRoleArn, '']
   HasCertificate:          !Not [!Equals [!Ref CertificateArn, '']]
+  HasRelay:                !Not [!Equals [!Ref RelayImage, '']]
+  HasRelayHTTPS:           !And [!Condition HasRelay, !Condition HasCertificate]
 
 Resources:
 
@@ -500,6 +517,158 @@ Resources:
           TargetGroupArn: !Ref ALBTargetGroup
 
 
+  # ── The fee-payer relay (Kora) ────────────────────────────────
+  # One container, one job: sign as fee payer for transactions Gecko prepared, under the
+  # caps in examples/kora_demo/kora.gecko.toml. It holds the hot key (SSM SecureString),
+  # never talks to Gecko's own service, and is reachable only through the ALB on its own
+  # HTTPS port. Kora's `/liveness` is unauthenticated by design, which makes it the health
+  # check; every RPC method needs the API key.
+
+  RelayALBIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasRelay
+    Properties:
+      GroupId: !Ref ALBSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref RelayListenerPort
+      ToPort: !Ref RelayListenerPort
+      CidrIp: 0.0.0.0/0
+
+  RelaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: HasRelay
+    Properties:
+      GroupDescription: relay (:8080) - allow from ALB only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - {IpProtocol: -1, CidrIp: 0.0.0.0/0}
+
+  RelayTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: HasRelay
+    Properties:
+      Name: gecko-relay-tg
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckPath: /liveness
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+
+  RelayListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasRelayHTTPS
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: !Ref RelayListenerPort
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RelayTargetGroup
+
+  RelayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: HasRelay
+    Properties:
+      LogGroupName: /ecs/gecko-relay
+      RetentionInDays: 30
+
+  # Reads ONLY /gecko-relay/* — the MCP's execution role reads /gecko-mcp/*. Two
+  # prefixes, two roles: the relay task can never resolve the MCP's secrets, nor the
+  # other way round.
+  RelayExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: HasRelay
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: gecko-relay-ssm-read
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-relay/*
+
+  RelayTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasRelay
+    DependsOn: RelayLogGroup
+    Properties:
+      Family: gecko-relay
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt RelayExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: relay
+          Image: !Ref RelayImage
+          Essential: true
+          PortMappings:
+            - {ContainerPort: 8080, Protocol: tcp}
+          # `--rpc-url` is a CLI argument, not an env var, in Kora; the image's CMD
+          # is a `sh -c` line that reads $RPC_URL (examples/kora_demo/Dockerfile.relay).
+          Environment:
+            - {Name: RUST_LOG, Value: info}
+          # All three must exist in SSM before the first deploy or the task fails at boot
+          # with ResourceInitializationError. infra/deploy-relay.sh checks and refuses.
+          Secrets:
+            - Name: KORA_RELAY_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-relay/KORA_RELAY_KEY
+            - Name: KORA_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-relay/KORA_API_KEY
+            - Name: RPC_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-relay/RPC_URL
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/gecko-relay
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  RelayService:
+    Type: AWS::ECS::Service
+    Condition: HasRelayHTTPS
+    DependsOn: [RelayListenerHTTPS]
+    Properties:
+      ServiceName: gecko-relay
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref RelayTaskDef
+      LaunchType: FARGATE
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref RelaySecurityGroup]
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: relay
+          ContainerPort: 8080
+          TargetGroupArn: !Ref RelayTargetGroup
+
+
 Outputs:
 
   ALBDNSName:
@@ -518,3 +687,7 @@ Outputs:
     Export:
       Name: SurfcallServiceName
 
+  RelayURL:
+    Condition: HasRelayHTTPS
+    Description: The relay's JSON-RPC endpoint, behind the same cert as the MCP
+    Value: !Sub https://mcp.geckovision.tech:${RelayListenerPort}/

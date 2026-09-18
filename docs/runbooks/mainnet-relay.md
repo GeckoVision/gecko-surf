@@ -49,6 +49,51 @@ docker compose logs -f kora                # "RPC server started on 0.0.0.0:8080
 with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`. Port 8080 is loopback
 only; Gecko runs on the same host, or over a private network you add to the compose file.
 
+## 2b. Or on ECS, next to the hosted MCP (the way we run it)
+
+The relay is a second Fargate service on the `surfcall-mcp-ecs` stack, behind the SAME load
+balancer and certificate as the MCP, on its own HTTPS port. The certificate names one host
+(`mcp.geckovision.tech`) and this account owns no DNS zone, so a second hostname would cost a
+new certificate and a DNS change for nothing: the relay answers at
+`https://mcp.geckovision.tech:8443/`. Its `/liveness` is the health check (Kora leaves it
+unauthenticated on purpose); every RPC method needs the API key.
+
+Three parameters under `/gecko-relay/` in SSM, put once, by you, from a machine that is not
+the relay. The execution role reads only that prefix; the MCP's role reads only
+`/gecko-mcp/*`.
+
+```bash
+# 1. the hot key, generated OFF the box (§1 above), pasted once, never written to a file here
+aws ssm put-parameter --name /gecko-relay/KORA_RELAY_KEY --type SecureString --value "$(cat relay.b58)" --region us-east-2
+# 2. the API key Gecko presents in x-api-key
+aws ssm put-parameter --name /gecko-relay/KORA_API_KEY --type SecureString \
+  --value "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" --region us-east-2
+# 3. the mainnet RPC the relay simulates and reads through (a Helius URL carries its key: SecureString)
+aws ssm put-parameter --name /gecko-relay/RPC_URL --type SecureString --value "$RPC_URL" --region us-east-2
+```
+
+Then one command builds Kora from `../kora` at the pinned tag, adds `kora.gecko.toml` and the
+memory signer file on top (`examples/kora_demo/Dockerfile.relay`), pushes to ECR
+`gecko-relay`, and deploys. The script refuses to deploy while any of the three parameters
+is missing, because the task would fail at boot otherwise.
+
+```bash
+./infra/deploy-relay.sh                      # --port 8443 --kora-ref kora-cli-v2.2.0-beta.8 are the defaults
+aws logs tail /ecs/gecko-relay --follow --region us-east-2   # "RPC server started on 0.0.0.0:8080"
+```
+
+Fund the signer (§1) only after the six probes below pass against the public URL:
+
+```bash
+KORA_RPC_URL=https://mcp.geckovision.tech:8443/ KORA_API_KEY=... ./infra/probe-relay.sh
+```
+
+What the ECS shape changes from compose: nothing in the config. `kora.gecko.toml` is byte
+for byte the same file, the caps are the same, and `signAndSend` is still off. What it
+adds: the key lives in SSM and reaches the container as an environment variable at boot,
+the container has no shell access from outside, and `aws ecs update-service
+--desired-count 0` is the off switch.
+
 ## 3. Probe the wire before the first coin
 
 A config is a claim; 401 and 405 are evidence. Same six probes as the fork runbook, against
