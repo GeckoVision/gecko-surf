@@ -30,8 +30,10 @@ from .rpc import RpcCall, RpcError, default_rpc_call
 __all__ = [
     "CLASSIC_SPL_TOKEN_PROGRAM",
     "TOKEN_2022_PROGRAM",
+    "MintExtensions",
     "MintTokenProgram",
     "classify_token_program",
+    "read_mint_extensions",
     "read_mint_token_programs",
     "unknown_token_program",
 ]
@@ -187,3 +189,92 @@ def read_mint_token_programs(
             _read_chunk(readable[start : start + _CHUNK], rpc_url=rpc_url, call=call)
         )
     return out
+
+
+@dataclass(frozen=True)
+class MintExtensions:
+    """One mint's extension set as READ from the chain, plus the one field an extension's
+    soundness turns on: which program its transfer hook names.
+
+    ``names`` are the ``extension`` strings of a ``getAccountInfo`` ``jsonParsed`` mint,
+    in the node's order and spelling; a classic mint has none. ``transfer_hook_program``
+    is the ``programId`` inside the ``transferHook`` extension's state — ``None`` when the
+    mint carries no hook extension AND when it carries one whose program is null (Token-2022
+    lets an issuer reserve the hook without pointing it anywhere). The two are told apart
+    by ``names``, which is why an acceptance pins both.
+
+    Evidence, not a verdict. :func:`gecko.simulate.parse_token_deltas` decides what the set
+    means; this type only says what was read.
+    """
+
+    names: tuple[str, ...]
+    transfer_hook_program: str | None
+
+
+def read_mint_extensions(
+    mints: Iterable[str],
+    *,
+    rpc_url: str,
+    rpc_call: RpcCall | None = None,
+) -> dict[str, MintExtensions]:
+    """Read each distinct mint's extension set, once, as ``jsonParsed``.
+
+    A mint that could not be read, or whose answer is not a parsed mint, is ABSENT from the
+    result — and absent is what the delta parser refuses as ``token-2022-extensions-unread``.
+    Nothing here turns a failed read into an empty set: an empty set is a positive reading
+    of a classic mint, and a node that answered nothing has not made it.
+    """
+    call = rpc_call or default_rpc_call
+    distinct = list(dict.fromkeys(m for m in mints if isinstance(m, str) and m))[
+        :_MAX_DISTINCT_MINTS
+    ]
+    out: dict[str, MintExtensions] = {}
+    for start in range(0, len(distinct), _CHUNK):
+        chunk = distinct[start : start + _CHUNK]
+        try:
+            response = call(
+                rpc_url, "getMultipleAccounts", [chunk, {"encoding": "jsonParsed"}]
+            )
+        except (RpcError, OSError, ValueError):
+            continue
+        result = response.get("result") if isinstance(response, dict) else None
+        values = result.get("value") if isinstance(result, dict) else None
+        if not isinstance(values, list) or len(values) != len(chunk):
+            continue
+        for mint, value in zip(chunk, values):
+            parsed = _parse_mint_extensions(value)
+            if parsed is not None:
+                out[mint] = parsed
+    return out
+
+
+def _parse_mint_extensions(value: Any) -> MintExtensions | None:
+    """The extension set of one ``jsonParsed`` account, or ``None`` if it is not a mint."""
+    if not isinstance(value, dict):
+        return None
+    data = value.get("data")
+    parsed = data.get("parsed") if isinstance(data, dict) else None
+    if not isinstance(parsed, dict) or parsed.get("type") != "mint":
+        return None
+    info = parsed.get("info")
+    if not isinstance(info, dict):
+        return None
+    raw_extensions = info.get("extensions", [])
+    if not isinstance(raw_extensions, list):
+        return None
+    names: list[str] = []
+    hook_program: str | None = None
+    for entry in raw_extensions:
+        if not isinstance(entry, dict) or not isinstance(entry.get("extension"), str):
+            # One unreadable entry makes the whole set unreadable: a set with a hole in
+            # it is not the set, and the parser downstream would read it as complete.
+            return None
+        name = str(entry["extension"])
+        names.append(name)
+        if name.lower() == "transferhook":
+            state = entry.get("state")
+            program = state.get("programId") if isinstance(state, dict) else None
+            if program is not None and not isinstance(program, str):
+                return None
+            hook_program = program
+    return MintExtensions(names=tuple(names), transfer_hook_program=hook_program)

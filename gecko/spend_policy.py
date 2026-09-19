@@ -136,8 +136,10 @@ RESIDUALS, NAMED RATHER THAN LEFT FOR A READER TO DISCOVER.
   separately proved it controls. A DEX vault paying tokens INTO us is an outflow of some
   other owner and must not be charged, which is why the filter exists; the cost is that a
   transfer moving tokens out of a third party's account under a delegation is not bounded
-  here. Token-2022's permanent-delegate mints are refused outright upstream; a classic
-  SPL delegation is not, and this is where that shows.
+  here. Token-2022's permanent-delegate mints are refused outright upstream unless a
+  human accepted that mint by name (``SpendPolicy.accepted_mints``, checked here against
+  what the simulation applied); a classic SPL delegation is not, and this is where that
+  shows.
 * **The velocity counter is ADVISORY**, per the note above, in every denomination.
 
 This module holds no key, signs nothing, sends nothing, and stores no transaction. A
@@ -165,7 +167,14 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from .simulate import Receipt, TokenDeltaUnmeasurable, TokenOutflow
+from .simulate import (
+    TOKEN_2022_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
+    AcceptedMint,
+    Receipt,
+    TokenDeltaUnmeasurable,
+    TokenOutflow,
+)
 from .txbind import (
     DISCRIMINATOR_CEILING,
     DecodedMessage,
@@ -243,6 +252,16 @@ SpendRefusalCode = Literal[
     "over-hourly-token-cap",
     "over-daily-token-cap",
     "token-leg-not-measured",
+    # The simulation measured a Token-2022 mint under a human ACCEPTANCE of its extension
+    # set (``AcceptedMint``), and this policy does not carry that acceptance: nobody
+    # authored one for the mint, or the one authored pins a different state. "Never
+    # accepted" and "accepted, then the mint changed" are different answers.
+    "mint-acceptance-not-authored",
+    "mint-acceptance-stale",
+    # The policy says this mint carries unsound extensions (it accepts it), and the
+    # simulation measured it WITHOUT applying the acceptance — so the extension evidence
+    # it was given omitted them. Evidence that disagrees with the human is refused.
+    "mint-acceptance-not-applied",
 ]
 
 #: Programs that CANNOT move an SPL token, so a message built only from them has no token
@@ -416,6 +435,13 @@ class SpendPolicy:
     #: gate refuses. An agent that genuinely moves no tokens authors
     #: :meth:`TokenCaps.none` — a sentence, not a silence.
     token_caps: TokenCaps | None = None
+    #: The Token-2022 mints whose UNSOUND extensions a human accepted out of band, each
+    #: with its whole extension set and its transfer hook program pinned
+    #: (:class:`~gecko.simulate.AcceptedMint`). Empty by default, and empty is authored:
+    #: the ordinary policy accepts no hooked mint, and the simulation refuses to measure
+    #: one. The gate checks every acceptance the simulation APPLIED against this set, so
+    #: an acceptance handed to the simulation by anyone but the policy's author refuses.
+    accepted_mints: frozenset[AcceptedMint] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -424,6 +450,27 @@ class SpendPolicy:
         object.__setattr__(
             self, "allowed_destinations", frozenset(self.allowed_destinations)
         )
+        object.__setattr__(self, "accepted_mints", frozenset(self.accepted_mints))
+        seen: set[str] = set()
+        for accepted in self.accepted_mints:
+            if accepted.mint in seen:
+                raise ValueError(
+                    f"two acceptances for mint {accepted.mint}; a mint is accepted in one "
+                    "state or not at all"
+                )
+            seen.add(accepted.mint)
+        # The premise the acceptance rests on, bound where the policy is authored: an
+        # accepted mint's confidential-transfer and permanent-delegate waivers are sound
+        # only while no token-program instruction is admitted directly, because either
+        # could then move the mint with no public delta (see POLICY_ACCEPTABLE_REFUSALS).
+        if self.accepted_mints and any(
+            entry.program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID)
+            for entry in self.allowed_instructions
+        ):
+            raise ValueError(
+                "a mint acceptance waives refusals whose soundness rests on no "
+                "token-program instruction being allowlisted; this policy allowlists one"
+            )
         for name in (
             "per_transaction_cap_lamports",
             "hourly_cap_lamports",
@@ -1204,7 +1251,7 @@ class SpendPolicyGate:
         # fallback is what keeps every self-paid flow byte-for-byte unchanged.
         authority = receipt.sol_delta_account or decoded.fee_payer
 
-        resolved = _resolve_token_outflows(receipt, decoded, authority)
+        resolved = _resolve_token_outflows(receipt, decoded, authority, policy)
         if isinstance(resolved, SpendVerdict):
             return resolved
 
@@ -1234,7 +1281,7 @@ class SpendPolicyGate:
 
 
 def _resolve_token_outflows(
-    receipt: Receipt, decoded: DecodedMessage, authority: str
+    receipt: Receipt, decoded: DecodedMessage, authority: str, policy: SpendPolicy
 ) -> tuple[TokenOutflow, ...] | SpendVerdict:
     """What left the AUTHORITY, per mint — or the refusal that says why we cannot know.
 
@@ -1253,6 +1300,13 @@ def _resolve_token_outflows(
     delegated authority for what that does not cover. This keyed on the fee payer until
     2026-09-16, which was correct only while the payer and the spender were the same
     account — under a relay the payer moves nothing and the filter emptied the cap.
+
+    A ``measured`` report may have got there under an ACCEPTANCE — a human waiving a
+    mint's unsound extensions (``report.acceptances``). Each one is checked against
+    ``policy.accepted_mints`` before the numbers are read: the simulation takes its
+    acceptances from whoever calls it, and only the policy says whether that caller was
+    the human. An acceptance the policy never authored, or one pinning a different state
+    than the policy's, refuses before any amount is compared against a cap.
     """
     report = receipt.token_delta
     if report is None:
@@ -1269,6 +1323,26 @@ def _resolve_token_outflows(
             f"{', '.join(sorted(set(token_capable)))}, which can move tokens; an "
             f"unmeasured token leg is refused, never read as zero",
         )
+    authored = {accepted.mint: accepted for accepted in policy.accepted_mints}
+    for applied in report.acceptances:
+        pinned = authored.get(applied.mint)
+        if pinned is None:
+            return _refuse(
+                "mint-acceptance-not-authored",
+                f"the simulation measured mint {applied.mint} under an acceptance of its "
+                f"Token-2022 extensions, and this policy carries no acceptance for that "
+                f"mint; an acceptance the human did not author is refused, never inherited "
+                f"from whoever ran the simulation",
+            )
+        if pinned != applied:
+            return _refuse(
+                "mint-acceptance-stale",
+                f"the simulation measured mint {applied.mint} under an acceptance pinning "
+                f"extensions [{', '.join(sorted(applied.extensions))}] and transfer hook "
+                f"program {applied.transfer_hook_program}; this policy accepts that mint "
+                f"in a different state ([{', '.join(sorted(pinned.extensions))}], hook "
+                f"{pinned.transfer_hook_program}), and an acceptance is of a state",
+            )
     try:
         outflows = report.outflows()
     except TokenDeltaUnmeasurable as exc:
@@ -1276,6 +1350,21 @@ def _resolve_token_outflows(
             "amount-unresolvable",
             f"the token leg of this simulation could not be measured ({exc}); there is "
             f"no amount to compare against a cap, and zero is not the answer",
+        )
+    # The downgrade, not the forgery: evidence that simply OMITS a mint's unsound
+    # extensions makes it measure as sound with no acceptance to check. The policy
+    # carries the human's statement that the mint is unsound, so a measured movement of
+    # an accepted mint with no acceptance applied means the evidence contradicted them.
+    applied_mints = {applied.mint for applied in report.acceptances}
+    seen_mints = {movement.mint for movement in report.movements} | {
+        outflow.mint for outflow in outflows
+    }
+    for mint in sorted(seen_mints & set(authored) - applied_mints):
+        return _refuse(
+            "mint-acceptance-not-applied",
+            f"the human accepted mint {mint} as carrying unsound Token-2022 extensions, "
+            f"and the simulation measured it without applying that acceptance; the "
+            f"extension evidence it was given contradicts the policy and is refused",
         )
     return tuple(outflow for outflow in outflows if outflow.owner == authority)
 
