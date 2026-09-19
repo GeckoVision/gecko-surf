@@ -52,6 +52,7 @@ from gecko.rpc import default_rpc_call, validate_rpc_url  # noqa: E402
 from gecko.sandbox import ephemeral_signer, prove_surfnet  # noqa: E402
 from gecko.sandbox.cheatcodes import fund_sol  # noqa: E402
 from gecko.sandbox.rehearse import rehearse_purchase  # noqa: E402
+from gecko.simulate import AcceptedMint  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
@@ -134,6 +135,31 @@ def _emit_trace(args: argparse.Namespace, trace: Trace) -> None:
 USDG_MINT = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
 TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+# The operator's acceptance of USDG's Token-2022 extensions, AUTHORED here on 2026-09-18
+# from a jsonParsed read of the mint and never copied off the chain at run time: the
+# simulation measures the USDG leg only while the mint still reads exactly this set with
+# the hook reserved and pointing nowhere (programId null). If Paxos adds an extension or
+# points the hook at a program, the run refuses as mint-extensions-changed and a human
+# looks again. The transfer fee RATE (0 bps on 2026-09-18) is not pinned: a raised fee
+# lowers what the swap returns, which plan_swap's minimum-out defends, not this gate.
+# Founder decision 2026-09-18: explicit per-mint acceptance, in the policy.
+USDG_ACCEPTED = AcceptedMint(
+    mint=USDG_MINT,
+    extensions=frozenset(
+        {
+            "mintCloseAuthority",
+            "permanentDelegate",
+            "transferFeeConfig",
+            "confidentialTransferMint",
+            "confidentialTransferFeeConfig",
+            "transferHook",
+            "metadataPointer",
+            "tokenMetadata",
+        }
+    ),
+    transfer_hook_program=None,
+)
 
 
 def _rehearse_route_on_fork(
@@ -244,6 +270,7 @@ def _settle_route_on_mainnet(
     from gecko.prepare_instruction import prepare_instruction_result
     from gecko.providers.whirlpool import WHIRLPOOL_PROGRAM, plan_swap
     from gecko.simulate import BuiltTx, simulate
+    from gecko.token_program import read_mint_extensions
 
     held = _token_balance(args.rpc_url, buyer.pubkey, USDG_MINT)
     print(f"  buyer USDG         {held}   (converting {args.convert_amount})")
@@ -253,6 +280,29 @@ def _settle_route_on_mainnet(
             f"{args.convert_amount}; nothing here guesses a smaller amount for you"
         )
         return 2
+
+    # The mint's extension set is READ now and checked against the acceptance above by
+    # the simulation; the gate then checks the acceptance the simulation applied against
+    # the policy. Printing both here is so a refusal names what moved.
+    evidence = read_mint_extensions([USDG_MINT], rpc_url=args.rpc_url)
+    read = evidence.get(USDG_MINT)
+    if read is None:
+        print(
+            "STOP: the USDG mint's extension set could not be read; unread is refused"
+        )
+        return 2
+    print(
+        f"  USDG extensions    {', '.join(read.names)}  hook program "
+        f"{read.transfer_hook_program}"
+    )
+    if not USDG_ACCEPTED.matches(read):
+        print(
+            "STOP: the USDG mint no longer reads as the accepted state; a human looks "
+            "before the pin is changed"
+        )
+        return 2
+    print("  acceptance         matches the mint as read")
+    accepted = {USDG_MINT: USDG_ACCEPTED}
 
     idl_fetch, build_call = orquestra_seams()
     plan = plan_swap(
@@ -299,6 +349,8 @@ def _settle_route_on_mainnet(
         network_label=f"simulated against {network} (convert leg, unsigned)",
         network=network,
         track=[buyer.pubkey],
+        mint_extensions=evidence,
+        accepted_mints=accepted,
     )
     print(
         f"\n  CONVERT  {receipt.status.upper()}  {receipt.units_consumed or 0:,} CU  "
@@ -307,6 +359,22 @@ def _settle_route_on_mainnet(
     if receipt.status != "pass":
         print(f"REFUSED: the convert leg does not simulate ({receipt.revert_class})")
         return 1
+    leg = receipt.token_delta
+    if leg is None or leg.status != "measured":
+        why = (
+            "not tracked"
+            if leg is None
+            else "; ".join(f"[{r.reason}] {r.detail}" for r in leg.refusals)
+        )
+        print(f"REFUSED: the convert leg's token movement is not measurable: {why}")
+        print("         the spend gate would refuse this leg; nothing was signed")
+        return 1
+    sold = [o for o in leg.outflows() if o.owner == buyer.pubkey]
+    print(
+        "  token leg  measured: "
+        + ", ".join(f"{o.ui} of {o.mint[:8]}… leaves the buyer" for o in sold)
+        + f"  (acceptance applied: {[a.mint[:8] + '…' for a in leg.acceptances]})"
+    )
 
     def prepare_purchase() -> dict[str, Any]:
         return prepare_purchase_result(
@@ -348,6 +416,7 @@ def _settle_route_on_mainnet(
             input_mint=USDG_MINT,
             input_decimals=6,
             input_per_transaction_raw=args.convert_amount,
+            accepted_mints=(USDG_ACCEPTED,),
         ),
         ledger=InMemorySpendLedger(),
     )
@@ -396,6 +465,8 @@ def _settle_route_on_mainnet(
         convert_signer=signer_with(convert_gate),
         purchase_signer=signer_with(purchase_gate),
         authority=buyer.pubkey,
+        mint_extensions=evidence,
+        convert_accepted_mints=accepted,
         convert_last_valid_block_height=int(last_valid),
         trace=trace,
     )

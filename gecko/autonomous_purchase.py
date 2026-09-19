@@ -67,9 +67,9 @@ from __future__ import annotations
 
 import base64
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from .handoff import verify_handoff
 from .cosign import Contribution, CosignRefused, merge_signatures, take_signature
@@ -87,7 +87,14 @@ from .relay import (
 )
 from .rpc import RpcCall, default_rpc_call
 from .signer import AUTHORITY_ROLE, SignerRefused, TransactionSigner
-from .simulate import BuildCall, BuiltTx, Receipt, simulate
+from .simulate import (
+    AcceptedMint,
+    BuildCall,
+    BuiltTx,
+    MintExtensionEvidence,
+    Receipt,
+    simulate,
+)
 from .trace import Trace, short
 from .spend_policy import (
     AllowedInstruction,
@@ -259,6 +266,7 @@ def swap_spend_policy(
     hourly_lamports: int = DEFAULT_HOURLY_LAMPORTS,
     daily_lamports: int = DEFAULT_DAILY_LAMPORTS,
     max_transactions_per_day: int = DEFAULT_MAX_TRANSACTIONS_PER_DAY,
+    accepted_mints: Iterable[AcceptedMint] = (),
 ) -> SpendPolicy:
     """The policy for the CONVERT leg of a route: one swap instruction, one input mint.
 
@@ -273,6 +281,14 @@ def swap_spend_policy(
     ``allowed_destinations`` is the set the swap may write — the pool, its vaults, the
     tick arrays and the buyer's two token accounts, all DERIVED by ``plan_swap`` — and it
     has no default for the same reason the purchase policy's has none.
+
+    ``accepted_mints`` is the human's acceptance of the input mint's Token-2022
+    extensions when it carries ones the simulation refuses to measure (USDG carries a
+    transfer hook, a permanent delegate, a transfer fee config and confidential transfer).
+    It is authored by the operator, never read off the chain and copied: the pin is what
+    turns a changed mint into a refusal instead of a measurement. The fee RATE is not
+    pinned; a raised fee lowers what the swap returns, which the swap's minimum-out
+    threshold defends, not this cap.
     """
     if not allowed_destinations:
         raise PurchaseConfigurationError(
@@ -317,6 +333,7 @@ def swap_spend_policy(
                 )
             ]
         ),
+        accepted_mints=frozenset(accepted_mints),
     )
 
 
@@ -476,7 +493,7 @@ def run_purchase(
     spend_gate: SpendPolicyGate,
     build_call: BuildCall,
     rpc_call: RpcCall | None = None,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
     now: float | None = None,
     priority_fee_microlamports: int | None = None,
     confirm_timeout_seconds: float = 60.0,
@@ -790,7 +807,8 @@ def settle_sponsored(
     signer: TransactionSigner,
     authority: str,
     rpc_call: RpcCall | None = None,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
     last_valid_block_height: int = 0,
     priority_fee_microlamports: int = 0,
     confirm_timeout_seconds: float = 60.0,
@@ -846,6 +864,7 @@ def settle_sponsored(
             network=network,
             track=[authority],
             mint_extensions=mint_extensions,
+            accepted_mints=accepted_mints,
         )
         facts["units"] = receipt.units_consumed
         facts["binding_prefix"] = short(receipt.message_binding)
@@ -1200,6 +1219,9 @@ def settle_route(
     purchase_signer: TransactionSigner,
     authority: str,
     rpc_call: RpcCall | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    convert_accepted_mints: Mapping[str, AcceptedMint] | None = None,
+    purchase_accepted_mints: Mapping[str, AcceptedMint] | None = None,
     convert_last_valid_block_height: int = 0,
     trace: Trace | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -1217,6 +1239,12 @@ def settle_route(
     Two signers, two gates: the swap's policy and the shop's policy authorise different
     instructions on different mints, and one signer holding both would be one gate that
     lets either leg carry the other's instruction. ``authority`` is the buyer on both.
+    ``mint_extensions`` reaches both legs' simulations; the acceptances are SPLIT per
+    leg. The convert leg sells a Token-2022 mint whose extensions must be read and, where
+    unsound, accepted by the human — under the convert gate's policy. The purchase leg
+    has its own policy, and an acceptance it never authored would refuse it AFTER the
+    convert had landed: converted and stuck. So the purchase leg gets only what the
+    shop's policy carries, which is normally nothing.
     This is the mainnet sibling of :func:`gecko.sandbox.rehearse_route.rehearse_gasless_route`.
     """
     log = trace or Trace(lane="route", network=str(network))
@@ -1229,6 +1257,8 @@ def settle_route(
             signer=convert_signer,
             authority=authority,
             rpc_call=rpc_call,
+            mint_extensions=mint_extensions,
+            accepted_mints=convert_accepted_mints,
             last_valid_block_height=convert_last_valid_block_height,
             trace=log,
             sleep=sleep,
@@ -1277,6 +1307,8 @@ def settle_route(
         signer=purchase_signer,
         authority=authority,
         rpc_call=rpc_call,
+        mint_extensions=mint_extensions,
+        accepted_mints=purchase_accepted_mints,
         last_valid_block_height=int(
             (prepared.get("expires") or {}).get("last_valid_block_height") or 0
         ),

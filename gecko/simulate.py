@@ -44,6 +44,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from .networks import UNKNOWN_NETWORK, Network
 from .provenance import TokenDeltaBasis
 from .rpc import RpcCall, _http_post_json, default_rpc_call, validate_rpc_url
+from .token_program import MintExtensions
 from .txbind import LookupResolution
 
 __all__ = [
@@ -56,6 +57,9 @@ __all__ = [
     "TOKEN_2022_PROGRAM_ID",
     "TOKEN_DELTA_REFUSALS",
     "TOKEN_PROGRAM_ID",
+    "AcceptedMint",
+    "MintExtensionEvidence",
+    "POLICY_ACCEPTABLE_REFUSALS",
     "TokenDeltaBasis",
     "TokenDeltaRefusal",
     "TokenDeltaReport",
@@ -166,6 +170,11 @@ TOKEN_DELTA_REFUSALS: frozenset[str] = frozenset(
         # Token-2022 mint whose extension set was never read. Unread is not "none" —
         # assuming none is exactly the assume-classic bug.
         "token-2022-extensions-unread",
+        # A human ACCEPTED this mint's extensions (see ``AcceptedMint``) and the mint no
+        # longer matches what they accepted: an extension appeared or vanished, or the
+        # transfer hook points at a different program. The acceptance was of a state, not
+        # of a name, and the state moved.
+        "mint-extensions-changed",
         # The owning program is absent or unrecognised, or the evidence contradicts it.
         "token-program-unknown",
         "token-program-mismatch",
@@ -270,6 +279,105 @@ _BASE58_ALPHABET = frozenset(
 #: input rather than a mint, and we will not render a scale we have never seen.
 _MAX_DECIMALS = 18
 
+#: What a caller may pass as one mint's extension evidence: the bare ``extension`` names
+#: (the original shape; enough to REFUSE on, never enough to accept on), or the full
+#: :class:`~gecko.token_program.MintExtensions` reading, which also carries the transfer
+#: hook's program. An acceptance is only ever checked against the full reading.
+MintExtensionEvidence = Sequence[str] | MintExtensions
+
+#: The refusals a human MAY waive per mint through :class:`AcceptedMint`, and why each one
+#: is waivable at all: for every one of them the SENDER'S raw balance delta is still
+#: exactly what the sender was debited, and the raw→ui rendering is still exact. That is
+#: the one property the spend cap rests on. The other refusals are not on this list
+#: because for them the number itself is wrong, not merely incomplete:
+#:
+#: * ``transfer-fee`` — the fee is withheld on the RECIPIENT side; the sender is debited
+#:   the full amount, which is what leaves the authority and what the cap bounds. The
+#:   RATE is not pinned: an issuer raising it changes what the pool receives and so what
+#:   the swap returns, which is the swap's own minimum-out threshold to defend, never
+#:   this cap's, which bounds what leaves and nothing that arrives.
+#: * ``transfer-hook`` — a hook program runs after the transfer, with the authority
+#:   de-escalated to a non-signer, so it cannot spend the authority's other holdings; any
+#:   balance it does change is a balance this report reads. The acceptance PINS the hook
+#:   program, so a re-pointed hook refuses rather than runs.
+#: * ``permanent-delegate`` — a third party may move this mint at any time, which is a
+#:   risk of HOLDING it, not of this transaction: the delegate is not a signer here, and
+#:   the simulated delta is the simulated transaction's alone.
+#: * ``confidential-transfer`` — the public balance stays readable; a confidential
+#:   movement would need a confidential-transfer instruction, which the instruction
+#:   allowlist does not admit.
+#:
+#: ``interest-bearing`` and ``ui-amount-scaled`` render a ui amount that is not the raw
+#: one, and ``non-transferable`` cannot be swapped at all; none of them is waivable.
+#:
+#: Two of the four rest on NO TOKEN-PROGRAM INSTRUCTION BEING ALLOWLISTED: a policy that
+#: admits Token-2022 directly could carry a confidential transfer (no public delta) or a
+#: delegate's move. :class:`~gecko.spend_policy.SpendPolicy` refuses to be authored with
+#: an acceptance beside a token-program instruction, which is where that premise is
+#: enforced. What is read and pinned is the MINT's extension set; the buyer's token
+#: account's own extensions are not, and a public-amount outflow cap needs none of them.
+POLICY_ACCEPTABLE_REFUSALS: frozenset[str] = frozenset(
+    {"transfer-fee", "transfer-hook", "permanent-delegate", "confidential-transfer"}
+)
+
+
+@dataclass(frozen=True)
+class AcceptedMint:
+    """A human's out-of-band acceptance of ONE Token-2022 mint's extension set.
+
+    The mint's WHOLE extension set is named, normalised, and pinned — not just the hook —
+    because the refusal a hook earns sits beside the refusals its neighbours earn, and
+    waiving one while the others still refuse measures nothing. ``transfer_hook_program``
+    is pinned too: an issuer can re-point a hook after the human looked, and the acceptance
+    is of the program the human looked at, so a different one is ``mint-extensions-changed``.
+
+    Constructing one that names an extension outside both review tables, or one whose
+    refusal is not in :data:`POLICY_ACCEPTABLE_REFUSALS`, raises: an acceptance can waive
+    what the code can reason about and nothing else. The human names the mint and pins
+    the state; the gate then measures from balances and applies the mint's cap.
+    """
+
+    mint: str
+    extensions: frozenset[str]
+    transfer_hook_program: str | None
+
+    def __post_init__(self) -> None:
+        if not _is_base58_pubkey(self.mint):
+            raise ValueError("an accepted mint must be a base58 public key")
+        if not isinstance(self.extensions, (frozenset, set, tuple, list)) or not all(
+            isinstance(name, str) for name in self.extensions
+        ):
+            raise ValueError("an accepted extension set is a set of names")
+        normalised = frozenset(_normalise_extension(name) for name in self.extensions)
+        for key in sorted(normalised):
+            reason = _UNSOUND_EXTENSIONS.get(key)
+            if reason is None:
+                if key not in _SOUND_EXTENSIONS:
+                    raise ValueError(
+                        f"extension {key!r} is outside both review tables and cannot be "
+                        "accepted; the table grows by review, not by policy"
+                    )
+                continue
+            if reason not in POLICY_ACCEPTABLE_REFUSALS:
+                raise ValueError(
+                    f"extension {key!r} earns {reason!r}, which no acceptance may waive"
+                )
+        if self.transfer_hook_program is not None and not _is_base58_pubkey(
+            self.transfer_hook_program
+        ):
+            raise ValueError(
+                "a pinned transfer hook program must be a base58 public key"
+            )
+        object.__setattr__(self, "extensions", normalised)
+
+    def matches(self, evidence: MintExtensions) -> bool:
+        """Whether a fresh reading is the state this acceptance was made over."""
+        read = frozenset(_normalise_extension(name) for name in evidence.names)
+        return (
+            read == self.extensions
+            and evidence.transfer_hook_program == self.transfer_hook_program
+        )
+
 
 class TokenDeltaUnmeasurable(Exception):
     """Raised when an amount is read off a report that REFUSED to measure one.
@@ -371,8 +479,17 @@ class TokenDeltaReport:
     #: :class:`TokenOutflow` is already the right shape, so that basis produces it directly
     #: and leaves ``movements`` empty.
     instruction_outflows: tuple[TokenOutflow, ...] = ()
+    #: The acceptances that were APPLIED to reach these numbers: one per mint whose
+    #: unsound extensions a human waived (:class:`AcceptedMint`). Recorded so that the
+    #: spend gate can check each one against the policy the human actually authored —
+    #: a report measured under an acceptance the policy does not carry is refused there.
+    acceptances: tuple[AcceptedMint, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.acceptances and self.status != "measured":
+            # An acceptance on a refused report would be diagnosed by the gate as the
+            # acceptance's problem when the real one is the refusal beside it.
+            raise ValueError("an unmeasurable report applied no acceptance")
         if self.refusals and self.status != "unmeasurable":
             raise ValueError("a report carrying refusals cannot be labelled measured")
         if not self.refusals and self.status != "measured":
@@ -587,17 +704,31 @@ def _normalise_extension(name: str) -> str:
 def _extension_refusal(
     mint: str,
     program_id: str,
-    mint_extensions: Mapping[str, Sequence[str]] | None,
-) -> TokenDeltaRefusal | None:
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
+) -> TokenDeltaRefusal | AcceptedMint | None:
     """Decide whether this mint's EXTENSION state makes the measurement unsound.
 
     Extensions are on-chain state and arrive here as evidence the caller READ (the
     ``extension`` names of a ``getAccountInfo`` ``jsonParsed`` mint). No evidence for a
     Token-2022 mint is a refusal, not an assumption of none.
+
+    Three answers: ``None`` (sound, measure), a :class:`TokenDeltaRefusal` (do not), or
+    the :class:`AcceptedMint` that was APPLIED — the mint carries extensions the tables
+    call unsound, a human accepted exactly this state out of band, and the fresh reading
+    still matches it. The acceptance is returned rather than swallowed so the report can
+    record it and the gate can check it against the policy.
     """
-    declared = None if mint_extensions is None else mint_extensions.get(mint)
+    evidence = None if mint_extensions is None else mint_extensions.get(mint)
+    names: tuple[Any, ...] | None
+    if evidence is None:
+        names = None
+    elif isinstance(evidence, MintExtensions):
+        names = evidence.names
+    else:
+        names = tuple(evidence)
     if program_id == TOKEN_PROGRAM_ID:
-        if declared:
+        if names:
             return TokenDeltaRefusal(
                 reason="token-program-mismatch",
                 mint=mint,
@@ -608,7 +739,7 @@ def _extension_refusal(
                 ),
             )
         return None
-    if declared is None:
+    if names is None:
         return TokenDeltaRefusal(
             reason="token-2022-extensions-unread",
             mint=mint,
@@ -617,7 +748,8 @@ def _extension_refusal(
                 "none, and several extensions make the delta not the debit"
             ),
         )
-    for name in declared:
+    unsound: list[tuple[str, str]] = []
+    for name in names:
         if not isinstance(name, str):
             return TokenDeltaRefusal(
                 reason="extension-unrecognised",
@@ -627,24 +759,55 @@ def _extension_refusal(
         key = _normalise_extension(name)
         reason = _UNSOUND_EXTENSIONS.get(key)
         if reason is not None:
-            return TokenDeltaRefusal(
-                reason=reason,
-                mint=mint,
-                detail=(
-                    f"the mint carries the {name} extension, so the balance delta is not "
-                    "the amount debited by the signer"
-                ),
-            )
+            unsound.append((name, reason))
+            continue
         if key not in _SOUND_EXTENSIONS:
             return TokenDeltaRefusal(
                 reason="extension-unrecognised",
                 mint=mint,
                 detail=(
-                    f"the mint carries {name}, an extension this engine does not model; "
-                    "an unmodelled extension may redefine what a transfer does"
+                    f"the mint carries the {name} extension, which has not been reviewed; "
+                    "an unreviewed extension is refused, not assumed harmless"
                 ),
             )
-    return None
+    if not unsound:
+        return None
+    first_name, first_reason = unsound[0]
+    acceptance = None if accepted_mints is None else accepted_mints.get(mint)
+    if acceptance is None:
+        return TokenDeltaRefusal(
+            reason=first_reason,
+            mint=mint,
+            detail=(
+                f"the mint carries the {first_name} extension, so the balance delta is "
+                "not the debit unless a human accepted this mint's extension set out of "
+                "band, and none did"
+            ),
+        )
+    if not isinstance(evidence, MintExtensions):
+        return TokenDeltaRefusal(
+            reason=first_reason,
+            mint=mint,
+            detail=(
+                f"the mint carries the {first_name} extension and a human accepted it, "
+                "but the evidence here is a list of names without the transfer hook's "
+                "program; an acceptance is checked against a full reading only"
+            ),
+        )
+    if acceptance.mint != mint or not acceptance.matches(evidence):
+        read = ", ".join(sorted(_normalise_extension(name) for name in names))
+        pinned = ", ".join(sorted(acceptance.extensions))
+        return TokenDeltaRefusal(
+            reason="mint-extensions-changed",
+            mint=mint,
+            detail=(
+                f"a human accepted this mint with extensions [{pinned}] and transfer hook "
+                f"program {acceptance.transfer_hook_program}; the chain now reads "
+                f"[{read}] with transfer hook program {evidence.transfer_hook_program}. "
+                "The acceptance was of a state, and the state moved"
+            ),
+        )
+    return acceptance
 
 
 def _index_balances(
@@ -680,7 +843,8 @@ def _index_balances(
 def parse_token_deltas(
     value: Mapping[str, Any],
     *,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
 ) -> TokenDeltaReport | None:
     """Turn a simulation ``value``'s pre/post token balances into a typed delta.
 
@@ -692,6 +856,12 @@ def parse_token_deltas(
     (the ``extension`` names from ``getAccountInfo`` ``jsonParsed``). It is an input, not
     a network call: this function makes none. A Token-2022 mint missing from it refuses.
 
+    ``accepted_mints`` is the human's out-of-band acceptance of named mints whose
+    extensions the tables call unsound (:class:`AcceptedMint`). An accepted mint whose
+    fresh reading matches its pin is measured, and the acceptance is recorded on the report
+    for the gate to check against the policy; one whose reading moved refuses as
+    ``mint-extensions-changed``. No acceptance, no measurement — unchanged.
+
     Everything in ``value`` is untrusted transport output: shapes are checked, numbers are
     never coerced, and any disagreement between the pre and post rows for one account is a
     refusal rather than a resolved conflict.
@@ -702,6 +872,7 @@ def parse_token_deltas(
         return None
 
     refusals: list[TokenDeltaRefusal] = []
+    applied: dict[str, AcceptedMint] = {}
 
     # THREE SHAPES, THREE DIFFERENT FACTS — measured against api.mainnet-beta.solana.com
     # (a ``let_me_buy make_purchase`` that moves tokens returned two populated rows at 6
@@ -833,12 +1004,14 @@ def parse_token_deltas(
                 continue
             pre_raw = pre_entry.raw
 
-        extension_refusal = _extension_refusal(
-            post_entry.mint, post_entry.program_id, mint_extensions
+        extension_verdict = _extension_refusal(
+            post_entry.mint, post_entry.program_id, mint_extensions, accepted_mints
         )
-        if extension_refusal is not None:
-            refusals.append(extension_refusal)
+        if isinstance(extension_verdict, TokenDeltaRefusal):
+            refusals.append(extension_verdict)
             continue
+        if extension_verdict is not None:
+            applied.setdefault(post_entry.mint, extension_verdict)
 
         delta = post_entry.raw - pre_raw
         movements.append(
@@ -896,6 +1069,7 @@ def parse_token_deltas(
         status="unmeasurable" if refusals else "measured",
         movements=tuple(movements),
         refusals=tuple(refusals),
+        acceptances=() if refusals else tuple(applied.values()),
     )
 
 
@@ -986,8 +1160,9 @@ def parse_token_deltas_from_instructions(
     *,
     fee_payer: str,
     account_keys: Sequence[str],
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
     top_level_token_instructions: int = 0,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
 ) -> TokenDeltaReport | None:
     """Sum the token leg from ``jsonParsed`` inner instructions. A STRICT FALLBACK.
 
@@ -1032,6 +1207,8 @@ def parse_token_deltas_from_instructions(
     Token-2022 mint whose extensions were not read is refused, because several of them make
     the delta not the debit. Leaving it out let this basis price a Token-2022 movement on no
     extension evidence at all, silently repealing that rule for the whole fallback.
+    ``accepted_mints`` is the same human acceptance :func:`parse_token_deltas` takes, and
+    it applies under this basis for the same reason it applies under the arrays.
 
     Everything in ``value`` is untrusted transport output. Amounts are read as decimal
     STRINGS and never coerced from a float: ``uiAmount`` is a JSON number and a u64 past
@@ -1067,6 +1244,7 @@ def parse_token_deltas_from_instructions(
         return None
 
     refusals: list[TokenDeltaRefusal] = []
+    applied: dict[str, AcceptedMint] = {}
     if top_level_token_instructions:
         refusals.append(
             _ix_refusal(
@@ -1139,6 +1317,8 @@ def parse_token_deltas_from_instructions(
                 refusals,
                 account_keys=account_keys,
                 mint_extensions=mint_extensions,
+                accepted_mints=accepted_mints,
+                applied=applied,
             )
 
     if refusals:
@@ -1156,6 +1336,7 @@ def parse_token_deltas_from_instructions(
         movements=(),
         refusals=(),
         basis="instruction-trace",
+        acceptances=tuple(applied.values()),
         instruction_outflows=tuple(
             TokenOutflow(
                 mint=mint,
@@ -1177,7 +1358,9 @@ def _read_token_instruction(
     refusals: list[TokenDeltaRefusal],
     *,
     account_keys: Sequence[str],
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
+    applied: dict[str, AcceptedMint] | None = None,
 ) -> None:
     """Fold one parsed inner instruction into ``debits``, or append the refusal it earns.
 
@@ -1302,13 +1485,17 @@ def _read_token_instruction(
             )
         )
         return
-    extension_refusal = _extension_refusal(mint, program_id, mint_extensions)
-    if extension_refusal is not None:
+    extension_verdict = _extension_refusal(
+        mint, program_id, mint_extensions, accepted_mints
+    )
+    if isinstance(extension_verdict, TokenDeltaRefusal):
         # The SAME rule the arrays basis applies. Omitting it here would have let the
         # weaker basis price a Token-2022 movement on no extension evidence — repealing
         # "unread is not none" for every mint the fallback ever sees.
-        refusals.append(extension_refusal)
+        refusals.append(extension_verdict)
         return
+    if extension_verdict is not None and applied is not None:
+        applied.setdefault(mint, extension_verdict)
 
     amount_field = info.get("tokenAmount")
     if not isinstance(amount_field, Mapping):
@@ -1702,7 +1889,8 @@ def _traced_token_delta(
     built: Any,
     value: Mapping[str, Any],
     *,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
 ) -> TokenDeltaReport | None:
     """The ``instruction-trace`` fallback, or ``None`` if it cannot be attempted.
 
@@ -1732,6 +1920,7 @@ def _traced_token_delta(
         account_keys=decoded.account_keys,
         mint_extensions=mint_extensions,
         top_level_token_instructions=top_level,
+        accepted_mints=accepted_mints,
     )
 
 
@@ -1745,7 +1934,8 @@ def simulate(
     network_label: str = _DEFAULT_NETWORK_LABEL,
     network: Network,
     replace_blockhash: bool = True,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
 ) -> Receipt:
     """Build ``plan`` into a tx and simulate it → a :class:`Receipt`.
 
@@ -1861,7 +2051,9 @@ def simulate(
     # the simulation carried no token balances (the node omitted the keys) —
     # NOT TRACKED, never zero. A Token-2022 mint whose extensions were not read, or whose
     # extensions make the delta not the debit, comes back REFUSED rather than numbered.
-    token_delta = parse_token_deltas(value, mint_extensions=mint_extensions)
+    token_delta = parse_token_deltas(
+        value, mint_extensions=mint_extensions, accepted_mints=accepted_mints
+    )
     # THE ARRAYS WIN WHENEVER THEY SPEAK. The instruction trace is consulted only where the
     # arrays said nothing at all — absent, or present and null — which is a hard refusal
     # downstream today. It therefore can only move refuse -> (measure | refuse), and never
@@ -1869,7 +2061,9 @@ def simulate(
     # saying "we saw something we will not put a number on", and an instruction sum that
     # cannot see it either has no standing to disagree.
     if _arrays_said_nothing(token_delta):
-        traced = _traced_token_delta(built, value, mint_extensions=mint_extensions)
+        traced = _traced_token_delta(
+            built, value, mint_extensions=mint_extensions, accepted_mints=accepted_mints
+        )
         if traced is not None:
             token_delta = traced
 

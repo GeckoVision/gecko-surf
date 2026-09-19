@@ -140,6 +140,25 @@ def test_the_swap_policy_authorises_the_swap_and_not_the_shop() -> None:
     assert (
         "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" not in policy.token_caps.caps
     ), "the mint being bought needs no cap: a credit is not a spend"
+    assert policy.accepted_mints == frozenset(), "no hooked mint is accepted by default"
+
+
+def test_the_swap_policy_carries_the_human_acceptance_of_the_input_mint() -> None:
+    from gecko.simulate import AcceptedMint
+
+    accepted = AcceptedMint(
+        mint=USDG,
+        extensions=frozenset({"transferHook", "permanentDelegate"}),
+        transfer_hook_program=None,
+    )
+    policy = swap_spend_policy(
+        allowed_destinations=frozenset({"pool111"}),
+        input_mint=USDG,
+        input_decimals=6,
+        input_per_transaction_raw=50_000,
+        accepted_mints=(accepted,),
+    )
+    assert policy.accepted_mints == frozenset({accepted})
 
 
 def policy_lighthouse(policy):
