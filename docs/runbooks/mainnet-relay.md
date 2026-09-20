@@ -231,6 +231,35 @@ The dry run prints the extension set it read and whether it matches the acceptan
 `CONVERT PASS` with the token leg measured (`N of 2u1tszSe… leaves the buyer`). If it prints
 `DOES NOT MATCH`, stop: Paxos changed the mint and a human looks before the pin does.
 
+**Measured 2026-09-19, the first complete route.** Three runs, founder-authorized in chat,
+in this order, and each one is part of the record:
+
+1. `--convert-from USDG --convert-amount 50000`: refused at leg 1 before any signature,
+   nothing moved. PayBox invalidated the wallet's agent signer mid-exchange
+   (`POST .../moonx-sign 403 "agent signer has been revoked"`); the PayBox app's activity
+   feed shows `agent_signer.invalidated` in the same minute. Why PayBox did that is not
+   known; the plain espresso refused the same way afterwards, so it was the signer, not
+   the swap. A new agent signer was provisioned in the app.
+2. The plain espresso with the new signer: `3kx9uzqJ…`, 49,235 == 49,235 CU, relay-paid.
+3. The route: leg 1 `48ouiBNA…` landed (0.05 USDG -> 0.049999 USDC, 45,159 predicted vs
+   45,164 charged, the pool moved between simulation and slot), leg 2 refused at prepare
+   with nothing signed: run 2 had spent the USDC the route was counting on, and 0.05
+   USDC converted did not reach the 0.10 price. The runner now refuses BEFORE leg 1 when
+   the priced mint held plus the quote's minimum out is under the price. After a 0.06 USDG
+   top-up, `--convert-amount 60000`:
+
+```
+leg 1  LANDED 4PpwRxrG7JnRHTwtr25gGJ2hpHecN6YM8wdwkhFZ4WQVvWJg6XBiSogfe1UT1hTUkvBPBdXWPhDwsWh2uXiJKu8U   CU 45167 == 45167   (slot 448589176)
+leg 2  LANDED 4WmhBh4yZewsWZnASvBAtHwxXwtuBkCmF3uM2rQ5v165M8bjkkt4hut85WcVRBZEWV3Y832GZNhPiC7YCmTXjnRN   CU 49240 == 49240   (slot 448589193)
+buyer  SOL 22,865,000 -> 22,865,000   USDG 0.069063 -> 0.009063   USDC 0.050309 -> 0.110308 -> 0.010308
+relay  SOL 9,970,000 -> 9,950,000     (two fees of 10,000 lamports)
+GASLESS ROUTE: converted and bought on mainnet; the buyer's SOL never moved.
+```
+
+Read back from the chain: the swap carries Whirlpool and the relay's Lighthouse assertion,
+the purchase lands 17 slots later, and the USDG leg was measured by the spend gate under
+the acceptance rather than refused. Traces under `private/runs/route-2026-09-19{b,c}.jsonl`.
+
 ## 5. Watch the balance
 
 Kora exports Prometheus at `/metrics` on the same port (`[metrics]` in the config), with the

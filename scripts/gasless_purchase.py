@@ -240,6 +240,21 @@ def _rehearse_route_on_fork(
     return 1
 
 
+def _product_price_raw(args: argparse.Namespace, network: Any) -> int | None:
+    """The product's price in its mint's raw units, read from the store listing, or None."""
+    from gecko.store_directory import list_stores_result
+
+    listing = list_stores_result(
+        {"store": args.store, "network": network, "rpc_url": args.rpc_url}
+    )
+    for store in listing.get("stores") or []:
+        for product in store.get("products") or []:
+            if product.get("name") == args.product and product.get("mint") == USDC_MINT:
+                price = product.get("price_raw")
+                return int(price) if isinstance(price, int) else None
+    return None
+
+
 def _token_balance(rpc_url: str, owner: str, mint: str) -> int:
     """Raw balance of ``mint`` held by ``owner`` across its token accounts, at `confirmed`."""
     reply = default_rpc_call(
@@ -322,6 +337,27 @@ def _settle_route_on_mainnet(
     print(
         f"  convert    {args.convert_amount} USDG -> USDC on {str(plan.get('pool'))[:8]}…  "
         f"min out {quote.get('min_amount_out')}"
+    )
+    # Can the purchase be paid AFTER the convert lands? Measured 2026-09-19: leg 1 landed
+    # and leg 2 refused at prepare because the USDC held plus the swap's output was under
+    # the price; the swap was real money spent for a purchase that could not follow. The
+    # quote's minimum out is the floor the swap guarantees, so held + floor >= price is
+    # the only reading that never signs leg 1 for nothing.
+    price = _product_price_raw(args, network)
+    held_usdc = _token_balance(args.rpc_url, buyer.pubkey, USDC_MINT)
+    floor = int(quote.get("min_amount_out") or 0)
+    if price is None:
+        print("STOP: the product's price could not be read; nothing here guesses it")
+        return 2
+    if held_usdc + floor < price:
+        print(
+            f"STOP: after converting, the buyer would hold at most {held_usdc} + "
+            f"{floor} = {held_usdc + floor} raw USDC and the product costs {price}; "
+            f"raise --convert-amount or fund the wallet, then run again"
+        )
+        return 2
+    print(
+        f"  purchase   {price} raw USDC; held {held_usdc} + swap floor {floor} covers it"
     )
     prepared = prepare_instruction_result(
         {

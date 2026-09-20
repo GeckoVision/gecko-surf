@@ -9,9 +9,9 @@
   one command maps any API — messy, paywalled, or on-chain — into a call graph your agent<br>
   <b>checks instead of guesses from</b>, and anything that spends is simulated to a
   <b>receipt</b> first.<br>
-  No wallet, no payment rail, no key held — 60 mainnet transactions, 45 with a cost
-  predicted before signing, 44 of those exact to the unit (re-read from the chain,
-  2026-09-18).
+  No wallet, no payment rail, no key held — 64 mainnet transactions, 49 with a cost
+  predicted before signing, 47 of those exact to the unit (re-read from the chain,
+  2026-09-19).
 </p>
 
 <p align="center">
@@ -137,7 +137,7 @@ And the depth is measured, not asserted:
 - **Seven security layers, fail-closed:** spec sanitizer · per-tool quarantine · image
   Skill Guard · SSRF netguard · out-of-band auth anchoring · verdict signing gate · an
   AST-enforced never-sign boundary.
-- **The numbers:** 5,043 tests · 60 mainnet transactions, 44/45 predictions exact · 1 paid by a fee relay, the buyer holding no SOL · 8 Solana programs wired, 4 differential-proven · 2
+- **The numbers:** 5,043 tests · 64 mainnet transactions, 47/49 predictions exact · 5 paid by a fee relay, the buyer holding no SOL, the last four a USDG→USDC→purchase route · 8 Solana programs wired, 4 differential-proven · 2
   live receipt-pairs · −77%/−89% measured context cuts · a 4,534-program catalog listed ·
   0 auth headers exposed across 14 real specs.
 
