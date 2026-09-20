@@ -67,9 +67,9 @@ from __future__ import annotations
 
 import base64
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from .handoff import verify_handoff
 from .cosign import Contribution, CosignRefused, merge_signatures, take_signature
@@ -87,7 +87,14 @@ from .relay import (
 )
 from .rpc import RpcCall, default_rpc_call
 from .signer import AUTHORITY_ROLE, SignerRefused, TransactionSigner
-from .simulate import BuildCall, BuiltTx, Receipt, simulate
+from .simulate import (
+    AcceptedMint,
+    BuildCall,
+    BuiltTx,
+    MintExtensionEvidence,
+    Receipt,
+    simulate,
+)
 from .trace import Trace, short
 from .spend_policy import (
     AllowedInstruction,
@@ -119,6 +126,9 @@ __all__ = [
     "default_spend_policy",
     "run_purchase",
     "settle_sponsored",
+    "settle_route",
+    "swap_spend_policy",
+    "RouteOutcome",
 ]
 
 
@@ -137,6 +147,12 @@ COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111"
 #: truncated to 8. Pinned as a literal and cross-checked against a real built transaction,
 #: so a rename upstream refuses here instead of quietly matching nothing.
 MAKE_PURCHASE_DISCRIMINATOR = bytes.fromhex("c13ee38869d4c914")
+
+#: Orca Whirlpool, and the anchor sighash of ``global:swap_v2`` — the ONE instruction the
+#: convert leg of a route is allowed to carry (measured on mainnet 2026-09-18: the built
+#: swap is that single instruction; nothing else).
+WHIRLPOOL_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+SWAP_V2_DISCRIMINATOR = bytes.fromhex("2b04ed0b1ac91e62")
 
 #: The demo ceiling on the SOL leg — fees and any rent the purchase pays. It is NOT the
 #: price: the price is denominated in USDC and capped by :data:`DEFAULT_USDC_*` below. A
@@ -237,6 +253,90 @@ def default_spend_policy(
     )
 
 
+def swap_spend_policy(
+    *,
+    allowed_destinations: frozenset[str],
+    input_mint: str,
+    input_decimals: int,
+    input_per_transaction_raw: int,
+    program_id: str = WHIRLPOOL_PROGRAM,
+    discriminator: bytes = SWAP_V2_DISCRIMINATOR,
+    sponsored: bool = True,
+    per_transaction_lamports: int = DEFAULT_PER_TRANSACTION_LAMPORTS,
+    hourly_lamports: int = DEFAULT_HOURLY_LAMPORTS,
+    daily_lamports: int = DEFAULT_DAILY_LAMPORTS,
+    max_transactions_per_day: int = DEFAULT_MAX_TRANSACTIONS_PER_DAY,
+    accepted_mints: Iterable[AcceptedMint] = (),
+) -> SpendPolicy:
+    """The policy for the CONVERT leg of a route: one swap instruction, one input mint.
+
+    The purchase policy above allowlists the shop's instruction and caps USDC. A swap is
+    a different instruction moving a different mint, and a policy that covered both
+    would be one policy authorising two things nobody asked for at once. So the convert
+    leg gets its own: the swap instruction (Whirlpool ``swap_v2`` by default), the
+    compute-budget price bid, the relay's Lighthouse assertion when sponsored, and a cap
+    on the mint being SOLD in that mint's own raw units. The mint being bought needs no
+    cap: a credit is not a spend.
+
+    ``allowed_destinations`` is the set the swap may write — the pool, its vaults, the
+    tick arrays and the buyer's two token accounts, all DERIVED by ``plan_swap`` — and it
+    has no default for the same reason the purchase policy's has none.
+
+    ``accepted_mints`` is the human's acceptance of the input mint's Token-2022
+    extensions when it carries ones the simulation refuses to measure (USDG carries a
+    transfer hook, a permanent delegate, a transfer fee config and confidential transfer).
+    It is authored by the operator, never read off the chain and copied: the pin is what
+    turns a changed mint into a refusal instead of a measurement. The fee RATE is not
+    pinned; a raised fee lowers what the swap returns, which the swap's minimum-out
+    threshold defends, not this cap.
+    """
+    if not allowed_destinations:
+        raise PurchaseConfigurationError(
+            "a swap policy with no allowed destinations authorises nothing; name the pool "
+            "accounts the swap may write"
+        )
+    if input_per_transaction_raw <= 0:
+        raise PurchaseConfigurationError("the convert leg needs a positive input cap")
+    return SpendPolicy(
+        authorized=True,
+        per_transaction_cap_lamports=per_transaction_lamports,
+        hourly_cap_lamports=hourly_lamports,
+        daily_cap_lamports=daily_lamports,
+        max_transactions_per_day=max_transactions_per_day,
+        allowed_instructions=frozenset(
+            {
+                AllowedInstruction(program_id=program_id, discriminator=discriminator),
+                AllowedInstruction(
+                    program_id=COMPUTE_BUDGET_PROGRAM, discriminator=b"\x03"
+                ),
+                *(
+                    [
+                        AllowedInstruction(
+                            program_id=LIGHTHOUSE_PROGRAM,
+                            discriminator=LIGHTHOUSE_ASSERT_ACCOUNT_INFO,
+                        )
+                    ]
+                    if sponsored
+                    else []
+                ),
+            }
+        ),
+        allowed_destinations=frozenset(allowed_destinations),
+        token_caps=TokenCaps.of(
+            [
+                TokenCap(
+                    mint=input_mint,
+                    decimals=input_decimals,
+                    per_transaction_raw=input_per_transaction_raw,
+                    hourly_raw=input_per_transaction_raw,
+                    daily_raw=input_per_transaction_raw,
+                )
+            ]
+        ),
+        accepted_mints=frozenset(accepted_mints),
+    )
+
+
 # --------------------------------------------------------------------------------------
 # Outcomes.
 # --------------------------------------------------------------------------------------
@@ -253,6 +353,8 @@ PurchaseRefusalCode = Literal[
     # The relay-paid path. Each names the party whose answer was refused.
     "relay-refused",
     "cosign-refused",
+    # The route: the purchase leg could not even be prepared after the convert leg landed.
+    "prepare-refused",
 ]
 
 
@@ -391,7 +493,7 @@ def run_purchase(
     spend_gate: SpendPolicyGate,
     build_call: BuildCall,
     rpc_call: RpcCall | None = None,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
     now: float | None = None,
     priority_fee_microlamports: int | None = None,
     confirm_timeout_seconds: float = 60.0,
@@ -705,7 +807,8 @@ def settle_sponsored(
     signer: TransactionSigner,
     authority: str,
     rpc_call: RpcCall | None = None,
-    mint_extensions: Mapping[str, Sequence[str]] | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
     last_valid_block_height: int = 0,
     priority_fee_microlamports: int = 0,
     confirm_timeout_seconds: float = 60.0,
@@ -761,6 +864,7 @@ def settle_sponsored(
             network=network,
             track=[authority],
             mint_extensions=mint_extensions,
+            accepted_mints=accepted_mints,
         )
         facts["units"] = receipt.units_consumed
         facts["binding_prefix"] = short(receipt.message_binding)
@@ -1080,3 +1184,139 @@ def _consumed_units(call: RpcCall, rpc_url: str, signature: str) -> int | None:
     if isinstance(units, bool) or not isinstance(units, int):
         return None
     return units
+
+
+# --------------------------------------------------------------------------------------
+# The route: convert, then buy, both relay-paid, on mainnet
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RouteOutcome:
+    """Two legs and the objections that stand between them and "the route landed"."""
+
+    convert: PurchaseOutcome
+    purchase: PurchaseOutcome | None
+    objections: tuple[str, ...] = ()
+
+    @property
+    def landed(self) -> bool:
+        return (
+            isinstance(self.convert, PurchaseSettled)
+            and isinstance(self.purchase, PurchaseSettled)
+            and not self.objections
+        )
+
+
+def settle_route(
+    convert_unsigned_base64: str,
+    *,
+    prepare_purchase: Callable[[], Mapping[str, Any]],
+    network: Network,
+    rpc_url: str,
+    relay: FeePayerRelay,
+    convert_signer: TransactionSigner,
+    purchase_signer: TransactionSigner,
+    authority: str,
+    rpc_call: RpcCall | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    convert_accepted_mints: Mapping[str, AcceptedMint] | None = None,
+    purchase_accepted_mints: Mapping[str, AcceptedMint] | None = None,
+    convert_last_valid_block_height: int = 0,
+    trace: Trace | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> RouteOutcome:
+    """Convert first, then buy; each leg is :func:`settle_sponsored`, in that order.
+
+    The purchase leg is PREPARED only after the convert leg has landed, by
+    ``prepare_purchase``: its bytes depend on the state the swap produced (the buyer's
+    balance of the priced mint) and on a blockhash that is a minute old at most, so
+    preparing it earlier would be preparing it against a state that no longer exists.
+    ``prepare_purchase`` returns the ``prepare_purchase`` tool's answer: refused, or a
+    transaction with its expiry.
+
+    Two signers, two gates: the swap's policy and the shop's policy authorise different
+    instructions on different mints, and one signer holding both would be one gate that
+    lets either leg carry the other's instruction. ``authority`` is the buyer on both.
+    ``mint_extensions`` reaches both legs' simulations; the acceptances are SPLIT per
+    leg. The convert leg sells a Token-2022 mint whose extensions must be read and, where
+    unsound, accepted by the human — under the convert gate's policy. The purchase leg
+    has its own policy, and an acceptance it never authored would refuse it AFTER the
+    convert had landed: converted and stuck. So the purchase leg gets only what the
+    shop's policy carries, which is normally nothing.
+    This is the mainnet sibling of :func:`gecko.sandbox.rehearse_route.rehearse_gasless_route`.
+    """
+    log = trace or Trace(lane="route", network=str(network))
+    with log.step("convert", "gecko") as facts:
+        first = settle_sponsored(
+            convert_unsigned_base64,
+            network=network,
+            rpc_url=rpc_url,
+            relay=relay,
+            signer=convert_signer,
+            authority=authority,
+            rpc_call=rpc_call,
+            mint_extensions=mint_extensions,
+            accepted_mints=convert_accepted_mints,
+            last_valid_block_height=convert_last_valid_block_height,
+            trace=log,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+        if isinstance(first, PurchaseSettled):
+            facts["units"] = first.consumed_units
+        else:
+            facts["outcome"] = first.code
+    if not isinstance(first, PurchaseSettled):
+        return RouteOutcome(
+            convert=first,
+            purchase=None,
+            objections=(
+                "the convert leg did not land; the purchase leg was not attempted",
+            ),
+        )
+
+    with log.step("prepare", "gecko") as facts:
+        prepared = prepare_purchase()
+        if prepared.get("refused") or prepared.get("error"):
+            facts["outcome"] = str(prepared.get("code") or "error")
+    if prepared.get("refused") or prepared.get("error"):
+        refusal = PurchaseRefused(
+            code="prepare-refused",
+            reason=(
+                f"the purchase leg could not be prepared after the convert leg landed: "
+                f"[{prepared.get('code') or 'error'}] "
+                f"{prepared.get('reason') or prepared.get('error')}"
+            ),
+            network=network,
+        )
+        return RouteOutcome(
+            convert=first,
+            purchase=refusal,
+            objections=(
+                "the convert leg landed but the purchase leg was refused at prepare",
+            ),
+        )
+
+    second = settle_sponsored(
+        str(prepared["transaction"]["unsigned_transaction"]),
+        network=network,
+        rpc_url=rpc_url,
+        relay=relay,
+        signer=purchase_signer,
+        authority=authority,
+        rpc_call=rpc_call,
+        mint_extensions=mint_extensions,
+        accepted_mints=purchase_accepted_mints,
+        last_valid_block_height=int(
+            (prepared.get("expires") or {}).get("last_valid_block_height") or 0
+        ),
+        trace=log,
+        sleep=sleep,
+        monotonic=monotonic,
+    )
+    objections: list[str] = []
+    if not isinstance(second, PurchaseSettled):
+        objections.append("the convert leg landed but the purchase leg did not")
+    return RouteOutcome(convert=first, purchase=second, objections=tuple(objections))

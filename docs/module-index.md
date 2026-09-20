@@ -229,7 +229,7 @@ package depends on it, which is worth a look before you add a caller.
 | `surfaceviz` | Render the Agent Surface as an SVG call graph — "graphviz for APIs". | 3 · `mcp_server`, `report`, `surface` |
 | `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 5 · `events`, `http_server`, `onboard` +2 |
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
-| `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 1 · `store_directory` |
+| `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 2 · `simulate`, `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
 | `tools` | Question-shaped tool generator — the comprehension payload. | 30 · `agentnative`, `catalog`, `chain_eval` +27 |
 | `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 3 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_route` |

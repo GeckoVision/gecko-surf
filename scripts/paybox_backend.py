@@ -40,6 +40,7 @@ import base64
 import json
 import os
 import shutil
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -82,7 +83,22 @@ def _default_run(argv: Sequence[str], env: Mapping[str, str]) -> tuple[int, str]
         timeout=TIMEOUT_SECONDS,
         check=False,
     )
+    if completed.returncode != 0 and completed.stderr:
+        # The CLI writes its reason to stderr and exits 1. The exception this becomes
+        # carries the CLASS of failure only (the signer redacts even that to a type
+        # name), which left a headless operator with nothing to act on: measured
+        # 2026-09-19, a mainnet leg refused with no reason anywhere. So the reason goes
+        # to OUR stderr, scrubbed of anything token- or base64-shaped, and truncated.
+        sys.stderr.write(f"paybox cli: {_scrub(completed.stderr)}\n")
     return completed.returncode, completed.stdout
+
+
+def _scrub(text: str) -> str:
+    """The first line of a CLI error, with key- and payload-shaped runs removed."""
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    line = re.sub(r"pbx[a-z_]*[A-Za-z0-9_-]{10,}", "pbx…", line)
+    line = re.sub(r"[A-Za-z0-9+/=]{60,}", "<payload>", line)
+    return line[:300]
 
 
 def _cli() -> list[str]:
