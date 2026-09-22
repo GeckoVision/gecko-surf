@@ -479,3 +479,54 @@ def test_without_a_fee_payer_nothing_changes_and_no_gasless_block_appears() -> N
     assert builder.calls[0]["payer"] == BUYER
     assert result["fee_payer"] == BUYER
     assert "gasless" not in result
+
+
+def test_a_second_signer_that_is_not_a_relay_still_gets_a_full_signature_array() -> (
+    None
+):
+    """Measured 2026-09-22 on the hosted surface: an Orca open_position (the actor plus a
+    fresh position-mint key) came back from the builder with ONE signature slot under a
+    TWO-signer header, and the node refused to simulate it ("failed to sanitize accounts
+    offsets"). The array is made to match the header whether or not a relay is involved."""
+    import base64
+
+    from solders.hash import Hash
+    from solders.instruction import AccountMeta, Instruction
+    from solders.keypair import Keypair
+    from solders.message import Message
+    from solders.pubkey import Pubkey
+
+    second = Keypair().pubkey()
+    message = Message.new_with_blockhash(
+        [
+            Instruction(
+                Pubkey.from_string(PROGRAM), b"\x01", [AccountMeta(second, True, True)]
+            )
+        ],
+        Pubkey.from_string(BUYER),
+        Hash.default(),
+    )
+    one_slot = base64.b64encode(b"\x01" + bytes(64) + bytes(message)).decode()
+    seen: list[str] = []
+
+    def rpc(_url: str, method: str, params: list[Any]) -> dict[str, Any]:
+        if method == "simulateTransaction":
+            seen.append(params[0])
+        return ok_rpc(_url, method, params)
+
+    prepare_instruction_result(
+        {
+            "program_id": PROGRAM,
+            "instruction": "contribute",
+            "payer": BUYER,
+            "values": VALUES,
+        },
+        idl_fetch=idl_fetch,
+        build_call=lambda **_kw: one_slot,
+        rpc_call=rpc,
+        rpc_url="https://rpc.example",
+    )
+    assert seen, "the bytes were simulated"
+    raw = base64.b64decode(seen[0])
+    assert raw[0] == 2, "two signature slots, matching the two-signer header"
+    assert raw[1 + 2 * 64 :] == bytes(message), "the message itself is untouched"
