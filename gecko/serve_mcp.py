@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -165,6 +166,26 @@ GATED_SURFACES = frozenset({"birdeye"})
 #
 # `GECKO_UNLISTED_SURFACES` (comma-separated) overrides this at deploy time.
 UNLISTED_SURFACES = frozenset({"reportavnzla", "sosvenezuela", "txline", "bootcamp"})
+
+
+#: One mount per bootcamp TEAM, named ``bootcamp-<team>``, from ``GECKO_BOOTCAMP_TEAMS``
+#: (comma-separated slugs). Same surface as ``bootcamp``; the mount name is what
+#: ``surf.connect`` and ``surf.call`` record as ``surface_id``, so a team's runs are
+#: separable week over week by a field already stored (``scripts/team_runs.py``). A slug
+#: that is not lowercase letters, digits and dashes is dropped, not repaired.
+_TEAM_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+MAX_TEAM_MOUNTS = 24
+
+
+def bootcamp_team_mounts() -> tuple[str, ...]:
+    """The team mount names this host serves, in the order the env var lists them."""
+    names: list[str] = []
+    for part in os.environ.get("GECKO_BOOTCAMP_TEAMS", "").split(","):
+        slug = part.strip().casefold()
+        name = f"bootcamp-{slug}"
+        if slug and _TEAM_SLUG.match(slug) and name not in names:
+            names.append(name)
+    return tuple(names[:MAX_TEAM_MOUNTS])
 
 
 def resolve_unlisted_surfaces(default: frozenset[str] = frozenset()) -> frozenset[str]:
@@ -453,6 +474,13 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
         )
     )
+    for team_mount in bootcamp_team_mounts():
+        surfaces.append(
+            (
+                team_mount,
+                OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
+            )
+        )
     # Refugios (shelters) — comprehended with the publishable apikey injected as a
     # static header. Passed as a CLIENT (not a bare spec) so the multi-surface builder
     # uses its session; the key is invisible to the agent.
@@ -635,7 +663,10 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.
         gated_surfaces=gated,
         # Advertised nowhere, still served. See UNLISTED_SURFACES.
-        unlisted_surfaces=resolve_unlisted_surfaces(UNLISTED_SURFACES),
+        # Team mounts are unlisted whatever the override says: a team's URL is handed
+        # out in class, never shown in the public catalog.
+        unlisted_surfaces=resolve_unlisted_surfaces(UNLISTED_SURFACES)
+        | frozenset(bootcamp_team_mounts()),
     )
 
 

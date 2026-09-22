@@ -185,16 +185,93 @@ def test_sign_sends_the_solana_intent_and_returns_bytes_with_both_signatures() -
     assert all(tx.verify_with_results()), "relay's and buyer's signatures both verify"
 
 
-def test_the_fee_payer_role_is_refused_before_paybox_is_asked() -> None:
+def test_fee_payer_for_another_account_is_refused_before_paybox_is_asked() -> None:
+    """The relay's bytes name the RELAY as fee payer. Asked to sign them as fee payer,
+    the wallet would be paying for someone else; it refuses without calling PayBox."""
     relay, buyer = _keys()
     unsigned_b64, _ = _relay_signed_tx(relay, buyer)
     cli = FakeCli(buyer)
-    backend = PayboxAuthorityBackend(wallet=_wallet(buyer), run=cli, cli=("paybox",))
-    with pytest.raises(PayboxBackendError, match="authority"):
+    backend = PayboxAuthorityBackend(
+        wallet=_wallet(buyer), run=cli, cli=("paybox",), self_paid=True
+    )
+    with pytest.raises(PayboxBackendError, match="another account"):
         backend.sign_transaction(
             base64.b64decode(unsigned_b64), _attestation("fee-payer")
         )
     assert cli.calls == []
+
+
+def test_a_self_paid_transaction_signs_as_its_own_fee_payer() -> None:
+    """Self-paid: the wallet is slot 0. A one-time co-signer already filled its own slot
+    (a Whirlpool position mint); PayBox signs the wallet's slot and leaves that one."""
+    from solders.hash import Hash
+    from solders.instruction import AccountMeta, Instruction
+    from solders.keypair import Keypair
+    from solders.message import Message
+    from solders.transaction import Transaction
+
+    _, buyer = _keys()
+    position_mint = Keypair()
+    ix = Instruction(
+        Pubkey_from("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"),
+        b"open",
+        [AccountMeta(position_mint.pubkey(), True, True)],
+    )
+    message = Message.new_with_blockhash([ix], buyer.pubkey(), Hash.default())
+    tx = Transaction.new_unsigned(message)
+    tx.partial_sign([position_mint], message.recent_blockhash)
+    cli = FakeCli(buyer)
+    backend = PayboxAuthorityBackend(
+        wallet=_wallet(buyer), run=cli, cli=("paybox",), self_paid=True
+    )
+    signed = backend.sign_transaction(bytes(tx), _attestation("fee-payer"))
+    back = Transaction.from_bytes(signed)
+    assert bytes(back.message) == bytes(message)
+    assert all(back.verify_with_results()), (
+        "wallet and co-signer signatures both verify"
+    )
+
+
+def test_fee_payer_is_refused_unless_the_runner_opted_in() -> None:
+    """The self-paid scope is per runner: a backend opened without it keeps the
+    authority-only rule, so a mis-wired fee-payer profile elsewhere still fails here."""
+    _, buyer = _keys()
+    from solders.hash import Hash
+    from solders.message import Message
+    from solders.transaction import Transaction
+
+    message = Message.new_with_blockhash([], buyer.pubkey(), Hash.default())
+    cli = FakeCli(buyer)
+    backend = PayboxAuthorityBackend(wallet=_wallet(buyer), run=cli, cli=("paybox",))
+    with pytest.raises(PayboxBackendError, match="self_paid"):
+        backend.sign_transaction(
+            bytes(Transaction.new_unsigned(message)), _attestation("fee-payer")
+        )
+    assert cli.calls == []
+
+
+def test_the_authority_role_is_refused_when_the_bytes_make_the_wallet_fee_payer() -> (
+    None
+):
+    _, buyer = _keys()
+    from solders.hash import Hash
+    from solders.message import Message
+    from solders.transaction import Transaction
+
+    message = Message.new_with_blockhash([], buyer.pubkey(), Hash.default())
+    cli = FakeCli(buyer)
+    backend = PayboxAuthorityBackend(wallet=_wallet(buyer), run=cli, cli=("paybox",))
+    with pytest.raises(PayboxBackendError, match="role and the bytes disagree"):
+        backend.sign_transaction(
+            bytes(Transaction.new_unsigned(message)), _attestation()
+        )
+    assert cli.calls == []
+
+
+def Pubkey_from(address: str):  # noqa: N802 - a local helper named for what it builds
+    from solders.pubkey import Pubkey
+
+    return Pubkey.from_string(address)
 
 
 def test_a_parked_request_is_a_refusal_naming_status_and_id_only() -> None:

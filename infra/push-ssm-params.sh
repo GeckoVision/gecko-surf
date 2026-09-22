@@ -127,6 +127,10 @@ declare -A PARAMS=(
   # a request to fetch anonymously (the endpoint is gated; it would 401 every boot).
   [GECKO_PROVIDER_SYNC_URL]="GECKO_PROVIDER_SYNC_URL"
   [GECKO_PROVIDER_SYNC_TOKEN]="GECKO_PROVIDER_SYNC_TOKEN"
+
+  # Bootcamp team mounts: comma-separated slugs, each served at /bootcamp-<slug>/mcp,
+  # unlisted. Not a secret; SecureString only because every param here is one.
+  [GECKO_BOOTCAMP_TEAMS]="GECKO_BOOTCAMP_TEAMS"
 )
 
 echo "==> Region:     $REGION"
@@ -195,6 +199,8 @@ declare -A REQUIRED_AT_BOOT=(
   # turn provider self-service on; a restart then mounts every active surface.
   [GECKO_PROVIDER_SYNC_URL]="__unset__"
   [GECKO_PROVIDER_SYNC_TOKEN]="__unset__"
+  # Sentinel => no team mounts (the slug check drops it).
+  [GECKO_BOOTCAMP_TEAMS]="__unset__"
 )
 
 SKIPPED=()

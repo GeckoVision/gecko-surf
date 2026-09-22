@@ -50,7 +50,7 @@ from typing import Any, Callable, Mapping, Sequence
 sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 
 from gecko.cosign import CosignRefused, signature_slots, take_signature  # noqa: E402
-from gecko.signer import AUTHORITY_ROLE, SigningAttestation  # noqa: E402
+from gecko.signer import AUTHORITY_ROLE, FEE_PAYER_ROLE, SigningAttestation  # noqa: E402
 
 #: The one intent this backend issues. Named once.
 INTENT_OP = "solanaTransaction"
@@ -168,6 +168,10 @@ class PayboxAuthorityBackend:
     wallet: PayboxWallet
     run: Run = field(default=_default_run, repr=False)
     cli: tuple[str, ...] | None = None
+    #: Sign as the wallet's OWN fee payer. Off by default: every runner but the one that
+    #: must pay rent from the wallet (a Whirlpool position) keeps the authority-only
+    #: scope, so a mis-wired fee-payer profile there still fails here.
+    self_paid: bool = False
 
     @classmethod
     def open(
@@ -176,6 +180,7 @@ class PayboxAuthorityBackend:
         credential: str | None = None,
         run: Run | None = None,
         cli: Sequence[str] | None = None,
+        self_paid: bool = False,
     ) -> PayboxAuthorityBackend:
         """List the wallets this token may use, pick one, and require ``autonomous``.
 
@@ -201,7 +206,7 @@ class PayboxAuthorityBackend:
                 f"wallet {chosen.credential_id} is on {chosen.approval_mode!r}; a headless "
                 f"signature needs 'autonomous'"
             )
-        return cls(wallet=chosen, run=runner, cli=tuple(argv))
+        return cls(wallet=chosen, run=runner, cli=tuple(argv), self_paid=self_paid)
 
     @property
     def pubkey(self) -> str:
@@ -210,15 +215,35 @@ class PayboxAuthorityBackend:
     def sign_transaction(
         self, unsigned_transaction: bytes, attestation: SigningAttestation
     ) -> bytes:
-        if attestation.signing_as != AUTHORITY_ROLE:
+        if attestation.signing_as == FEE_PAYER_ROLE and not self.self_paid:
             raise PayboxBackendError(
-                "this backend signs as the authority; it will not sign as fee payer"
+                "this backend signs as the authority; it signs as fee payer only when "
+                "opened self_paid=True by a runner that must pay rent from the wallet"
+            )
+        if attestation.signing_as not in (AUTHORITY_ROLE, FEE_PAYER_ROLE):
+            raise PayboxBackendError(
+                f"this backend does not sign as {attestation.signing_as!r}"
             )
         unsigned_b64 = base64.b64encode(unsigned_transaction).decode()
         slots = signature_slots(unsigned_b64)
         if self.pubkey not in slots:
             raise PayboxBackendError(
                 "the transaction does not name this wallet as a required signer"
+            )
+        # Self-paid (a Whirlpool position's rent comes from the wallet, and a relay may
+        # not move an authority's SOL): the wallet pays its OWN fee. The fee payer is
+        # slot 0 of the bytes, and it must be this wallet; asked to pay for anyone else,
+        # this refuses. The signer checks the same agreement from its side
+        # (`authority-is-the-fee-payer` and its mirror); this is the backend's copy.
+        if attestation.signing_as == FEE_PAYER_ROLE and slots[0] != self.pubkey:
+            raise PayboxBackendError(
+                "asked to sign as fee payer, but these bytes name another account as "
+                "the fee payer; this wallet pays only its own fee"
+            )
+        if attestation.signing_as == AUTHORITY_ROLE and slots[0] == self.pubkey:
+            raise PayboxBackendError(
+                "asked to sign as the authority, but these bytes make this wallet the "
+                "fee payer; the role and the bytes disagree"
             )
         intent = {
             "op": INTENT_OP,
