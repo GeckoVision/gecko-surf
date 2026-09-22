@@ -587,6 +587,12 @@ def test_simulation_stays_at_least_as_loose_as_the_blockhash() -> None:
 
     source = inspect.getsource(simmod)
     used = [c for c in _LOOSENESS if f'"commitment": "{c}"' in source]
+    # The simulation and the pre-balance read share ONE named commitment (2026-09-22: a
+    # pre-read at the node default lagged a just-landed transaction). Both must use it.
+    assert source.count('"commitment": SIMULATION_COMMITMENT') >= 2, (
+        "the pre-balance read and the simulation must share SIMULATION_COMMITMENT"
+    )
+    used.append(simmod.SIMULATION_COMMITMENT)
     assert used, "simulate names no commitment — it would inherit an RPC default"
     for commitment in used:
         assert _LOOSENESS[commitment] >= _LOOSENESS[RPC_COMMITMENT], (

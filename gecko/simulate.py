@@ -279,6 +279,11 @@ _BASE58_ALPHABET = frozenset(
 #: input rather than a mint, and we will not render a scale we have never seen.
 _MAX_DECIMALS = 18
 
+#: One commitment for every read a receipt is computed from. The balance before and the
+#: simulated balance after must come from the same view of the chain, or the difference
+#: between two views is reported as money moving.
+SIMULATION_COMMITMENT = "processed"
+
 #: What a caller may pass as one mint's extension evidence: the bare ``extension`` names
 #: (the original shape; enough to REFUSE on, never enough to accept on), or the full
 #: :class:`~gecko.token_program.MintExtensions` reading, which also carries the transfer
@@ -1971,7 +1976,16 @@ def simulate(
 
     pre_lamports: int | None = None
     if tracked:
-        pre = call(rpc_url, "getAccountInfo", [tracked[0], {"encoding": "base64"}])
+        # The SAME commitment the simulation below runs at. Measured 2026-09-22 on
+        # mainnet: read at the node's default (finalized), the balance lagged a
+        # transaction that had just landed, while the simulation saw it; the delta then
+        # counted that transaction's rent as leaving the wallet a second time, and the
+        # spend gate refused a deposit that moved no SOL but its own fee.
+        pre = call(
+            rpc_url,
+            "getAccountInfo",
+            [tracked[0], {"encoding": "base64", "commitment": SIMULATION_COMMITMENT}],
+        )
         pre_lamports = _lamports_or_absent(pre.get("result"))
 
     # The tx carries its own encoding (Orquestra returns base58); getAccountInfo is a
@@ -1986,7 +2000,7 @@ def simulate(
         # replace_blockhash=False with a real, fresh blockhash to earn an `exact` binding
         # — and inherit its ~150-slot expiry along with it.
         "replaceRecentBlockhash": replace_blockhash,
-        "commitment": "processed",
+        "commitment": SIMULATION_COMMITMENT,
         # The CPI trace, for the FALLBACK basis only. Asked for unconditionally because a
         # node cannot be asked for it retroactively: by the time the balance arrays are
         # discovered to be absent, this simulation is over. It costs a larger response and
