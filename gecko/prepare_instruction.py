@@ -522,11 +522,12 @@ def prepare_instruction_result(
         return _refuse(
             "build-failed", f"the builder refused: {type(exc).__name__}: {exc}"
         )
-    if fee_payer and fee_payer != payer:
-        # The builder ships a one-slot signature array under a two-signer header when
-        # the payer is not the actor (measured; gecko.cosign.normalize_signature_slots).
-        # The message is untouched; only the array outside it is made consistent.
-        transaction = _with_signature_slots(transaction)
+    # The builder ships a one-slot signature array under ANY multi-signer header: a relay
+    # that is not the actor (measured 2026-09-16), and a second signer the actor is not,
+    # such as a fresh Whirlpool position mint (measured 2026-09-22, where the node refused
+    # to simulate: "failed to sanitize accounts offsets"). The message is untouched; only
+    # the array outside it is made to match its own header, so this is safe to do always.
+    transaction = _with_signature_slots(transaction)
 
     # THE BINDING IS WHAT MAKES `verify_signed_transaction` REACHABLE HERE.
     #
