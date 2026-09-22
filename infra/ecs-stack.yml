@@ -458,6 +458,10 @@ Resources:
             # force-new-deployment to gate the paid surfaces deliberately.
             - Name: GECKO_REQUIRE_KEY
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_REQUIRE_KEY
+            # One unlisted mount per bootcamp team (gecko/serve_mcp.py
+            # bootcamp_team_mounts). `__unset__` fails the slug check => no team mounts.
+            - Name: GECKO_BOOTCAMP_TEAMS
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_BOOTCAMP_TEAMS
             - Name: PRIVY_APP_ID
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_APP_ID
             - Name: PRIVY_JWKS_URL

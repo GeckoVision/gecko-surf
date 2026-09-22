@@ -52,7 +52,7 @@ from gecko.rpc import default_rpc_call, validate_rpc_url  # noqa: E402
 from gecko.sandbox import ephemeral_signer, prove_surfnet  # noqa: E402
 from gecko.sandbox.cheatcodes import fund_sol  # noqa: E402
 from gecko.sandbox.rehearse import rehearse_purchase  # noqa: E402
-from gecko.simulate import AcceptedMint  # noqa: E402
+from operator_policy import USDG_ACCEPTED  # noqa: E402
 from gecko.signer import (  # noqa: E402
     AUTHORITY_ROLE,
     DEVELOPER_KEYPAIR_FILE_PROFILE_NAME,
@@ -136,31 +136,6 @@ USDG_MINT = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
 TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-# The operator's acceptance of USDG's Token-2022 extensions, AUTHORED here on 2026-09-18
-# from a jsonParsed read of the mint and never copied off the chain at run time: the
-# simulation measures the USDG leg only while the mint still reads exactly this set with
-# the hook reserved and pointing nowhere (programId null). If Paxos adds an extension or
-# points the hook at a program, the run refuses as mint-extensions-changed and a human
-# looks again. The transfer fee RATE (0 bps on 2026-09-18) is not pinned: a raised fee
-# lowers what the swap returns, which plan_swap's minimum-out defends, not this gate.
-# Founder decision 2026-09-18: explicit per-mint acceptance, in the policy.
-USDG_ACCEPTED = AcceptedMint(
-    mint=USDG_MINT,
-    extensions=frozenset(
-        {
-            "mintCloseAuthority",
-            "permanentDelegate",
-            "transferFeeConfig",
-            "confidentialTransferMint",
-            "confidentialTransferFeeConfig",
-            "transferHook",
-            "metadataPointer",
-            "tokenMetadata",
-        }
-    ),
-    transfer_hook_program=None,
-)
-
 
 def _rehearse_route_on_fork(
     args: argparse.Namespace, proof: Any, buyer: Any, relay: KoraRelay
@@ -240,6 +215,34 @@ def _rehearse_route_on_fork(
     return 1
 
 
+def _record_decision(
+    network: Any,
+    *,
+    lane: str,
+    programs: tuple[str, ...],
+    terminal: str,
+    code: str | None = None,
+    signatures: tuple[str, ...] = (),
+    at_stake: tuple[tuple[str, int, int], ...] = (),
+    trace: Trace | None = None,
+) -> None:
+    """One row in the decision log per mainnet run: landed, refused by name, or abandoned."""
+    from gecko.decision_log import append_decision, decision_row
+
+    row = decision_row(
+        trace=trace or Trace(lane=lane, network=str(network)),
+        lane=lane,
+        network=str(network),
+        programs=programs,
+        terminal=terminal,  # type: ignore[arg-type]
+        code=code,
+        signatures=signatures,
+        at_stake=at_stake,
+    )
+    path = append_decision(row)
+    print(f"  decision   {terminal}{f' [{code}]' if code else ''}  -> {path}")
+
+
 def _product_price_raw(args: argparse.Namespace, network: Any) -> int | None:
     """The product's price in its mint's raw units, read from the store listing, or None."""
     from gecko.store_directory import list_stores_result
@@ -315,6 +318,14 @@ def _settle_route_on_mainnet(
             "STOP: the USDG mint no longer reads as the accepted state; a human looks "
             "before the pin is changed"
         )
+        _record_decision(
+            network,
+            lane="route",
+            programs=("whirlpool", "let_me_buy"),
+            terminal="abandoned",
+            code="mint-extensions-changed",
+            at_stake=((USDG_MINT, args.convert_amount, 6),),
+        )
         return 2
     print("  acceptance         matches the mint as read")
     accepted = {USDG_MINT: USDG_ACCEPTED}
@@ -354,6 +365,14 @@ def _settle_route_on_mainnet(
             f"STOP: after converting, the buyer would hold at most {held_usdc} + "
             f"{floor} = {held_usdc + floor} raw USDC and the product costs {price}; "
             f"raise --convert-amount or fund the wallet, then run again"
+        )
+        _record_decision(
+            network,
+            lane="route",
+            programs=("whirlpool", "let_me_buy"),
+            terminal="abandoned",
+            code="route-unaffordable",
+            at_stake=((USDG_MINT, args.convert_amount, 6), (USDC_MINT, price, 6)),
         )
         return 2
     print(
@@ -523,6 +542,24 @@ def _settle_route_on_mainnet(
     print(f"  relay SOL after    {relay_sol_after}   (before {relay_sol_before})")
     for line in route.objections:
         print(f"  OBJECTION  {line}")
+    legs = [leg for leg in (route.convert, route.purchase) if leg is not None]
+    refused_leg = next(
+        (leg for leg in legs if not isinstance(leg, PurchaseSettled)), None
+    )
+    _record_decision(
+        network,
+        lane="route",
+        programs=("whirlpool", "let_me_buy"),
+        terminal="landed" if route.landed else "refused",
+        code=None
+        if route.landed
+        else (refused_leg.code if refused_leg else "not-landed"),
+        signatures=tuple(
+            leg.signature for leg in legs if isinstance(leg, PurchaseSettled)
+        ),
+        at_stake=((USDG_MINT, args.convert_amount, 6), (USDC_MINT, price, 6)),
+        trace=trace,
+    )
     if buyer_sol_after != buyer_sol_before:
         print("NOT GASLESS: the buyer's SOL moved.")
         return 1
@@ -773,10 +810,38 @@ def main(argv: list[str] | None = None) -> int:
         trace=trace,
     )
     _emit_trace(args, trace)
+    price_raw = _product_price_raw(args, network)
+    stake = (
+        (
+            USDC_MINT,
+            price_raw
+            if price_raw is not None
+            else int(round(args.max_spend_usdc * 1_000_000)),
+            6,
+        ),
+    )
     if not isinstance(outcome, PurchaseSettled):
         print(f"\nREFUSED [{outcome.code}]: {outcome.reason}")
+        _record_decision(
+            network,
+            lane="settle",
+            programs=("let_me_buy",),
+            terminal="refused",
+            code=outcome.code,
+            at_stake=stake,
+            trace=trace,
+        )
         return 1
 
+    _record_decision(
+        network,
+        lane="settle",
+        programs=("let_me_buy",),
+        terminal="landed",
+        signatures=(outcome.signature,),
+        at_stake=stake,
+        trace=trace,
+    )
     print(f"\n  LANDED   {outcome.signature}")
     print(
         f"  CU       predicted {outcome.predicted_units}  charged {outcome.consumed_units}"

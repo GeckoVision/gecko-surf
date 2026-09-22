@@ -67,12 +67,18 @@ from __future__ import annotations
 
 import base64
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal
 
 from .handoff import verify_handoff
-from .cosign import Contribution, CosignRefused, merge_signatures, take_signature
+from .cosign import (
+    Contribution,
+    CosignRefused,
+    merge_signatures,
+    normalize_signature_slots,
+    take_signature,
+)
 from .feebump import FeebumpError, with_priority_fee
 from .landing import RPC_COMMITMENT, latest_blockhash
 from .landing import priority_fee_microlamports as estimate_priority_fee
@@ -355,6 +361,10 @@ PurchaseRefusalCode = Literal[
     "cosign-refused",
     # The route: the purchase leg could not even be prepared after the convert leg landed.
     "prepare-refused",
+    # The node failed after the bytes were signed: the send, or the confirmation. When the
+    # transaction was already broadcast its signature is in the reason, so a caller can
+    # look it up instead of sending a second one.
+    "transport-failed",
 ]
 
 
@@ -1206,6 +1216,203 @@ class RouteOutcome:
             and isinstance(self.purchase, PurchaseSettled)
             and not self.objections
         )
+
+
+def _priority_fee_of(message: Any) -> int:
+    """The compute-unit price the message bids, read from its bytes (0 when it bids none)."""
+    keys = [str(key) for key in message.account_keys]
+    for instruction in message.instructions:
+        program = keys[instruction.program_id_index]
+        data = bytes(instruction.data)
+        if program == COMPUTE_BUDGET_PROGRAM and data[:1] == b"\x03" and len(data) >= 9:
+            return int.from_bytes(data[1:9], "little")
+    return 0
+
+
+def settle_cosigned(
+    unsigned_transaction_base64: str,
+    *,
+    network: Network,
+    rpc_url: str,
+    signer: TransactionSigner,
+    authority: str,
+    cosigners: Sequence[Any] = (),
+    rpc_call: RpcCall | None = None,
+    mint_extensions: Mapping[str, MintExtensionEvidence] | None = None,
+    accepted_mints: Mapping[str, AcceptedMint] | None = None,
+    last_valid_block_height: int = 0,
+    confirm_timeout_seconds: float = 60.0,
+    poll_interval_seconds: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+    trace: Trace | None = None,
+) -> PurchaseOutcome:
+    """Self-paid, with ONE-TIME co-signers: simulate, verify, sign, merge, send, confirm.
+
+    The shape of :func:`settle_sponsored` without a relay. A co-signer is a key minted for
+    this transaction alone (a fresh Whirlpool position mint): it signs the message in its
+    own slot FIRST, exactly where a relay's signature sits, and holds no authority
+    afterwards. ``cosigners`` are solders ``Keypair``-like objects (``pubkey()``,
+    ``sign_message(bytes)``). The authority's signer, its policy and its gate are the same
+    ones every other path uses; a co-signer's signature grants nothing the gate did not
+    authorise, because the gate reads the message, and the message is the same bytes.
+    """
+    from .cosign import _decode as _decode_transaction
+
+    call = rpc_call or default_rpc_call
+    log = trace or Trace(lane="cosigned", network=str(network))
+    subject = base64.b64encode(
+        normalize_signature_slots(base64.b64decode(unsigned_transaction_base64))
+    ).decode()
+    message_bytes = bytes(_decode_transaction(subject).message)
+    contributions = [
+        Contribution(str(key.pubkey()), bytes(key.sign_message(message_bytes)))
+        for key in cosigners
+    ]
+    if contributions:
+        try:
+            with log.step("cosign", "gecko") as facts:
+                subject = merge_signatures(
+                    subject, contributions, require_complete=False
+                )
+                facts["note"] = f"{len(contributions)} one-time key(s)"
+        except CosignRefused as refusal:
+            return PurchaseRefused(
+                code="cosign-refused",
+                reason=f"[{refusal.code}] {refusal.reason}",
+                network=network,
+            )
+
+    with log.step("simulate", "node") as facts:
+        receipt = simulate(
+            {},
+            rpc_url=rpc_url,
+            rpc_call=call,
+            build_call=lambda _plan: BuiltTx(tx=subject, encoding="base64"),
+            replace_blockhash=False,
+            network_label=f"simulated against {network} (co-signed, authority unsigned)",
+            network=network,
+            track=[authority],
+            mint_extensions=mint_extensions,
+            accepted_mints=accepted_mints,
+        )
+        facts["units"] = receipt.units_consumed
+        facts["binding_prefix"] = short(receipt.message_binding)
+        if receipt.status != "pass":
+            facts["outcome"] = f"receipt-{receipt.status}"
+    if receipt.status != "pass":
+        return PurchaseRefused(
+            code="receipt-failed",
+            reason=(
+                f"the transaction did not pass simulation (status={receipt.status}, "
+                f"class={receipt.revert_class}); a transaction that reverts is refused "
+                f"rather than paid for"
+            ),
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+    with log.step("verify", "gecko") as facts:
+        handoff = verify_handoff(
+            subject,
+            receipt,
+            require="exact",
+            expected_network=network,
+            encoding="base64",
+        )
+        if not handoff.approved:
+            facts["outcome"] = "binding-refused"
+    if not handoff.approved or handoff.transaction_base64 is None:
+        return PurchaseRefused(
+            code="binding-refused",
+            reason=f"the receipt does not attest these bytes: {handoff.reason}",
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+
+    current_slot = _current_slot(call, rpc_url)
+    try:
+        with log.step("sign", "buyer"):
+            signed = signer.sign(handoff, receipt=receipt, current_slot=current_slot)
+    except SignerRefused as refusal:
+        spend_refusal = refusal.code == "spend-not-authorized"
+        return PurchaseRefused(
+            code="spend-refused" if spend_refusal else "signer-refused",
+            reason=f"[{refusal.code}] {refusal.reason}",
+            network=network,
+            receipt=receipt,
+            verdict=refusal.verdict,
+            predicted_units=receipt.units_consumed,
+        )
+    verdict = signed.spend_verdict
+    if verdict is None:
+        return PurchaseRefused(
+            code="signer-refused",
+            reason="the signer produced a signature but published no spend verdict",
+            network=network,
+            receipt=receipt,
+            predicted_units=receipt.units_consumed,
+        )
+    try:
+        with log.step("merge", "gecko"):
+            own = take_signature(
+                signed.signed_transaction_base64,
+                expect_message=message_bytes,
+                signer=authority,
+            )
+            merged = merge_signatures(
+                subject, [*contributions, Contribution(authority, own)]
+            )
+    except CosignRefused as refusal:
+        return PurchaseRefused(
+            code="cosign-refused",
+            reason=f"[{refusal.code}] {refusal.reason}",
+            network=network,
+            receipt=receipt,
+            verdict=verdict,
+            predicted_units=receipt.units_consumed,
+        )
+
+    try:
+        with log.step("send", "node"):
+            signature = _send(call, rpc_url, merged)
+        with log.step("confirm", "node") as facts:
+            consumed = _confirm(
+                call,
+                rpc_url,
+                signature,
+                timeout_seconds=confirm_timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                sleep=sleep,
+                monotonic=monotonic,
+            )
+            facts["units"] = consumed
+    except PurchaseTransportError as failure:
+        sent = f" (broadcast as {failure.signature}; look it up before sending again)"
+        return PurchaseRefused(
+            code="transport-failed",
+            reason=f"{failure.reason}{sent if failure.signature else ''}",
+            network=network,
+            receipt=receipt,
+            verdict=verdict,
+            predicted_units=receipt.units_consumed,
+        )
+    message, _version = _message_of(base64.b64decode(subject))
+    return PurchaseSettled(
+        signature=signature,
+        network=network,
+        receipt=receipt,
+        verdict=verdict,
+        predicted_units=receipt.units_consumed,
+        consumed_units=consumed,
+        blockhash=str(message.recent_blockhash),
+        last_valid_block_height=last_valid_block_height,
+        priority_fee_microlamports=_priority_fee_of(message),
+        fee_payer=authority,
+        authority=authority,
+        signatures=1 + len(contributions),
+    )
 
 
 def settle_route(
