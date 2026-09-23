@@ -15,7 +15,15 @@ from dataclasses import dataclass
 
 from .enrich import BlurbFields, parse_blurb
 from .ingest import Operation
-from .lexnorm import fold_tokens, normalize_query
+from .rankable import (
+    FoldedUnit,
+    RankableUnit,
+    fold_unit,
+    intent_score_folded,
+    rank_units,
+    score_folded,
+    unit_text,
+)
 from .tools import tool_name
 
 _WORD = re.compile(r"[a-z0-9]+")
@@ -71,34 +79,44 @@ class CatalogEntry:
         """
         return parse_blurb(self.blurb)
 
-    @property
-    def _haystack(self) -> str:
+    def as_unit(self) -> RankableUnit:
+        """This operation projected into the corpus-agnostic unit the scorer ranks.
+
+        The ONE place an ``Operation`` becomes rankable. Note what does not cross:
+        method, parameters, responses — everything that makes an operation CALLABLE.
+        The ranker never read them, which is why a document can be projected into
+        the same unit without becoming callable in the process (see
+        :mod:`gecko.rankable`).
+        """
         o = self.operation
-        return " ".join(
-            [
-                o.summary,
-                o.description,
-                o.path,
-                " ".join(o.tags),
-                o.operation_id,
-                # The blurb's four tag BODIES — not its markup. Folding the raw string in
-                # put `xml`/`intent`/`required`/`auth`/`gotchas`/`none` into every enriched
-                # op, which is uniform across the surface and therefore pure ranking noise.
-                self._blurb_fields.ranking_text,
-            ]
+        blurb = self._blurb_fields
+        return RankableUnit(
+            unit_id=self.tool_name,
+            title=o.summary,
+            body=o.description,
+            locator=o.path,
+            identity=o.operation_id,
+            tags=tuple(o.tags),
+            # The blurb's four tag BODIES — not its markup. Folding the raw string in
+            # put `xml`/`intent`/`required`/`auth`/`gotchas`/`none` into every enriched
+            # op, which is uniform across the surface and therefore pure ranking noise.
+            aux_rank=blurb.ranking_text,
+            # ONLY `<intent>` may gate — see `intent_tokens`.
+            aux_intent=blurb.intent,
+            fallback_rank=0 if o.method == "GET" else 1,
         )
 
-    def _folded_fields(self) -> tuple[set[str], set[str], set[str]]:
+    @property
+    def _haystack(self) -> str:
+        return unit_text(self.as_unit())
+
+    def _folded(self) -> FoldedUnit:
         """The scored surface, folded. Derived on every call ON PURPOSE: ``_tokens`` is a
         module global that callers (the retrieval-arms harness) swap at runtime to compare
         tokenizers, and a per-entry cache would quietly serve one arm's vocabulary to the
         next. The per-token fold is memoized in :mod:`gecko.lexnorm` instead, which is
         stateless and cannot go stale."""
-        return (
-            fold_tokens(_tokens(self._haystack)),
-            fold_tokens(_tokens(self.operation.summary)),
-            fold_tokens(_tokens(self.operation.operation_id)),
-        )
+        return fold_unit(self.as_unit(), _tokens)
 
     #: The fields that speak about WHAT AN OPERATION IS FOR, as opposed to what its payload
     #: looks like. ``description`` and the raw ``path`` are deliberately absent: they are
@@ -109,34 +127,20 @@ class CatalogEntry:
     #: `next_scroll_id`. The path is not needed here because our `operation_id` is derived
     #: from method+path, so path vocabulary already reaches the gate through it.
     def intent_tokens(self) -> set[str]:
-        """The gating surface: summary, tags, operationId, and the generated blurb (which
-        exists precisely to add intent vocabulary). Derived per call for the same reason as
-        :meth:`_folded_fields` — the tokenizer is a swappable module global."""
-        o = self.operation
-        return fold_tokens(
-            _tokens(
-                " ".join(
-                    [
-                        o.summary,
-                        " ".join(o.tags),
-                        o.operation_id,
-                        # ONLY `<intent>` — the blurb's user-vocabulary restatement, which
-                        # is what the whole enrichment exists to add. `<required>`,
-                        # `<auth>` and `<gotchas>` are ranking evidence but must not
-                        # certify SCOPE: they describe plumbing in words like "required",
-                        # "none" and "token" that any query might brush. Measured: the
-                        # query "none" certified 3 genuine in-scope hits on pegana with
-                        # the raw blurb folded in here.
-                        self._blurb_fields.intent,
-                    ]
-                )
-            )
-        )
+        """The gating surface: summary, tags, operationId, and the generated blurb's
+        ``<intent>`` body — its user-vocabulary restatement, which is what the whole
+        enrichment exists to add. ``<required>``, ``<auth>`` and ``<gotchas>`` are ranking
+        evidence but must not certify SCOPE: they describe plumbing in words like
+        "required", "none" and "token" that any query might brush. Measured: the query
+        "none" certified 3 genuine in-scope hits on pegana with the raw blurb folded in
+        here. Derived per call for the same reason as :meth:`_folded` — the tokenizer is a
+        swappable module global."""
+        return set(self._folded().intent)
 
     def intent_score(self, query_tokens: set[str]) -> int:
         """Corroboration on the intent surface. ``0`` means: this op ranked only because the
         query brushed its reference prose, which is not evidence that the query is in scope."""
-        return len(normalize_query(query_tokens) & self.intent_tokens())
+        return intent_score_folded(self._folded(), query_tokens)
 
     def score_query(self, query: str) -> int:
         """Score raw query TEXT — the honest entry point for a caller that has a
@@ -151,13 +155,6 @@ class CatalogEntry:
         on the same vocabulary. Folding is idempotent, so a caller that already folded
         (or already dropped stopwords) gets the identical result.
         """
-        query_tokens = normalize_query(query_tokens)
-        if not query_tokens:
-            # No content-bearing term survived (an all-stopword query). Scoring 0 is the
-            # honest answer: search_scored then serves the flagged never-empty prior
-            # instead of a "genuine" hit won on `is`/`this`.
-            return 0
-        hay, summary, op_id = self._folded_fields()
         # The operationId is the op's OWN identity — its camelCase/snake sub-words
         # (list·assets) are what the intent that names this op overlaps. Counting that
         # overlap a second time (like the summary double-count) lets the op the query
@@ -168,11 +165,7 @@ class CatalogEntry:
         # by the id's token count, so it re-weights identity — never swamps the ranking.
         #
         # summary + operationId matches count double (the most intent-bearing fields)
-        return (
-            len(query_tokens & hay)
-            + len(query_tokens & summary)
-            + len(query_tokens & op_id)
-        )
+        return score_folded(self._folded(), query_tokens)
 
 
 @dataclass(frozen=True)
@@ -213,25 +206,19 @@ class Catalog:
         q = _tokens(query)
         if not q:
             return []
-        scored = [(e.score(q), e) for e in self.entries]
-        matches = sorted(
-            (se for se in scored if se[0] > 0),
-            key=lambda se: (-se[0], se[1].operation.path),
-        )
-        # Rank on everything, GATE on intent. A hit won purely inside reference prose is
-        # ranked exactly where it was, but is not allowed to certify the query as in-scope —
-        # see `intent_tokens`. Measured: this took the out-of-scope pass rate on an 89-op
-        # surface from 0.33 to 1.00 and moved recall on no other set.
-        genuine = [(s, e) for s, e in matches if e.intent_score(q) > 0]
-        if genuine:
-            return [ScoredEntry(e, s, False) for s, e in genuine[:limit]]
-        # 0/97 fallback: deterministic, non-semantic, query-independent. Flagged
-        # score-0 / is_fallback so it stays below any confidence floor.
-        fallback = sorted(
-            self.entries,
-            key=lambda e: (0 if e.operation.method == "GET" else 1, e.operation.path),
-        )
-        return [ScoredEntry(e, 0, True) for e in fallback[:limit]]
+        # Rank on everything, GATE on intent (`gate=True`). A hit won purely inside
+        # reference prose is ranked exactly where it was, but is not allowed to certify
+        # the query as in-scope — see `intent_tokens`. Measured: this took the
+        # out-of-scope pass rate on an 89-op surface from 0.33 to 1.00 and moved recall
+        # on no other set. With no genuine hit, the 0/97 fallback (`fallback=True`):
+        # deterministic, non-semantic, query-independent, flagged score-0 / is_fallback
+        # so it stays below any confidence floor. Both policies are API-SURFACE policies
+        # and are passed explicitly; `gecko.doccorpus` turns both off, and says why.
+        folded = [e._folded() for e in self.entries]
+        ranked = rank_units(folded, q, limit, gate=True, fallback=True)
+        return [
+            ScoredEntry(self.entries[r.index], r.score, r.is_fallback) for r in ranked
+        ]
 
     def search(self, query: str, limit: int = 5) -> list[CatalogEntry]:
         return [s.entry for s in self.search_scored(query, limit)]

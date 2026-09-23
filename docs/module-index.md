@@ -2,7 +2,7 @@
 
 # Module index
 
-244 modules in `gecko/` (subpackages included), from their own docstrings.
+246 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -20,6 +20,7 @@ package depends on it, which is worth a look before you add a caller.
 | `binding` | Per-customer binding — the join that makes the day-one model work. | 0 |
 | `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 15 · `authcheck`, `catalog_mcp`, `chain_eval` +12 |
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
+| `capability` | The Capability Card: what a contributor writes, and the check that admits it. | 1 · `cli` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
 | `cards` | In-chat cards for Gecko tools — MCP Apps resources, PayBox-style. | 1 · `http_server` |
 | `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 9 · `client`, `endpoint_score`, `find_start` +6 |
@@ -67,7 +68,7 @@ package depends on it, which is worth a look before you add a caller.
 | `examples.txline` | Serve the TxLINE off-chain API (TxODDS) to your agent — first-call-correct, | 0 |
 | `fcc_eval` | Agent-in-the-loop first-call-correct (FCC) eval — the companion metric to the | 3 · `chain_eval`, `corrections`, `score` |
 | `feebump` | Priority-fee injection for a builder's unsigned transaction — a VERIFIED rebuild. | 1 · `autonomous_purchase` |
-| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 16 · `endpoint_score`, `ingest_gate`, `prove` +13 |
+| `find_start` | ``find_start`` — route a plain intent to the right starting point across programs. | 17 · `capability`, `endpoint_score`, `ingest_gate` +14 |
 | `fork_lane` | The fork lane — the "see what would MOVE" escalation, on a throwaway key. | 0 |
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
@@ -89,7 +90,7 @@ package depends on it, which is worth a look before you add a caller.
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
 | `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 19 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +16 |
-| `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `catalog`, `find_start`, `purchase_intent_eval` |
+| `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 2 · `find_start`, `purchase_intent_eval` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
 | `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
@@ -127,12 +128,12 @@ package depends on it, which is worth a look before you add a caller.
 | `privy_login` | Privy passwordless email-OTP provider for ``gecko login``. | 2 · `privy_auth`, `privy_server` |
 | `privy_server` | Server-side Privy email-OTP — identity for the hosted ``gecko login`` (SERVER-ONLY). | 1 · `authlogin` |
 | `program_errors` | Name a reverted call's error against the program's OWN table — or refuse to name it. | 1 · `prepare_instruction` |
-| `program_graph` | The instruction↔PDA derivation graph — the join, assembled and emitted. | 11 · `artifact`, `find_start`, `lifecycle` +8 |
+| `program_graph` | The instruction↔PDA derivation graph — the join, assembled and emitted. | 12 · `artifact`, `capability`, `find_start` +9 |
 | `program_mcp` | Serve a program's instruction↔PDA graph as an agent-facing MCP surface. | 1 · `examples.ore` |
 | `project.errors` | Every way a projection can refuse, as one typed hierarchy. | 4 · `project.fdl`, `project.graph_read`, `project.probes` +1 |
 | `project.fdl` | ProgramGraph -> one Orquestra FDL document (the Flow Definition Language). | 0 |
 | `project.graph_read` | The questions every projector asks a :class:`~gecko.program_graph.ProgramGraph`. | 2 · `project.fdl`, `project.probes` |
-| `project.probes` | ProgramGraph -> the probe cases a scorecard runs. The list nobody types by hand. | 0 |
+| `project.probes` | ProgramGraph -> the probe cases a scorecard runs. The list nobody types by hand. | 1 · `capability` |
 | `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 3 · `cli`, `drift_watch`, `ingest_gate` |
 | `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
@@ -178,6 +179,7 @@ package depends on it, which is worth a look before you add a caller.
 | `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
 | `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 4 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +1 |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
+| `rerank` | The rerank seam — a second pass over candidates the first pass already found. | 0 |
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
