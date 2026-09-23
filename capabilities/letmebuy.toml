@@ -1,0 +1,60 @@
+# The example card. Written by us, so a student has a finished one to read before writing
+# theirs. The surface is the LetMeBuy storefront program, which Gecko already wires; what
+# this card adds is the part no derivation recovers — the sentences, and the bindings a
+# human had to choose.
+#
+# Check it with:  uv run gecko capability check capabilities/letmebuy.toml
+
+[surface]
+slug   = "letmebuy"
+kind   = "solana-program"
+source = "BUYuxRfhCMWavaUWxhGtPP3ksKEDZxCD5gzknk3JfAya"
+idl    = "let_me_buy.idl.json"
+owner  = "@ernanibmurtinho"
+tier   = "community"
+
+# The values a caller genuinely has to choose. The graph cannot know them, and says so.
+[bindings]
+signer        = "GpaLFMwQWh2xuBkMQGKmcYT5A1WgYJekofu6DJjp8W9c"
+authority     = "DMjTEZJuV3mpfzBNeeuFy9m47A1bj5CXVhCNVo7BEPzy"
+mint          = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+store_name    = "geckocoffee"
+product_name  = "Espresso"
+name          = "Espresso"
+price         = "100000"
+table_number  = "1"
+
+# One sentence per instruction. THIS is the contribution.
+[intents]
+make_purchase  = "get me an espresso from the coffee shop and pay with my stablecoins"
+initialize     = "open a shop so people can buy from me"
+add_product    = "put a new drink on the menu with its price"
+
+# At least one sentence that shares no word with the instruction name. A paraphrase that
+# echoes the name measures keyword matching and nothing else.
+[[paraphrase]]
+intent  = "I am thirsty and I have a wallet"
+expects = "make_purchase"
+
+[[paraphrase]]
+intent  = "list something I sell, with what it costs"
+expects = "add_product"
+
+# The honest partial. Five instructions derive from this card's bindings; these three ask
+# for values this card does not carry, and saying so by refusal class is what makes the
+# card mergeable. An undeclared refusal would keep it out; so would a declared gap that
+# stopped firing, because then the card describes a surface it no longer matches.
+[[declared_gap]]
+instruction = "mark_as_delivered"
+refusal     = "MissingProbeBindingError"
+note        = "needs the order id, which only exists after a purchase has landed"
+
+[[declared_gap]]
+instruction = "update_details"
+refusal     = "MissingProbeBindingError"
+note        = "needs the new description and image, which belong to the shop owner"
+
+[[declared_gap]]
+instruction = "update_telegram_channel"
+refusal     = "MissingProbeBindingError"
+note        = "needs the channel handle the owner controls"
