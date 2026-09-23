@@ -21,9 +21,12 @@ which is the kind of number a floor can be built on. Whether any particular
 reranker actually produces a separable score on this corpus is a measurement, and
 this module exists so that measurement can be made without buying a model first.
 
-WHAT SHIPS TODAY: the seam, a deterministic identity, and an oracle. The oracle
-is the point. Before adding a dependency, run it and read the ceiling: if a
-perfect reranker cannot move the number you care about, no real one will either.
+WHAT SHIPS TODAY: the seam, a deterministic identity, and two oracles. NOT a
+measurement. There is no harness in this repository that scores a reranker
+against a golden set, so nothing here is pinned by a number, and an adversarial
+review was right to refuse the table this docstring used to carry. Build that
+harness before buying a model; until then these classes bound the question, they
+do not answer it.
 """
 
 from __future__ import annotations
@@ -74,10 +77,11 @@ class OracleReranker:
     oracle never had to refuse and reported a ceiling that did not exist. An oracle
     that is wrong is worse than no oracle, because it is believed.
 
-    Measured on 2026-09-23 over txodds and pegana: perfect ordering buys almost
-    nothing. txodds paraphrase is already 1.00 at rank 1 without it, pegana does
-    not move at rank 1 at all, and out-of-scope refusal is unchanged. Reordering
-    cannot refuse: a permutation of a wrong pool is still a wrong pool.
+    Observed on 2026-09-23 over txodds and pegana, by an ad-hoc run rather than a
+    committed harness: perfect ordering bought almost nothing. txodds paraphrase
+    was already 1.00 at rank 1 without it and pegana did not move at rank 1.
+    Refusal is unchanged, and that part is definitional rather than observed --
+    this class always returns a full pool, so it can never decline.
     """
 
     gold_by_query: Mapping[str, frozenset[str]]
@@ -93,16 +97,24 @@ class OracleReranker:
 class RefusingOracleReranker:
     """The ceiling for a second pass that is allowed to say "none of these".
 
-    This is the one that matters, and the gap between it and ``OracleReranker`` is
-    the entire case for buying a reranker. Measured on the same run:
+    READ THE NEXT PARAGRAPH BEFORE QUOTING THIS CLASS. An adversarial review on
+    2026-09-23 refuted the table that used to sit here, and it was right.
 
-        arm                          paraphrase retrieved@8    out-of-scope pass
-        hybrid                              1.00                     0.00
-        hybrid + ordering oracle            1.00                     0.00
-        hybrid + THIS                       1.00                     1.00
+    Its out-of-scope pass rate is 1.00 BY CONSTRUCTION, not by measurement: a
+    query absent from ``gold_by_query`` yields an empty gold set, so ``rerank``
+    returns ``[]``, for any arm, any pool, any corpus. The reviewer confirmed it
+    over 2000 random (query, pool) pairs. Its recall is likewise identical to the
+    arm it wraps, because it never drops a gold name. So "refusing reaches 1.00
+    and 1.00" restates how this class is written; it is not evidence that any real
+    scorer could do the same.
 
-    Full recall and full refusal at the same time, which neither the lexical arm
-    nor the dense arm can reach alone. The dense arm finds every paraphrase and
+    What IS measured, and separately: the hybrid arm reaches paraphrase
+    retrieved@8 of 1.00 on txodds and pegana against Atlas, while its
+    out-of-scope pass falls to 0.00. That came from an ad-hoc run, not from a
+    committed harness, which is the exact failure ``scripts/retrieval_report.py``
+    was written to end. Until a harness scores a reranker against a golden set,
+    treat the case for an absolute scorer as a HYPOTHESIS with a mechanism, not
+    as a result. The dense arm finds every paraphrase and
     also answers every out-of-scope query, because cosine similarity RANKS and
     confidence needs an ABSOLUTE judgement of whether this candidate answers this
     query at all.
