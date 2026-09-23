@@ -54,6 +54,7 @@ _SUBCOMMANDS = (
     "test",
     "inspect",
     "ingest-gate",
+    "capability",
     "report",
     "verify-docs",
     "from-docs",
@@ -301,6 +302,37 @@ def _cmd_inspect(argv: list[str]) -> int:
             file=sys.stderr,
         )
     return 1 if (below or inspect_mod.has_blocking(report)) else 0
+
+
+def _cmd_capability(argv: list[str]) -> int:
+    """`gecko capability check <card>` — admit or refuse one Capability Card (offline, $0).
+
+    A card is a contributor's description of ONE surface: the bindings and the sentences,
+    everything else derived. This runs the four gates and prints the report a contributor
+    puts on their portfolio. Exit 1 when the card is not admitted, so CI can gate on it.
+
+    Routing is REPORTED and never rejects: a sentence our ranker misses is a fact about
+    the ranker, and the card is how we found out.
+    """
+    from .capability import CapabilityCardError, load_card, render, check_card
+
+    p = argparse.ArgumentParser(
+        prog="gecko capability",
+        description="Check a Capability Card: the graph builds, every refusal is declared, "
+        "the sentences route, and nothing signs.",
+    )
+    p.add_argument("action", choices=["check"], help="check a card")
+    p.add_argument("card", help="path to capabilities/<slug>.toml")
+    p.add_argument("--json", action="store_true", help="machine-readable report")
+    args = p.parse_args(argv)
+
+    try:
+        report = check_card(load_card(args.card))
+    except CapabilityCardError as refusal:
+        print(f"REFUSED: {refusal}", file=sys.stderr)
+        return 1
+    print(render(report, as_json=args.json))
+    return 0 if report.admitted else 1
 
 
 def _cmd_ingest_gate(argv: list[str]) -> int:
@@ -2492,6 +2524,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_inspect(rest)
     if cmd == "ingest-gate":
         return _cmd_ingest_gate(rest)
+    if cmd == "capability":
+        return _cmd_capability(rest)
     if cmd == "report":
         return _cmd_report(rest)
     if cmd == "verify-docs":
