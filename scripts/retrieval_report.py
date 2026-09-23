@@ -83,7 +83,7 @@ CASES: dict[str, tuple[Path, Callable[[], Any]]] = {
     ),
 }
 
-READINGS = ("ranker", "with_fallback")
+READINGS = ("ranker", "retrieved", "with_fallback")
 
 #: The two lexical arms, scored over the same pool by the same metric. `overlap` is
 #: what ships; `bm25` is `catalog.BM25Index`, fully built and never selected.
@@ -205,7 +205,9 @@ def render(report: Mapping[str, Any]) -> str:
         "`catalog.BM25Index` (BM25F with IDF, TF saturation, length norm, per-field weights),",
         "built long ago and never selected.",
         "",
-        "`ranker` counts genuine hits. `with_fallback` credits the never-empty 0/97",
+        "`ranker` counts hits the LEXICAL arm corroborated. `retrieved` counts hits either",
+        "arm genuinely ranked, excluding the query-independent prior -- it is the reading",
+        "that can see a dense arm working. `with_fallback` credits the never-empty 0/97",
         "candidate's position and is **not** a ranker number. On `paraphrase_no_overlap`",
         "neither reading can see a dense arm working: the golden sets enforce zero token",
         "overlap with the gold op, so the lexical score is 0 by arithmetic and every fused",

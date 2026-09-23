@@ -134,3 +134,17 @@ def test_both_arms_score_the_same_pool(fresh: dict[str, Any]) -> None:
         overlap, bm25 = entry["arms"]["overlap"], entry["arms"]["bm25"]
         assert overlap["n_positive"] == bm25["n_positive"], name
         assert overlap["n_oos"] == bm25["n_oos"], name
+
+
+def test_the_third_reading_gives_a_lexical_arm_nothing(fresh: dict[str, Any]) -> None:
+    """`retrieved` counts what either arm genuinely ranked. With no dense arm there is
+    nothing extra to count, so it must equal `ranker` exactly.
+
+    If these ever diverge on a lexical-only arm, the reading has started crediting the
+    query-independent prior, which is the bug it exists to avoid.
+    """
+    for arm in fresh["arms"]:
+        for archetype, entry in fresh["pooled"][arm]["by_archetype"].items():
+            assert entry["retrieved"] == entry["ranker"], (
+                f"{arm}/{archetype}: a lexical arm cannot retrieve more than it ranks"
+            )
