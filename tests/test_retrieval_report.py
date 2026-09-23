@@ -61,7 +61,7 @@ def test_the_paraphrase_figure_in_circulation_is_the_one_we_measure(
     This is the number quoted in CLAUDE.md and in `private/2026-09-20-jev-intent-routing.md`.
     It is pinned so that it cannot quietly stop being true while still being quoted.
     """
-    paraphrase = fresh["pooled"]["by_archetype"]["paraphrase_no_overlap"]
+    paraphrase = fresh["pooled"]["overlap"]["by_archetype"]["paraphrase_no_overlap"]
     assert paraphrase["n"] == 27
     assert paraphrase["ranker"]["8"] == pytest.approx(0.04, abs=0.005)
     assert paraphrase["with_fallback"]["8"] == pytest.approx(0.22, abs=0.005)
@@ -70,7 +70,7 @@ def test_the_paraphrase_figure_in_circulation_is_the_one_we_measure(
 def test_the_easy_archetypes_are_solved_and_stay_solved(fresh: dict[str, Any]) -> None:
     """Keyword echo is what overlap counting is guaranteed to win. If this falls, the
     regression is in the ranker itself, not in anything subtle about paraphrases."""
-    pooled = fresh["pooled"]["by_archetype"]
+    pooled = fresh["pooled"]["overlap"]["by_archetype"]
     assert pooled["keyword_echo"]["ranker"]["8"] == pytest.approx(1.00, abs=0.005)
     assert pooled["near_dup_disambiguation"]["ranker"]["8"] >= 0.94
 
@@ -86,7 +86,7 @@ def test_the_two_readings_part_company_only_on_paraphrases(
     is entirely the fallback's position. That gap is the metric talking about
     itself, and it is why `0.04` must never be quoted as "retrieval is broken".
     """
-    pooled = fresh["pooled"]["by_archetype"]
+    pooled = fresh["pooled"]["overlap"]["by_archetype"]
     for archetype in ("keyword_echo", "near_dup_disambiguation"):
         entry = pooled[archetype]
         assert entry["ranker"] == entry["with_fallback"], (
@@ -102,4 +102,35 @@ def test_every_golden_set_is_in_the_report(fresh: dict[str, Any]) -> None:
     all four, so a report missing one cannot reproduce it."""
     assert set(fresh["sets"]) == {"txodds", "pegana", "privy", "birdeye"}
     for name, entry in fresh["sets"].items():
-        assert entry["n_positive"] > 0, f"{name} contributed no positive task"
+        assert entry["arms"]["overlap"]["n_positive"] > 0, (
+            f"{name} contributed no positive task"
+        )
+
+
+def test_bm25_is_measured_and_did_not_earn_selection(fresh: dict[str, Any]) -> None:
+    """The arm that was built and never selected, and why it stays that way.
+
+    This is pinned because "BM25 is better" is the obvious assumption, the plan
+    made it, and the measurement refused it. If someone selects BM25F later, this
+    test should be the thing that makes them show a number first.
+    """
+    overlap = fresh["pooled"]["overlap"]["by_archetype"]
+    bm25 = fresh["pooled"]["bm25"]["by_archetype"]
+
+    assert bm25["keyword_echo"]["ranker"]["8"] < overlap["keyword_echo"]["ranker"]["8"]
+    assert (
+        bm25["near_dup_disambiguation"]["ranker"]["1"]
+        < (overlap["near_dup_disambiguation"]["ranker"]["1"])
+    )
+    assert bm25["paraphrase_no_overlap"]["ranker"]["8"] == 0.0, (
+        "a lexical arm cannot score an archetype defined by sharing no tokens. If this "
+        "ever passes, the golden set's zero-overlap rule broke, not retrieval."
+    )
+
+
+def test_both_arms_score_the_same_pool(fresh: dict[str, Any]) -> None:
+    """Otherwise the comparison is between two different questions."""
+    for name, entry in fresh["sets"].items():
+        overlap, bm25 = entry["arms"]["overlap"], entry["arms"]["bm25"]
+        assert overlap["n_positive"] == bm25["n_positive"], name
+        assert overlap["n_oos"] == bm25["n_oos"], name
