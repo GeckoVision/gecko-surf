@@ -1,0 +1,423 @@
+{
+  "baseline": {
+    "arm": "BM25 + title_weight + one_per_page, top_k=3",
+    "dev": {
+      "hits": 20,
+      "rate": 0.8,
+      "total": 25
+    },
+    "heldout": {
+      "hits": 20,
+      "rate": 0.8333,
+      "total": 24
+    },
+    "pooled": {
+      "hits": 40,
+      "rate": 0.8163,
+      "total": 49
+    },
+    "source": "Dev3Pack-bootcamp-AI-Engineering/src/bootcamp_agent/coach.py:110"
+  },
+  "cases": {
+    "dev": {
+      "file": "data/evals/coach.jsonl",
+      "n": 25
+    },
+    "heldout": {
+      "file": "data/evals/coach-heldout.jsonl",
+      "n": 24
+    }
+  },
+  "corpus": {
+    "chars": 579772,
+    "loader_excludes": [
+      "quiz"
+    ],
+    "page_ids_sha256": "2e589ab3ab084d01",
+    "pages": 132,
+    "root": "units/en"
+  },
+  "dev_misses_shipped": [
+    {
+      "expected": [
+        "unit0/get-settled"
+      ],
+      "got": [
+        "bonus/b06-improve-the-coach/introduction",
+        "tracks/coding-assistant/introduction",
+        "tracks/demos/introduction"
+      ],
+      "question": "what does bootcamp start do"
+    },
+    {
+      "expected": [
+        "unit0/local-model",
+        "unit0/runtime-lanes"
+      ],
+      "got": [
+        "unit2/session-07-grounding-metrics/concepts-2",
+        "tracks/demos/introduction",
+        "tracks/depth/introduction"
+      ],
+      "question": "how much does a key cost"
+    },
+    {
+      "expected": [
+        "unit0/local-model"
+      ],
+      "got": [
+        "tracks/demos/introduction",
+        "tracks/first-contribution/introduction",
+        "unit0/ask-your-assistant"
+      ],
+      "question": "how do I set up ollama"
+    },
+    {
+      "expected": [
+        "unit0/runtime-lanes"
+      ],
+      "got": [
+        "tracks/coding-assistant/introduction",
+        "unit0/ask-your-assistant",
+        "unit1/session-01-assistant-configuration/concepts-2"
+      ],
+      "question": "which sessions need a coding assistant"
+    },
+    {
+      "expected": [
+        "unit0/ask-your-assistant"
+      ],
+      "got": [
+        "unit0/w09-mcp-first-server/introduction",
+        "unit3/session-13-secure-mcp-server/concepts-1",
+        "unit3/session-13-secure-mcp-server/introduction"
+      ],
+      "question": "how do I add an MCP server to claude code"
+    },
+    {
+      "expected": [
+        "unit0/week3"
+      ],
+      "got": [
+        "tracks/demos/introduction",
+        "tracks/ship-it/introduction",
+        "unit3/session-15-defend-the-capstone/concepts-1"
+      ],
+      "question": "what happens on demo day"
+    },
+    {
+      "expected": [
+        "unit0/introduction",
+        "unit0/how-to-submit"
+      ],
+      "got": [
+        "tracks/coding-assistant/introduction",
+        "tracks/cookbook/introduction",
+        "tracks/final-assignment/introduction"
+      ],
+      "question": "how is the course marked"
+    },
+    {
+      "expected": [
+        "unit1/session-01-assistant-configuration/concepts-1",
+        "unit0/runtime-lanes",
+        "tracks/coding-assistant/introduction"
+      ],
+      "got": [
+        "unit0/w12-dsa-for-agents/introduction",
+        "unit1/session-05-deterministic-mini-agent/introduction",
+        "bonus/b03-multi-agent-orchestration/introduction"
+      ],
+      "question": "what is AGENTS.md for"
+    }
+  ],
+  "engine": "gecko.doccorpus.DocIndex over gecko.rankable (the shipped overlap arm)",
+  "generated_by": "scripts/course_retrieval_report.py",
+  "metric": "hit rate at k over DISTINCT page ids; a hit is any expected page id in the top k",
+  "miss_diagnostics": {
+    "corpus": {
+      "chars": 657.8,
+      "distinct_words": 73.4,
+      "n": 879
+    },
+    "gold_page_chunks": {
+      "chars": 667.7,
+      "distinct_words": 74.1,
+      "n": 68
+    },
+    "retrieved_on_miss": {
+      "chars": 793.4,
+      "distinct_words": 85.4,
+      "n": 24
+    },
+    "what": "mean size of a chunk, corpus-wide vs retrieved on a dev miss vs on the gold page"
+  },
+  "variants": {
+    "chunks_400": {
+      "chunks": 1651,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 400,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.6,
+        "hit@3": 0.72,
+        "hit@5": 0.84,
+        "hits@1": 15,
+        "hits@3": 18,
+        "hits@5": 21,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.5,
+        "hit@3": 0.8333,
+        "hit@5": 0.9167,
+        "hits@1": 12,
+        "hits@3": 20,
+        "hits@5": 22,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.551,
+        "hit@3": 0.7755,
+        "hit@5": 0.8776,
+        "hits@1": 27,
+        "hits@3": 38,
+        "hits@5": 43,
+        "n": 49
+      },
+      "why": "half the chunk budget \u2014 a SWEEP POINT, not a selection: on 25 dev questions one question is 4 points, so picking the best cell here would be fitting noise"
+    },
+    "intent_gate_on": {
+      "chunks": 879,
+      "config": {
+        "intent_gate": true,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.44,
+        "hit@3": 0.44,
+        "hit@5": 0.44,
+        "hits@1": 11,
+        "hits@3": 11,
+        "hits@5": 11,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.375,
+        "hit@3": 0.4583,
+        "hit@5": 0.4583,
+        "hits@1": 9,
+        "hits@3": 11,
+        "hits@5": 11,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.4082,
+        "hit@3": 0.449,
+        "hit@5": 0.449,
+        "hits@1": 20,
+        "hits@3": 22,
+        "hits@5": 22,
+        "n": 49
+      },
+      "why": "the API surface's intent gate applied to prose: a hit must also match the title/tags/page-id surface"
+    },
+    "no_one_per_source": {
+      "chunks": 879,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": false,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.56,
+        "hit@3": 0.68,
+        "hit@5": 0.72,
+        "hits@1": 14,
+        "hits@3": 17,
+        "hits@5": 18,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.5833,
+        "hit@3": 0.8333,
+        "hit@5": 0.8333,
+        "hits@1": 14,
+        "hits@3": 20,
+        "hits@5": 20,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.5714,
+        "hit@3": 0.7551,
+        "hit@5": 0.7755,
+        "hits@1": 28,
+        "hits@3": 37,
+        "hits@5": 38,
+        "n": 49
+      },
+      "why": "the post-rank policy off: one long page may take every slot"
+    },
+    "sections": {
+      "chunks": 1204,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": true
+      },
+      "dev": {
+        "hit@1": 0.44,
+        "hit@3": 0.64,
+        "hit@5": 0.76,
+        "hits@1": 11,
+        "hits@3": 16,
+        "hits@5": 19,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.7083,
+        "hit@3": 0.8333,
+        "hit@5": 0.9167,
+        "hits@1": 17,
+        "hits@3": 20,
+        "hits@5": 22,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.5714,
+        "hit@3": 0.7347,
+        "hit@5": 0.8367,
+        "hits@1": 28,
+        "hits@3": 36,
+        "hits@5": 41,
+        "n": 49
+      },
+      "why": "chunk at markdown headings first, and carry the heading path in the title"
+    },
+    "shipped": {
+      "chunks": 879,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.56,
+        "hit@3": 0.68,
+        "hit@5": 0.84,
+        "hits@1": 14,
+        "hits@3": 17,
+        "hits@5": 21,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.5833,
+        "hit@3": 0.875,
+        "hit@5": 0.9167,
+        "hits@1": 14,
+        "hits@3": 21,
+        "hits@5": 22,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.5714,
+        "hit@3": 0.7755,
+        "hit@5": 0.8776,
+        "hits@1": 28,
+        "hits@3": 38,
+        "hits@5": 43,
+        "n": 49
+      },
+      "why": "the arm the API surface ships, paragraph chunks at 800, one page per slot"
+    },
+    "truncating_chunker": {
+      "chunks": 879,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "truncate",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.56,
+        "hit@3": 0.68,
+        "hit@5": 0.84,
+        "hits@1": 14,
+        "hits@3": 17,
+        "hits@5": 21,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.5833,
+        "hit@3": 0.875,
+        "hit@5": 0.9167,
+        "hits@1": 14,
+        "hits@3": 21,
+        "hits@5": 22,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.5714,
+        "hit@3": 0.7755,
+        "hit@5": 0.8776,
+        "hits@1": 28,
+        "hits@3": 38,
+        "hits@5": 43,
+        "n": 49
+      },
+      "why": "the course chunker's own handling of an oversized block: cut it (drops table rows, keeps the header)"
+    },
+    "whole_page": {
+      "chunks": 132,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 1000000,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.48,
+        "hit@3": 0.64,
+        "hit@5": 0.72,
+        "hits@1": 12,
+        "hits@3": 16,
+        "hits@5": 18,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.6667,
+        "hit@3": 0.8333,
+        "hit@5": 0.9167,
+        "hits@1": 16,
+        "hits@3": 20,
+        "hits@5": 22,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.5714,
+        "hit@3": 0.7347,
+        "hit@5": 0.8163,
+        "hits@1": 28,
+        "hits@3": 36,
+        "hits@5": 40,
+        "n": 49
+      },
+      "why": "no chunking at all: one page, one unit \u2014 the control that says what chunking bought"
+    }
+  }
+}
