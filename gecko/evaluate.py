@@ -181,7 +181,9 @@ def evaluate_golden(
     per_task: list[dict[str, Any]] = []
     ranks_with_fallback: list[int | None] = []
     ranks_ranker: list[int | None] = []
+    ranks_retrieved: list[int | None] = []
     oos_pass_ranker: list[bool] = []
+    oos_pass_retrieved: list[bool] = []
     oos_pass_with_fallback: list[bool] = []
     n_via_fallback = 0
 
@@ -191,8 +193,23 @@ def evaluate_golden(
             top1 = hits[0] if hits else None
             genuine_top1 = next((h for h in hits if not h.is_fallback), None)
             pass_ranker = genuine_top1 is None  # the ranker itself declined
+            # Under `retrieved`, a dense-only hit counts as something the system found,
+            # so an out-of-scope query that returns one is a false positive. This is the
+            # honest cost of the third reading and it is measured, not assumed: the dense
+            # arm's cosine scores are too compressed to separate an out-of-scope intent
+            # from a paraphrase, which is exactly why confidence stays lexical-anchored.
+            retrieved_top1 = next(
+                (
+                    h
+                    for h in hits
+                    if not h.is_fallback or getattr(h, "from_dense", False)
+                ),
+                None,
+            )
+            pass_retrieved = retrieved_top1 is None
             pass_floor = top1 is None or top1.is_fallback  # below the confidence floor
             oos_pass_ranker.append(pass_ranker)
+            oos_pass_retrieved.append(pass_retrieved)
             oos_pass_with_fallback.append(pass_floor)
             per_task.append(
                 _StrictCard(
@@ -201,8 +218,10 @@ def evaluate_golden(
                         "expect_ops": [],
                         "archetype": t.archetype,
                         "rank_ranker": None,
+                        "rank_retrieved": None,
                         "rank_with_fallback": None,
                         "hit_ranker": pass_ranker,
+                        "hit_retrieved": pass_ranker,
                         "hit_with_fallback": pass_floor,
                         "via_fallback": False,
                         "top1": top1.name if top1 else None,
@@ -218,10 +237,24 @@ def evaluate_golden(
         rank_with_fallback = min((p for p, _ in matches), default=None)
         genuine = [p for p, h in matches if not h.is_fallback]
         rank_ranker = min(genuine) if genuine else None
+        # THE THIRD READING. `is_fallback` is lexical-anchored, so a hit the dense arm
+        # ranked and the lexical arm could not corroborate is flagged exactly like the
+        # query-independent 0/97 prior -- and `ranker` drops both. That is correct for a
+        # confidence floor and wrong for scoring retrieval: measured on txodds and pegana,
+        # the hybrid arm put the gold op in the top 8 for every paraphrase task while
+        # `ranker` reported 0.00. `retrieved` counts a hit that either arm genuinely
+        # ranked, and excludes the prior, which is the only candidate no query produced.
+        found = [
+            p
+            for p, h in matches
+            if not h.is_fallback or getattr(h, "from_dense", False)
+        ]
+        rank_retrieved = min(found) if found else None
         via_fallback = rank_with_fallback is not None and rank_ranker is None
         n_via_fallback += int(via_fallback)
         ranks_with_fallback.append(rank_with_fallback)
         ranks_ranker.append(rank_ranker)
+        ranks_retrieved.append(rank_retrieved)
         per_task.append(
             _StrictCard(
                 {
@@ -229,8 +262,10 @@ def evaluate_golden(
                     "expect_ops": list(t.expect_ops),
                     "archetype": t.archetype,
                     "rank_ranker": rank_ranker,
+                    "rank_retrieved": rank_retrieved,
                     "rank_with_fallback": rank_with_fallback,
                     "hit_ranker": rank_ranker is not None,
+                    "hit_retrieved": rank_retrieved is not None,
                     "hit_with_fallback": rank_with_fallback is not None,
                     "via_fallback": via_fallback,
                 },
@@ -247,10 +282,12 @@ def evaluate_golden(
             # coincide on this run, and any gap between them is exactly these tasks.
             "n_via_fallback": n_via_fallback,
             "ranker": _recall_mrr(ranks_ranker),
+            "retrieved": _recall_mrr(ranks_retrieved),
             "with_fallback": _recall_mrr(ranks_with_fallback),
             "oos_pass_rate": _StrictCard(
                 {
                     "ranker": sum(oos_pass_ranker) / n_oos,
+                    "retrieved": sum(oos_pass_retrieved) / n_oos,
                     "with_fallback": sum(oos_pass_with_fallback) / n_oos,
                 },
                 _CARD_RETIRED,

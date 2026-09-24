@@ -48,7 +48,16 @@ class FusedHit:
     RANKING but never sets confidence on its own — measured on ``voyage-4-lite``, its cosine
     scores are too compressed to separate an out-of-scope intent from a real paraphrase, so
     tying confidence to lexical corroboration guarantees OOS pass-rate >= the lexical baseline
-    by construction, while dense still lifts paraphrase recall via rank."""
+    by construction, while dense still lifts paraphrase recall via rank.
+
+    ``from_dense`` is PROVENANCE, not confidence, and it exists because those two were
+    indistinguishable and a measurement paid for it. A hit the dense arm ranked and the
+    lexical arm did not corroborate carries ``is_fallback=True`` -- correctly, for the
+    out-of-scope floor -- and so did the query-independent 0/97 prior, which is not
+    retrieval at all. Any metric reading ``is_fallback`` therefore scored a working dense
+    arm and a constant the same: measured on txodds and pegana, hybrid put the gold op in
+    the top 8 for EVERY paraphrase task and the ranker reading still said 0.00. This flag
+    is what lets a report tell "found by dense" apart from "nothing matched"."""
 
     name: str
     summary: str
@@ -56,6 +65,7 @@ class FusedHit:
     method: str
     score: float
     is_fallback: bool
+    from_dense: bool = False
 
 
 def project_hits(hits: Sequence[ScoredHit | FusedHit]) -> list[dict[str, Any]]:
@@ -183,6 +193,7 @@ def hybrid_scored(
     lex_genuine = set(lex_names)
 
     dense_names = [n for n, _ in dense_index.search(query, depth)]
+    dense_ranked = set(dense_names)
 
     fused = rrf_fuse([lex_names, dense_names], k)
     if not fused:
@@ -207,6 +218,7 @@ def hybrid_scored(
                 method=op.method,
                 score=score,
                 is_fallback=name not in lex_genuine,
+                from_dense=name in dense_ranked,
             )
         )
         if len(out) >= limit:
