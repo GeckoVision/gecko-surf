@@ -46,8 +46,33 @@ from ..tools import tool_annotations
 #: Where the course markdown lives on this server. A deploy sets it; nothing else does.
 COURSE_ROOT_ENV = "GECKO_COURSE_ROOT"
 
-#: Page ids containing any of these are never loaded. A quiz is an answer key.
-EXCLUDE = ("quiz",)
+#: What counts as the course. An ALLOW list, because a corpus taken from a
+#: repository otherwise gets the repository's machinery: on 2026-09-24 the top hit
+#: for "how do I install uv" was `.claude/skills/fix-my-setup/SKILL` and for "which
+#: terminal should I use" it was `.claude/agents/setup-doctor`. Both match well and
+#: neither is something to hand a student. Everything not named here is out.
+INCLUDE = (
+    "units/",  # the lessons
+    "projects/",  # the projects, their READMEs and their notebooks
+    "cookbook/",  # worked recipes
+    "demos/",  # runnable demonstrations
+    "depth/",  # the depth track
+    "ship-it/",  # the ship-it track
+    "capstone-template/",
+    "final_assignment/",
+    "integrations/",
+    "docs/",  # the learner-facing guides
+    "README",
+    "SETUP",
+)
+
+#: Never loaded, whatever the allow list says. A quiz competes with the lesson that
+#: teaches it; a solution notebook is an answer key, and an answer key that is
+#: retrievable is retrieved. Both are in the student's own clone either way.
+EXCLUDE = ("quiz", "solutions")
+
+#: The text shapes a course is written in. Notebooks are projected, not read.
+SUFFIXES = (".md", ".mdx", ".ipynb")
 
 #: A hit must contain at least half the query's content terms. MEASURED 2026-09-24,
 #: not chosen: at 0.5 the course's own 49 labelled questions still score 38/49, exactly
@@ -329,7 +354,7 @@ def build_course_surface(root: Path | None = None) -> CourseSurface | None:
     if root is None or not root.is_dir():
         return None
     try:
-        pages = load_pages(root, exclude=EXCLUDE)
+        pages = load_pages(root, suffixes=SUFFIXES, include=INCLUDE, exclude=EXCLUDE)
     except CorpusError:
         # The loader raises on a root with no pages. Here that is not an error to
         # propagate: it is the deploy saying there is nothing to serve, and the

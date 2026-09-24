@@ -29,12 +29,12 @@
     }
   },
   "corpus": {
-    "chars": 594684,
+    "chars": 486329,
     "loader_excludes": [
       "quiz"
     ],
-    "page_ids_sha256": "f64c05ef74d339c4",
-    "pages": 133,
+    "page_ids_sha256": "c755235e89783e4b",
+    "pages": 109,
     "root": "units/en"
   },
   "dev_misses_shipped": [
@@ -85,23 +85,12 @@
     },
     {
       "expected": [
-        "unit0/ask-your-assistant"
-      ],
-      "got": [
-        "unit0/w09-mcp-first-server/introduction",
-        "unit3/session-13-secure-mcp-server/concepts-1",
-        "unit3/session-13-secure-mcp-server/introduction"
-      ],
-      "question": "how do I add an MCP server to claude code"
-    },
-    {
-      "expected": [
         "unit0/week3"
       ],
       "got": [
         "tracks/demos/introduction",
         "tracks/ship-it/introduction",
-        "unit3/session-15-defend-the-capstone/concepts-1"
+        "tracks/coding-assistant/introduction"
       ],
       "question": "what happens on demo day"
     },
@@ -136,25 +125,25 @@
   "metric": "hit rate at k over DISTINCT page ids; a hit is any expected page id in the top k",
   "miss_diagnostics": {
     "corpus": {
-      "chars": 658.3,
-      "distinct_words": 73.5,
-      "n": 901
+      "chars": 658.1,
+      "distinct_words": 73.4,
+      "n": 737
     },
     "gold_page_chunks": {
-      "chars": 667.7,
-      "distinct_words": 74.1,
-      "n": 68
+      "chars": 680.4,
+      "distinct_words": 75.9,
+      "n": 57
     },
     "retrieved_on_miss": {
-      "chars": 793.4,
-      "distinct_words": 85.4,
-      "n": 24
+      "chars": 776.5,
+      "distinct_words": 83.0,
+      "n": 21
     },
     "what": "mean size of a chunk, corpus-wide vs retrieved on a dev miss vs on the gold page"
   },
   "variants": {
     "chunks_400": {
-      "chunks": 1693,
+      "chunks": 1381,
       "config": {
         "intent_gate": false,
         "max_chars": 400,
@@ -164,35 +153,35 @@
       },
       "dev": {
         "hit@1": 0.6,
-        "hit@3": 0.72,
-        "hit@5": 0.84,
+        "hit@3": 0.76,
+        "hit@5": 0.88,
         "hits@1": 15,
-        "hits@3": 18,
-        "hits@5": 21,
+        "hits@3": 19,
+        "hits@5": 22,
         "n": 25
       },
       "heldout": {
-        "hit@1": 0.5,
+        "hit@1": 0.5833,
         "hit@3": 0.8333,
         "hit@5": 0.9167,
-        "hits@1": 12,
+        "hits@1": 14,
         "hits@3": 20,
         "hits@5": 22,
         "n": 24
       },
       "pooled": {
-        "hit@1": 0.551,
-        "hit@3": 0.7755,
-        "hit@5": 0.8776,
-        "hits@1": 27,
-        "hits@3": 38,
-        "hits@5": 43,
+        "hit@1": 0.5918,
+        "hit@3": 0.7959,
+        "hit@5": 0.898,
+        "hits@1": 29,
+        "hits@3": 39,
+        "hits@5": 44,
         "n": 49
       },
       "why": "half the chunk budget \u2014 a SWEEP POINT, not a selection: on 25 dev questions one question is 4 points, so picking the best cell here would be fitting noise"
     },
     "coverage_50": {
-      "chunks": 901,
+      "chunks": 737,
       "config": {
         "intent_gate": false,
         "max_chars": 800,
@@ -202,10 +191,10 @@
       },
       "dev": {
         "hit@1": 0.56,
-        "hit@3": 0.68,
+        "hit@3": 0.72,
         "hit@5": 0.84,
         "hits@1": 14,
-        "hits@3": 17,
+        "hits@3": 18,
         "hits@5": 21,
         "n": 25
       },
@@ -220,17 +209,93 @@
       },
       "pooled": {
         "hit@1": 0.5714,
-        "hit@3": 0.7755,
+        "hit@3": 0.7959,
         "hit@5": 0.8776,
         "hits@1": 28,
-        "hits@3": 38,
+        "hits@3": 39,
         "hits@5": 43,
         "n": 49
       },
       "why": "a hit must contain at least half the query's CONTENT terms. Added after the out-of-scope pass rate was measured at 23% against a docstring that claimed refusal by construction: one brushed term (`home`) was returning a page for a question about baking bread. This is what the course surface serves"
     },
+    "full_corpus": {
+      "chunks": 2222,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.32,
+        "hit@3": 0.44,
+        "hit@5": 0.52,
+        "hits@1": 8,
+        "hits@3": 11,
+        "hits@5": 13,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.25,
+        "hit@3": 0.4583,
+        "hit@5": 0.7083,
+        "hits@1": 6,
+        "hits@3": 11,
+        "hits@5": 17,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.2857,
+        "hit@3": 0.449,
+        "hit@5": 0.6122,
+        "hits@1": 14,
+        "hits@3": 22,
+        "hits@5": 30,
+        "n": 49
+      },
+      "why": "every document a student has, not just units/en: 66 notebooks and the project/cookbook markdown, quizzes and solutions excluded. This is what the surface SERVES, so it is the row that matters; the units-only rows are here to show what including the rest costs"
+    },
+    "full_corpus_idf": {
+      "chunks": 2222,
+      "config": {
+        "intent_gate": false,
+        "max_chars": 800,
+        "one_per_source": true,
+        "oversize": "keep",
+        "sections": false
+      },
+      "dev": {
+        "hit@1": 0.32,
+        "hit@3": 0.44,
+        "hit@5": 0.56,
+        "hits@1": 8,
+        "hits@3": 11,
+        "hits@5": 14,
+        "n": 25
+      },
+      "heldout": {
+        "hit@1": 0.25,
+        "hit@3": 0.5417,
+        "hit@5": 0.7083,
+        "hits@1": 6,
+        "hits@3": 13,
+        "hits@5": 17,
+        "n": 24
+      },
+      "pooled": {
+        "hit@1": 0.2857,
+        "hit@3": 0.4898,
+        "hit@5": 0.6327,
+        "hits@1": 14,
+        "hits@3": 24,
+        "hits@5": 31,
+        "n": 49
+      },
+      "why": "the full corpus, scoring each matched term by how rare it is instead of counting distinct matches. The indicated fix for the miss diagnosis below: misses are vocabulary breadth, not paraphrase"
+    },
     "intent_gate_on": {
-      "chunks": 901,
+      "chunks": 737,
       "config": {
         "intent_gate": true,
         "max_chars": 800,
@@ -268,7 +333,7 @@
       "why": "the API surface's intent gate applied to prose: a hit must also match the title/tags/page-id surface"
     },
     "no_one_per_source": {
-      "chunks": 901,
+      "chunks": 737,
       "config": {
         "intent_gate": false,
         "max_chars": 800,
@@ -287,26 +352,26 @@
       },
       "heldout": {
         "hit@1": 0.5833,
-        "hit@3": 0.8333,
-        "hit@5": 0.8333,
+        "hit@3": 0.875,
+        "hit@5": 0.875,
         "hits@1": 14,
-        "hits@3": 20,
-        "hits@5": 20,
+        "hits@3": 21,
+        "hits@5": 21,
         "n": 24
       },
       "pooled": {
         "hit@1": 0.5714,
-        "hit@3": 0.7551,
-        "hit@5": 0.7755,
+        "hit@3": 0.7755,
+        "hit@5": 0.7959,
         "hits@1": 28,
-        "hits@3": 37,
-        "hits@5": 38,
+        "hits@3": 38,
+        "hits@5": 39,
         "n": 49
       },
       "why": "the post-rank policy off: one long page may take every slot"
     },
     "sections": {
-      "chunks": 1230,
+      "chunks": 1007,
       "config": {
         "intent_gate": false,
         "max_chars": 800,
@@ -316,35 +381,35 @@
       },
       "dev": {
         "hit@1": 0.44,
-        "hit@3": 0.64,
+        "hit@3": 0.68,
         "hit@5": 0.76,
         "hits@1": 11,
-        "hits@3": 16,
+        "hits@3": 17,
         "hits@5": 19,
         "n": 25
       },
       "heldout": {
-        "hit@1": 0.7083,
+        "hit@1": 0.75,
         "hit@3": 0.8333,
         "hit@5": 0.9167,
-        "hits@1": 17,
+        "hits@1": 18,
         "hits@3": 20,
         "hits@5": 22,
         "n": 24
       },
       "pooled": {
-        "hit@1": 0.5714,
-        "hit@3": 0.7347,
+        "hit@1": 0.5918,
+        "hit@3": 0.7551,
         "hit@5": 0.8367,
-        "hits@1": 28,
-        "hits@3": 36,
+        "hits@1": 29,
+        "hits@3": 37,
         "hits@5": 41,
         "n": 49
       },
       "why": "chunk at markdown headings first, and carry the heading path in the title"
     },
     "shipped": {
-      "chunks": 901,
+      "chunks": 737,
       "config": {
         "intent_gate": false,
         "max_chars": 800,
@@ -354,10 +419,10 @@
       },
       "dev": {
         "hit@1": 0.56,
-        "hit@3": 0.68,
+        "hit@3": 0.72,
         "hit@5": 0.84,
         "hits@1": 14,
-        "hits@3": 17,
+        "hits@3": 18,
         "hits@5": 21,
         "n": 25
       },
@@ -372,17 +437,17 @@
       },
       "pooled": {
         "hit@1": 0.5714,
-        "hit@3": 0.7755,
+        "hit@3": 0.7959,
         "hit@5": 0.8776,
         "hits@1": 28,
-        "hits@3": 38,
+        "hits@3": 39,
         "hits@5": 43,
         "n": 49
       },
       "why": "the arm the API surface ships, paragraph chunks at 800, one page per slot"
     },
     "truncating_chunker": {
-      "chunks": 901,
+      "chunks": 737,
       "config": {
         "intent_gate": false,
         "max_chars": 800,
@@ -392,10 +457,10 @@
       },
       "dev": {
         "hit@1": 0.56,
-        "hit@3": 0.68,
+        "hit@3": 0.72,
         "hit@5": 0.84,
         "hits@1": 14,
-        "hits@3": 17,
+        "hits@3": 18,
         "hits@5": 21,
         "n": 25
       },
@@ -410,17 +475,17 @@
       },
       "pooled": {
         "hit@1": 0.5714,
-        "hit@3": 0.7755,
+        "hit@3": 0.7959,
         "hit@5": 0.8776,
         "hits@1": 28,
-        "hits@3": 38,
+        "hits@3": 39,
         "hits@5": 43,
         "n": 49
       },
       "why": "the course chunker's own handling of an oversized block: cut it (drops table rows, keeps the header)"
     },
     "whole_page": {
-      "chunks": 133,
+      "chunks": 109,
       "config": {
         "intent_gate": false,
         "max_chars": 1000000,
@@ -430,11 +495,11 @@
       },
       "dev": {
         "hit@1": 0.48,
-        "hit@3": 0.64,
-        "hit@5": 0.72,
+        "hit@3": 0.68,
+        "hit@5": 0.76,
         "hits@1": 12,
-        "hits@3": 16,
-        "hits@5": 18,
+        "hits@3": 17,
+        "hits@5": 19,
         "n": 25
       },
       "heldout": {
@@ -448,11 +513,11 @@
       },
       "pooled": {
         "hit@1": 0.5714,
-        "hit@3": 0.7347,
-        "hit@5": 0.8163,
+        "hit@3": 0.7551,
+        "hit@5": 0.8367,
         "hits@1": 28,
-        "hits@3": 36,
-        "hits@5": 40,
+        "hits@3": 37,
+        "hits@5": 41,
         "n": 49
       },
       "why": "no chunking at all: one page, one unit \u2014 the control that says what chunking bought"

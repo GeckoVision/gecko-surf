@@ -18,16 +18,16 @@ from gecko.providers.course_surface import (
 )
 
 PAGES = {
-    "unit1/loops.mdx": (
+    "units/en/unit1/loops.mdx": (
         "# Loops and graphs\n\n"
         "A loop repeats one step until a budget runs out. A graph declares which "
         "transitions are legal before anything runs.\n"
     ),
-    "unit1/retrieval.mdx": (
+    "units/en/unit1/retrieval.mdx": (
         "# Retrieval baselines\n\n"
         "Keyword search scores a passage by the words it shares with the question.\n"
     ),
-    "unit1/quiz.mdx": "# Quiz\n\nQ1. What is a loop? Answer: it repeats.\n",
+    "units/en/unit1/quiz.mdx": "# Quiz\n\nQ1. What is a loop? Answer: it repeats.\n",
 }
 
 
@@ -50,7 +50,7 @@ def surface(corpus: Path) -> CourseSurface:
 def test_it_finds_the_page_that_answers(surface: CourseSurface) -> None:
     result = surface.call_tool("search_course", {"query": "what is a graph transition"})
     assert result["hits"], "a question the corpus answers returned nothing"
-    assert result["hits"][0]["page_id"] == "unit1/loops"
+    assert result["hits"][0]["page_id"] == "units/en/unit1/loops"
 
 
 def test_an_out_of_scope_question_is_refused(surface: CourseSurface) -> None:
@@ -87,7 +87,7 @@ def test_a_quiz_is_never_retrievable(surface: CourseSurface) -> None:
 
 
 def test_reading_a_page_by_id(surface: CourseSurface) -> None:
-    result = surface.call_tool("read_course_page", {"page_id": "unit1/loops"})
+    result = surface.call_tool("read_course_page", {"page_id": "units/en/unit1/loops"})
     assert result["found"] is True
     assert "transitions are legal" in result["text"]
 
@@ -95,14 +95,14 @@ def test_reading_a_page_by_id(surface: CourseSurface) -> None:
 def test_an_unknown_page_id_is_refused_with_something_to_do(
     surface: CourseSurface,
 ) -> None:
-    result = surface.call_tool("read_course_page", {"page_id": "unit1/nope"})
+    result = surface.call_tool("read_course_page", {"page_id": "units/en/unit1/nope"})
     assert result["found"] is False
     assert "list_course_pages" in result["note"]
 
 
 def test_listing_filters_by_prefix(surface: CourseSurface) -> None:
-    assert surface.call_tool("list_course_pages", {"prefix": "unit1"})["count"] == 2
-    assert surface.call_tool("list_course_pages", {"prefix": "unit9"})["count"] == 0
+    assert surface.call_tool("list_course_pages", {"prefix": "units/en/unit1"})["count"] == 2
+    assert surface.call_tool("list_course_pages", {"prefix": "units/en/unit9"})["count"] == 0
 
 
 def test_an_empty_corpus_does_not_mount(tmp_path: Path) -> None:
