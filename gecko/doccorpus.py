@@ -35,13 +35,21 @@ wrong answer waiting to be taken while the V2 feedback path is unresolved.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .rankable import FoldedUnit, RankableUnit, Tokenize, fold_unit, rank_units
+from .rankable import (
+    FoldedUnit,
+    RankableUnit,
+    Tokenize,
+    fold_unit,
+    normalize_query,
+    rank_units,
+)
 
 __all__ = [
     "DocChunk",
@@ -402,6 +410,7 @@ class DocIndex:
         *,
         one_per_source: bool = True,
         gate: bool = False,
+        min_coverage: float = 0.0,
     ) -> list[DocHit]:
         """The passages that answer ``query``, best first. EMPTY IS AN ANSWER.
 
@@ -414,6 +423,15 @@ class DocIndex:
         the report can show what turning it on costs a document corpus. It is not a
         tuning knob: leaving it on is the shape of "the page must say in its heading
         what it teaches in its body", which is not how prose works.
+
+        ``min_coverage`` is the fraction of the query's CONTENT terms a chunk must
+        contain to be returned at all. It exists because "no fallback prior" was
+        documented here as refusal and measured on 2026-09-24 as a 20% out-of-scope
+        pass rate: "how do I bake sourdough bread at home" returned a page because
+        one term, ``home``, appears in course prose. A single brushed word out of
+        four is not evidence, and no amount of ranking fixes that, because the
+        problem is which hits EXIST rather than their order. ``0.0`` keeps every
+        number measured before this existed reproducible.
         """
         query_tokens = self._tokenize(query)
         if not query_tokens:
@@ -427,10 +445,27 @@ class DocIndex:
             gate=gate,
             fallback=False,
         )
+        # The coverage floor is applied to the QUERY's content terms, computed once
+        # here rather than per chunk: `normalize_query` is idempotent and the scorer
+        # applies it anyway, so this is the same vocabulary the score was built from.
+        content = normalize_query(query_tokens)
+        needed = 0
+        if min_coverage > 0.0 and content:
+            # ceil, so a 2-term query at 0.5 needs 1 and a 3-term query needs 2. A
+            # floor that rounds down would let a 1-of-3 brush through at 0.5.
+            needed = max(1, math.ceil(len(content) * min_coverage))
+
         hits: list[DocHit] = []
         seen: set[str] = set()
         for item in ranked:
             chunk = self.chunks[item.index]
+            if needed:
+                folded = self._folded[item.index]
+                covered = len(
+                    content & (folded.haystack | folded.title | folded.identity)
+                )
+                if covered < needed:
+                    continue
             if one_per_source:
                 if chunk.page_id in seen:
                     continue
