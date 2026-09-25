@@ -23,9 +23,10 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .mcp_client import McpClient, McpError
+from .simulate import BuildCall, BuiltTx
 
 __all__ = [
     "OrquestraBuildError",
@@ -99,7 +100,7 @@ def orquestra_seams(
     timeout: int = 45,
     client: McpClient | None = None,
     blockhash_provider: Callable[[], str] | None = None,
-) -> tuple[Any, Any]:
+) -> tuple[Callable[[str], dict[str, Any]], BuildCall]:
     """Build the ``(idl_fetch, build_call)`` pair `prepare_instruction` expects.
 
     The project id is resolved once on the first call and reused, so a prepare costs one
@@ -128,28 +129,22 @@ def orquestra_seams(
             project_id_for(program_id), api_base=api_base, timeout=timeout
         )
 
-    def build_call(
-        *,
-        program_id: str,
-        instruction: str,
-        accounts: dict[str, str],
-        args: dict[str, Any],
-        payer: str,
-        blockhash: str | None = None,
-    ) -> str:
-        """``blockhash`` lets the CALLER own the expiry budget.
+    def build_call(plan: Mapping[str, Any]) -> BuiltTx:
+        """A :data:`~gecko.simulate.BuildCall`: the resolved plan in, unsigned bytes out.
 
-        When the builder fetches its own, nobody downstream knows when these bytes stop
-        being landable — the caller cannot state a budget for a blockhash it never saw.
-        Passing one in is also what makes a local fork work at all; see
-        :func:`fork_blockhash_provider`.
+        The plan's ``blockhash`` lets the CALLER own the expiry budget. When the builder
+        fetches its own, nobody downstream knows when these bytes stop being landable —
+        the caller cannot state a budget for a blockhash it never saw. Passing one in is
+        also what makes a local fork work at all; see :func:`fork_blockhash_provider`.
         """
+        program_id = str(plan["program_id"])
+        blockhash = plan.get("blockhash")
         request: dict[str, Any] = {
             "projectId": project_id_for(program_id),
-            "instruction": instruction,
-            "accounts": accounts,
-            "args": args,
-            "feePayer": payer,
+            "instruction": str(plan["instruction"]),
+            "accounts": dict(plan["accounts"]),
+            "args": dict(plan["args"]),
+            "feePayer": str(plan["payer"]),
             "network": network,
             "encoding": "base64",
         }
@@ -167,7 +162,7 @@ def orquestra_seams(
                 "the builder answered without a transaction; refusing to guess which "
                 "part of its reply was the bytes"
             )
-        return match.group(1)
+        return BuiltTx(tx=match.group(1), encoding="base64")
 
     return idl_fetch, build_call
 

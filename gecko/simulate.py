@@ -1773,6 +1773,40 @@ def revert_family(revert_class: str | None) -> tuple[str, int | None]:
     return ("other", None)
 
 
+#: How much of a failing builder's body is read. A diagnosis fits in a line or two; the
+#: rest is somebody else's stack trace, and `sanitize_text` caps what survives this anyway.
+_BUILD_ERROR_BODY_BYTES = 2048
+
+
+def _error_body(exc: urllib.error.HTTPError) -> str:
+    """The builder's own explanation, capped and scanned — or "" when there is none.
+
+    WHY IT IS SAFE TO CARRY. Nothing auth-bearing can ride along: the build POST sends no
+    credential (:func:`gecko.rpc._http_post_json` sets Content-Type and User-Agent and
+    nothing else), so there is none to be echoed back. A body that nonetheless looks like
+    a secret is dropped WHOLE rather than trimmed — ``looks_like_secret_value`` is the
+    same test that keeps a spec's example value out of a tool arg — and an
+    instruction-shaped body is replaced by ``sanitize_text``, which also caps the length.
+    """
+    from .sanitize import looks_like_secret_value, sanitize_text
+
+    try:
+        raw = exc.read(_BUILD_ERROR_BODY_BYTES)
+    except Exception:  # noqa: BLE001 - a body we cannot read is simply absent
+        return ""
+    if not raw:
+        return ""
+    text = " ".join(raw.decode("utf-8", "replace").split())
+    if not text:
+        return ""
+    if looks_like_secret_value(text):
+        return (
+            " — the builder's body was withheld: it looks like it carries a credential"
+        )
+    cleaned, _poisoned = sanitize_text(text)
+    return f" — the builder said: {cleaned}"
+
+
 def _default_build_call(plan: Mapping[str, Any]) -> BuiltTx:
     """POST the plan to its ``build_url`` and extract the serialized tx + its encoding.
 
@@ -1797,10 +1831,19 @@ def _default_build_call(plan: Mapping[str, Any]) -> BuiltTx:
     try:
         resp = _http_post_json(url, body)
     except urllib.error.HTTPError as exc:
-        # A build-transport failure (auth, bad payload) — NOT a program revert. Surface
-        # the status + url only; never echo the request/response body (redaction posture).
+        # A build-transport failure (auth, bad payload, the builder's own upstream) — NOT
+        # a program revert. THE BODY IS KEPT, and that is a correction: it used to be
+        # dropped "redaction posture", and on 2026-09-25 that cost the diagnosis. The
+        # builder answered HTTP 500 to five of six identical purchases and its body said
+        # exactly why — "Failed to fetch recent blockhash: RPC request failed: HTTP 429",
+        # its upstream RPC, for a blockhash we discard — while every stranger who hit it
+        # got a bare 500. A builder is a user-configured HTTP target, not ingested spec
+        # content (see this function's docstring), so its error is a diagnosis rather than
+        # untrusted prose to scrub; it is still capped and injection-scanned by
+        # `sanitize_text`, and dropped whole if anything in it looks like a credential.
         raise SimulateError(
             f"build POST to {url} failed: HTTP {exc.code} {exc.reason}"
+            f"{_error_body(exc)}"
         ) from exc
     except urllib.error.URLError as exc:
         raise SimulateError(f"build POST to {url} failed: {exc.reason}") from exc

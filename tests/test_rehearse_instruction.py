@@ -13,9 +13,11 @@ that proved itself.
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
+
+from gecko.simulate import BuiltTx
 
 from gecko.sandbox import rehearse as rehearse_module
 from gecko.sandbox.rehearse import RehearsalError
@@ -183,22 +185,25 @@ def make_builder(payer_holder: dict[str, str]) -> Any:
     payer against the signing key — a fake string would skip the one check that matters.
     """
 
-    def build(**kwargs: Any) -> str:
+    def build(plan: Mapping[str, Any]) -> BuiltTx:
         from solders.hash import Hash
         from solders.instruction import AccountMeta, Instruction
         from solders.message import Message
         from solders.pubkey import Pubkey
         from solders.transaction import Transaction
 
-        payer = Pubkey.from_string(kwargs["payer"])
-        payer_holder["accounts"] = kwargs["accounts"]
+        payer = Pubkey.from_string(plan["payer"])
+        payer_holder["accounts"] = plan["accounts"]
         instruction = Instruction(
             Pubkey.from_string(PROGRAM),
             b"\x00" * 8,
             [AccountMeta(payer, True, True)],
         )
         message = Message.new_with_blockhash([instruction], payer, Hash.default())
-        return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
+        return BuiltTx(
+            tx=base64.b64encode(bytes(Transaction.new_unsigned(message))).decode(),
+            encoding="base64",
+        )
 
     return build
 
@@ -365,20 +370,23 @@ def make_relay_builder(actor: str) -> Any:
     emits when payer != actor, so the repair in prepare_instruction is exercised too.
     """
 
-    def build(**kwargs: Any) -> str:
+    def build(plan: Mapping[str, Any]) -> BuiltTx:
         from solders.hash import Hash
         from solders.instruction import AccountMeta, Instruction
         from solders.message import Message
         from solders.pubkey import Pubkey
 
-        payer = Pubkey.from_string(kwargs["payer"])
+        payer = Pubkey.from_string(plan["payer"])
         instruction = Instruction(
             Pubkey.from_string(PROGRAM),
             b"\x00" * 8,
             [AccountMeta(Pubkey.from_string(actor), True, True)],
         )
         message = Message.new_with_blockhash([instruction], payer, Hash.default())
-        return base64.b64encode(bytes([1]) + bytes(64) + bytes(message)).decode()
+        return BuiltTx(
+            tx=base64.b64encode(bytes([1]) + bytes(64) + bytes(message)).decode(),
+            encoding="base64",
+        )
 
     return build
 

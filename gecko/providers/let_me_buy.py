@@ -39,6 +39,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from ..find_start import StartSpec
 from ..prepare_instruction import prepare_instruction_result
 from ..rpc import RpcCall, default_rpc_call
+from ..simulate import BuildCall
 from ..showcase import MAX_PRODUCTS
 from ..store_accounts import purchase_accounts, receipts_pda, resolve_store
 from ..store_directory import LET_ME_BUY_PROGRAM_ID, decode_store
@@ -110,7 +111,7 @@ def plan_store_change(
     rpc_url: str,
     exact: bool = False,
     idl_fetch: Callable[[str], dict[str, Any]] | None = None,
-    build_call: Callable[..., Any] | None = None,
+    build_call: BuildCall | None = None,
     rpc_call: RpcCall = default_rpc_call,
 ) -> StorePlan:
     """Diff the live store against `target` and order the steps so none of them reverts.
@@ -272,7 +273,7 @@ def _build(
     step: PlanStep,
     authority: str,
     idl_fetch: Callable[[str], dict[str, Any]],
-    build_call: Callable[..., Any],
+    build_call: BuildCall,
 ) -> PlanStep:
     """Unsigned bytes for one step. NOT simulated — see the module docstring."""
     prepared = prepare_instruction_result(

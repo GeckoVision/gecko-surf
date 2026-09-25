@@ -2,7 +2,7 @@
 
 # Module index
 
-249 modules in `gecko/` (subpackages included), from their own docstrings.
+251 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -13,7 +13,7 @@ package depends on it, which is worth a look before you add a caller.
 | `account_recipes` | IDL -> the seed recipe that lets an account PROVE which account it is. | 2 · `read_accounts`, `value_sources` |
 | `agentnative` | Emit an ingested API's own agent-native discovery surface. | 6 · `comprehend_service`, `docsearch`, `http_server` +3 |
 | `arazzo` | Arazzo export — the derived plan as a portable handoff artifact. | 2 · `cli`, `mcp_server` |
-| `artifact` | The per-program artifact — what a catalogue stores beside an IDL so agents can call it. | 2 · `cli`, `providers.catalog_surface` |
+| `artifact` | The per-program artifact — what a catalogue stores beside an IDL so agents can call it. | 3 · `cli`, `instruction_build`, `providers.catalog_surface` |
 | `authcheck` | Live credential check — "do these creds ACTUALLY authenticate?" | 0 |
 | `authlogin` | Hosted login service — email OTP → a minted Gecko key (SERVER-SIDE identity). | 1 · `http_server` |
 | `autonomous_purchase` | One call that prepares, verifies, authorises, signs and settles a purchase. | 1 · `prepare_purchase` |
@@ -85,12 +85,13 @@ package depends on it, which is worth a look before you add a caller.
 | `ingest` | OpenAPI surface ingestor. | 21 · `catalog`, `chain_eval`, `cli` +18 |
 | `ingest_gate` | Should this program be ingested at all? A gate on ingesting, not a step in ingesting. | 1 · `providers.cli` |
 | `inspect` | ``gecko inspect`` — a provider-facing agent-readiness scorecard. | 2 · `http_server`, `report` |
+| `instruction_build` | An IDL instruction -> the exact bytes a program reads, encoded HERE, offline. | 1 · `providers.let_me_buy_build` |
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 19 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +16 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 20 · `autonomous_purchase`, `instruction_build`, `prepare_purchase` +17 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `find_start`, `purchase_intent_eval`, `rankable` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
@@ -149,6 +150,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.jurassic_fi` | jurassic_fi (Jurassic Finance token sale) — the servable plan intent. | 1 · `providers.cli` |
 | `providers.landing_record` | Opt-in corpus recording for the landing orchestrators — the D2 wiring. | 7 · `providers.jupiter_landing`, `providers.metadao_landing`, `providers.meteora_landing` +4 |
 | `providers.let_me_buy` | Plan a change to a `let_me_buy` storefront — ordered unsigned steps, or a refusal. | 1 · `providers.cli` |
+| `providers.let_me_buy_build` | ``make_purchase``, built HERE — this program's ABI as data, plus one wiring line. | 1 · `prepare_purchase` |
 | `providers.metadao` | MetaDAO launchpad_v7 — the third Orquestra program made runnable end-to-end. | 2 · `providers.cli`, `providers.metadao_landing` |
 | `providers.metadao_landing` | The MetaDAO "fund-that-passes" orchestrator — the third program that RUNS. | 0 |
 | `providers.meteora` | Meteora DLMM — the first Orquestra provider instance (the touchable Berkay demo). | 2 · `providers.cli`, `providers.meteora_landing` |
@@ -199,7 +201,7 @@ package depends on it, which is worth a look before you add a caller.
 | `sandbox.rehearse_swap` | A Meteora DLMM swap, landed on a proven surfnet and judged by what moved. | 0 |
 | `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 10 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +7 |
 | `sandbox.try_purchase` | ``try_purchase`` — the rehearsal, as a tool an agent can reach, beside the real one. | 1 · `providers.catalog_surface` |
-| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 11 · `client`, `corpus`, `enrich` +8 |
+| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 12 · `client`, `corpus`, `enrich` +9 |
 | `scale` | Below-scale surface sizing — the "don't truncate when you don't have to" rule. | 1 · `client` |
 | `scope` | Retrieval returns a SCOPE, not a surface — the attention budget of one search. | 1 · `mcp_server` |
 | `score` | The provider report — one surface, before and after, and what changed. | 0 |
@@ -219,7 +221,7 @@ package depends on it, which is worth a look before you add a caller.
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 26 · `autonomous_purchase`, `corpus`, `drift_watch` +23 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 32 · `autonomous_purchase`, `corpus`, `drift_watch` +29 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 3 · `autonomous_purchase`, `providers.whirlpool_position`, `signer` |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
@@ -227,7 +229,7 @@ package depends on it, which is worth a look before you add a caller.
 | `store.projections` | The ONLY writer into the outcome collection — allowlist-first, fail-closed. | 2 · `fork_lane`, `recorded_lane` |
 | `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
 | `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 12 · `pay_route`, `prepare_purchase`, `providers.jurassic_fi` +9 |
-| `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 8 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.agents` +5 |
+| `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 9 · `providers.catalog_surface`, `providers.let_me_buy`, `providers.let_me_buy_build` +6 |
 | `submit_transaction` | Submit a Gecko-verified signed transaction and rebroadcast until it lands. | 1 · `providers.catalog_surface` |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |

@@ -24,6 +24,8 @@ Every response is returned to the caller and never persisted (invariant #1).
 
 from __future__ import annotations
 
+import base64
+
 from .tools import tool_annotations
 
 from typing import Any, Callable, Literal, Mapping
@@ -38,6 +40,7 @@ from .pda import (
     derive_pda,
 )
 from .program_graph import ProgramGraph, build_program_graph
+from .simulate import BuildCall, BuiltTx
 from .value_sources import value_sources
 
 __all__ = [
@@ -79,7 +82,13 @@ PrepareInstructionRefusal = Literal[
 IdlFetch = Callable[[str], dict[str, Any]]
 #: Build an unsigned transaction from a fully-resolved plan. Injected for the same reason —
 #: and because the builder that does this best is usually the catalogue's own.
-BuildCall = Callable[..., str]
+#:
+#: IMPORTED, NEVER REDECLARED. This module used to define its own ``BuildCall`` as
+#: ``Callable[..., str]`` while :mod:`gecko.simulate` defined the same NAME as
+#: ``Callable[[Mapping[str, Any]], BuiltTx]``. Two incompatible types under one name is a
+#: contract nobody can read and mypy cannot check across the seam, so the plan-shaped one
+#: in ``simulate`` is now the single source of truth and this module takes a plan mapping
+#: and gets a :class:`~gecko.simulate.BuiltTx` back, exactly like every other call site.
 RpcCall = Callable[[str, str, list[Any]], dict[str, Any]]
 
 
@@ -256,6 +265,31 @@ def plan_accounts(
         )
 
     return resolved, origins, missing
+
+
+def _base64_tx(built: BuiltTx) -> str:
+    """A builder's :class:`~gecko.simulate.BuiltTx` as base64, whatever it returned.
+
+    Builders disagree: Orquestra's HTTP ``/build`` answers base58, its MCP one answers
+    base64. The encoding travels WITH the bytes on ``BuiltTx`` precisely so neither side
+    has to assume, and this is the one place that reads it.
+    """
+    from .txbind import _decode
+
+    if built.encoding == "base64":
+        return built.tx
+    return base64.b64encode(_decode(built.tx, built.encoding)).decode()
+
+
+def _blockhash_in(transaction_base64: str) -> str | None:
+    """The recent blockhash these bytes carry, or ``None`` when they do not decode."""
+    try:
+        from solders.transaction import VersionedTransaction
+
+        raw = base64.b64decode(transaction_base64)
+        return str(VersionedTransaction.from_bytes(raw).message.recent_blockhash)
+    except Exception:  # noqa: BLE001 - unreadable bytes are reported by the binding step
+        return None
 
 
 def _with_signature_slots(transaction_base64: str) -> str:
@@ -500,24 +534,17 @@ def prepare_instruction_result(
         except Exception:  # noqa: BLE001 - an absent budget is honest; a wrong one is not
             blockhash = last_valid = current_height = None
 
+    build_plan: dict[str, Any] = {
+        "program_id": program_id,
+        "instruction": instruction,
+        "accounts": resolved,
+        "args": {name: values[name] for name in declared_args},
+        "payer": fee_payer or payer,
+    }
+    if blockhash:
+        build_plan["blockhash"] = blockhash
     try:
-        build_kwargs: dict[str, Any] = {
-            "program_id": program_id,
-            "instruction": instruction,
-            "accounts": resolved,
-            "args": {name: values[name] for name in declared_args},
-            "payer": fee_payer or payer,
-        }
-        if blockhash:
-            build_kwargs["blockhash"] = blockhash
-        try:
-            transaction = build_call(**build_kwargs)
-        except TypeError:
-            # a builder that does not accept a blockhash fetches its own; the budget is
-            # then unknown, and saying so beats reporting one that is not this tx's
-            build_kwargs.pop("blockhash", None)
-            blockhash = last_valid = current_height = None
-            transaction = build_call(**build_kwargs)
+        transaction = _base64_tx(build_call(build_plan))
     except Exception as exc:  # noqa: BLE001
         return _refuse(
             "build-failed", f"the builder refused: {type(exc).__name__}: {exc}"
@@ -528,6 +555,17 @@ def prepare_instruction_result(
     # to simulate: "failed to sanitize accounts offsets"). The message is untouched; only
     # the array outside it is made to match its own header, so this is safe to do always.
     transaction = _with_signature_slots(transaction)
+
+    # DID THE BUILDER ACTUALLY USE OUR BLOCKHASH? This used to be inferred from a
+    # ``TypeError`` — a builder whose Python signature had no ``blockhash`` parameter.
+    # That could not see a builder that ACCEPTED the key and stamped its own anyway, and
+    # the consequence is a budget reported for a blockhash these bytes do not carry. So it
+    # is now READ BACK OUT OF THE BYTES: disagreement drops the budget rather than
+    # publishing one that belongs to some other transaction. AFTER the repair above, so a
+    # one-slot array under a two-signer header — which does not parse — is not mistaken
+    # for a builder that ignored us.
+    if blockhash and _blockhash_in(transaction) != blockhash:
+        blockhash = last_valid = current_height = None
 
     # THE BINDING IS WHAT MAKES `verify_signed_transaction` REACHABLE HERE.
     #

@@ -20,10 +20,15 @@ THE ORDER, AND WHY:
    builder is called. A builder is not the authority on whether a plan is sane — the real
    one answered ``HTTP 200`` to a purchase that paid the buyer back — so judging its
    response instead would mean the bad plan had already left this machine.
-4. Build once, through Orquestra ``/build``. Once, because building twice yields two
-   different transactions and we would verify the one nobody signs.
-5. The builder stamps a blockhash from ITS OWN RPC, and on 2026-08-12 that was ~4,500
-   blocks stale — every transaction it returns is dead on arrival. So the 32 blockhash
+4. Build once, HERE (:mod:`gecko.providers.let_me_buy_build` over the engine's
+   :mod:`gecko.instruction_build`): the discriminator, two Borsh strings and a u8, over
+   the accounts derived in step 2. Until 2026-09-25 this was a POST to Orquestra
+   ``/build``; that morning it answered HTTP 500 on five of six identical requests
+   ("Failed to fetch recent blockhash: HTTP 429" — its own upstream RPC), and every
+   purchase on every host died at a call for a blockhash we discard. An injected
+   ``build_call`` still replaces the builder, so the seam is unchanged.
+5. The built bytes carry a placeholder blockhash (the hosted builder's was ~4,500 blocks
+   stale on 2026-08-12, which is the same thing: dead on arrival). So the 32 blockhash
    bytes are replaced with a fresh hash from the node we simulate against, at the offset
    the LAYOUT dictates (:func:`~gecko.txbind.blockhash_offset`), never by searching for
    the old value and never by re-assembling the message.
@@ -86,6 +91,7 @@ from .networks import APPROVABLE_NETWORKS, UNKNOWN_NETWORK, Network, coerce_netw
 from .pda import PdaDerivationError, derive_pda
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
+from .providers.let_me_buy_build import LOCAL_BUILDER_ID
 from .rpc import RpcCall, RpcError, default_rpc_call
 from .simulate import BuildCall, BuiltTx, Receipt, SimulateError, simulate
 from .txbind import (
@@ -800,7 +806,7 @@ def _prepare(
         f"{ORQUESTRA_API_BASE}/{program.orquestra_project}"
         f"/instructions/{MAKE_PURCHASE}/build"
     )
-    builder = build_call or _http_build_call
+    builder = build_call or _local_build_call
     build_request = {
         "build_url": build_url,
         "accounts": dict(accounts),
@@ -930,7 +936,7 @@ def _prepare(
             "api_id": LET_ME_BUY_API_ID,
             "instruction": MAKE_PURCHASE,
             "program_id": program.program_id,
-            "built_by": build_url,
+            "built_by": LOCAL_BUILDER_ID if build_call is None else build_url,
             "store_note": store.note,
         },
         "args": instruction_args,
@@ -1278,14 +1284,31 @@ def _next_step(
 
 
 def _http_build_call(plan: Mapping[str, Any]) -> BuiltTx:
-    """The default builder: Orquestra ``/build`` through the engine's own POST seam.
+    """Orquestra ``/build`` through the engine's own POST seam — no longer the default.
 
-    Wrapped rather than passed directly so the private default stays referenced in exactly
-    one place, and so the URL it is given is this module's constant — never a caller's.
+    Kept for the other let_me_buy instructions (``add_product``, ``delete_product``, …)
+    that scripts still build through the hosted endpoint, and for the ``build_url`` a
+    result reports when a caller injects this builder on purpose.
     """
     from .simulate import _default_build_call
 
     return _default_build_call(plan)
+
+
+def _local_build_call(plan: Mapping[str, Any]) -> BuiltTx:
+    """The default builder: ``make_purchase`` encoded here, from the IDL, offline.
+
+    A :class:`~gecko.instruction_build.InstructionEncodeError` is a plan that cannot be
+    encoded (a missing account, an arg that is not a u8). It is surfaced as the same
+    :class:`SimulateError` a builder failure always was, so the refusal path above does
+    not grow a second branch.
+    """
+    from .providers.let_me_buy_build import LocalBuildError, build_make_purchase
+
+    try:
+        return build_make_purchase(plan)
+    except LocalBuildError as exc:
+        raise SimulateError(f"local build refused: {exc}") from exc
 
 
 #: What ``buyer`` means when the caller is the only one who can name it (mode A).
