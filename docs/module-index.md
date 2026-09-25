@@ -2,7 +2,7 @@
 
 # Module index
 
-246 modules in `gecko/` (subpackages included), from their own docstrings.
+248 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -41,6 +41,7 @@ package depends on it, which is worth a look before you add a caller.
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
 | `dense` | The dense retrieval arm — MongoDB Atlas ``$vectorSearch`` over per-op ``SurfaceDoc``s. | 2 · `client`, `search` |
+| `doccorpus` | Documents as rankable units — the second projector onto the shipped lexical arm. | 0 |
 | `docs_reader.core` | from-docs orchestration — human doc page -> draft OpenAPI, the whole $0 flow. | 0 |
 | `docs_reader.emit` | Candidate operations -> a *draft* OpenAPI 3.1 document. | 1 · `docs_reader.core` |
 | `docs_reader.html` | Stdlib HTML -> the parser's ordered node stream (the $0 rendering seam). | 1 · `docs_reader.core` |
@@ -90,7 +91,7 @@ package depends on it, which is worth a look before you add a caller.
 | `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
 | `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 19 · `autonomous_purchase`, `prepare_purchase`, `providers.jupiter_landing` +16 |
-| `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 2 · `find_start`, `purchase_intent_eval` |
+| `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `find_start`, `purchase_intent_eval`, `rankable` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
 | `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
@@ -161,6 +162,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.whirlpool_position` | Plan an Orca Whirlpool liquidity position: open it, then fund it by token amounts. | 0 |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
 | `purchase_intent_eval` | Score intent -> (store, product) against the frozen purchase-intent set. | 0 |
+| `rankable` | The rankable unit — the thing the shipped lexical arm actually scores. | 2 · `catalog`, `doccorpus` |
 | `read_accounts` | The read layer: which LIVE instance of a declared account type is the one you mean. | 2 · `ingest_gate`, `providers.catalog_surface` |
 | `recorded_lane` | The recorded lane — the $0 first green, and the attributed simulate feed. | 0 |
 | `redteam.__main__` | gecko-redteam — run the off-chain battle-test suite and gate on the scorecard. | 0 |

@@ -101,6 +101,7 @@ class Variant:
     oversize: str = "keep"
     one_per_source: bool = True
     gate: bool = False
+    min_coverage: float = 0.0
 
 
 #: The grid. Each row changes ONE thing against `shipped`, so a delta has a cause.
@@ -108,6 +109,14 @@ VARIANTS: tuple[Variant, ...] = (
     Variant(
         "shipped",
         "the arm the API surface ships, paragraph chunks at 800, one page per slot",
+    ),
+    Variant(
+        "coverage_50",
+        "a hit must contain at least half the query's CONTENT terms. Added after the "
+        "out-of-scope pass rate was measured at 23% against a docstring that claimed "
+        "refusal by construction: one brushed term (`home`) was returning a page for "
+        "a question about baking bread. This is what the course surface serves",
+        min_coverage=0.5,
     ),
     Variant(
         "no_one_per_source",
@@ -179,6 +188,7 @@ def _hit_counts(
             limit=top,
             one_per_source=variant.one_per_source,
             gate=variant.gate,
+            min_coverage=variant.min_coverage,
         )
         pages = list(dict.fromkeys(hit.page_id for hit in hits))
         for k in KS:
