@@ -1,6 +1,6 @@
 {
   "name": "@geckovision/gecko",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The knowledge graph for APIs your agent can trust \u2014 map any API into a verified graph your agent traverses instead of guessing, and simulate any action to a receipt before money moves.",
   "keywords": [
     "gecko",
@@ -25,9 +25,9 @@
     "lib"
   ],
   "optionalDependencies": {
-    "@geckovision/gecko-linux-x64": "=0.9.5",
-    "@geckovision/gecko-linux-arm64": "=0.9.5",
-    "@geckovision/gecko-darwin-arm64": "=0.9.5"
+    "@geckovision/gecko-linux-x64": "=0.12.0",
+    "@geckovision/gecko-linux-arm64": "=0.12.0",
+    "@geckovision/gecko-darwin-arm64": "=0.12.0"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

@@ -2,7 +2,7 @@
 
 # Module index
 
-248 modules in `gecko/` (subpackages included), from their own docstrings.
+249 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -41,7 +41,7 @@ package depends on it, which is worth a look before you add a caller.
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
 | `dense` | The dense retrieval arm — MongoDB Atlas ``$vectorSearch`` over per-op ``SurfaceDoc``s. | 2 · `client`, `search` |
-| `doccorpus` | Documents as rankable units — the second projector onto the shipped lexical arm. | 0 |
+| `doccorpus` | Documents as rankable units — the second projector onto the shipped lexical arm. | 1 · `providers.course_surface` |
 | `docs_reader.core` | from-docs orchestration — human doc page -> draft OpenAPI, the whole $0 flow. | 0 |
 | `docs_reader.emit` | Candidate operations -> a *draft* OpenAPI 3.1 document. | 1 · `docs_reader.core` |
 | `docs_reader.html` | Stdlib HTML -> the parser's ordered node stream (the $0 rendering seam). | 1 · `docs_reader.core` |
@@ -143,6 +143,7 @@ package depends on it, which is worth a look before you add a caller.
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
 | `providers.catalog_surface` | The Orquestra CATALOG surface — the router as an MCP front door. | 5 · `pay_route`, `providers.cli`, `providers.whirlpool` +2 |
 | `providers.cli` | ``gecko-orquestra`` — serve an Orquestra program's front-door surface over MCP. | 9 · `cli`, `find_start`, `ingest_gate` +6 |
+| `providers.course_surface` | The course surface — the Dev3Pack lessons, answerable by an agent a student owns. | 1 · `serve_mcp` |
 | `providers.jupiter` | Jupiter — the program surface, and the honest statement of what it cannot carry. | 1 · `providers.cli` |
 | `providers.jupiter_landing` | Jupiter — the swap that needs BOTH surfaces to exist. | 1 · `providers.jupiter` |
 | `providers.jurassic_fi` | jurassic_fi (Jurassic Finance token sale) — the servable plan intent. | 1 · `providers.cli` |
@@ -237,7 +238,7 @@ package depends on it, which is worth a look before you add a caller.
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 2 · `simulate`, `store_directory` |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 30 · `agentnative`, `catalog`, `chain_eval` +27 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 31 · `agentnative`, `catalog`, `chain_eval` +28 |
 | `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 4 · `autonomous_purchase`, `decision_log`, `sandbox.rehearse` +1 |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |

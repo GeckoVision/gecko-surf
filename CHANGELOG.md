@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.12.0
+
+The release where the first two commands a learner types stop lying to them.
+
+`pip install gecko-surf` then `gecko connect <surface> --probe` raised
+`ModuleNotFoundError: No module named 'anyio'` — a package the reader never typed, on a
+package they did install. Measured against the PUBLISHED 0.11.0 in a clean venv, not
+against this tree. `_require_serve_extra()` now fails with the command to type, at all
+four entry points including `probe`, which is the one `--probe` calls and the one the
+first pass missed.
+
+And `npx @geckovision/gecko@0.11.0 doctor` reported `gecko 0.10.3`. Not a build bug: the
+tag was pushed, the release ran, and the tag was then moved four minutes later to the
+commit that carried the version bump. The second run rebuilt correct binaries and
+overwrote the GitHub Release assets, but its npm job died on
+`E409 Cannot publish over previously staged version`. npm versions are immutable, so the
+Release asset is right and the npm package is wrong forever. Only `npx` users were
+affected; PyPI and `install.sh` shipped the correct 0.11.0.
+
+A release job now refuses to upload a binary that does not report the tag it ships under,
+before `publish-npm` and `publish-pypi` can run. Every existing smoke step passes on a
+wrong-commit build. None of them could see this one, because they all check what the
+binary DOES and none checked what it CLAIMS TO BE.
+
+Also in this release:
+
+- **the course is a surface**, not eleven URLs pasted one at a time: `search_course`
+  ranks lesson pages without turning one into an `Operation`, and an empty result is an
+  answer rather than a fallback. The refusal rate it was fixed for was measured, not
+  asserted: 23% of out-of-scope questions were being answered because one content word
+  brushed a page
+- **one rankable unit, two projectors** — `catalog` projects an `Operation`, `doccorpus`
+  projects a document chunk, and nothing above the line can mistake a page for a call
+- **the retrieval measurement was wrong, and the dense arm had been working all along**:
+  the older "0.00 on paraphrase" was arithmetic from the metric definition, not a
+  measurement
+- **a Capability Card**, and the check that admits one
+- **the gasless route closed on mainnet**: relay-paid purchase end to end, the convert
+  leg, and a USDG→USDC→espresso chain in the ledger
+- an Orca position opened and funded through Gecko on mainnet, and a DLMM swap landed on
+  the fork, judged by what moved
+
+### Fixed
+- **`gecko connect` tracebacked on a transitive dependency.** The message now names the
+  extra and deliberately does NOT name the dependency that broke: which package it was is
+  our problem, not the reader's. It also quotes the brackets, because zsh globs them.
+- **A balance read at a different commitment than the simulation it was compared to.**
+- **A multi-signer build got a partial signature array** unless it happened to be
+  relay-paid.
+- **Every version marker in the repo had drifted** — `plugin.json` at 0.10.3, four
+  plugin and marketplace manifests at 0.10.0, and the npm launcher pinning its platform
+  packages at `=0.9.5`. The CI publish step stamps those pins, so they could not ship
+  through a tag; they could ship through a hand publish. A test now holds every marker to
+  `pyproject.toml`.
+
+### Security
+- **`submit_transaction`'s binding gate is a tautology, and the docstring claimed the
+  opposite.** A review flagged it, we tried to refute it and could not, so we ran it: a
+  transaction Gecko never prepared returns `verified: True` with the verdict
+  *"byte-identical, over its message, to the one the receipt attested"*. No receipt
+  attested it. The binding is a plain sha256 over the caller's own transaction with no
+  server secret and no stored receipt, and `verify_signed` compares it to the caller's own
+  string. The gate is `sha256(tx) == caller_sha256(tx)`.
+
+  Bounded, and we are saying so rather than sitting on it: Gecko holds no key, so this is
+  relay, attribution and resource abuse, not custody. The false claim is removed from the
+  docstring and the finding ships as a strict `xfail` so it cannot be quietly forgotten.
+  Issued bindings are the fix and are not in this release.
+
 ## 0.11.0
 
 The release where `gecko ingest-gate` works in the binary you install. It never has:
