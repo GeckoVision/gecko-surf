@@ -54,6 +54,7 @@ from .jito_surface import build_jito_surface, build_jito_tips_surface
 from .kora_surface import build_kora_catalog_surface, build_kora_surface
 from .mcp_server import McpSurface
 from .provider_sync import fetch_provider_surfaces
+from .providers.course_surface import build_course_surface
 from .providers.catalog_surface import OrquestraCatalogSurface
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
@@ -474,6 +475,20 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
             OrquestraCatalogSurface(find_start_pages=_orquestra_catalog_pages()),
         )
     )
+    # The COURSE. Not a catalog surface: these are lesson pages, and a page is not
+    # callable. `gecko.doccorpus` is the projector that lets one be ranked without
+    # being turned into an `Operation`, which is why nothing here can reach
+    # `tools.to_tool`. It serves `llms.txt` and `llms-full.txt` too, because a
+    # client that cannot speak MCP is exactly the one reading a course link by link.
+    #
+    # It MOUNTS ONLY IF THERE IS A CORPUS (`GECKO_COURSE_ROOT`). An empty corpus would
+    # answer "not in these pages" to every question, which reads like a correct
+    # refusal and is actually a broken deploy. A missing mount is a deploy problem
+    # somebody notices; a lying mount is not.
+    course = build_course_surface()
+    if course is not None:
+        surfaces.append(("course", course))
+
     for team_mount in bootcamp_team_mounts():
         surfaces.append(
             (

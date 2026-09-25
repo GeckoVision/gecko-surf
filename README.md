@@ -305,7 +305,7 @@ Gecko takes no cut, holds no funds, signs nothing.
 ```bash
 uv run ruff format && uv run ruff check --fix
 uv run mypy gecko
-uv run pytest                # 2,400+ passing
+uv run pytest                # 5,043 passing
 uv run python -m gecko.demo  # $0 recorded E2E
 ```
 

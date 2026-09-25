@@ -1059,6 +1059,10 @@ def build_http_app(
     # rebinding guard needed. Built once at app-build time (static per surface).
     _ARTIFACT_MEDIA = {
         "llms.txt": "text/plain; charset=utf-8",
+        # The whole corpus in one fetch, for a client that cannot speak MCP at all.
+        # An agent handed a course reads it link by link otherwise, which is the
+        # problem this file exists to end.
+        "llms-full.txt": "text/plain; charset=utf-8",
         "gecko.json": "application/json",
         ".well-known/gecko.json": "application/json",
         "tools.md": "text/markdown; charset=utf-8",
@@ -1079,6 +1083,24 @@ def build_http_app(
                 return Response(_text, media_type=_ARTIFACT_MEDIA[_rel])
 
             artifact_routes.append(Route("/" + rel, endpoint=_artifact_endpoint))
+
+    # A surface that is not an OpenAPI client can still publish agent-readable text.
+    # The branch above only fires for `AgentApiClient`, which is why a document surface
+    # served an MCP endpoint and nothing a plain HTTP agent could read. Duck-typed on
+    # purpose: a surface opts in by having `artifacts()`, and the host stays ignorant
+    # of what kind of thing it is serving.
+    own_artifacts = getattr(surface, "artifacts", None)
+    if not artifact_routes and callable(own_artifacts):
+        for rel, text in own_artifacts().items():
+            if rel not in _ARTIFACT_MEDIA:
+                continue
+
+            def _own_artifact_endpoint(
+                _request: Any, _text: str = text, _rel: str = rel
+            ) -> Any:
+                return Response(_text, media_type=_ARTIFACT_MEDIA[_rel])
+
+            artifact_routes.append(Route("/" + rel, endpoint=_own_artifact_endpoint))
 
     # WHICH CODE IS LIVE. `/healthz` answers "is it up", which is a different and much
     # weaker question — twice in one day the only way to tell whether a merged change had
