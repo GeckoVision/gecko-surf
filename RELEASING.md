@@ -9,6 +9,7 @@ separate artifacts). This checklist keeps them in sync.
 | File | Field | What it versions |
 |---|---|---|
 | `pyproject.toml` | `version` | the PyPI package (`__version__` auto-tracks it) |
+| `plugin.json` | `version` | the Agent Plugins 1.0.0 manifest at the repo root |
 | `skills/.claude-plugin/plugin.json` | `version` | the Claude Code plugin |
 | `skills/.cursor-plugin/plugin.json` | `version` | the Cursor plugin |
 | `.claude-plugin/marketplace.json` | `version` | the Claude marketplace listing |
@@ -19,14 +20,24 @@ separate artifacts). This checklist keeps them in sync.
 > a teammate who refreshed the plugin saw no version change and couldn't tell it updated.
 > Never bump `pyproject` alone.
 
+`tests/test_release_versions.py` now fails the PR when any marker above disagrees with
+`pyproject.toml`, so this table is enforced rather than remembered.
+
 ## Steps
 
-1. **Bump** the five markers above to `X.Y.Z`.
+1. **Bump** every marker above to `X.Y.Z` (`tests/test_release_versions.py` checks this).
 2. **Update `CHANGELOG.md`** — a new `## X.Y.Z — YYYY-MM-DD` section (Added / Fixed).
 3. **`uv lock`** — sync the lockfile's own `gecko-surf` version.
 4. **Verify green:** `uv run ruff check` · `uv run mypy gecko` · `uv run --extra serve --extra dense --extra fcc pytest` (the serve tests need `--extra serve`; a bare `uv run pytest` shows collection errors, not failures) · `uv run python -m gecko.demo`.
 5. **PR → merge** the `chore/release-X.Y.Z` branch to `main`.
 6. **Tag + push:** `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z` → `release.yaml`
+   - ⚠️ **Tag the BUMP commit, and never move a tag that already built.** `v0.11.0` was
+     pushed at `1e726d3`, one commit BEFORE the bump: pip built `gecko_surf-0.10.3`, the
+     binaries said `0.10.3`, and `publish-npm` shipped them as `0.11.0`. Moving the tag to
+     the real bump fixed the GitHub Release assets and could not fix npm — npm versions are
+     immutable, so `@geckovision/gecko@0.11.0` runs 0.10.3 permanently. The `Version gate`
+     step in `release.yaml` now fails the build before anything is uploaded or published,
+     and the fix for a mismatch is a NEW version, never a re-point.
    builds the standalone binaries, attaches them to the GitHub Release, **and publishes
    the npm packages** (`@geckovision/gecko` launcher + per-platform binary packages) via
    **Trusted Publishing (OIDC)** — no stored token — so `npx @geckovision/gecko add <api>`

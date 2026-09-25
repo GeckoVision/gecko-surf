@@ -130,6 +130,52 @@ jobs:
           chmod +x "out/${{ matrix.asset }}"
           "out/${{ matrix.asset }}" --help
 
+      # THE VERSION GATE. The frozen binary must report the version it is being released
+      # AS — and this is the one release defect that cannot be repaired afterwards.
+      #
+      # THIS SHIPPED. `npm i @geckovision/gecko-linux-x64@0.11.0` installs a binary whose
+      # `--version` prints `gecko 0.10.3`, and `strings` finds `gecko_surf-0.10.3.dist-info`
+      # inside it. Nothing was wrong with the freeze: PyInstaller collected the metadata of
+      # the wheel pip had just built, and pip built `gecko_surf-0.10.3-py3-none-any.whl`
+      # because the tag `v0.11.0` pointed, at the moment that build ran, at `1e726d3` — the
+      # gate fix, whose `pyproject.toml` still read 0.10.3. The tag was moved four minutes
+      # later to the real bump (`e374f7c`); that run re-uploaded correct binaries to the
+      # GitHub Release, but npm had already published, and an npm version is IMMUTABLE. So
+      # every `npx @geckovision/gecko@0.11.0` user runs 0.10.3 forever.
+      #
+      # A `--help` exit code cannot see this. Neither can the config, OCR, TLS or CA steps:
+      # all of them pass perfectly on a binary built from the wrong commit. Only comparing
+      # what the binary SAYS against the tag it is being shipped under can, and it must run
+      # in `build`, before the upload — `publish-npm` and `publish-pypi` both `needs: build`,
+      # so failing here means no Release asset, no npm publish, nothing immutable.
+      #
+      # `gecko --version` prints exactly `gecko X.Y.Z`, resolved through
+      # `importlib.metadata.version("gecko-surf")` (gecko/__init__.py) — i.e. the dist-info
+      # of the wheel THIS build installed, not a string anyone edited by hand. Its
+      # `PackageNotFoundError` fallback, `0.0.0+dev`, is also caught here: a binary that
+      # cannot see its own metadata must not ship either.
+      - name: Version gate (the binary must report the tag it ships under)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "out/${{ matrix.asset }}"
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::release.yaml ran against ${{ github.ref_type }} '${GITHUB_REF_NAME}' — only a TAG ref produces a real version; dispatch against the tag (see the workflow_dispatch note at the top)"
+            exit 1
+          fi
+          expected="${GITHUB_REF_NAME#v}"
+          reported="$("out/${{ matrix.asset }}" --version | head -n1 | awk '{print $NF}')"
+          echo "tag says: $expected · binary says: $reported"
+          if [ "$reported" = "0.0.0+dev" ]; then
+            echo "::error::the frozen binary reports the uninstalled-source fallback (0.0.0+dev) — gecko-surf metadata did not make it into the bundle, so the binary cannot state its own version"
+            exit 1
+          fi
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::version mismatch: tag v$expected but the frozen binary reports $reported. The tagged commit's pyproject.toml is not $expected — almost certainly the tag points at a commit before the release bump (this is the v0.11.0 npm defect). Re-point the tag at the bump commit and re-run; do NOT let this publish."
+            exit 1
+          fi
+          echo "version gate OK: $reported matches the tag"
+
       # PER-ARCH PIXEL-CHANNEL ASSERTION. Bundling [ocr] is only worth its 13 MB if the
       # frozen binary can actually READ pixels — a bundled-but-unreachable tesserocr
       # would ship a bigger binary that still says INCOMPLETE, and we would not know.
