@@ -570,3 +570,92 @@ def test_cli_probe_flag_is_wired_and_prints_to_stderr(capsys) -> None:
     assert code == 2
     assert captured.out == ""
     assert "invalid surface name" in captured.err
+
+
+def test_a_missing_serve_extra_names_the_command_to_type(monkeypatch: Any) -> None:
+    """The first command anybody runs after `gecko login`, and it used to traceback.
+
+    Measured 2026-09-25 against the PUBLISHED 0.11.0 in a clean venv: `pip install
+    gecko-surf` then `gecko connect bootcamp --probe` raised
+    `ModuleNotFoundError: No module named 'anyio'`. A learner reading that has no way
+    to know the answer is an extra on a package they did install, and it is step one
+    of the funnel.
+    """
+    import builtins
+
+    from gecko import connect as connect_mod
+
+    real = builtins.__import__
+
+    def refuse_the_extra(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name in ("anyio", "mcp") or name.startswith(("anyio.", "mcp.")):
+            raise ImportError(f"No module named {name!r}")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_the_extra)
+
+    for call in (
+        lambda: connect_mod.probe("bootcamp"),
+        lambda: connect_mod.connect("bootcamp"),
+    ):
+        with pytest.raises(connect_mod.ConnectError) as caught:
+            call()
+        message = str(caught.value)
+        assert "serve" in message, "the message must name the extra"
+        assert "gecko-surf[serve]" in message, "and the exact thing to install"
+        assert "anyio" not in message, (
+            "a transitive dependency is not the user's problem"
+        )
+
+
+def test_a_missing_surface_a_missing_key_and_a_dead_network_read_differently(
+    monkeypatch: Any,
+) -> None:
+    """They used to be one line, and the server always knew the difference.
+
+    Measured 2026-09-25 against the live host: `gecko connect <x> --probe` printed
+    `could not reach the hosted surface — McpError: Session terminated` for an unknown
+    surface, for a gated one with no key, AND for a dead network. The status code was
+    never reached, because `McpError` carries no `.response`. A student who typos a
+    surface name should not get the same message as one who forgot to log in.
+    """
+    import urllib.error
+
+    from gecko import connect as connect_mod
+
+    def answering(status: int) -> Any:
+        def _open(request: Any, timeout: float = 0.0) -> Any:
+            raise urllib.error.HTTPError(
+                getattr(request, "full_url", ""), status, "", {}, None
+            )
+
+        return _open
+
+    monkeypatch.setattr(connect_mod, "_surface_names", lambda *a, **k: "alpha, beta")
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", answering(404))
+    missing = connect_mod._preflight("https://example.test/nope/mcp")
+    assert missing is not None and "no surface" in str(missing)
+    assert "alpha, beta" in str(missing), "a 404 must say what DOES exist"
+
+    monkeypatch.setattr(urllib.request, "urlopen", answering(401))
+    gated = connect_mod._preflight("https://example.test/paid/mcp")
+    assert gated is not None and "gecko login" in str(gated)
+    assert "no surface" not in str(gated), "a key problem is not a missing surface"
+
+    assert str(missing) != str(gated), "the two most common failures must differ"
+
+
+def test_the_preflight_fails_open(monkeypatch: Any) -> None:
+    """A diagnostic that blocks the thing it diagnoses is worse than no diagnostic."""
+    import urllib.request
+
+    from gecko import connect as connect_mod
+
+    def explode(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("the preflight itself is broken")
+
+    monkeypatch.setattr(urllib.request, "urlopen", explode)
+    assert connect_mod._preflight("https://example.test/any/mcp") is None

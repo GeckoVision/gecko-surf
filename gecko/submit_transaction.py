@@ -8,13 +8,28 @@ purchase — and then stop. Worse, the agent under the ~60s blockhash clock drop
 round trip ("verification after broadcast is theatre"). Bundling the check into
 the submit makes the safety free instead of optional.
 
-**The binding is REQUIRED, and that is the whole security design.** This tool
-broadcasts ONLY bytes that verify, at ``exact`` strength, against a binding a
-Gecko receipt issued — so it cannot be used as an open relay for arbitrary
-signed transactions, and the verification an agent under time pressure would
-drop is structurally impossible to skip. Gecko still never signs and never holds
-a key: the caller brings bytes their own wallet signed; this is transport for a
-decision the receipt already attested.
+**The binding is REQUIRED, and here is exactly what it does and does not buy.**
+It DETECTS A BYTE SWAP between prepare and sign: a caller who was handed bytes and
+signed different ones cannot pass, so the verification an agent under time pressure
+would drop is structurally impossible to skip. That is real and it is the reason
+this tool exists.
+
+It is NOT an authorization, and this docstring used to claim it was. **OPEN FINDING,
+2026-09-25:** the binding is a pure hash of the caller's own transaction
+(:func:`gecko.txbind.message_binding` — no server secret, no HMAC, no stored
+receipt) and :mod:`gecko.verify_signed` compares it against the caller's own
+string. The gate is therefore ``sha256(tx) == caller_supplied_sha256(tx)``, which
+anyone can satisfy. A transaction Gecko never prepared passes it; demonstrated in
+``tests/test_verify_signed.py`` as a strict xfail. So this tool CAN be used to
+relay arbitrary signed bytes, and the sentence that used to sit here saying
+otherwise was the strongest argument a reviewer would have had for not reading
+this function.
+
+Bounded honestly: Gecko still never signs and holds no key, so this is a relay,
+attribution and resource problem, not a custody breach. The caller brings bytes
+their own wallet signed. The fix is that bindings must be ISSUED rather than
+computed, which is an architecture call because it trades the any-signer symmetry
+this module is built around.
 
 The rebroadcast loop is the measured fix for one-shot sends on public RPC
 (mainnet tx #24's first attempt expired unlanded; the identical bytes
