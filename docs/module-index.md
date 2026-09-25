@@ -199,7 +199,7 @@ package depends on it, which is worth a look before you add a caller.
 | `sandbox.rehearse_swap` | A Meteora DLMM swap, landed on a proven surfnet and judged by what moved. | 0 |
 | `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 10 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +7 |
 | `sandbox.try_purchase` | ``try_purchase`` — the rehearsal, as a tool an agent can reach, beside the real one. | 1 · `providers.catalog_surface` |
-| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 11 · `client`, `corpus`, `enrich` +8 |
+| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 12 · `client`, `corpus`, `enrich` +9 |
 | `scale` | Below-scale surface sizing — the "don't truncate when you don't have to" rule. | 1 · `client` |
 | `scope` | Retrieval returns a SCOPE, not a surface — the attention budget of one search. | 1 · `mcp_server` |
 | `score` | The provider report — one surface, before and after, and what changed. | 0 |
@@ -219,7 +219,7 @@ package depends on it, which is worth a look before you add a caller.
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
 | `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 26 · `autonomous_purchase`, `corpus`, `drift_watch` +23 |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 30 · `autonomous_purchase`, `corpus`, `drift_watch` +27 |
 | `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 3 · `autonomous_purchase`, `providers.whirlpool_position`, `signer` |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |

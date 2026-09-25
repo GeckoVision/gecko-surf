@@ -12,12 +12,13 @@ seeds on it, a pinned program account, and a two-argument instruction.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 
 from gecko.prepare_instruction import plan_accounts, prepare_instruction_result
 from gecko.program_graph import build_program_graph
+from gecko.simulate import BuiltTx
 
 PROGRAM = "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm"
 ADMIN = "6Dw1xBGXChPeS69hovvYMF2nmRxgdoA711TKuuAbN5rV"
@@ -124,9 +125,9 @@ class RecordingBuilder:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(self, **kwargs: Any) -> str:
-        self.calls.append(kwargs)
-        return "AQAAtransaction"
+    def __call__(self, plan: Mapping[str, Any]) -> BuiltTx:
+        self.calls.append(dict(plan))
+        return BuiltTx(tx="AQAAtransaction", encoding="base64")
 
 
 def ok_rpc(_url: str, _method: str, _params: list[Any]) -> dict[str, Any]:
@@ -522,7 +523,7 @@ def test_a_second_signer_that_is_not_a_relay_still_gets_a_full_signature_array()
             "values": VALUES,
         },
         idl_fetch=idl_fetch,
-        build_call=lambda **_kw: one_slot,
+        build_call=lambda _plan: BuiltTx(tx=one_slot, encoding="base64"),
         rpc_call=rpc,
         rpc_url="https://rpc.example",
     )
@@ -530,3 +531,80 @@ def test_a_second_signer_that_is_not_a_relay_still_gets_a_full_signature_array()
     raw = base64.b64decode(seen[0])
     assert raw[0] == 2, "two signature slots, matching the two-signer header"
     assert raw[1 + 2 * 64 :] == bytes(message), "the message itself is untouched"
+
+
+# --- the expiry budget belongs to the blockhash these bytes actually carry --------
+
+
+FRESH = "9BbnhWs2xkDvChRxLpoPPzXKPQzZq54BQmMWubbkeYyv"
+
+
+def _budget_rpc(_url: str, method: str, params: list[Any]) -> dict[str, Any]:
+    if method == "getLatestBlockhash":
+        return {
+            "result": {"value": {"blockhash": FRESH, "lastValidBlockHeight": 1_000}}
+        }
+    if method == "getBlockHeight":
+        return {"result": 900}
+    return ok_rpc(_url, method, params)
+
+
+def _tx_with(blockhash: str) -> str:
+    import base64
+
+    from solders.hash import Hash
+    from solders.instruction import AccountMeta, Instruction
+    from solders.message import Message
+    from solders.pubkey import Pubkey
+    from solders.transaction import Transaction
+
+    payer = Pubkey.from_string(BUYER)
+    message = Message.new_with_blockhash(
+        [
+            Instruction(
+                Pubkey.from_string(PROGRAM), b"\x01", [AccountMeta(payer, True, True)]
+            )
+        ],
+        payer,
+        Hash.from_string(blockhash),
+    )
+    return base64.b64encode(bytes(Transaction.new_unsigned(message))).decode()
+
+
+def _prepared_with(tx_base64: str) -> dict[str, Any]:
+    return prepare_instruction_result(
+        {
+            "program_id": PROGRAM,
+            "instruction": "contribute",
+            "payer": BUYER,
+            "values": VALUES,
+        },
+        idl_fetch=idl_fetch,
+        build_call=lambda _plan: BuiltTx(tx=tx_base64, encoding="base64"),
+        rpc_call=_budget_rpc,
+        rpc_url="https://rpc.example",
+    )
+
+
+def test_a_builder_that_used_our_blockhash_gets_the_budget_and_an_exact_binding() -> (
+    None
+):
+    out = _prepared_with(_tx_with(FRESH))
+    assert out["refused"] is False
+    assert out["expires"]["blockhash"] == FRESH
+    assert out["expires"]["blocks_remaining"] == 100
+    assert out["binding_strength"] == "exact"
+
+
+def test_a_builder_that_stamped_its_own_blockhash_gets_no_budget() -> None:
+    """The check that replaced a ``TypeError`` sniff, and sees what that could not.
+
+    A builder may accept a ``blockhash`` and stamp its own anyway — Orquestra's did, ~4,500
+    blocks stale. Reporting OUR blockhash's deadline for bytes carrying THEIRS is a number
+    that is wrong in the direction that costs a signer the window.
+    """
+    other = "11111111111111111111111111111111"
+    out = _prepared_with(_tx_with(other))
+    assert out["refused"] is False
+    assert "expires" not in out, "a budget for a blockhash these bytes do not carry"
+    assert out["binding_strength"] == "structural"

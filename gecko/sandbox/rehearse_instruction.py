@@ -29,6 +29,7 @@ from typing import Any, Mapping, Sequence
 
 from ..prepare_instruction import prepare_instruction_result
 from ..rpc import RpcCall, default_rpc_call
+from ..simulate import BuildCall
 from .cheatcodes import _decode_token_account, fund_sol, fund_token
 from .rehearse import (
     CONFIRM_TIMEOUT_SECONDS,
@@ -117,7 +118,7 @@ def rehearse_instruction(
     instruction: str,
     values: Mapping[str, Any],
     idl_fetch: Any,
-    build_call: Any,
+    build_call: BuildCall,
     fund_tokens: Sequence[tuple[str, int] | tuple[str, int, str]] = (),
     fee_lamports: int = DEFAULT_FEE_LAMPORTS,
     rpc_call: RpcCall | None = None,

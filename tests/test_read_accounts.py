@@ -35,6 +35,7 @@ from gecko.pda import (
 )
 from gecko.read_accounts import READ_ACCOUNTS_TOOL, read_accounts
 from gecko.rpc import RpcError
+from gecko.simulate import BuiltTx
 
 PROGRAM = "raWrRH5R3Ym7rRFry3T8YrED6nBcUUVN2HLAdmtQLdm"
 ADMIN = "6Dw1xBGXChPeS69hovvYMF2nmRxgdoA711TKuuAbN5rV"
@@ -561,7 +562,10 @@ def test_the_surface_serves_it_and_never_takes_an_rpc_from_the_caller() -> None:
     address = launch_address(100, ADMIN)
     surface = OrquestraCatalogSurface(
         purchase_rpc_call=fake_rpc([(address, launch_data(100, ADMIN, "DEATON"))]),
-        instruction_seams=(lambda _program_id: JURASSIC, lambda **_kwargs: ""),
+        instruction_seams=(
+            lambda _program_id: JURASSIC,
+            lambda _plan: BuiltTx(tx="", encoding="base64"),
+        ),
     )
     out = surface.call_tool(
         "read_accounts", {"program_id": PROGRAM, "account_type": "Launch"}

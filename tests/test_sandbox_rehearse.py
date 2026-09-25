@@ -814,6 +814,7 @@ def test_the_general_rehearsal_reaches_only_the_proven_fork() -> None:
     """
     from gecko.sandbox import rehearse_instruction as module
     from gecko.sandbox.surfnet import ephemeral_signer
+    from gecko.simulate import BuiltTx
 
     proof = offline_proof()
     fork = FakeFork(proof.rpc_url)
@@ -834,7 +835,7 @@ def test_the_general_rehearsal_reaches_only_the_proven_fork() -> None:
             instruction="noop",
             values={},
             idl_fetch=lambda _p: {},
-            build_call=lambda **_k: None,
+            build_call=lambda _plan: BuiltTx(tx="", encoding="base64"),
             rpc_call=fork,
         )
     finally:

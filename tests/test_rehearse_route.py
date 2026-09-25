@@ -8,8 +8,9 @@ recipient at index 5. What is under test is the sequencing and the judgement, no
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import Any, Mapping
 
+from gecko.simulate import BuiltTx
 from gecko.sandbox import ephemeral_signer
 from gecko.sandbox.rehearse_route import RouteLeg, rehearse_gasless_route
 from gecko.store_accounts import TOKEN_PROGRAM_ID, derive_ata
@@ -25,7 +26,7 @@ TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 def _convert_builder(actor: str, sender_ata: str, recipient_ata: str) -> Any:
     """The relay pays; the actor signs; accounts 4 and 5 are the two token accounts."""
 
-    def build(**kwargs: Any) -> str:
+    def build(plan: Mapping[str, Any]) -> BuiltTx:
         from solders.hash import Hash
         from solders.instruction import AccountMeta, Instruction
         from solders.message import Message
@@ -46,10 +47,13 @@ def _convert_builder(actor: str, sender_ata: str, recipient_ata: str) -> Any:
         )
         message = Message.new_with_blockhash(
             [instruction],
-            Pubkey.from_string(kwargs["payer"]),
+            Pubkey.from_string(plan["payer"]),
             Hash.from_string("6xCk4Xgb64QofLjfh5Q5sy47W5dURHagdcDWWhhoAqgo"),
         )
-        return base64.b64encode(bytes([1]) + bytes(64) + bytes(message)).decode()
+        return BuiltTx(
+            tx=base64.b64encode(bytes([1]) + bytes(64) + bytes(message)).decode(),
+            encoding="base64",
+        )
 
     return build
 
