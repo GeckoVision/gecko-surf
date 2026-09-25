@@ -1068,6 +1068,36 @@ def build_http_app(
         "tools.md": "text/markdown; charset=utf-8",
         "SKILL.md": "text/markdown; charset=utf-8",
     }
+
+    def _own_artifact_media(rel: str) -> str | None:
+        """The media type for a surface-published artifact, or ``None`` to refuse it.
+
+        The named map above covers the generated discovery files. A DOCUMENT surface
+        also publishes one file per page, so an agent that read the map can fetch the
+        page it names — before this, ``llms.txt`` listed 250 pages and every link was a
+        page id pointing at no route, which is a map a client cannot follow. The set of
+        names is therefore open, and the shape is what is checked:
+
+        - a relative path only. A leading ``/``, a ``..`` segment, a backslash, a NUL or
+          a drive letter is refused outright. These names come from page ids derived
+          from a filesystem walk on our own server, which is exactly the kind of input
+          that stops being trustworthy the day someone points the corpus elsewhere.
+        - a suffix we are willing to serve as text. Anything else is refused rather
+          than guessed, because a media type we got wrong is a browser-side execution
+          decision.
+        """
+        if rel in _ARTIFACT_MEDIA:
+            return _ARTIFACT_MEDIA[rel]
+        if rel.startswith("/") or "\\" in rel or "\x00" in rel or ":" in rel:
+            return None
+        if any(part in ("..", "", ".") for part in rel.split("/")):
+            return None
+        if rel.endswith(".md"):
+            return "text/markdown; charset=utf-8"
+        if rel.endswith(".txt"):
+            return "text/plain; charset=utf-8"
+        return None
+
     artifact_routes: list[Any] = []
     client_for_emit = getattr(surface, "client", None)
     if isinstance(client_for_emit, AgentApiClient):
@@ -1092,13 +1122,14 @@ def build_http_app(
     own_artifacts = getattr(surface, "artifacts", None)
     if not artifact_routes and callable(own_artifacts):
         for rel, text in own_artifacts().items():
-            if rel not in _ARTIFACT_MEDIA:
+            media = _own_artifact_media(rel)
+            if media is None:
                 continue
 
             def _own_artifact_endpoint(
-                _request: Any, _text: str = text, _rel: str = rel
+                _request: Any, _text: str = text, _media: str = media
             ) -> Any:
-                return Response(_text, media_type=_ARTIFACT_MEDIA[_rel])
+                return Response(_text, media_type=_media)
 
             artifact_routes.append(Route("/" + rel, endpoint=_own_artifact_endpoint))
 

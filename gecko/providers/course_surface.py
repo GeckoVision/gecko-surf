@@ -61,18 +61,57 @@ INCLUDE = (
     "capstone-template/",
     "final_assignment/",
     "integrations/",
-    "docs/",  # the learner-facing guides
+    # NOT a bare `docs/`. That directory holds the instructor's material next to the
+    # learner's, and on 2026-09-25 a bare prefix put `docs/instructor/projects/
+    # 01-clothing-reviews/solution` at the TOP of the hits for "clothing reviews
+    # project solution", readable by id and sitting inside `llms-full.txt`.
+    "docs/guides/",
+    "docs/dev3pack/",
+    "docs/curriculum",
+    "docs/course-index",
+    "docs/notebook-index",
     "README",
     "SETUP",
 )
 
 #: Never loaded, whatever the allow list says. A quiz competes with the lesson that
-#: teaches it; a solution notebook is an answer key, and an answer key that is
-#: retrievable is retrieved. Both are in the student's own clone either way.
-EXCLUDE = ("quiz", "solutions")
+#: teaches it; a solution is an answer key, and an answer key that is retrievable is
+#: retrieved. Both are in the student's own clone either way.
+#:
+#: `solution` is SINGULAR on purpose. It was `solutions` until 2026-09-25 and the file
+#: is called `solution.md`, so the deny list named a thing that does not exist while the
+#: thing that does exist was served. A substring match on the singular catches both.
+#: `instructor` is the same lesson applied one level up: the rubric, the session plans
+#: and every deck live under it.
+#:
+#: THIS LIST IS NOT OURS TO INVENT. The course's own publisher already declares what
+#: never travels to a student (`scripts/publish_cohort.py`, the `NEVER` mapping:
+#: `tests` — "test_checks.py holds the solved value of every exercise" — plus
+#: `docs/instructor`, `docs/specs`, `docs/plans`, `evals`, `.github`). We were serving
+#: what that contract withholds, because we wrote a second list from memory instead of
+#: reading the first. The allow list above is narrowed to agree with it; if the two ever
+#: disagree again, the publisher's is right and this one is the bug.
+EXCLUDE = ("quiz", "solution", "instructor")
+
+#: Machinery, refused whatever the allow list says. An allow list scopes what COUNTS as
+#: the course; it cannot see that a directory inside the scope is a dependency tree.
+#: `integrations/` is course content and `integrations/sendai-txs/node_modules` is 468
+#: pages of somebody else's README, which the allow list happily admitted.
+DENY_DIRS = (
+    "node_modules",
+    "site-packages",
+    ".venv",
+    "__pycache__",
+    ".ipynb_checkpoints",
+    "graphify-out",
+)
 
 #: The text shapes a course is written in. Notebooks are projected, not read.
 SUFFIXES = (".md", ".mdx", ".ipynb")
+
+#: Where a single page is served, relative to this surface's mount. Every link in
+#: `llms.txt` points here, so an agent that read the map can fetch what it names.
+PAGES_PREFIX = "pages"
 
 #: A hit must contain at least half the query's content terms. MEASURED 2026-09-24,
 #: not chosen: at 0.5 the course's own 49 labelled questions still score 38/49, exactly
@@ -218,7 +257,16 @@ class CourseSurface:
         Built from ``self.index``, so a page the tools refuse to rank (a quiz) is a
         page these files cannot leak either. One corpus, one set of exclusions.
         """
-        return {"llms.txt": self._llms_txt(), "llms-full.txt": self._llms_full_txt()}
+        files = {"llms.txt": self._llms_txt(), "llms-full.txt": self._llms_full_txt()}
+        # ONE FILE PER PAGE, so the map is followable. `llms.txt` listed every page and
+        # linked each one to its own id, which is not a URL: over plain HTTP the entire
+        # "Pages" section was decorative, and the only usable artifact was the whole
+        # corpus in one 700 KB fetch. `read_course_page` solved this for MCP clients
+        # only — the clients these files exist for are exactly the ones that cannot
+        # call it.
+        for page_id, page in self.index.pages.items():
+            files[f"{PAGES_PREFIX}/{page_id}.md"] = f"# {page.title}\n\n{page.text}"
+        return files
 
     def _llms_txt(self) -> str:
         lines = [
@@ -232,13 +280,14 @@ class CourseSurface:
             "",
             "- Connect over MCP and call `search_course` for a question in a student's "
             "own words. An empty result means the course does not cover it yet.",
+            "- Or fetch any single page at the link beside its title below.",
             "- Or fetch `llms-full.txt` beside this file for every page in one request.",
             "",
             f"## Pages ({len(self._titles)})",
             "",
         ]
         lines += [
-            f"- [{title}]({page_id}): {page_id}"
+            f"- [{title}]({PAGES_PREFIX}/{page_id}.md): {page_id}"
             for page_id, title in sorted(self._titles.items())
         ]
         return "\n".join(lines) + "\n"
@@ -354,7 +403,12 @@ def build_course_surface(root: Path | None = None) -> CourseSurface | None:
     if root is None or not root.is_dir():
         return None
     try:
-        pages = load_pages(root, suffixes=SUFFIXES, include=INCLUDE, exclude=EXCLUDE)
+        pages = load_pages(
+            root,
+            suffixes=SUFFIXES,
+            include=INCLUDE,
+            exclude=EXCLUDE + DENY_DIRS,
+        )
     except CorpusError:
         # The loader raises on a root with no pages. Here that is not an error to
         # propagate: it is the deploy saying there is nothing to serve, and the
