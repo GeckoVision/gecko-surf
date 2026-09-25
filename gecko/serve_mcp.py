@@ -56,6 +56,8 @@ from .mcp_server import McpSurface
 from .provider_sync import fetch_provider_surfaces
 from .providers.course_surface import build_course_surface
 from .providers.catalog_surface import OrquestraCatalogSurface
+from .telegram_webhook import WEBHOOK_PATH as TELEGRAM_WEBHOOK_PATH
+from .telegram_webhook import telegram_routes
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
 from .registry.wiring import build_keystore_from_env, build_wallet_directory_from_env
@@ -650,6 +652,19 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         logger.info("serving the wallet-aware storefront at /%s (gated)", STORE_SURFACE)
         surfaces = surfaces + [store_mount]
 
+    # The TELEGRAM door onto the SAME engine the MCP mounts serve. Not a second
+    # comprehension: it calls `list_stores` / `prepare_purchase` on the orquestra catalog
+    # surface built above, so a person in a chat and an agent over MCP get the same
+    # answers and the same refusals.
+    #
+    # It mounts ONLY when TELEGRAM_WEBHOOK_SECRET and TELEGRAM_BOT_TOKEN both hold real
+    # values; otherwise `telegram_routes` returns [] and the path 404s like any
+    # unregistered route. An unset secret cannot mean "allow everyone" because there is
+    # no door to be permissive at (see gecko.telegram_webhook).
+    telegram = telegram_routes(dict(surfaces).get("orquestra"))
+    if telegram:
+        logger.info("serving the Telegram webhook at %s", TELEGRAM_WEBHOOK_PATH)
+
     # Hourly self-refresh drift-watch: Tier-1 sha-diff refresh + Tier-2 challenge-only
     # 402 re-probe, mutating the registry in place so /paysh/mcp reflects the fresh state.
     async def _paysh_worker() -> None:
@@ -673,6 +688,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             build_keystore_from_env(),
             feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
         ),
+        extra_routes=telegram,
         background_tasks=[_paysh_worker],
         # Gate ONLY the paid surfaces (env can override; see GATED_SURFACES). Without
         # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.

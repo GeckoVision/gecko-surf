@@ -2,7 +2,7 @@
 
 # Module index
 
-252 modules in `gecko/` (subpackages included), from their own docstrings.
+256 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -189,7 +189,7 @@ package depends on it, which is worth a look before you add a caller.
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 48 · `autonomous_purchase`, `cli`, `drift_watch` +45 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 49 · `autonomous_purchase`, `cli`, `drift_watch` +46 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
@@ -237,6 +237,10 @@ package depends on it, which is worth a look before you add a caller.
 | `surfacereport` | The graph report for an API surface — what the graph says about the API. | 1 · `workflows` |
 | `surfaces` | Surface Registry — the internal control-plane store of comprehended API surfaces. | 11 · `binding`, `catalog_mcp`, `client` +8 |
 | `surfaceviz` | Render the Agent Surface as an SVG call graph — "graphviz for APIs". | 3 · `mcp_server`, `report`, `surface` |
+| `telegram_api` | The one outbound call this surface makes: Telegram's ``sendMessage``. | 1 · `telegram_webhook` |
+| `telegram_intent` | What a person typed, reduced to one of five things Gecko can actually do. | 1 · `telegram_webhook` |
+| `telegram_reply` | Engine answers, rendered for a person in a chat window. | 1 · `telegram_webhook` |
+| `telegram_webhook` | ``POST /telegram/webhook`` — a person in a chat, talking to the engine. | 1 · `serve_mcp` |
 | `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 5 · `events`, `http_server`, `onboard` +2 |
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 2 · `simulate`, `store_directory` |

@@ -131,6 +131,35 @@ declare -A PARAMS=(
   # Bootcamp team mounts: comma-separated slugs, each served at /bootcamp-<slug>/mcp,
   # unlisted. Not a secret; SecureString only because every param here is one.
   [GECKO_BOOTCAMP_TEAMS]="GECKO_BOOTCAMP_TEAMS"
+
+  # Telegram chat surface (gecko/telegram_webhook.py + telegram_api.py) — POST
+  # /telegram/webhook, so a person in a chat reaches the SAME engine the MCP mounts
+  # serve (list_stores / prepare_purchase). BOTH must hold real values or the route is
+  # not mounted at all and the path 404s: a webhook with no secret would let anyone
+  # drive the bot, and one with no token would accept updates and answer nobody.
+  #
+  # BOTH ARE SECRETS, and one of them is easy to under-rate. TELEGRAM_BOT_TOKEN is a
+  # BEARER CREDENTIAL, not config: whoever holds it controls the bot, can read every
+  # message sent to it, and can repoint its webhook at their own server. Leaking it is
+  # a full takeover of the chat surface, so it is SecureString like everything else
+  # here, never logged, and never echoed in an error (the URL contains it).
+  # TELEGRAM_WEBHOOK_SECRET is the only thing separating a real Telegram delivery from
+  # a stranger POSTing a fabricated update; it is compared with hmac.compare_digest.
+  #
+  # The sentinel keeps the route ABSENT (404, identical to a path that was never
+  # registered), so a sentinel deploy is safe and simply leaves the door shut — and,
+  # as with GECKO_SERVABLE_TOKEN, `__unset__` must never be honoured as a real secret:
+  # it is a literal in a PUBLIC repo, so accepting it would turn the placeholder that
+  # keeps the door shut into the key that opens it.
+  #
+  # After pushing real values, point Telegram at the host ONCE (founder-run; keep the
+  # token out of shell history):
+  #   curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  #     -H 'Content-Type: application/json' \
+  #     -d '{"url":"https://mcp.geckovision.tech/telegram/webhook",
+  #          "secret_token":"<TELEGRAM_WEBHOOK_SECRET>"}'
+  [TELEGRAM_BOT_TOKEN]="TELEGRAM_BOT_TOKEN"
+  [TELEGRAM_WEBHOOK_SECRET]="TELEGRAM_WEBHOOK_SECRET"
 )
 
 echo "==> Region:     $REGION"
@@ -201,6 +230,11 @@ declare -A REQUIRED_AT_BOOT=(
   [GECKO_PROVIDER_SYNC_TOKEN]="__unset__"
   # Sentinel => no team mounts (the slug check drops it).
   [GECKO_BOOTCAMP_TEAMS]="__unset__"
+  # Sentinels keep /telegram/webhook UNMOUNTED (404). Either one missing is enough:
+  # an unset secret closes the door rather than widening it, and an unset bot token
+  # means there is no way to reply, which is not a surface worth serving.
+  [TELEGRAM_BOT_TOKEN]="__unset__"
+  [TELEGRAM_WEBHOOK_SECRET]="__unset__"
 )
 
 SKIPPED=()
