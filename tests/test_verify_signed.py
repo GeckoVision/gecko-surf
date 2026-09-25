@@ -300,3 +300,44 @@ def test_a_truncated_transaction_is_not_reported_as_signed() -> None:
         bytes([2]) + b"\xaa" * 64
     ).decode()  # promises 2, has 1
     assert _carries_a_signature(truncated) is False
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "OPEN FINDING 2026-09-25: the binding is a pure hash of the caller's own "
+        "transaction (txbind.py:621-627 — no server secret, no HMAC, no stored "
+        "receipt), and verify_signed compares it against the caller's own string "
+        "(verify_signed.py:159). So the gate is sha256(tx) == caller_sha256(tx), "
+        "which anyone can satisfy. Demonstrated: a transaction Gecko never prepared "
+        "returns verified=True with the verdict 'byte-identical ... to the one the "
+        "receipt attested'. No receipt attested it. STRICT so that whoever fixes this "
+        "is forced to delete the marker rather than leave a passing test mislabelled."
+    ),
+)
+def test_a_transaction_gecko_never_prepared_is_refused() -> None:
+    """What the binding is DOCUMENTED to guarantee, as an executable claim.
+
+    `submit_transaction.py:12-19` says the tool "broadcasts ONLY bytes that verify, at
+    `exact` strength, against a binding a Gecko receipt issued — so it cannot be used
+    as an open relay". This test is that sentence. It fails.
+
+    What the binding HONESTLY does, and it is worth keeping: it detects a byte swap
+    between prepare and sign for a cooperative caller. That is real. It is an integrity
+    check an honest caller cannot skip, not an authorization only Gecko can grant, and
+    only the second makes it not-an-open-relay.
+
+    The fix is that bindings must be ISSUED, not computed: an HMAC over the message
+    under a host-side key, returned by prepare_*, verified here. That trades the
+    "any signer, any client" symmetry this module is proud of, so it is an
+    architecture call and not a patch.
+    """
+    hostile = _tx(b"NOT PREPARED BY GECKO")
+    forged = message_binding(hostile, strength="exact")
+
+    out = _check(transaction=_sign(hostile), binding=forged)
+
+    assert out["verified"] is False, (
+        "a transaction Gecko never prepared passed the binding gate; the caller "
+        "computed the binding with a plain hash and no secret"
+    )
