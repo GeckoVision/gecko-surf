@@ -58,7 +58,7 @@ arm.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .lexnorm import fold_tokens, normalize_query
@@ -159,6 +159,37 @@ def score_folded(folded: FoldedUnit, query_tokens: set[str]) -> int:
         len(query_tokens & folded.haystack)
         + len(query_tokens & folded.title)
         + len(query_tokens & folded.identity)
+    )
+
+
+def score_folded_weighted(
+    folded: FoldedUnit, query_tokens: set[str], weight: Mapping[str, float]
+) -> float:
+    """``score_folded``, with each matched term contributing its own weight.
+
+    ADDED BESIDE rather than folded into ``score_folded`` on purpose. That function
+    returns an ``int`` and four committed scorecards are pinned to the integers it
+    produces; giving it a weight would change every number the API path has ever
+    published, to fix a problem only the document path has.
+
+    The problem it fixes, measured 2026-09-24 on the 241-document course corpus:
+    counting DISTINCT matched terms makes "redact" (19 pages) worth exactly what
+    "write" (most pages) is worth, so the notebook that teaches `redact` ranked 24th
+    behind two dozen pages tied at the same score. A term's weight is how much its
+    presence narrows the field, which is what an IDF is.
+
+    Same three surfaces and the same double-count as ``score_folded``, so the only
+    difference between the two is what a match is worth. A term absent from
+    ``weight`` contributes nothing, which is the honest treatment of a term the
+    corpus has never seen.
+    """
+    query_tokens = normalize_query(query_tokens)
+    if not query_tokens:
+        return 0.0
+    return sum(
+        weight.get(term, 0.0)
+        for surface in (folded.haystack, folded.title, folded.identity)
+        for term in query_tokens & surface
     )
 
 

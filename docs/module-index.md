@@ -2,7 +2,7 @@
 
 # Module index
 
-251 modules in `gecko/` (subpackages included), from their own docstrings.
+252 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -104,6 +104,7 @@ package depends on it, which is worth a look before you add a caller.
 | `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
 | `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 23 · `access`, `caller`, `cli` +20 |
 | `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 14 · `autonomous_purchase`, `corpus`, `fork_preflight` +11 |
+| `notebookdoc` | A Jupyter notebook, projected onto markdown so a document corpus can rank it. | 1 · `doccorpus` |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
 | `ore_state` | Read + decode ORE V3 ``Miner`` / ``Treasury`` accounts — the state a claim needs. | 1 · `providers.ore` |

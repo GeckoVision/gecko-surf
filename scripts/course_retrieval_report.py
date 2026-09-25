@@ -56,6 +56,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from gecko.providers import course_surface
 from gecko.doccorpus import DocIndex, DocPage, load_pages  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -84,6 +85,16 @@ BASELINE = {
 KS: tuple[int, ...] = (1, 3, 5)
 
 
+#: The labelled sets name pages relative to `units/en` (`unit2/session-08/...`),
+#: because that is how the course's own toctree names them. The FULL corpus is
+#: loaded from the repository root, so the same page is `units/en/unit2/...`.
+#: Comparing the two without folding this away scored the full corpus 0/49 — not a
+#: cost, a prefix. Fold both sides, once, here.
+def _comparable(page_id: str) -> str:
+    prefix = f"{UNITS.as_posix()}/"
+    return page_id[len(prefix) :] if page_id.startswith(prefix) else page_id
+
+
 @dataclass(frozen=True)
 class Case:
     question: str
@@ -102,6 +113,8 @@ class Variant:
     one_per_source: bool = True
     gate: bool = False
     min_coverage: float = 0.0
+    idf: bool = False
+    corpus: str = "units"
 
 
 #: The grid. Each row changes ONE thing against `shipped`, so a delta has a cause.
@@ -109,6 +122,24 @@ VARIANTS: tuple[Variant, ...] = (
     Variant(
         "shipped",
         "the arm the API surface ships, paragraph chunks at 800, one page per slot",
+    ),
+    Variant(
+        "full_corpus",
+        "every document a student has, not just units/en: 66 notebooks and the "
+        "project/cookbook markdown, quizzes and solutions excluded. This is what "
+        "the surface SERVES, so it is the row that matters; the units-only rows "
+        "are here to show what including the rest costs",
+        min_coverage=0.5,
+        corpus="full",
+    ),
+    Variant(
+        "full_corpus_idf",
+        "the full corpus, scoring each matched term by how rare it is instead of "
+        "counting distinct matches. The indicated fix for the miss diagnosis below: "
+        "misses are vocabulary breadth, not paraphrase",
+        min_coverage=0.5,
+        idf=True,
+        corpus="full",
     ),
     Variant(
         "coverage_50",
@@ -189,8 +220,9 @@ def _hit_counts(
             one_per_source=variant.one_per_source,
             gate=variant.gate,
             min_coverage=variant.min_coverage,
+            idf=variant.idf,
         )
-        pages = list(dict.fromkeys(hit.page_id for hit in hits))
+        pages = list(dict.fromkeys(_comparable(hit.page_id) for hit in hits))
         for k in KS:
             if set(pages[:k]) & set(case.expected):
                 per_k[k] += 1
@@ -263,7 +295,20 @@ def _fingerprint(pages: Sequence[DocPage]) -> dict[str, Any]:
 
 
 def build(course_root: Path) -> dict[str, Any]:
+    # Two corpora, on purpose. `units` is the historical one and the only one
+    # comparable to the coach's published baseline, which was measured over the
+    # same pages. `full` is what the surface actually serves. Reporting both is
+    # how the cost of a complete corpus stays visible instead of being absorbed.
     pages = load_pages(course_root / UNITS, suffixes=(".mdx",), exclude=("quiz",))
+    # The surface's OWN scope, imported rather than retyped: a report measuring a
+    # different corpus from the one served is a report about nothing.
+    full_pages = load_pages(
+        course_root,
+        suffixes=course_surface.SUFFIXES,
+        include=course_surface.INCLUDE,
+        exclude=course_surface.EXCLUDE,
+    )
+    corpora = {"units": pages, "full": full_pages}
     dev = load_cases(course_root / DEV_CASES)
     heldout = load_cases(course_root / HELDOUT_CASES)
 
@@ -272,7 +317,7 @@ def build(course_root: Path) -> dict[str, Any]:
     diagnostics: dict[str, Any] = {}
     for variant in VARIANTS:
         index = DocIndex(
-            pages,
+            corpora[variant.corpus],
             max_chars=variant.max_chars,
             sections=variant.sections,
             oversize=variant.oversize,  # type: ignore[arg-type]

@@ -37,11 +37,13 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from .notebookdoc import notebook_markdown
 from .rankable import (
     FoldedUnit,
     RankableUnit,
@@ -49,6 +51,7 @@ from .rankable import (
     fold_unit,
     normalize_query,
     rank_units,
+    score_folded_weighted,
 )
 
 __all__ = [
@@ -144,6 +147,7 @@ def load_pages(
     root: Path,
     *,
     suffixes: Sequence[str] = (".md", ".mdx"),
+    include: Sequence[str] = (),
     exclude: Sequence[str] = (),
     tag_from_parent: bool = True,
 ) -> list[DocPage]:
@@ -155,7 +159,20 @@ def load_pages(
     guess at, because a server filesystem path must never leave the process).
 
     ``exclude`` drops any page whose id contains one of the given words. The course
-    corpus uses it for ``quiz``: an answer key must not be retrievable.
+    corpus uses it for ``quiz`` and ``solutions``: a question set competes with the
+    lesson that teaches it, and an answer key that is retrievable is retrieved.
+
+    ``include``, when non-empty, keeps ONLY pages whose id starts with one of the
+    given prefixes. A corpus taken from a repository gets the repository's
+    machinery for free otherwise — assistant configuration, plugin commands, build
+    kits — and measured on 2026-09-24 that machinery took the top slot for "how do
+    I install uv" and "which terminal should I use", which is not course content
+    however well it matches. An allow list is the honest shape for "what is the
+    course", because it has to be written down rather than remembered.
+
+    ``.ipynb`` is projected onto markdown by :func:`gecko.notebookdoc.notebook_markdown`
+    rather than read, because a notebook is JSON and indexing its serialisation would
+    rank cell ids and execution counts. Outputs are dropped there, not here.
 
     Built per call and never cached to disk: an index that can go stale is worse
     than no index.
@@ -172,9 +189,20 @@ def load_pages(
         if not path.resolve().is_relative_to(base):
             continue
         page_id = path.relative_to(base).with_suffix("").as_posix()
+        if include and not any(page_id.startswith(prefix) for prefix in include):
+            continue
         if any(word in page_id for word in exclude):
             continue
-        lines = path.read_text(encoding="utf-8").splitlines()
+        if path.suffix == ".ipynb":
+            # A notebook is JSON, so it is PROJECTED onto markdown rather than read.
+            # `gecko.notebookdoc` owns that decision, including dropping outputs: an
+            # output is somebody's run, not course content.
+            text = notebook_markdown(path)
+            if not text:
+                continue
+            lines = text.splitlines()
+        else:
+            lines = path.read_text(encoding="utf-8").splitlines()
         title, tags, body_start = _read_header(lines)
         body = "\n".join(lines[body_start:]).strip()
         if not body:
@@ -357,7 +385,7 @@ class DocHit:
 
     chunk: DocChunk
     page: DocPage
-    score: int
+    score: float
 
     @property
     def page_id(self) -> str:
@@ -402,6 +430,17 @@ class DocIndex:
             for c in self.chunks
         ]
         self._tokenize = tokenize
+        # Document frequency over the folded haystacks, computed once for the same
+        # reason the folds are: a corpus is static between builds. `idf` turns a
+        # match into "how much does this term narrow the field", which is what the
+        # unweighted scorer cannot express.
+        frequency: Counter[str] = Counter()
+        for folded in self._folded:
+            frequency.update(folded.haystack)
+        total = len(self._folded) or 1
+        self._idf: dict[str, float] = {
+            term: math.log(1 + total / count) for term, count in frequency.items()
+        }
 
     def search_scored(
         self,
@@ -411,6 +450,7 @@ class DocIndex:
         one_per_source: bool = True,
         gate: bool = False,
         min_coverage: float = 0.0,
+        idf: bool = False,
     ) -> list[DocHit]:
         """The passages that answer ``query``, best first. EMPTY IS AN ANSWER.
 
@@ -436,15 +476,38 @@ class DocIndex:
         query_tokens = self._tokenize(query)
         if not query_tokens:
             return []
-        ranked = rank_units(
-            self._folded,
-            query_tokens,
-            # Rank the whole corpus, then let the post-rank policy cut it: truncating
-            # first would let one long page eat every slot before dedupe could see it.
-            limit=len(self._folded),
-            gate=gate,
-            fallback=False,
-        )
+        if idf:
+            # The document path's ranking reduces to "score, keep the positives,
+            # sort" because `gate` and `fallback` are both off here — so weighting
+            # is applied directly rather than by teaching `rank_units` a policy the
+            # API path does not want.
+            weighted = [
+                (score_folded_weighted(folded, query_tokens, self._idf), index)
+                for index, folded in enumerate(self._folded)
+            ]
+            # (index, score), the shape both branches meet in. `RankedUnit` carries
+            # an int score for the API path, and an IDF score is fractional.
+            ranked: list[tuple[int, float]] = [
+                (index, score)
+                for score, index in sorted(
+                    (item for item in weighted if item[0] > 0),
+                    key=lambda item: (-item[0], self._folded[item[1]].unit.locator),
+                )
+            ]
+        else:
+            ranked = [
+                (item.index, float(item.score))
+                for item in rank_units(
+                    self._folded,
+                    query_tokens,
+                    # Rank the whole corpus, then let the post-rank policy cut it:
+                    # truncating first would let one long page eat every slot before
+                    # dedupe could see it.
+                    limit=len(self._folded),
+                    gate=gate,
+                    fallback=False,
+                )
+            ]
         # The coverage floor is applied to the QUERY's content terms, computed once
         # here rather than per chunk: `normalize_query` is idempotent and the scorer
         # applies it anyway, so this is the same vocabulary the score was built from.
@@ -457,10 +520,10 @@ class DocIndex:
 
         hits: list[DocHit] = []
         seen: set[str] = set()
-        for item in ranked:
-            chunk = self.chunks[item.index]
+        for index, score in ranked:
+            chunk = self.chunks[index]
             if needed:
-                folded = self._folded[item.index]
+                folded = self._folded[index]
                 covered = len(
                     content & (folded.haystack | folded.title | folded.identity)
                 )
@@ -470,7 +533,7 @@ class DocIndex:
                 if chunk.page_id in seen:
                     continue
                 seen.add(chunk.page_id)
-            hits.append(DocHit(chunk, self.pages[chunk.page_id], item.score))
+            hits.append(DocHit(chunk, self.pages[chunk.page_id], score))
             if len(hits) >= limit:
                 break
         return hits
