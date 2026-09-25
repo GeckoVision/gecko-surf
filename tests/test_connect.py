@@ -570,3 +570,39 @@ def test_cli_probe_flag_is_wired_and_prints_to_stderr(capsys) -> None:
     assert code == 2
     assert captured.out == ""
     assert "invalid surface name" in captured.err
+
+
+def test_a_missing_serve_extra_names_the_command_to_type(monkeypatch: Any) -> None:
+    """The first command anybody runs after `gecko login`, and it used to traceback.
+
+    Measured 2026-09-25 against the PUBLISHED 0.11.0 in a clean venv: `pip install
+    gecko-surf` then `gecko connect bootcamp --probe` raised
+    `ModuleNotFoundError: No module named 'anyio'`. A learner reading that has no way
+    to know the answer is an extra on a package they did install, and it is step one
+    of the funnel.
+    """
+    import builtins
+
+    from gecko import connect as connect_mod
+
+    real = builtins.__import__
+
+    def refuse_the_extra(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name in ("anyio", "mcp") or name.startswith(("anyio.", "mcp.")):
+            raise ImportError(f"No module named {name!r}")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_the_extra)
+
+    for call in (
+        lambda: connect_mod.probe("bootcamp"),
+        lambda: connect_mod.connect("bootcamp"),
+    ):
+        with pytest.raises(connect_mod.ConnectError) as caught:
+            call()
+        message = str(caught.value)
+        assert "serve" in message, "the message must name the extra"
+        assert "gecko-surf[serve]" in message, "and the exact thing to install"
+        assert "anyio" not in message, (
+            "a transitive dependency is not the user's problem"
+        )

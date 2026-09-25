@@ -49,6 +49,32 @@ class ConnectError(Exception):
     """A connect-path failure. NEVER carries a key — only the ref, host, or reason."""
 
 
+#: `connect` needs the MCP transport stack, which ships with the `serve` extra and not
+#: with the bare package. This is the FIRST command anybody runs after `gecko login`, so
+#: a bare `ModuleNotFoundError: anyio` traceback is the activation funnel dying at step
+#: one. Measured 2026-09-25 against the published 0.11.0 from a clean venv: that is
+#: exactly what `pip install gecko-surf` then `gecko connect` produces.
+SERVE_EXTRA_HINT = (
+    "`gecko connect` needs the MCP transport, which ships with the serve extra.\n"
+    '  Install it:  uv tool install "gecko-surf[serve]"\n'
+    "  In a project: uv sync --extra serve   (or: uv pip install 'gecko-surf[serve]')\n"
+    "Quote the brackets: zsh treats them as a glob."
+)
+
+
+def _require_serve_extra() -> None:
+    """Fail with the command to type, rather than a traceback naming a transitive dep.
+
+    A student reading `ModuleNotFoundError: No module named 'anyio'` has no way to know
+    that the answer is an extra on a package they did install.
+    """
+    try:
+        import anyio  # noqa: F401
+        import mcp  # noqa: F401
+    except ImportError as exc:
+        raise ConnectError(SERVE_EXTRA_HINT) from exc
+
+
 def surface_url(surface: str, *, host: str = DEFAULT_HOST) -> str:
     """The hosted MCP endpoint for ``surface``.
 
@@ -216,6 +242,7 @@ def _reason(leaf: BaseException) -> str:
 async def serve_connect(url: str, headers: dict[str, str]) -> None:
     """Own both transports and bridge them. Imports are local so the CLI's other
     subcommands never pay for the MCP transport stack."""
+    _require_serve_extra()
     from mcp.client.streamable_http import streamablehttp_client
     from mcp.server.stdio import stdio_server
 
@@ -233,6 +260,7 @@ async def _probe(url: str, headers: dict[str, str]) -> tuple[str, str, int]:
     ``(server_name, server_version, tool_count)``. This exercises the exact path a bridged
     client would — key, reach, TLS, auth, handshake — but ends instead of serving, so it is
     runnable from a plain terminal. Raises on any failure (mapped by the caller)."""
+    _require_serve_extra()
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
@@ -259,6 +287,7 @@ def probe(
     initialize + list_tools and exits — so ``gecko connect <surface> --probe`` gives a
     yes/no answer from a terminal, no MCP client needed. Raises :class:`ConnectError` on
     any failure, mapped from the transport by :func:`terminal_error`."""
+    _require_serve_extra()
     import anyio
 
     url = surface_url(surface, host=host)
@@ -278,6 +307,7 @@ def connect(
     resolver: ChainResolver | None = None,
 ) -> None:
     """Resolve the sealed key and serve ``surface`` over stdio. Blocks until EOF."""
+    _require_serve_extra()
     import anyio
 
     url = surface_url(surface, host=host)
