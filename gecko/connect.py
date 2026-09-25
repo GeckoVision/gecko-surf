@@ -239,6 +239,69 @@ def _reason(leaf: BaseException) -> str:
     return f"{name}: {message}" if message else name
 
 
+def _preflight(url: str, *, timeout: float = 4.0) -> ConnectError | None:
+    """Ask the mount a cheap question first, so three failures stop reading as one.
+
+    WHY THIS EXISTS. `terminal_error` maps a status code correctly, and never sees one:
+    the MCP client raises `McpError`, which carries no `.response`, so a missing surface
+    (404), a missing key (401) and a dead network all fall through to the same
+    "could not reach the hosted surface" line. Measured 2026-09-25 against the live
+    host: a bare GET already tells the three apart — an open mount answers 406, a gated
+    one 401, an unknown one 404. So we ask before opening the session.
+
+    FAILS OPEN on purpose. If the preflight itself cannot run, it returns None and the
+    real connection proceeds: a diagnostic that blocks the thing it is diagnosing is
+    worse than no diagnostic.
+    """
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = response.status
+    except urllib.error.HTTPError as error:
+        status = error.code
+    except Exception:
+        return None  # fail open: let the real connection produce the real error
+
+    if status == 404:
+        return ConnectError(
+            f"no surface at {url}.\n"
+            f"  Live surfaces: {_surface_names(url) or 'could not be listed'}\n"
+            "  Then: gecko connect <surface> --probe"
+        )
+    if status in (401, 403):
+        return ConnectError(
+            f"that surface needs a Gecko key and none was accepted (HTTP {status}).\n"
+            "  Run `gecko login` — it seals the key in your OS keychain and never prints it.\n"
+            "  If you have logged in, your account may not be enabled for this surface yet."
+        )
+    return None
+
+
+def _surface_names(url: str, *, timeout: float = 4.0) -> str:
+    """The host's own list of mounts, for a "did you mean". Never hardcoded."""
+    import json
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    try:
+        with urllib.request.urlopen(
+            f"{parts.scheme}://{parts.netloc}/", timeout=timeout
+        ) as reply:
+            listed = json.loads(reply.read().decode("utf-8"))
+    except Exception:
+        return ""
+    names = [
+        str(entry.get("name"))
+        for entry in listed.get("surfaces", [])
+        if entry.get("name")
+    ]
+    return ", ".join(sorted(names))
+
+
 async def serve_connect(url: str, headers: dict[str, str]) -> None:
     """Own both transports and bridge them. Imports are local so the CLI's other
     subcommands never pay for the MCP transport stack."""
@@ -291,7 +354,13 @@ def probe(
     import anyio
 
     url = surface_url(surface, host=host)
+    # The KEY first, then the network. A missing sealed key is a local fact and must
+    # not cost a round trip — nor be reported as "the surface rejected your key",
+    # which is what a preflight-first order says when there is no key to reject.
     headers = client_headers(resolve_key(resolver))
+    named = _preflight(url)
+    if named is not None:
+        raise named
     try:
         return anyio.run(_probe, url, headers)
     except (KeyboardInterrupt, SystemExit, ConnectError):

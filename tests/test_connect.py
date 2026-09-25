@@ -606,3 +606,56 @@ def test_a_missing_serve_extra_names_the_command_to_type(monkeypatch: Any) -> No
         assert "anyio" not in message, (
             "a transitive dependency is not the user's problem"
         )
+
+
+def test_a_missing_surface_a_missing_key_and_a_dead_network_read_differently(
+    monkeypatch: Any,
+) -> None:
+    """They used to be one line, and the server always knew the difference.
+
+    Measured 2026-09-25 against the live host: `gecko connect <x> --probe` printed
+    `could not reach the hosted surface — McpError: Session terminated` for an unknown
+    surface, for a gated one with no key, AND for a dead network. The status code was
+    never reached, because `McpError` carries no `.response`. A student who typos a
+    surface name should not get the same message as one who forgot to log in.
+    """
+    import urllib.error
+
+    from gecko import connect as connect_mod
+
+    def answering(status: int) -> Any:
+        def _open(request: Any, timeout: float = 0.0) -> Any:
+            raise urllib.error.HTTPError(
+                getattr(request, "full_url", ""), status, "", {}, None
+            )
+
+        return _open
+
+    monkeypatch.setattr(connect_mod, "_surface_names", lambda *a, **k: "alpha, beta")
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", answering(404))
+    missing = connect_mod._preflight("https://example.test/nope/mcp")
+    assert missing is not None and "no surface" in str(missing)
+    assert "alpha, beta" in str(missing), "a 404 must say what DOES exist"
+
+    monkeypatch.setattr(urllib.request, "urlopen", answering(401))
+    gated = connect_mod._preflight("https://example.test/paid/mcp")
+    assert gated is not None and "gecko login" in str(gated)
+    assert "no surface" not in str(gated), "a key problem is not a missing surface"
+
+    assert str(missing) != str(gated), "the two most common failures must differ"
+
+
+def test_the_preflight_fails_open(monkeypatch: Any) -> None:
+    """A diagnostic that blocks the thing it diagnoses is worse than no diagnostic."""
+    import urllib.request
+
+    from gecko import connect as connect_mod
+
+    def explode(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("the preflight itself is broken")
+
+    monkeypatch.setattr(urllib.request, "urlopen", explode)
+    assert connect_mod._preflight("https://example.test/any/mcp") is None
