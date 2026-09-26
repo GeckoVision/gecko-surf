@@ -19,7 +19,7 @@ status, never the text, the username, or the chat id.
 plus what we can say about them; the buyer is an address the person typed, because
 there is no wallet here to look one up in.
 
-**Fail closed on the secret.** ``TELEGRAM_WEBHOOK_SECRET`` unset means the route is not
+**Fail closed on the secret.** ``TELEGRAM_PAYBOT_WEBHOOK`` unset means the route is not
 mounted at all — :func:`telegram_routes` returns an empty list, exactly as
 ``build_course_surface`` returns ``None`` rather than mounting an empty corpus. An
 unset secret can therefore never be read as "allow everyone", because there is no door
@@ -70,7 +70,7 @@ WEBHOOK_PATH = "/telegram/webhook"
 #: ``setWebhook``). Lowercase because that is how ASGI/Starlette normalises it.
 SECRET_HEADER = "x-telegram-bot-api-secret-token"
 
-WEBHOOK_SECRET_ENV = "TELEGRAM_WEBHOOK_SECRET"
+WEBHOOK_SECRET_ENV = "TELEGRAM_PAYBOT_WEBHOOK"
 
 #: An update is a small JSON envelope. Capped before parsing because this is an
 #: unauthenticated-until-the-header-checks door on a public host.
@@ -253,10 +253,10 @@ def build_telegram_webhook(
 
     ``None`` — and therefore no route — whenever any of three things is missing:
 
-    * no secret (explicit or ``TELEGRAM_WEBHOOK_SECRET``): an open webhook would let
+    * no secret (explicit or ``TELEGRAM_PAYBOT_WEBHOOK``): an open webhook would let
       anyone drive the bot, so the absence of a secret closes the door rather than
       widening it;
-    * no way to reply (explicit ``sender`` or ``TELEGRAM_BOT_TOKEN``): a route that
+    * no way to reply (explicit ``sender`` or ``TELEGRAM_PAYBOT_TOKEN``): a route that
       accepts updates and answers nobody looks healthy and is not;
     * no ``engine``: a webhook with nothing behind it can only answer errors, which
       reads to a person as "the bot is broken" rather than "the host is misconfigured".
@@ -298,7 +298,7 @@ def telegram_routes(
         logger.info(
             "telegram webhook NOT mounted: set %s and %s to serve it",
             WEBHOOK_SECRET_ENV,
-            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_PAYBOT_TOKEN",
         )
         return []
     from starlette.requests import Request

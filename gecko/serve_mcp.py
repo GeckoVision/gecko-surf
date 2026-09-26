@@ -657,7 +657,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     # surface built above, so a person in a chat and an agent over MCP get the same
     # answers and the same refusals.
     #
-    # It mounts ONLY when TELEGRAM_WEBHOOK_SECRET and TELEGRAM_BOT_TOKEN both hold real
+    # It mounts ONLY when TELEGRAM_PAYBOT_WEBHOOK and TELEGRAM_PAYBOT_TOKEN both hold real
     # values; otherwise `telegram_routes` returns [] and the path 404s like any
     # unregistered route. An unset secret cannot mean "allow everyone" because there is
     # no door to be permissive at (see gecko.telegram_webhook).

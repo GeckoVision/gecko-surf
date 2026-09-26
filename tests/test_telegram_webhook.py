@@ -5,7 +5,7 @@ the REAL ``OrquestraCatalogSurface`` with an injected RPC, and nothing here touc
 socket. What the file is really asserting, in order of how much it would cost to get
 wrong:
 
-1. **Fail closed on the secret.** No ``TELEGRAM_WEBHOOK_SECRET`` ⇒ no route at all
+1. **Fail closed on the secret.** No ``TELEGRAM_PAYBOT_WEBHOOK`` ⇒ no route at all
    (404), never an open one. A wrong/absent header ⇒ 403 before the body is read.
 2. **Control plane (invariant #1).** A message's text, the sender's name and the chat
    id reach no log, no store, and no field on the webhook object. Asserted against the
@@ -487,7 +487,7 @@ def test_the_env_alone_mounts_the_route_and_replies(monkeypatch) -> None:
     """The plumbing the deploy actually uses: two env vars, no injection.
 
     Every other test here injects a sender, which proves the logic and not the wiring.
-    This one sets only ``TELEGRAM_WEBHOOK_SECRET`` + ``TELEGRAM_BOT_TOKEN`` — what SSM
+    This one sets only ``TELEGRAM_PAYBOT_WEBHOOK`` + ``TELEGRAM_PAYBOT_TOKEN`` — what SSM
     provides — and asserts a real ``sendMessage`` was assembled. The POST helper is
     replaced, so no packet leaves.
     """
