@@ -38,3 +38,4 @@ most — an ADR that does not forbid anything did not decide anything.
 | | |
 |---|---|
 | [2026-09-25](2026-09-25-buildcall-fourth-adapter-seam.md) | `BuildCall` is the fourth adapter seam, and the build default moves in-engine |
+| [2026-09-26](2026-09-26-windowless-hosts-sign-in-the-users-wallet.md) | **Proposed.** On a surface with no signing window, the user's own wallet asks us for the transaction (Solana Pay). Custody paths refused or gated |
