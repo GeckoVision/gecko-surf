@@ -28,6 +28,7 @@ __all__ = [
     "user_agent",
     "validate_rpc_url",
     "default_rpc_call",
+    "post_json",
 ]
 
 # A JSON-RPC caller: (rpc_url, method, params) -> the parsed response dict.
@@ -87,8 +88,16 @@ def validate_rpc_url(rpc_url: str) -> None:
         )
 
 
-def _http_post_json(url: str, body: bytes) -> dict[str, Any]:
-    """POST ``body`` as JSON and parse the response. Seam kept tiny so tests inject here."""
+def post_json(url: str, body: bytes) -> dict[str, Any]:
+    """POST ``body`` as JSON and parse the response. Seam kept tiny so tests inject here.
+
+    PUBLIC because it is the canonical JSON-over-HTTP POST for the whole engine: one
+    Content-Type, one honest User-Agent, one timeout. A second copy of this in another
+    module is how those three quietly diverge, so any control-plane JSON POST (JSON-RPC,
+    a Bot API call) comes through here. The caller owns URL validation — JSON-RPC checks
+    the scheme (:func:`validate_rpc_url`), and a caller whose host is a constant has
+    nothing to validate.
+    """
     req = urllib.request.Request(
         url,
         data=body,
@@ -96,6 +105,12 @@ def _http_post_json(url: str, body: bytes) -> dict[str, Any]:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 - scheme validated
         return json.loads(resp.read())  # type: ignore[no-any-return]
+
+
+#: The original private name, kept as an alias because four modules and several tests
+#: patch ``gecko.rpc._http_post_json`` to prove a path never reaches the wire. Renaming
+#: it would silently disarm those guards, which is the opposite of what a rename is for.
+_http_post_json = post_json
 
 
 def default_rpc_call(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:

@@ -1273,6 +1273,7 @@ def build_multi_surface_app(
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
+    extra_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     require_gecko_key: bool | None = None,
     gated_surfaces: Iterable[str] | None = None,
@@ -1300,6 +1301,13 @@ def build_multi_surface_app(
     ``registry_routes`` optionally appends the Gecko registry HTTP surface (built via
     ``gecko.registry.api.registry_routes``) — anonymous free-surface fetch + the
     premium 402 entitlement gate + OTP key issuance, at ``/registry/...``.
+
+    ``extra_routes`` appends any other plain Starlette routes the host wants at the
+    ROOT, alongside ``/healthz``. Generic on purpose: a surface that is not an MCP mount
+    (the Telegram webhook, ``gecko.telegram_webhook.telegram_routes``) hands back a list
+    of routes and the transport never imports it, so this module stays ignorant of what
+    it is serving. An empty list — which is how an unconfigured surface says "do not
+    mount me" — leaves the route table byte-identical.
 
     ``background_tasks`` are long-lived coroutine factories started on app startup and
     cancelled on shutdown (e.g. the pay.sh catalog self-refresh drift-watch). They run for
@@ -1915,6 +1923,10 @@ def build_multi_surface_app(
     routes.append(Mount(f"/{META_SURFACE_NAME}", app=meta_sub))
     if registry_routes:
         routes.extend(registry_routes)
+    # Root-level non-MCP routes (see `extra_routes`). AFTER the mounts, so a caller can
+    # never shadow a surface path with one of these.
+    if extra_routes:
+        routes.extend(extra_routes)
 
     @asynccontextmanager
     async def _lifespan(_app: Starlette) -> Any:
@@ -2029,6 +2041,7 @@ def serve_multi_http(
     public_url: str | None = None,
     enforce: EnforceMode | None = None,
     registry_routes: list[Any] | None = None,
+    extra_routes: list[Any] | None = None,
     background_tasks: list[Callable[[], Coroutine[Any, Any, None]]] | None = None,
     gated_surfaces: Iterable[str] | None = None,
     unlisted_surfaces: Iterable[str] | None = None,
@@ -2037,8 +2050,9 @@ def serve_multi_http(
 
     ``enforce`` is threaded to the risk gate on every surface; ``None`` uses the hosted
     ``block`` default (see ``build_multi_surface_app``). ``registry_routes``,
-    ``background_tasks``, ``gated_surfaces`` (which mounts the Gecko-key gate applies
-    to) and ``unlisted_surfaces`` (served, never advertised) are forwarded unchanged
+    ``extra_routes`` (root-level non-MCP routes), ``background_tasks``,
+    ``gated_surfaces`` (which mounts the Gecko-key gate applies to) and
+    ``unlisted_surfaces`` (served, never advertised) are forwarded unchanged
     (see ``build_multi_surface_app``)."""
     import uvicorn
 
@@ -2051,6 +2065,7 @@ def serve_multi_http(
         public_url=public_url,
         enforce=enforce,
         registry_routes=registry_routes,
+        extra_routes=extra_routes,
         background_tasks=background_tasks,
         gated_surfaces=gated_surfaces,
         unlisted_surfaces=unlisted_surfaces,

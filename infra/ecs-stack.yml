@@ -493,6 +493,16 @@ Resources:
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_PROVIDER_SYNC_URL
             - Name: GECKO_PROVIDER_SYNC_TOKEN
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_PROVIDER_SYNC_TOKEN
+            # Telegram chat surface (gecko/telegram_webhook.py). BOTH are secrets: the
+            # bot token is a BEARER CREDENTIAL (whoever holds it controls the bot and
+            # reads every message sent to it), and the webhook secret is the only thing
+            # telling a real Telegram delivery from a fabricated one. Either unset or
+            # the __unset__ sentinel => the route is not mounted and /telegram/webhook
+            # 404s, so a sentinel deploy boots clean with the door shut.
+            - Name: TELEGRAM_BOT_TOKEN
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/TELEGRAM_BOT_TOKEN
+            - Name: TELEGRAM_WEBHOOK_SECRET
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/TELEGRAM_WEBHOOK_SECRET
           LogConfiguration:
             LogDriver: awslogs
             Options:
