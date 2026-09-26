@@ -138,12 +138,12 @@ declare -A PARAMS=(
   # not mounted at all and the path 404s: a webhook with no secret would let anyone
   # drive the bot, and one with no token would accept updates and answer nobody.
   #
-  # BOTH ARE SECRETS, and one of them is easy to under-rate. TELEGRAM_BOT_TOKEN is a
+  # BOTH ARE SECRETS, and one of them is easy to under-rate. TELEGRAM_PAYBOT_TOKEN is a
   # BEARER CREDENTIAL, not config: whoever holds it controls the bot, can read every
   # message sent to it, and can repoint its webhook at their own server. Leaking it is
   # a full takeover of the chat surface, so it is SecureString like everything else
   # here, never logged, and never echoed in an error (the URL contains it).
-  # TELEGRAM_WEBHOOK_SECRET is the only thing separating a real Telegram delivery from
+  # TELEGRAM_PAYBOT_WEBHOOK is the only thing separating a real Telegram delivery from
   # a stranger POSTing a fabricated update; it is compared with hmac.compare_digest.
   #
   # The sentinel keeps the route ABSENT (404, identical to a path that was never
@@ -154,12 +154,12 @@ declare -A PARAMS=(
   #
   # After pushing real values, point Telegram at the host ONCE (founder-run; keep the
   # token out of shell history):
-  #   curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  #   curl -sS "https://api.telegram.org/bot$TELEGRAM_PAYBOT_TOKEN/setWebhook" \
   #     -H 'Content-Type: application/json' \
   #     -d '{"url":"https://mcp.geckovision.tech/telegram/webhook",
-  #          "secret_token":"<TELEGRAM_WEBHOOK_SECRET>"}'
-  [TELEGRAM_BOT_TOKEN]="TELEGRAM_BOT_TOKEN"
-  [TELEGRAM_WEBHOOK_SECRET]="TELEGRAM_WEBHOOK_SECRET"
+  #          "secret_token":"<TELEGRAM_PAYBOT_WEBHOOK>"}'
+  [TELEGRAM_PAYBOT_TOKEN]="TELEGRAM_PAYBOT_TOKEN"
+  [TELEGRAM_PAYBOT_WEBHOOK]="TELEGRAM_PAYBOT_WEBHOOK"
 )
 
 echo "==> Region:     $REGION"
@@ -233,8 +233,8 @@ declare -A REQUIRED_AT_BOOT=(
   # Sentinels keep /telegram/webhook UNMOUNTED (404). Either one missing is enough:
   # an unset secret closes the door rather than widening it, and an unset bot token
   # means there is no way to reply, which is not a surface worth serving.
-  [TELEGRAM_BOT_TOKEN]="__unset__"
-  [TELEGRAM_WEBHOOK_SECRET]="__unset__"
+  [TELEGRAM_PAYBOT_TOKEN]="__unset__"
+  [TELEGRAM_PAYBOT_WEBHOOK]="__unset__"
 )
 
 SKIPPED=()

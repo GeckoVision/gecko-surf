@@ -47,7 +47,7 @@ logger = logging.getLogger("gecko.telegram_api")
 #: update — that is the whole SSRF posture of this surface.
 TELEGRAM_API_HOST = "https://api.telegram.org"
 
-BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+BOT_TOKEN_ENV = "TELEGRAM_PAYBOT_TOKEN"
 
 #: The SSM boot sentinel (infra/push-ssm-params.sh). An ECS ``secrets:`` ValueFrom must
 #: resolve or the task dies at boot, so an unfilled param is pushed with this
