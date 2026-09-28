@@ -46,6 +46,10 @@ from ..tools import tool_annotations
 #: Where the course markdown lives on this server. A deploy sets it; nothing else does.
 COURSE_ROOT_ENV = "GECKO_COURSE_ROOT"
 
+#: The cohort commit the corpus at ``GECKO_COURSE_ROOT`` was taken from. The image sets
+#: it from the same build argument that chose the files, so the two cannot disagree.
+COURSE_COMMIT_ENV = "GECKO_COURSE_COMMIT"
+
 #: What counts as the course. An ALLOW list, because a corpus taken from a
 #: repository otherwise gets the repository's machinery: on 2026-09-24 the top hit
 #: for "how do I install uv" was `.claude/skills/fix-my-setup/SKILL` and for "which
@@ -214,7 +218,12 @@ class CourseSurface:
 
     index: DocIndex
     pages_root: str = ""
+    #: The cohort commit these pages came from, stated so nobody has to infer it. On
+    #: 2026-09-28 the only way to tell production served last week's course was to
+    #: count its pages (219, the number the week-2 cohort gives).
+    commit: str = ""
     _titles: dict[str, str] = field(default_factory=dict, init=False)
+    _artifacts: dict[str, str] | None = field(default=None, init=False)
 
     surface_id = "gecko:course"
 
@@ -242,6 +251,16 @@ class CourseSurface:
             page_id: page.title for page_id, page in self.index.pages.items()
         }
 
+    def replace(self, index: DocIndex, *, commit: str) -> None:
+        """Serve a newer corpus in place: the mount, its routes and its sessions stay.
+
+        The titles are built before anything is assigned, so a request that lands
+        mid-swap sees the old corpus or the new one, never a mix it could cite.
+        """
+        titles = {page_id: page.title for page_id, page in index.pages.items()}
+        self.index, self._titles, self.commit = index, titles, commit
+        self._artifacts = None
+
     # -- tools ---------------------------------------------------------------
 
     # -- agent-readable text, for clients that cannot speak MCP ----------------
@@ -257,6 +276,10 @@ class CourseSurface:
         Built from ``self.index``, so a page the tools refuse to rank (a quiz) is a
         page these files cannot leak either. One corpus, one set of exclusions.
         """
+        # Cached, because the host now asks on every request (so a refreshed corpus
+        # reaches the files) and `llms-full.txt` is the whole course. `replace` clears it.
+        if self._artifacts is not None:
+            return self._artifacts
         files = {"llms.txt": self._llms_txt(), "llms-full.txt": self._llms_full_txt()}
         # ONE FILE PER PAGE, so the map is followable. `llms.txt` listed every page and
         # linked each one to its own id, which is not a URL: over plain HTTP the entire
@@ -266,6 +289,7 @@ class CourseSurface:
         # call it.
         for page_id, page in self.index.pages.items():
             files[f"{PAGES_PREFIX}/{page_id}.md"] = f"# {page.title}\n\n{page.text}"
+        self._artifacts = files
         return files
 
     def _llms_txt(self) -> str:
@@ -282,6 +306,8 @@ class CourseSurface:
             "own words. An empty result means the course does not cover it yet.",
             "- Or fetch any single page at the link beside its title below.",
             "- Or fetch `llms-full.txt` beside this file for every page in one request.",
+            "",
+            f"Course commit: {self.commit or 'unknown'}",
             "",
             f"## Pages ({len(self._titles)})",
             "",
@@ -379,7 +405,12 @@ class CourseSurface:
             for page_id, title in sorted(self._titles.items())
             if page_id.startswith(prefix)
         ]
-        return {"prefix": prefix, "count": len(rows), "pages": rows}
+        return {
+            "prefix": prefix,
+            "commit": self.commit,
+            "count": len(rows),
+            "pages": rows,
+        }
 
 
 def course_root() -> Path | None:
@@ -391,7 +422,9 @@ def course_root() -> Path | None:
     return root if root.is_dir() else None
 
 
-def build_course_surface(root: Path | None = None) -> CourseSurface | None:
+def build_course_surface(
+    root: Path | None = None, *, commit: str | None = None
+) -> CourseSurface | None:
     """The surface, or ``None`` when there is no corpus to serve.
 
     Returning ``None`` rather than an empty surface is the whole point: an empty
@@ -399,7 +432,10 @@ def build_course_surface(root: Path | None = None) -> CourseSurface | None:
     from a correct refusal and is actually a broken deploy. A mount that does not
     appear is a deploy problem somebody notices.
     """
-    root = root or course_root()
+    if root is None:
+        root = course_root()
+        if commit is None:
+            commit = os.environ.get(COURSE_COMMIT_ENV, "").strip()
     if root is None or not root.is_dir():
         return None
     try:
@@ -416,4 +452,6 @@ def build_course_surface(root: Path | None = None) -> CourseSurface | None:
         return None
     if not pages:
         return None
-    return CourseSurface(index=DocIndex(pages), pages_root=str(root))
+    return CourseSurface(
+        index=DocIndex(pages), pages_root=str(root), commit=commit or ""
+    )

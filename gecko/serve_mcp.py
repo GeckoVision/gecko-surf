@@ -54,7 +54,8 @@ from .jito_surface import build_jito_surface, build_jito_tips_surface
 from .kora_surface import build_kora_catalog_surface, build_kora_surface
 from .mcp_server import McpSurface
 from .provider_sync import fetch_provider_surfaces
-from .providers.course_surface import build_course_surface
+from .providers import course_refresh
+from .providers.course_surface import CourseSurface, build_course_surface
 from .providers.catalog_surface import OrquestraCatalogSurface
 from .telegram_webhook import WEBHOOK_PATH as TELEGRAM_WEBHOOK_PATH
 from .telegram_webhook import telegram_routes
@@ -675,6 +676,23 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             probe=challenge_probe,
         )
 
+    workers = [_paysh_worker]
+    # The course follows its cohort's HEAD instead of the commit the image was built
+    # with (gecko.providers.course_refresh). Off when the interval is 0 or no course.
+    course = dict(surfaces).get("course")
+    course_interval = course_refresh.refresh_seconds()
+    if isinstance(course, CourseSurface) and course_interval > 0:
+
+        async def _course_worker() -> None:
+            await course_refresh.watch_loop(course, interval=course_interval)
+
+        workers.append(_course_worker)
+        logger.info(
+            "course refresh every %ss from %s",
+            course_interval,
+            course.commit[:12] or "unknown",
+        )
+
     serve_multi_http(
         surfaces,
         host="0.0.0.0",  # noqa: S104 - bind all interfaces; the ALB fronts it
@@ -689,7 +707,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
         ),
         extra_routes=telegram,
-        background_tasks=[_paysh_worker],
+        background_tasks=workers,
         # Gate ONLY the paid surfaces (env can override; see GATED_SURFACES). Without
         # this, GECKO_REQUIRE_KEY=on would 403 the humanitarian + keyless demo mounts too.
         gated_surfaces=gated,
