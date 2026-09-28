@@ -391,10 +391,20 @@ def test_the_host_refuses_an_artifact_name_it_cannot_place() -> None:
                 "pages/ok.md": "# fine",
             }
 
+    from starlette.testclient import TestClient
+
     app = build_multi_surface_app([("h", Hostile())])
-    # Each surface is MOUNTED, so its routes live under the mount rather than on the
-    # app. Reading `app.routes` alone finds nothing and the assertion passes vacuously.
-    mount = next(r for r in app.routes if getattr(r, "path", "") == "/h")
-    served = {getattr(route, "path", "") for route in mount.routes}
-    assert "/pages/ok.md" in served
-    assert not [p for p in served if "etc" in p or ".." in p or p.endswith(".sh")]
+    # Asked over HTTP, not read off the route table: a folder is now ONE `{rest:path}`
+    # route looked up per request (so a refreshed corpus reaches its files), and the
+    # refusal has to hold for whatever name arrives in that path, not only for the
+    # names the surface listed at mount.
+    with TestClient(app) as client:
+        assert client.get("/h/pages/ok.md").status_code == 200
+        assert client.get("/h/pages/run.sh").status_code == 404
+        assert client.get("/h/etc/passwd").status_code == 404
+        # Raw, so the client cannot normalise the dots away before the route sees them.
+        # A guard ahead of the route answers 403 for it today; either refusal is fine,
+        # serving the content is not.
+        raw = client.get("/h/pages/%2E%2E/%2E%2E/secret.md")
+        assert raw.status_code in (403, 404)
+        assert raw.text != "no"

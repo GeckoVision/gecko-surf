@@ -63,11 +63,18 @@ COPY --from=course /course ./course
 RUN chown -R gecko:gecko /app
 USER gecko
 
+# The commit the course stage fetched, so the server can say which course it serves
+# and its refresher does not re-download what is already here.
+# Declared here, not at the top of the stage: a new commit per deploy would
+# otherwise rebuild every layer above it.
+ARG COURSE_REF=main
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
-    GECKO_COURSE_ROOT=/app/course
+    GECKO_COURSE_ROOT=/app/course \
+    GECKO_COURSE_COMMIT=${COURSE_REF}
 
 EXPOSE 8000
 

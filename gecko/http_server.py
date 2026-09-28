@@ -1119,19 +1119,43 @@ def build_http_app(
     # served an MCP endpoint and nothing a plain HTTP agent could read. Duck-typed on
     # purpose: a surface opts in by having `artifacts()`, and the host stays ignorant
     # of what kind of thing it is serving.
+    #
+    # LOOKED UP PER REQUEST, not frozen at mount. A surface whose corpus refreshes (the
+    # course follows its cohort's HEAD) otherwise kept serving the map it booted with,
+    # and a page published after boot had no route at all. One route per top-level
+    # name, and one `{rest:path}` route per folder, so a new page under an existing
+    # folder is reachable; the shape check runs on every request, against the name
+    # actually asked for.
     own_artifacts = getattr(surface, "artifacts", None)
     if not artifact_routes and callable(own_artifacts):
-        for rel, text in own_artifacts().items():
+
+        def _serve_own(rel: str) -> Any:
             media = _own_artifact_media(rel)
-            if media is None:
+            text = own_artifacts().get(rel) if media is not None else None
+            if text is None:
+                return PlainTextResponse("not found", status_code=404)
+            return Response(text, media_type=media)
+
+        seen_folders: set[str] = set()
+        for rel in own_artifacts():
+            if _own_artifact_media(rel) is None:
                 continue
+            folder, _, rest = rel.partition("/")
+            if not rest:
 
-            def _own_artifact_endpoint(
-                _request: Any, _text: str = text, _media: str = media
-            ) -> Any:
-                return Response(_text, media_type=_media)
+                def _own_file(_request: Any, _rel: str = rel) -> Any:
+                    return _serve_own(_rel)
 
-            artifact_routes.append(Route("/" + rel, endpoint=_own_artifact_endpoint))
+                artifact_routes.append(Route("/" + rel, endpoint=_own_file))
+            elif folder not in seen_folders:
+                seen_folders.add(folder)
+
+                def _own_folder(request: Any, _folder: str = folder) -> Any:
+                    return _serve_own(f"{_folder}/{request.path_params['rest']}")
+
+                artifact_routes.append(
+                    Route(f"/{folder}/{{rest:path}}", endpoint=_own_folder)
+                )
 
     # WHICH CODE IS LIVE. `/healthz` answers "is it up", which is a different and much
     # weaker question — twice in one day the only way to tell whether a merged change had
