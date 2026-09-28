@@ -27,6 +27,21 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra serve --extra events --extra solana
 
 # -----------------------------------------------------------------------------
+# The COURSE corpus for /course/mcp: the PUBLISHED cohort repository, the same files a
+# student clones, so no solution or answer key can reach the image by this path.
+# The course surface refuses to mount without a corpus, which is how production served
+# a 404 at /course/mcp on 2026-09-28: the env was unset and the files were never here.
+# COURSE_REF is a commit, pinned by infra/deploy.sh from the cohort's HEAD, so the
+# layer cache cannot serve last week's course under an unchanged "main".
+
+FROM python:3.12-slim AS course
+ARG COURSE_REF=main
+RUN python -c "import io, tarfile, urllib.request; \
+url = 'https://codeload.github.com/Gecko-Academy/dev3pack-cohort-2026-09/tar.gz/${COURSE_REF}'; \
+tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(url, timeout=120).read())).extractall('/tmp/c', filter='data')" \
+    && mv /tmp/c/* /course
+
+# -----------------------------------------------------------------------------
 
 FROM python:3.12-slim AS runner
 
@@ -43,6 +58,7 @@ COPY gecko ./gecko
 # examples/ wholesale means a new surface's spec can never be left out of the image.
 # Control plane only: no payloads, no secrets.
 COPY examples ./examples
+COPY --from=course /course ./course
 
 RUN chown -R gecko:gecko /app
 USER gecko
@@ -50,7 +66,8 @@ USER gecko
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PORT=8000 \
+    GECKO_COURSE_ROOT=/app/course
 
 EXPOSE 8000
 

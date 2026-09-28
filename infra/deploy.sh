@@ -142,8 +142,18 @@ if [[ "$SKIP_BUILD" == false ]]; then
 
   # Fargate runs amd64 unless you opt in to Graviton (we don't), so build amd64
   # explicitly even on arm64 dev machines.
+  # The course served at /course/mcp is the cohort as published NOW. A commit, not
+  # "main": an unchanged build arg lets the layer cache ship last week's course.
+  COURSE_REF=$(git ls-remote https://github.com/Gecko-Academy/dev3pack-cohort-2026-09 HEAD | cut -f1)
+  if [[ ! "$COURSE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: could not resolve the cohort repository's HEAD; /course/mcp would not mount." >&2
+    exit 1
+  fi
+  echo "==> Course:      cohort @ $COURSE_REF"
+
   echo "==> Building Docker image (linux/amd64)..."
-  docker buildx build --platform linux/amd64 -t surfcall --load "$REPO_ROOT"
+  docker buildx build --platform linux/amd64 --build-arg COURSE_REF="$COURSE_REF" \
+    -t surfcall --load "$REPO_ROOT"
 
   docker tag surfcall "$FULL_IMAGE"
   docker tag surfcall "${ECR_URI}:${ENVIRONMENT}-latest"
