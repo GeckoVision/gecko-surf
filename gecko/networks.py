@@ -44,6 +44,7 @@ from typing import Literal, Mapping, cast, get_args
 __all__ = [
     "APPROVABLE_NETWORKS",
     "CATCH_ALL_SPELLINGS",
+    "DEFAULT_RPC_URLS",
     "LEGACY_NETWORK_ALIASES",
     "NETWORKS",
     "Network",
@@ -80,6 +81,18 @@ APPROVABLE_NETWORKS: frozenset[str] = frozenset(
 #: the corpus's name for the fail-closed bucket before this module existed; rows carrying
 #: it are already on disk and must stay readable.
 LEGACY_NETWORK_ALIASES: Mapping[str, Network] = MappingProxyType({"other": "unknown"})
+
+#: The public RPC to simulate against when a caller names a network but no URL. Only a
+#: PINNED constant may be defaulted: a caller-supplied URL must go through the SSRF guard
+#: first, because the hosted surfaces are unauthenticated and would otherwise fetch
+#: whatever address a stranger names. ``fork`` has no default — a fork is somebody's own
+#: node. Shared by ``prepare_purchase`` and ``prepare_instruction`` so one name always
+#: means one endpoint.
+DEFAULT_RPC_URLS: dict[str, str] = {
+    "mainnet": "https://api.mainnet-beta.solana.com",
+    "devnet": "https://api.devnet.solana.com",
+    "testnet": "https://api.testnet.solana.com",
+}
 
 
 def _check_vocabulary_is_coherent() -> None:
