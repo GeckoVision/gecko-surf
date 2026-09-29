@@ -192,6 +192,23 @@ def bootcamp_team_mounts() -> tuple[str, ...]:
     return tuple(names[:MAX_TEAM_MOUNTS])
 
 
+#: The class door. Founder ruling 28 Sep 2026: the capstone runs through `/bootcamp/mcp`
+#: with each student on their own Gecko key (`gecko login`, then `gecko keys grant
+#: <account> --surface bootcamp`), so every call is attributable and the Friday mainnet
+#: purchases are tied to a person. It answered 200 with no key until this.
+CLASS_SURFACE = "bootcamp"
+
+
+def default_gated_surfaces() -> frozenset[str]:
+    """The hosted default gate: the paid surfaces, the class mount, every team mount.
+
+    A team mount is the same surface as ``bootcamp`` under another name, so gating one
+    and not the others would leave the class door open at a different URL.
+    ``GECKO_GATED_SURFACES`` still overrides the whole set at deploy time.
+    """
+    return GATED_SURFACES | {CLASS_SURFACE} | frozenset(bootcamp_team_mounts())
+
+
 def resolve_unlisted_surfaces(default: frozenset[str] = frozenset()) -> frozenset[str]:
     """Which surfaces are served but never advertised.
 
@@ -623,7 +640,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
     # Resolve the gate SCOPE once (env override -> the hosted default) and reuse it for
     # every downstream decision, so the mounts, the registry store and this guard can
     # never read a different set.
-    gated = resolve_gated_surfaces(default=GATED_SURFACES)
+    gated = resolve_gated_surfaces(default=default_gated_surfaces())
     # BOOT GUARD (R2): a declared-PAID surface must never be served with the gate OFF.
     # Deliberately BEFORE any network work below, so a misconfigured deploy dies fast.
     assert_paid_surfaces_are_gated(surfaces, gated)
