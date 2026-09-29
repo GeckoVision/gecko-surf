@@ -31,6 +31,13 @@ from .tools import tool_annotations
 from typing import Any, Callable, Literal, Mapping
 
 from .error_overlay import remediation_for
+from .networks import (
+    APPROVABLE_NETWORKS,
+    DEFAULT_RPC_URLS,
+    UNKNOWN_NETWORK,
+    Network,
+    coerce_network,
+)
 from .program_errors import name_program_error
 from .pda import (
     ConstantPdaSeedNode,
@@ -96,6 +103,42 @@ def _refuse(
     code: PrepareInstructionRefusal, reason: str, **extra: Any
 ) -> dict[str, Any]:
     return {"refused": True, "code": code, "reason": reason, **extra}
+
+
+def resolve_network_rpc(
+    raw: Any, *, pinned_url: str | None, pinned_network: Network
+) -> tuple[Network, str | None, dict[str, Any] | None]:
+    """``(network, rpc_url, refusal)`` for an optional caller-named network.
+
+    Omitted, nothing changes: the pinned URL, which speaks for ``pinned_network``. Named
+    and equal to it, the pinned URL still wins, so a surface pinned to a private node
+    keeps using it. Named and different, the network's PUBLIC endpoint from
+    :data:`~gecko.networks.DEFAULT_RPC_URLS` is used; the caller never supplies a URL
+    here (an unauthenticated mount would become an SSRF proxy).
+
+    Anything else is refused rather than defaulted. ``prepare_purchase`` falls back to
+    mainnet on an unrecognised name, but there the caller can also be naming a node;
+    here a devnet request quietly simulated on mainnet is the exact failure this
+    argument exists to fix. ``fork`` is refused too: it has no public endpoint.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return pinned_network, pinned_url, None
+    asked = coerce_network(raw.strip() if isinstance(raw, str) else raw)
+    default = DEFAULT_RPC_URLS.get(asked)
+    if default is None:
+        return (
+            pinned_network,
+            None,
+            _refuse(
+                "argument-invalid",
+                f"`network` must be one of {', '.join(sorted(DEFAULT_RPC_URLS))}; "
+                "a fork has no public RPC and this tool takes no caller-supplied one",
+                allowed_networks=sorted(DEFAULT_RPC_URLS),
+            ),
+        )
+    if asked == pinned_network:
+        return asked, pinned_url, None
+    return asked, default, None
 
 
 def plan_accounts(
@@ -431,14 +474,25 @@ def prepare_instruction_result(
     build_call: BuildCall,
     rpc_call: RpcCall | None = None,
     rpc_url: str | None = None,
+    rpc_network: Network = UNKNOWN_NETWORK,
 ) -> dict[str, Any]:
     """Plan, build and simulate one instruction. Never raises for an answer.
 
     An expected outcome — an unknown instruction, an account nobody can derive, a
     simulation that reverts — comes back as a structured refusal carrying no transaction,
     because each is something the caller must handle rather than retry.
+
+    ``rpc_network`` is the network ``rpc_url`` speaks for; a caller's optional
+    ``network`` argument is resolved against it by :func:`resolve_network_rpc`. It
+    defaults to ``unknown`` because a library caller that did not say (a fork rehearsal
+    passes its fork's URL) must not have its result labelled mainnet.
     """
     args = arguments or {}
+    network, rpc_url, network_refusal = resolve_network_rpc(
+        args.get("network"), pinned_url=rpc_url, pinned_network=rpc_network
+    )
+    if network_refusal is not None:
+        return network_refusal
     program_id = str(args.get("program_id") or "").strip()
     instruction = str(args.get("instruction") or "").strip()
     values: Mapping[str, Any] = args.get("values") or {}
@@ -593,6 +647,9 @@ def prepare_instruction_result(
         "signed": False,
         "instruction": instruction,
         "program_id": program_id,
+        # Which chain the blockhash and the simulation came from. Stated, because bytes
+        # checked on devnet say nothing about mainnet and must never read as if they did.
+        "network": network,
         "fee_payer": fee_payer or payer,
         # Absent when the actor pays its own fee. Present, it is the warning a caller
         # cannot afford to miss: these bytes need TWO signatures, the relay's first.
@@ -674,6 +731,9 @@ def prepare_instruction_result(
                 program_id=program_id,
             )
             extra: dict[str, Any] = {
+                # An `AccountNotFound` means "not on THIS chain"; naming the chain is
+                # what tells the caller whether to fix the accounts or the network.
+                "network": network,
                 "error": value.get("err"),
                 "logs": (value.get("logs") or [])[-12:],
                 "accounts": resolved,
@@ -726,8 +786,8 @@ PREPARE_INSTRUCTION_TOOL = {
     ),
     "description": (
         "Build ANY instruction of ANY program in the catalog, with every PDA derived "
-        "for you, and get back UNSIGNED bytes plus a mainnet simulation. Nothing here "
-        "signs or broadcasts.\n"
+        "for you, and get back UNSIGNED bytes plus a simulation on mainnet, or on the "
+        "`network` you name. Nothing here signs or broadcasts.\n"
         "\n"
         "Pass `values` with everything you already hold: the accounts you own or chose, "
         "and EVERY declared argument. What you do not pass, this derives — and what it "
@@ -779,6 +839,20 @@ PREPARE_INSTRUCTION_TOOL = {
                     "as-is; the response says which of your names filled which seed."
                 ),
                 "additionalProperties": True,
+            },
+            "network": {
+                "type": "string",
+                # The one approvable set, like every `network` on this surface
+                # (tests/test_network_vocabulary.py). `fork` is in it and refused by
+                # resolve_network_rpc, as prepare_purchase refuses a fork with no URL.
+                "enum": sorted(APPROVABLE_NETWORKS),
+                "description": (
+                    "optional: the chain to fetch the blockhash from and simulate on. "
+                    "Omit it for mainnet. Name devnet for a devnet program or account: "
+                    "simulated on mainnet, an account that exists only on devnet comes "
+                    "back as `AccountNotFound`. `fork` is refused here, since a fork is "
+                    "your own node and this tool takes no RPC URL"
+                ),
             },
         },
         "required": ["program_id", "instruction", "payer"],

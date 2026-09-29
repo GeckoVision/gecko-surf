@@ -44,6 +44,7 @@ from ..orquestra_client import OrquestraClient, OrquestraClientError
 from ..artifact import instruction_encoding
 from ..orquestra_build import ORQUESTRA_MCP_URL, orquestra_seams
 from ..lifecycle import LIFECYCLE_TOOL, build_lifecycle
+from ..networks import Network
 from ..prepare_instruction import (
     DERIVE_ATA_TOOL,
     DERIVE_PDA_TOOL,
@@ -128,8 +129,12 @@ class OrquestraCatalogSurface:
     #: The RPC the simulation runs against. A FIELD, never an argument: this surface is
     #: unauthenticated, and a caller-supplied URL would turn it into an SSRF proxy. The
     #: purchase path solves the same problem with an injected `url_guard`; here there is
-    #: nothing to guard because the caller never gets to choose.
+    #: nothing to guard because the caller never gets to choose a URL. A caller MAY name
+    #: a `network`, which swaps in that network's pinned public endpoint
+    #: (`gecko.networks.DEFAULT_RPC_URLS`) — still never a URL of theirs.
     instruction_rpc_url: str = "https://api.mainnet-beta.solana.com"
+    #: The network `instruction_rpc_url` speaks for. Naming it keeps the pinned URL.
+    instruction_network: Network = "mainnet"
     #: The catalog MCP used to resolve a program ADDRESS to a project id. Injectable for
     #: the same reason every other transport here is: the path stays falsifiable offline.
     catalog_mcp: Any = None
@@ -556,7 +561,8 @@ class OrquestraCatalogSurface:
         produced a jurassic_fi `contribute` that simulates on mainnet at 21,368 CU.
 
         The RPC comes from the surface, never from ``args`` — see
-        :attr:`instruction_rpc_url`.
+        :attr:`instruction_rpc_url`. A caller's ``network`` only selects among pinned
+        endpoints.
         """
         if self.instruction_seams is None:
             self.instruction_seams = orquestra_seams()
@@ -567,6 +573,7 @@ class OrquestraCatalogSurface:
             build_call=build_call,
             rpc_call=self.purchase_rpc_call or default_rpc_call,
             rpc_url=self.instruction_rpc_url,
+            rpc_network=self.instruction_network,
         )
 
     def _read_accounts(self, args: dict[str, Any]) -> Any:

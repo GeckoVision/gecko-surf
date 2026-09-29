@@ -87,7 +87,13 @@ from .effects import describe_effects
 from .handoff import verify_handoff
 from .landing import RPC_COMMITMENT, block_height, latest_blockhash
 from .netguard import UnsafeUrlError, validate_public_url
-from .networks import APPROVABLE_NETWORKS, UNKNOWN_NETWORK, Network, coerce_network
+from .networks import (
+    APPROVABLE_NETWORKS,
+    DEFAULT_RPC_URLS,
+    UNKNOWN_NETWORK,
+    Network,
+    coerce_network,
+)
 from .pda import PdaDerivationError, derive_pda
 from .plan_refusals import PlanRefused, check_plan_accounts
 from .provider_config import ProgramSpec, load_packaged_provider
@@ -190,15 +196,9 @@ class WiredStore:
     note: str
 
 
-#: The public RPC to simulate against when the caller names a network but no URL. Only a
-#: PINNED constant may be defaulted here: a caller-supplied URL goes through the SSRF
-#: guard first, because this surface is unauthenticated and would otherwise fetch whatever
-#: address a stranger names. ``fork`` has no default — a fork is somebody's own node.
-DEFAULT_RPC_URLS: dict[str, str] = {
-    "mainnet": "https://api.mainnet-beta.solana.com",
-    "devnet": "https://api.devnet.solana.com",
-    "testnet": "https://api.testnet.solana.com",
-}
+# DEFAULT_RPC_URLS (the pinned public endpoint per network) lives in `gecko.networks`
+# and is imported above: `prepare_instruction` resolves the same names to the same
+# endpoints, and two copies of that table would drift.
 
 #: What each account IS in this instruction, in IDL order. ``writable``/``signer`` are the
 #: IDL's own flags; the phrase is what a human needs to read the plan and notice that the

@@ -103,7 +103,7 @@ package depends on it, which is worth a look before you add a caller.
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
 | `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
 | `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 23 · `access`, `caller`, `cli` +20 |
-| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 14 · `autonomous_purchase`, `corpus`, `fork_preflight` +11 |
+| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 16 · `autonomous_purchase`, `corpus`, `fork_preflight` +13 |
 | `notebookdoc` | A Jupyter notebook, projected onto markdown so a document corpus can rank it. | 1 · `doccorpus` |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
