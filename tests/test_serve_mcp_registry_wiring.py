@@ -68,3 +68,8 @@ def test_registry_store_includes_refugios_when_apikey_set(monkeypatch):
     store = serve_mcp._registry_store(surfaces)
     assert "refugios" in store.names()
     assert "refugios" in {name for name, _ in surfaces}
+
+
+def test_class_wallets_disabled_without_mongo(monkeypatch):
+    monkeypatch.delenv("MONGODB_URI", raising=False)
+    assert wiring.build_class_wallets_from_env() is None

@@ -89,7 +89,7 @@ package depends on it, which is worth a look before you add a caller.
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
-| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 4 · `authlogin`, `cli`, `http_server` +1 |
+| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 5 · `authlogin`, `cli`, `http_server` +2 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
 | `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 20 · `autonomous_purchase`, `instruction_build`, `prepare_purchase` +17 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `find_start`, `purchase_intent_eval`, `rankable` |
