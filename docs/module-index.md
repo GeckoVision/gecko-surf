@@ -2,7 +2,7 @@
 
 # Module index
 
-257 modules in `gecko/` (subpackages included), from their own docstrings.
+259 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -61,7 +61,7 @@ package depends on it, which is worth a look before you add a caller.
 | `entitlements` | Entitlements — which customer may access which surface, and how. | 2 · `binding`, `x402_pay` |
 | `error_overlay` | What to DO about a program error — Gecko's knowledge, and labelled as ours. | 1 · `prepare_instruction` |
 | `evaluate` | Task-based first-call-correct evaluation (generic, API-agnostic). | 1 · `fcc_eval` |
-| `events` | Usage-event instrumentation — the honest adoption metric AND the first | 9 · `capture`, `client`, `enforce` +6 |
+| `events` | Usage-event instrumentation — the honest adoption metric AND the first | 11 · `capture`, `client`, `enforce` +8 |
 | `evidence` | The control that has to light up before a measurement is allowed to be a result. | 2 · `retrieval_eval`, `score` |
 | `examples.colosseum` | Serve the Colosseum Copilot API to your agent — first-call-correct, BYOK. | 1 · `serve_mcp` |
 | `examples.jupiter` | Serve the Jupiter Swap API to your agent — first-call-correct, keyless by default. | 0 |
@@ -234,6 +234,7 @@ package depends on it, which is worth a look before you add a caller.
 | `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 9 · `providers.catalog_surface`, `providers.let_me_buy`, `providers.let_me_buy_build` +6 |
 | `submit_transaction` | Submit a Gecko-verified signed transaction and rebroadcast until it lands. | 1 · `providers.catalog_surface` |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
+| `surface_calls` | The ``surf.call`` record for surfaces that do not emit their own. | 1 · `http_server` |
 | `surfacedoc` | SurfaceDoc — the per-operation embed target (control-plane-safe surface projection). | 1 · `dense` |
 | `surfacereport` | The graph report for an API surface — what the graph says about the API. | 1 · `workflows` |
 | `surfaces` | Surface Registry — the internal control-plane store of comprehended API surfaces. | 11 · `binding`, `catalog_mcp`, `client` +8 |
@@ -242,14 +243,15 @@ package depends on it, which is worth a look before you add a caller.
 | `telegram_intent` | What a person typed, reduced to one of five things Gecko can actually do. | 1 · `telegram_webhook` |
 | `telegram_reply` | Engine answers, rendered for a person in a chat window. | 1 · `telegram_webhook` |
 | `telegram_webhook` | ``POST /telegram/webhook`` — a person in a chat, talking to the engine. | 1 · `serve_mcp` |
-| `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 5 · `events`, `http_server`, `onboard` +2 |
+| `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 6 · `events`, `http_server`, `onboard` +3 |
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
 | `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 2 · `simulate`, `store_directory` |
-| `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 3 · `demo`, `http_server`, `mcp_server` |
+| `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 4 · `demo`, `http_server`, `mcp_server` +1 |
 | `tools` | Question-shaped tool generator — the comprehension payload. | 31 · `agentnative`, `catalog`, `chain_eval` +28 |
 | `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 4 · `autonomous_purchase`, `decision_log`, `sandbox.rehearse` +1 |
 | `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
+| `usage_report` | Who used which surface: calls per surface per day, distinct sessions, top tools. | 0 |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
 | `value_sources` | Where a missing seed value can be READ from — the hop between two of our own tools. | 1 · `prepare_instruction` |
 | `verify` | verify-docs — check a surface's operations against reality, attach verdicts (VAS-2). | 2 · `authcheck`, `report` |

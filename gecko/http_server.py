@@ -44,6 +44,7 @@ from .enforce import EnforceMode, resolve_hosted_enforce
 from .events import _safe_user_agent, emit_surf_event
 from .mcp_server import McpSurface, install_unknown_tool_gate
 from .telemetry import TelemetryError
+from .surface_calls import record_surface_call
 from .surfaces import tools_rev
 from .toolerror import tool_result_payload
 from .uaclass import classify_client
@@ -940,8 +941,10 @@ def build_http_app(
         # connect->call per session (retention). Only McpSurface accepts it; the meta
         # surface (duck-typed) does not, so it is passed conditionally.
         session_id = _session_id_from_context(server)
+        # McpSurface emits its own surf.call; every other surface is recorded HERE, once.
+        duck_typed = not isinstance(surface, McpSurface)
         try:
-            if isinstance(surface, McpSurface):
+            if not duck_typed:
                 result = surface.call_tool(name, args, session_id=session_id)
             elif surface_takes_account:
                 # WHO is asking, from the gate that verified them — never from `args`.
@@ -952,12 +955,30 @@ def build_http_app(
                 )
             else:
                 result = surface.call_tool(name, args)
-        except CallError as exc:
+        except Exception as exc:
+            if duck_typed:
+                record_surface_call(
+                    surface_id=cid,
+                    tool_name=name,
+                    result=None,
+                    exc=exc,
+                    latency_ms=int((time.perf_counter() - start) * 1000),
+                    session_id=session_id,
+                )
             # A pre-flight failure (missing path param / auth-gated) is itself a
             # first-call outcome worth capturing; record it, then propagate as before.
-            if corpus_path is not None:
+            if isinstance(exc, CallError) and corpus_path is not None:
                 _capture(name, None, exc, args, None)
             raise
+        if duck_typed:
+            record_surface_call(
+                surface_id=cid,
+                tool_name=name,
+                result=result,
+                exc=None,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                session_id=session_id,
+            )
         status = result.get("status") if isinstance(result, dict) else None
         _log_outcome(name, result)
         if corpus_path is not None:
@@ -2017,7 +2038,54 @@ def _uvicorn_kwargs(host: str, port: int) -> dict[str, Any]:
         "port": port,
         "proxy_headers": True,
         "forwarded_allow_ips": os.environ.get(FORWARDED_ALLOW_IPS_ENV, "*"),
+        "log_config": server_log_config(),
     }
+
+
+#: Level for the ``gecko.*`` loggers on a served host. INFO by default.
+LOG_LEVEL_ENV = "GECKO_LOG_LEVEL"
+_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
+def server_log_config() -> dict[str, Any]:
+    """uvicorn's own log config plus a handler for the ``gecko`` logger tree.
+
+    uvicorn is the only thing that configures logging on a served host, and it
+    configures only ``uvicorn.*``. Every ``gecko.*`` INFO line (``call tool=...``, the
+    startup mode lines) fell through to Python's last-resort handler, which prints
+    WARNING and above, so CloudWatch saw the access log and not one tool call
+    (measured 2026-09-28). Raising those lines to WARNING would make every normal call
+    read as a problem, so the level is set where the logging is configured instead.
+
+    Built from uvicorn's dict rather than a separate ``basicConfig`` because uvicorn
+    applies its config with ``dictConfig`` at startup; one config, applied once, cannot
+    be undone by the other.
+    """
+    import copy
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    config: dict[str, Any] = copy.deepcopy(LOGGING_CONFIG)
+    level = os.environ.get(LOG_LEVEL_ENV, "INFO").strip().upper()
+    if level not in _LOG_LEVELS:
+        level = "INFO"
+    config["formatters"]["gecko"] = {
+        "()": "uvicorn.logging.DefaultFormatter",
+        "fmt": "%(levelprefix)s %(name)s %(message)s",
+    }
+    config["handlers"]["gecko"] = {
+        "formatter": "gecko",
+        "class": "logging.StreamHandler",
+        "stream": "ext://sys.stderr",
+    }
+    # propagate=False: the root logger has no handler on a served host, and if one is
+    # ever added this keeps each line from printing twice.
+    config["loggers"]["gecko"] = {
+        "handlers": ["gecko"],
+        "level": level,
+        "propagate": False,
+    }
+    return config
 
 
 def serve_http(
