@@ -61,7 +61,11 @@ from .telegram_webhook import WEBHOOK_PATH as TELEGRAM_WEBHOOK_PATH
 from .telegram_webhook import telegram_routes
 from .registry.api import registry_routes as _registry_routes
 from .registry.store import RegistrySurface, SurfaceStore
-from .registry.wiring import build_keystore_from_env, build_wallet_directory_from_env
+from .registry.wiring import (
+    build_class_wallets_from_env,
+    build_keystore_from_env,
+    build_wallet_directory_from_env,
+)
 
 logger = logging.getLogger("gecko.serve_mcp")
 
@@ -705,6 +709,7 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
             registry_store,
             build_keystore_from_env(),
             feedback_path=os.environ.get("GECKO_FEEDBACK_PATH"),
+            class_wallets=build_class_wallets_from_env(),
         ),
         extra_routes=telegram,
         background_tasks=workers,

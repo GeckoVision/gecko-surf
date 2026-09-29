@@ -10,6 +10,8 @@ import logging
 import os
 from typing import Any
 
+from .class_wallet_store import MongoClassWalletStore
+from .class_wallets import ClassWalletRegistrar
 from .keys import KeyStore, Mailer
 from .wallets import MongoWalletDirectory
 
@@ -94,4 +96,32 @@ def build_wallet_directory_from_env() -> MongoWalletDirectory | None:
         return MongoWalletDirectory(collection=db["wallets"])
     except Exception:  # noqa: BLE001 - registry must not take the server down
         logger.warning("registry: wallet directory init failed (redacted)")
+        return None
+
+
+def build_class_wallets_from_env() -> ClassWalletRegistrar | None:
+    """The class-wallet registrar, or ``None`` (routes answer 503) when unconfigured.
+
+    Keys resolve through the same ``gecko_sk_`` registry the gated MCP mounts use
+    (:func:`gecko.keyregistry.registry_from_env`); registrations live in
+    ``gecko_registry.class_wallets``. Fails soft like the keystore: never logs the URI.
+    """
+    from gecko.keyregistry import registry_from_env
+
+    uri = os.environ.get("MONGODB_URI")
+    if not uri:
+        return None
+    registry = registry_from_env()
+    if registry is None:
+        return None
+    try:
+        from pymongo import MongoClient
+
+        db: Any = MongoClient(uri, serverSelectionTimeoutMS=2000)["gecko_registry"]
+        store = MongoClassWalletStore(
+            wallets=db["class_wallets"], challenges=db["class_wallet_challenges"]
+        )
+        return ClassWalletRegistrar.from_key_registry(registry, store)
+    except Exception:  # noqa: BLE001 - registry must not take the server down
+        logger.warning("registry: class wallet store init failed (redacted)")
         return None

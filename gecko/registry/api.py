@@ -19,6 +19,7 @@ from gecko.access import public_session
 from gecko.client import AgentApiClient
 from gecko.preflight_corpus import PreflightCorpusError, assert_classes_closed
 
+from .class_wallets import ClassWalletError, ClassWalletRegistrar
 from .keys import KeyStore, RegistryAuthError
 from .store import SurfaceStore
 
@@ -36,13 +37,22 @@ _IP_THROTTLE_WINDOW_SECONDS = 3600
 _IP_THROTTLE_MAX_ENTRIES = 10_000
 _ip_counts: dict[str, tuple[int, float]] = {}
 
+# The class-wallet routes get their OWN bucket with a higher cap: on demo day a whole
+# classroom sits behind one NAT address, and sharing the OTP bucket (10/h) would lock
+# the room out after five students. Still bounded; every hit is key-authenticated.
+_CLASS_WALLET_MAX_PER_HOUR = 120
+_class_wallet_ip_counts: dict[str, tuple[int, float]] = {}
+
 
 class _BodyTooLarge(Exception):
     """Raised by ``_json`` when the request body exceeds the registry cap."""
 
 
 def registry_routes(
-    store: SurfaceStore, keys: KeyStore | None, feedback_path: str | None = None
+    store: SurfaceStore,
+    keys: KeyStore | None,
+    feedback_path: str | None = None,
+    class_wallets: ClassWalletRegistrar | None = None,
 ) -> list[Route]:
     # One AgentApiClient per surface, built lazily on first search and cached — search
     # runs the full ingest+catalog build, so this avoids redoing that on every request.
@@ -179,6 +189,43 @@ def registry_routes(
             fh.write(json.dumps(record) + "\n")
         return JSONResponse(None, status_code=204)
 
+    def _class_wallet_refusal(status: int, code: str, message: str) -> JSONResponse:
+        return JSONResponse({"error": message, "code": code}, status_code=status)
+
+    def _class_wallet_throttled(request: Request) -> bool:
+        ip = request.client.host if request.client else "unknown"
+        return _throttled(_class_wallet_ip_counts, ip, _CLASS_WALLET_MAX_PER_HOUR)
+
+    async def _class_wallet_challenge(request: Request) -> JSONResponse:
+        # Same stance as the keys routes: no MONGODB_URI -> the door says so, no 404.
+        if class_wallets is None:
+            return _class_wallet_refusal(503, "not-enabled", "not enabled")
+        if _class_wallet_throttled(request):
+            return _class_wallet_refusal(429, "rate-limited", "too many requests")
+        try:
+            issued = class_wallets.issue_challenge(
+                _bearer(request), request.query_params.get("cohort")
+            )
+        except ClassWalletError as exc:
+            return _class_wallet_refusal(exc.status, exc.code, exc.message)
+        return JSONResponse(issued)
+
+    async def _class_wallet_register(request: Request) -> JSONResponse:
+        # Same stance as the keys routes: no MONGODB_URI -> the door says so, no 404.
+        if class_wallets is None:
+            return _class_wallet_refusal(503, "not-enabled", "not enabled")
+        if _class_wallet_throttled(request):
+            return _class_wallet_refusal(429, "rate-limited", "too many requests")
+        try:
+            body = await _json(request)
+        except _BodyTooLarge:
+            return _class_wallet_refusal(413, "too-large", "request body too large")
+        try:
+            registration = class_wallets.register(_bearer(request), body)
+        except ClassWalletError as exc:
+            return _class_wallet_refusal(exc.status, exc.code, exc.message)
+        return JSONResponse(registration.as_json())
+
     return [
         Route("/registry/surfaces", endpoint=_list),
         Route("/registry/surfaces/{name}", endpoint=_fetch),
@@ -186,7 +233,23 @@ def registry_routes(
         Route("/registry/keys/verify", endpoint=_keys_verify, methods=["POST"]),
         Route("/registry/search", endpoint=_search),
         Route("/registry/feedback", endpoint=_feedback, methods=["POST"]),
+        Route(
+            "/registry/class-wallet/challenge",
+            endpoint=_class_wallet_challenge,
+            methods=["GET"],
+        ),
+        Route(
+            "/registry/class-wallet",
+            endpoint=_class_wallet_register,
+            methods=["POST"],
+        ),
     ]
+
+
+def _bearer(request: Request) -> str:
+    """The presented Gecko key from ``Authorization: Bearer``, or "" — never logged."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else ""
 
 
 async def _json(request: Request) -> dict[str, Any]:
@@ -207,7 +270,12 @@ async def _json(request: Request) -> dict[str, Any]:
 
 
 def _ip_throttled(ip: str) -> bool:
-    """Return True (and record the attempt) if ``ip`` has hit the hourly cap.
+    """Return True (and record the attempt) if ``ip`` has hit the hourly OTP cap."""
+    return _throttled(_ip_counts, ip, _IP_THROTTLE_MAX_PER_HOUR)
+
+
+def _throttled(counts: dict[str, tuple[int, float]], ip: str, cap: int) -> bool:
+    """Return True (and record the attempt) if ``ip`` has hit ``cap`` this hour.
 
     Bounded in-memory map keyed by client IP -> (count, window_start). When
     the map grows past ``_IP_THROTTLE_MAX_ENTRIES`` (a slow-drip DoS on this
@@ -216,22 +284,22 @@ def _ip_throttled(ip: str) -> bool:
     is applied to maintain the hard cap.
     """
     now = time.time()
-    if len(_ip_counts) > _IP_THROTTLE_MAX_ENTRIES:
-        for key, (_, window_start) in list(_ip_counts.items()):
+    if len(counts) > _IP_THROTTLE_MAX_ENTRIES:
+        for key, (_, window_start) in list(counts.items()):
             if now - window_start >= _IP_THROTTLE_WINDOW_SECONDS:
-                del _ip_counts[key]
+                del counts[key]
         # Hard-cap: if still above limit after expiry sweep, evict oldest-first.
-        if len(_ip_counts) > _IP_THROTTLE_MAX_ENTRIES:
-            to_delete = len(_ip_counts) - _IP_THROTTLE_MAX_ENTRIES
-            for ip_key, _ in sorted(_ip_counts.items(), key=lambda kv: kv[1][1])[
+        if len(counts) > _IP_THROTTLE_MAX_ENTRIES:
+            to_delete = len(counts) - _IP_THROTTLE_MAX_ENTRIES
+            for ip_key, _ in sorted(counts.items(), key=lambda kv: kv[1][1])[
                 :to_delete
             ]:
-                del _ip_counts[ip_key]
-    count, window_start = _ip_counts.get(ip, (0, now))
+                del counts[ip_key]
+    count, window_start = counts.get(ip, (0, now))
     if now - window_start >= _IP_THROTTLE_WINDOW_SECONDS:
         count, window_start = 0, now
-    if count >= _IP_THROTTLE_MAX_PER_HOUR:
-        _ip_counts[ip] = (count, window_start)
+    if count >= cap:
+        counts[ip] = (count, window_start)
         return True
-    _ip_counts[ip] = (count + 1, window_start)
+    counts[ip] = (count + 1, window_start)
     return False
