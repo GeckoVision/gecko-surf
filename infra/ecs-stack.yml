@@ -462,6 +462,8 @@ Resources:
             # bootcamp_team_mounts). `__unset__` fails the slug check => no team mounts.
             - Name: GECKO_BOOTCAMP_TEAMS
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_BOOTCAMP_TEAMS
+            - Name: GECKO_DEVNET_FAUCET_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/GECKO_DEVNET_FAUCET_KEY
             - Name: PRIVY_APP_ID
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gecko-mcp/PRIVY_APP_ID
             - Name: PRIVY_JWKS_URL

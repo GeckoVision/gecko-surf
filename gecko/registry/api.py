@@ -11,6 +11,7 @@ import time
 from pathlib import Path as _Path
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -20,6 +21,7 @@ from gecko.client import AgentApiClient
 from gecko.preflight_corpus import PreflightCorpusError, assert_classes_closed
 
 from .class_wallets import ClassWalletError, ClassWalletRegistrar
+from .devnet_faucet import DevnetFaucet, FaucetError
 from .keys import KeyStore, RegistryAuthError
 from .store import SurfaceStore
 
@@ -43,6 +45,12 @@ _ip_counts: dict[str, tuple[int, float]] = {}
 _CLASS_WALLET_MAX_PER_HOUR = 120
 _class_wallet_ip_counts: dict[str, tuple[int, float]] = {}
 
+# The devnet faucet is keyless, so this bucket is all that bounds how fast it drains.
+# A classroom shares one NAT address; 40/h lets a room fund itself, and every call is
+# idempotent on-chain, so a retry costs a request, never tokens.
+_FAUCET_MAX_PER_HOUR = 40
+_faucet_ip_counts: dict[str, tuple[int, float]] = {}
+
 
 class _BodyTooLarge(Exception):
     """Raised by ``_json`` when the request body exceeds the registry cap."""
@@ -53,6 +61,7 @@ def registry_routes(
     keys: KeyStore | None,
     feedback_path: str | None = None,
     class_wallets: ClassWalletRegistrar | None = None,
+    faucet: DevnetFaucet | None = None,
 ) -> list[Route]:
     # One AgentApiClient per surface, built lazily on first search and cached — search
     # runs the full ingest+catalog build, so this avoids redoing that on every request.
@@ -226,6 +235,29 @@ def registry_routes(
             return _class_wallet_refusal(exc.status, exc.code, exc.message)
         return JSONResponse(registration.as_json())
 
+    async def _faucet_fund(request: Request) -> JSONResponse:
+        if faucet is None:
+            return _class_wallet_refusal(
+                503, "not-enabled", "the devnet faucet is not enabled"
+            )
+        ip = request.client.host if request.client else "unknown"
+        if _throttled(_faucet_ip_counts, ip, _FAUCET_MAX_PER_HOUR):
+            return _class_wallet_refusal(429, "rate-limited", "too many requests")
+        try:
+            body = await _json(request)
+        except _BodyTooLarge:
+            return _class_wallet_refusal(413, "too-large", "request body too large")
+        buyer = body.get("buyer")
+        if not isinstance(buyer, str) or not buyer.strip():
+            return _class_wallet_refusal(
+                400, "bad-address", 'send {"buyer": "<your buyer address>"}'
+            )
+        try:
+            funded = await run_in_threadpool(faucet.fund, buyer.strip())
+        except FaucetError as exc:
+            return _class_wallet_refusal(exc.status, exc.code, exc.message)
+        return JSONResponse(funded.as_json())
+
     return [
         Route("/registry/surfaces", endpoint=_list),
         Route("/registry/surfaces/{name}", endpoint=_fetch),
@@ -243,6 +275,7 @@ def registry_routes(
             endpoint=_class_wallet_register,
             methods=["POST"],
         ),
+        Route("/registry/class-wallet/faucet", endpoint=_faucet_fund, methods=["POST"]),
     ]
 
 
