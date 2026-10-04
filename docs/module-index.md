@@ -2,7 +2,7 @@
 
 # Module index
 
-259 modules in `gecko/` (subpackages included), from their own docstrings.
+261 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
@@ -89,7 +89,7 @@ package depends on it, which is worth a look before you add a caller.
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
 | `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
-| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 5 · `authlogin`, `cli`, `http_server` +2 |
+| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 6 · `authlogin`, `cli`, `http_server` +3 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
 | `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 20 · `autonomous_purchase`, `instruction_build`, `prepare_purchase` +17 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `find_start`, `purchase_intent_eval`, `rankable` |
@@ -179,6 +179,8 @@ package depends on it, which is worth a look before you add a caller.
 | `redteam.scenarios` | The 12 v1 battle-test scenarios as immutable DATA (off-chain, $0, deterministic). | 5 · `redteam.__main__`, `redteam.harness`, `redteam.matrix` +2 |
 | `redteam.scorer` | Scorer — the harm oracle + verdict mapping + the 2x2 scorecard. | 2 · `redteam.__main__`, `redteam.report` |
 | `registry.api` | Registry HTTP surface — mounted into the existing multi-surface server. | 1 · `serve_mcp` |
+| `registry.class_wallet_store` | Storage for class-wallet registrations: ``(account, cohort) -> public address``. | 2 · `registry.class_wallets`, `registry.wiring` |
+| `registry.class_wallets` | Class-wallet registration: a student proves they control an address before we fund it. | 2 · `registry.api`, `registry.wiring` |
 | `registry.client` | Runner-side registry fetch: TLS fetch -> local cache -> offline fallback. | 3 · `examples.colosseum`, `examples.jupiter`, `serve` |
 | `registry.keys` | Gecko key issuance: agent-native email OTP -> ``gk_live_`` key. | 2 · `registry.api`, `registry.wiring` |
 | `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |

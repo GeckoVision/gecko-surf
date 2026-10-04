@@ -132,6 +132,11 @@ declare -A PARAMS=(
   # unlisted. Not a secret; SecureString only because every param here is one.
   [GECKO_BOOTCAMP_TEAMS]="GECKO_BOOTCAMP_TEAMS"
 
+  # The bootcamp's DEVNET faucet (gecko/registry/devnet_faucet.py): a solana-keygen JSON
+  # byte array for a separate faucet wallet, NOT the class mint authority. Devnet only;
+  # the sentinel leaves POST /registry/class-wallet/faucet answering 503.
+  [GECKO_DEVNET_FAUCET_KEY]="GECKO_DEVNET_FAUCET_KEY"
+
   # Telegram chat surface (gecko/telegram_webhook.py + telegram_api.py) — POST
   # /telegram/webhook, so a person in a chat reaches the SAME engine the MCP mounts
   # serve (list_stores / prepare_purchase). BOTH must hold real values or the route is
@@ -230,6 +235,7 @@ declare -A REQUIRED_AT_BOOT=(
   [GECKO_PROVIDER_SYNC_TOKEN]="__unset__"
   # Sentinel => no team mounts (the slug check drops it).
   [GECKO_BOOTCAMP_TEAMS]="__unset__"
+  [GECKO_DEVNET_FAUCET_KEY]="__unset__"
   # Sentinels keep /telegram/webhook UNMOUNTED (404). Either one missing is enough:
   # an unset secret closes the door rather than widening it, and an unset bot token
   # means there is no way to reply, which is not a surface worth serving.
