@@ -361,6 +361,15 @@ def test_config_reads_the_bucket_and_key_together() -> None:
     assert alias.datasets_kms_key == "alias/gecko-ds"
 
 
+def test_config_reads_the_ssm_unset_sentinel_as_unset() -> None:
+    # The host provisions both parameters as `__unset__` (push-ssm-params.sh) until a
+    # bucket exists; that must mean "no S3 sink", not a malformed bucket at boot.
+    config = load_config(
+        {"GECKO_DATASETS_BUCKET": "__unset__", "GECKO_DATASETS_KMS_KEY": "__unset__"}
+    )
+    assert (config.datasets_bucket, config.datasets_kms_key) == (None, None)
+
+
 @pytest.mark.parametrize(
     "env",
     [

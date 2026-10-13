@@ -36,6 +36,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
+from ..credentials import PLATFORM_UNSET_SENTINEL
 
 __all__ = [
     "ORTHOGONAL_PAY_ENV",
@@ -258,10 +259,16 @@ def _orthogonal_pay(
     return out
 
 
+def _set_or_none(raw: str) -> str | None:
+    """Empty and the SSM boot sentinel both mean unset."""
+    value = raw.strip()
+    return None if not value or value == PLATFORM_UNSET_SENTINEL else value
+
+
 def _datasets(env: Mapping[str, str]) -> dict[str, Any]:
     """The snapshot bucket and its KMS key, refused by name (never by value)."""
-    bucket = env.get(DATASETS_BUCKET_ENV, "").strip() or None
-    key = env.get(DATASETS_KMS_KEY_ENV, "").strip() or None
+    bucket = _set_or_none(env.get(DATASETS_BUCKET_ENV, ""))
+    key = _set_or_none(env.get(DATASETS_KMS_KEY_ENV, ""))
     if bucket is not None and (not _BUCKET.match(bucket) or ".." in bucket):
         raise ConfigError(f"{DATASETS_BUCKET_ENV} is not an S3 bucket name")
     if key is not None and not _KMS_KEY.match(key):
