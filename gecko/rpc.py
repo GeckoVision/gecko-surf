@@ -17,6 +17,7 @@ user data, or secret is ever stored — this module only moves bytes over the wi
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -29,6 +30,7 @@ __all__ = [
     "validate_rpc_url",
     "default_rpc_call",
     "post_json",
+    "redact_url_secrets",
 ]
 
 # A JSON-RPC caller: (rpc_url, method, params) -> the parsed response dict.
@@ -72,6 +74,27 @@ class RpcError(Exception):
     in the response. Messages carry only the method + JSON-RPC code/message (public
     metadata); the request params body (which may be a large serialized tx) is never
     echoed, so no secret can leak through an error."""
+
+
+#: Query parameters that carry a credential in a provider URL (Helius, Alchemy, many RPC
+#: hosts put the key in the query string). Matched case-insensitively, value up to the
+#: next ``&``, whitespace, quote or bracket.
+_SECRET_QUERY = re.compile(
+    r"((?:api[-_]?key|apikey|access[-_]?token|token|key|secret)=)[^&\s'\"<>)\]]+",
+    re.IGNORECASE,
+)
+#: ``scheme://user:password@host`` userinfo.
+_USERINFO = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/@\s'\"]+@", re.IGNORECASE)
+
+
+def redact_url_secrets(text: str) -> str:
+    """Strip credential query values and ``user:pass@`` userinfo from ANY text.
+
+    Defence in depth for a message leaving a keyed transport: the primary rule is that a
+    keyed URL is never formatted into a message at all, and this catches the case where
+    some library formatted one for us (``HTTPError`` carries the full URL).
+    """
+    return _USERINFO.sub(r"\1<redacted>@", _SECRET_QUERY.sub(r"\1<redacted>", text))
 
 
 def validate_rpc_url(rpc_url: str) -> None:

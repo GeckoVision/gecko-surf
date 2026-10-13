@@ -48,8 +48,10 @@ jobs:
       # reproduces the exact local green (1192 passed, 1 skipped: tiktoken, which is in no
       # extra) without the heavier installs. `uv sync` installs the `dev` group by default, so
       # ruff/mypy/pytest come with it — every gate step runs from this one sync.
-      - name: Install (serve extra + dev group)
-        run: uv sync --extra serve
+      # `datasets` (pyarrow): the any-query dataset and supplier-watch tests write and
+      # read real Parquet files rather than faking the format.
+      - name: Install (serve + datasets extras + dev group)
+        run: uv sync --extra serve --extra datasets
 
       # The mandatory gates (.claude/rules/python.md). Any one red fails the PR — but
       # every one of them RUNS, which was not true before.

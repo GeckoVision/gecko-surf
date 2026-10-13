@@ -184,3 +184,181 @@ def test_the_swap_policy_refuses_to_authorise_nothing() -> None:
             input_decimals=6,
             input_per_transaction_raw=0,
         )
+
+
+# --------------------------------------------------------------------------------------
+# The rebate send endpoint is per LEG: the convert leg may use it, the purchase never.
+# --------------------------------------------------------------------------------------
+
+HELIUS_FAKE_KEY = "hk-ROUTE-SENTINEL-DO-NOT-LEAK"
+
+
+class _RecordingHelius:
+    """A fake `post` behind the real Helius transport: records URLs, relays the
+    sendTransaction to the fake node so the leg can confirm."""
+
+    def __init__(self, node) -> None:
+        self.node = node
+        self.urls: list[str] = []
+
+    def __call__(self, url, body):
+        import json
+
+        self.urls.append(url)
+        request = json.loads(body)
+        return self.node("http://127.0.0.1:8999", request["method"], request["params"])
+
+
+def _helius_send(post, relay=None):
+    from gecko.credentials import ChainResolver, KeyringBackend
+    from gecko.send_endpoint import helius_send
+
+    class _Keyring:
+        def get_keyring(self):
+            return object()
+
+        def get_password(self, service, user):
+            return HELIUS_FAKE_KEY if service == "gecko:HELIUS_API_KEY" else None
+
+    resolver = ChainResolver([KeyringBackend(module=_Keyring())])
+    return helius_send(
+        network="mainnet", resolver=resolver, post=post, relay_fee_payer=relay
+    )
+
+
+def _mainnet_signer(backend):
+    """The fixtures' signer, asserted on mainnet: the Helius endpoint is mainnet only,
+    and a signer profile names the network it signs for."""
+    from dataclasses import replace
+
+    signer = _signer(_gate(), backend)
+    return replace(signer, profile=replace(signer.profile, network="mainnet"))
+
+
+def _route_with_send(send, node, *, network="mainnet"):
+    backend = BuyerBackend()
+    return settle_route(
+        _relay_built_tx().tx,
+        prepare_purchase=_prepared_purchase,
+        network=network,
+        rpc_url="http://127.0.0.1:8999",
+        relay=FakeRelay(),
+        convert_signer=_mainnet_signer(backend),
+        purchase_signer=_mainnet_signer(backend),
+        authority=BUYER,
+        rpc_call=node,
+        sleep=lambda _s: None,
+        convert_send=send,
+    )
+
+
+def _counting(node):
+    sends: list[str] = []
+
+    def call(url, method, params):
+        if method == "sendTransaction":
+            sends.append(url)
+        return node(url, method, params)
+
+    return call, sends
+
+
+def test_the_convert_leg_goes_through_the_send_endpoint_and_the_purchase_does_not() -> (
+    None
+):
+    """The fixture's convert bytes are a STORE instruction, so even the convert leg's
+    request carries no rebate-address: the transport's own guard, independent of the
+    route's per-leg choice. The purchase leg never touches the transport at all."""
+    from urllib.parse import parse_qs, urlsplit
+
+    node, public_sends = _counting(_rpc())
+    post = _RecordingHelius(_rpc())
+    outcome = _route_with_send(_helius_send(post), node)
+
+    assert outcome.landed
+    assert len(post.urls) == 1, "one send through Helius: the convert leg's"
+    assert urlsplit(post.urls[0]).hostname == "mainnet.helius-rpc.com"
+    assert "rebate-address" not in parse_qs(urlsplit(post.urls[0]).query)
+    assert public_sends == ["http://127.0.0.1:8999"], "the purchase leg, unchanged"
+    assert isinstance(outcome.convert, PurchaseSettled)
+    assert outcome.convert.rebate is not None
+    assert outcome.convert.rebate.requested is False
+    assert isinstance(outcome.purchase, PurchaseSettled)
+    assert outcome.purchase.rebate is None
+    assert HELIUS_FAKE_KEY not in repr(outcome)
+
+
+def test_without_a_send_endpoint_the_route_is_unchanged() -> None:
+    node, public_sends = _counting(_rpc())
+    outcome = _route_with_send(None, node)
+    assert outcome.landed
+    assert len(public_sends) == 2
+    assert outcome.convert.rebate is None and outcome.purchase.rebate is None
+
+
+def test_a_mainnet_only_endpoint_on_a_fork_leg_is_refused_before_anything() -> None:
+    node, public_sends = _counting(_rpc())
+    post = _RecordingHelius(_rpc())
+    with pytest.raises(PurchaseConfigurationError, match="mainnet only"):
+        _route_with_send(_helius_send(post), node, network="fork")
+    assert post.urls == [] and public_sends == []
+
+
+def test_the_relay_paid_swap_send_names_the_configured_relay_never_the_buyer() -> None:
+    """`_send` with a Whirlpool, relay-paid message and the route's authority. Founder
+    ruling, 8 Oct: the rebate refills the relay; the authority never chooses it."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    from gecko.autonomous_purchase import _send
+    from gecko.landing import assemble_unsigned_tx
+    from tests.test_autonomous_purchase_relay import RELAY
+
+    swap = Instruction(
+        Pubkey.from_string(WHIRLPOOL_PROGRAM),
+        SWAP_V2_DISCRIMINATOR,
+        [AccountMeta(Pubkey.from_string(BUYER), True, True)],
+    )
+    tx = assemble_unsigned_tx([swap], RELAY).tx
+    urls: list[str] = []
+
+    def post(url, body):
+        urls.append(url)
+        return {"result": "SigFake1111"}
+
+    signature = _send(
+        lambda *_a: pytest.fail("the public node must not see this send"),
+        "http://127.0.0.1:8999",
+        tx,
+        send=_helius_send(post, relay=RELAY),
+        authority=BUYER,
+    )
+    assert signature == "SigFake1111"
+    assert parse_qs(urlsplit(urls[0]).query)["rebate-address"] == [RELAY]
+    assert BUYER not in urls[0]
+
+
+def test_a_failed_helius_send_is_a_transport_error_without_the_key() -> None:
+    import urllib.error
+
+    from gecko.autonomous_purchase import PurchaseTransportError, _send
+
+    def post(url, body):
+        raise urllib.error.HTTPError(url, 503, "down", {}, None)
+
+    with pytest.raises(PurchaseTransportError) as caught:
+        _send(
+            lambda *_a: pytest.fail("no fallback to public mid-transaction"),
+            "http://127.0.0.1:8999",
+            _relay_built_tx().tx,
+            send=_helius_send(post),
+            authority=BUYER,
+        )
+    assert "HTTP 503" in str(caught.value)
+    assert HELIUS_FAKE_KEY not in str(caught.value)
+    # The only context is the transport's own, already-redacted RpcError, which itself
+    # has no context: the HTTPError holding the keyed URL is unreachable.
+    assert HELIUS_FAKE_KEY not in repr(caught.value.__context__)
+    assert caught.value.__context__.__context__ is None

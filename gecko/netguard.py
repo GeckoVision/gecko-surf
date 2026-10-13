@@ -328,6 +328,46 @@ def safe_post_json(
     return chunk.decode("utf-8")
 
 
+def safe_get_headers(
+    url: str,
+    *,
+    method: str = "GET",
+    json_body: dict[str, Any] | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    resolver: Resolver | None = None,
+    opener_factory: OpenerFactory | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, dict[str, str]]:
+    """SSRF-safe request that returns ``(status, headers)`` and NEVER reads the body.
+
+    For a header-only probe (an x402 challenge lives in a response header): the body of
+    a 402 is a server's own text and is not wanted, so it is never read, decoded or
+    returned. Validated and pinned like :func:`safe_get`; follows no redirect (a 3xx
+    comes back as its status), and every 4xx/5xx is an answer, not an exception.
+    """
+    if method not in ("GET", "POST"):
+        raise UnsafeUrlError(f"method {method!r} is not probed")
+    _, ips = _resolve_public(url, resolver)
+    opener = (opener_factory or _pinned_opener)(ips[0] if ips else None)
+    request_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    request_headers.update(headers or {})
+    data = None
+    if method == "POST":
+        data = json.dumps(json_body or {}).encode("utf-8")
+        request_headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        url, data=data, method=method, headers=request_headers
+    )
+    try:
+        with opener.open(request, timeout=timeout) as resp:  # noqa: S310 (validated+pinned)
+            return getattr(resp, "status", 200), dict(resp.headers.items())
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, dict(exc.headers.items()) if exc.headers else {}
+        finally:
+            exc.close()
+
+
 def _pinned_opener(pinned_ip: str | None) -> urllib.request.OpenerDirector:
     """Build a urllib opener that (a) does NOT auto-follow redirects (we re-validate each
     hop ourselves) and (b) pins every connection to ``pinned_ip`` — the validated address

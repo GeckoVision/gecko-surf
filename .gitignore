@@ -56,3 +56,12 @@ graphify-out/
 # Demo kit: screenplays, casts and rendered videos stay local (founder, 2026-09-18).
 # The pattern and the honesty rules live in the repo history; media is not source.
 demo/kit/
+
+# The any-query planner's catalog, baked into the image by the Dockerfile but never
+# committed: a third party's catalog (Orthogonal /v1/details) and our own field ledgers,
+# in a public repo. Populate before building the image. The
+# .gitkeep files keep the folders (and the Dockerfile COPY) valid on a fresh clone.
+data/anyquery/details/*
+!data/anyquery/details/.gitkeep
+data/anyquery/ledgers/*
+!data/anyquery/ledgers/.gitkeep

@@ -46,11 +46,13 @@ import urllib.parse
 from typing import Any, Callable, Mapping
 
 from .rpc import RpcCall, RpcError, default_rpc_call
+from .send_endpoint import PublicSend, SendTransport, configured_send
 from .tools import tool_annotations
 from .verify_signed import verify_signed
 
 __all__ = [
     "SUBMIT_TRANSACTION_TOOL",
+    "operator_send",
     "submit_transaction_result",
 ]
 
@@ -91,15 +93,57 @@ def _refuse(code: str, reason: str, **extra: Any) -> dict[str, Any]:
     return out
 
 
+def operator_send(
+    arguments: Any,
+    *,
+    rpc_call: RpcCall | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> SendTransport | None:
+    """The operator's send endpoint for this call, or ``None`` for today's path.
+
+    ``None`` unless the operator turned rebate routing on (``GECKO_SEND_REBATE=1``).
+    When on, the Helius transport applies only when the caller did NOT name an
+    ``rpc_url``: then the send targets this server's default, which is mainnet by
+    construction. A caller-named endpoint is a network nobody asserted, and sending its
+    transaction to a mainnet relay while polling the caller's node would split one
+    transaction across two endpoints.
+    """
+    from .send_endpoint import rebate_enabled
+
+    if not rebate_enabled(environ):
+        return None
+    args: Mapping[str, Any] = arguments if isinstance(arguments, dict) else {}
+    call = rpc_call or default_rpc_call
+    if args.get("rpc_url"):
+        return PublicSend(
+            str(args["rpc_url"]),
+            call,
+            note="a caller-named rpc_url is used as given, without rebate routing",
+        )
+    send, _note = configured_send(
+        DEFAULT_RPC, network="mainnet", rpc_call=call, environ=environ
+    )
+    return send
+
+
 def submit_transaction_result(
     arguments: Any,
     *,
     rpc_call: RpcCall | None = None,
+    send: SendTransport | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Verify → send → rebroadcast → confirm, as one call. Never raises; every
-    failure is a structured refusal or an honest ``{expired: true, spent: false}``."""
+    failure is a structured refusal or an honest ``{expired: true, spent: false}``.
+
+    ``send`` is where the signed bytes go (:mod:`gecko.send_endpoint`). ``None`` is
+    today's path, byte for byte: every call to ``rpc_url`` through ``rpc_call``. When
+    it is given, the first send AND every rebroadcast go through it (one endpoint per
+    transaction, or a backrun bundle is lost), status and height reads stay on
+    ``rpc_url``, and the result carries a ``rebate`` block saying what was requested.
+    The rebate address is only ever the relay configured on ``send``; it is never derived
+    from the bytes and never taken from ``arguments``."""
     args: Mapping[str, Any] = arguments if isinstance(arguments, dict) else {}
     transaction = str(args.get("transaction") or "")
     binding = str(args.get("binding") or "")
@@ -129,6 +173,7 @@ def submit_transaction_result(
     except SubmitRefused as exc:
         return _refuse("rpc-url-refused", str(exc))
     call = rpc_call or default_rpc_call
+    sender: SendTransport = send if send is not None else PublicSend(rpc_url, call)
 
     # 1. THE NON-DROPPABLE CHECK — exact binding, before anything touches the wire.
     verdict = verify_signed(transaction=transaction, binding=binding)
@@ -143,10 +188,20 @@ def submit_transaction_result(
             },
         )
 
+    # The rebate block is reported only on the opt-in path, so the default result
+    # stays exactly what it was.
+    rebate: dict[str, Any] | None = (
+        sender.rebate_for(transaction).as_dict() if send is not None else None
+    )
+
+    def _with_rebate(out: dict[str, Any]) -> dict[str, Any]:
+        if rebate is not None:
+            out["rebate"] = rebate
+        return out
+
     # 2. FIRST SEND — preflight on, our own retries off (the loop below is the retry).
     try:
-        first = call(
-            rpc_url,
+        first = sender(
             "sendTransaction",
             [
                 transaction,
@@ -183,14 +238,16 @@ def submit_transaction_result(
             statuses = {}
         status = ((statuses.get("result") or {}).get("value") or [None])[0]
         if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
-            return {
-                "refused": False,
-                "confirmed": True,
-                "signature": signature,
-                "slot": status.get("slot"),
-                "err": status.get("err"),
-                "confirmation_status": status.get("confirmationStatus"),
-            }
+            return _with_rebate(
+                {
+                    "refused": False,
+                    "confirmed": True,
+                    "signature": signature,
+                    "slot": status.get("slot"),
+                    "err": status.get("err"),
+                    "confirmation_status": status.get("confirmationStatus"),
+                }
+            )
         # `ticks and ...` skips the read on the first pass: we have just sent, so the
         # budget cannot have run out yet, and a 600ms round trip here would sit in
         # front of the fast confirmation the reorder above exists to deliver.
@@ -203,23 +260,24 @@ def submit_transaction_result(
             except RpcError:
                 height = None
         if isinstance(height, int) and height > last_valid + 5:
-            return {
-                "refused": False,
-                "confirmed": False,
-                "expired": True,
-                "spent": False,
-                "signature": signature,
-                "reason": (
-                    f"the blockhash budget is spent (height {height} > "
-                    f"{last_valid}); this transaction can no longer land and no "
-                    "funds moved. Re-run the prepare step for fresh bytes and "
-                    "sign THOSE — never re-submit these"
-                ),
-            }
+            return _with_rebate(
+                {
+                    "refused": False,
+                    "confirmed": False,
+                    "expired": True,
+                    "spent": False,
+                    "signature": signature,
+                    "reason": (
+                        f"the blockhash budget is spent (height {height} > "
+                        f"{last_valid}); this transaction can no longer land and no "
+                        "funds moved. Re-run the prepare step for fresh bytes and "
+                        "sign THOSE — never re-submit these"
+                    ),
+                }
+            )
         sleep(_REBROADCAST_EVERY_S)
         try:
-            call(
-                rpc_url,
+            sender(
                 "sendTransaction",
                 [
                     transaction,
@@ -229,17 +287,19 @@ def submit_transaction_result(
         except RpcError:
             pass  # a failed rebroadcast is retried next tick; the status poll decides
         ticks += 1
-    return {
-        "refused": False,
-        "confirmed": False,
-        "expired": False,
-        "signature": signature,
-        "reason": (
-            f"gave up polling after {_MAX_SECONDS}s with the transaction neither "
-            "confirmed nor expired — check getSignatureStatuses for this "
-            "signature before doing ANYTHING else; it may still land"
-        ),
-    }
+    return _with_rebate(
+        {
+            "refused": False,
+            "confirmed": False,
+            "expired": False,
+            "signature": signature,
+            "reason": (
+                f"gave up polling after {_MAX_SECONDS}s with the transaction neither "
+                "confirmed nor expired — check getSignatureStatuses for this "
+                "signature before doing ANYTHING else; it may still land"
+            ),
+        }
+    )
 
 
 SUBMIT_TRANSACTION_TOOL: dict[str, Any] = {

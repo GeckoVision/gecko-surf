@@ -106,3 +106,51 @@ def test_send_is_off_by_default_and_needs_no_keypair_to_prepare():
 
 def test_the_default_keypair_is_the_solana_cli_location():
     assert swap.DEFAULT_KEYPAIR == Path.home() / ".config" / "solana" / "id.json"
+
+
+class _EmptyKeyring:
+    def get_keyring(self):
+        return object()
+
+    def get_password(self, service, user):
+        return None
+
+
+def test_rebate_without_a_keychain_key_stops_before_signing(
+    tmp_path, monkeypatch, capsys
+):
+    """`--send --rebate` decides its endpoint before the signature exists. No key in
+    the keychain (an env var does not count) means nothing is signed or sent."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "keyring", _EmptyKeyring())
+    monkeypatch.setenv("GECKO_CRED_HELIUS_API_KEY", "hk-ENV-MUST-BE-IGNORED")
+    monkeypatch.setattr(
+        swap, "simulate", lambda *a, **k: pytest.fail("simulated before refusing")
+    )
+    mine, path = _keypair_file(tmp_path)
+    code = swap._settle(
+        _args(keypair=path, rebate=True),
+        _unsigned_tx_paying_from(mine.pubkey()),
+        "abc",
+        100,
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "no HELIUS_API_KEY in keychain" in out and "Nothing was signed" in out
+    assert "hk-ENV-MUST-BE-IGNORED" not in out
+
+
+def test_rebate_off_mainnet_stops_before_signing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        swap, "simulate", lambda *a, **k: pytest.fail("simulated before refusing")
+    )
+    mine, path = _keypair_file(tmp_path)
+    code = swap._settle(
+        _args(keypair=path, rebate=True, network="devnet"),
+        _unsigned_tx_paying_from(mine.pubkey()),
+        "abc",
+        100,
+    )
+    assert code == 1
+    assert "mainnet only" in capsys.readouterr().out

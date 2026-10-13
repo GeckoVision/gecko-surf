@@ -1,0 +1,8 @@
+{"api": "akta-pro", "catalog": "orthogonal", "output_fields": ["data", "data.company_hierarchy", "request_id"], "path": "/v1/company/enrichment/company_hierarchy/{company}"}
+{"api": "akta-pro", "catalog": "orthogonal", "output_fields": ["data", "data.trust_signal", "data.trust_signal.compliance", "request_id"], "path": "/v1/company/enrichment/trust_signal/{company}"}
+{"api": "crustdata", "catalog": "orthogonal", "output_fields": ["[].match_type", "[].matches", "[].matches[].confidence_score", "request_id"], "path": "/company/identify"}
+{"api": "financial-datasets", "catalog": "orthogonal", "output_fields": ["news[]", "news[].title", "request_id"], "path": "/news"}
+{"api": "financial-datasets", "catalog": "orthogonal", "output_fields": ["request_id", "snapshot", "snapshot.day_change_percent", "snapshot.price"], "path": "/prices/snapshot"}
+{"api": "predictleads", "catalog": "orthogonal", "output_fields": ["data[]", "data[].attributes", "data[].attributes.summary", "request_id"], "path": "/v3/companies/{company_id_or_domain}/news_events"}
+{"api": "predictleads", "catalog": "orthogonal", "output_fields": ["meta", "meta.parent_company_domain", "request_id"], "path": "/v3/companies/{id_or_domain}"}
+{"api": "scrapecreators", "catalog": "orthogonal", "output_fields": ["comments[]", "comments[].text", "request_id"], "path": "/v2/instagram/post/comments"}

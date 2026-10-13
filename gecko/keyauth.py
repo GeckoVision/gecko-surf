@@ -30,7 +30,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +41,40 @@ __all__ = [
     "FileAllowlist",
     "KeyAuthError",
     "KeyGate",
+    "PRINCIPAL_SCOPE_KEY",
     "SurfaceGrants",
     "SurfaceScopedAllowlist",
     "authorize",
+    "bearer_from_scope",
     "deny_all_resolver",
     "scope_gate",
 ]
+
+#: Where a mount that resolves its OWN caller (the dataset endpoint: a reader key is no
+#: account) hands that caller down with the request. Written only by that mount's own edge,
+#: unconditionally, and read by the transport for a surface whose ``call_tool`` takes
+#: ``principal``. The account gate's ``gecko.account`` is a different key on purpose: a
+#: reader must never be mistaken for an account.
+PRINCIPAL_SCOPE_KEY = "gecko.principal"
+
+
+def bearer_from_scope(scope: Any) -> str | None:
+    """The token of an ASGI scope's ``Authorization: Bearer <token>`` header, else None.
+
+    Header-only (never the body), so a gate never consumes the streaming transport.
+    UNTRUSTED input: passed straight to a resolver and NEVER logged."""
+    for key, value in scope.get("headers") or []:
+        if bytes(key).lower() == b"authorization":
+            try:
+                raw = bytes(value).decode("latin-1").strip()
+            except Exception:  # noqa: BLE001 - a malformed header is simply no key
+                return None
+            scheme, _, token = raw.partition(" ")
+            if scheme.lower() == "bearer" and token.strip():
+                return token.strip()
+            return None
+    return None
+
 
 #: Why a decision landed. Carries the account (never the token) so a 403 can name the
 #: reason without echoing a secret. ``ok`` is the only allow reason.

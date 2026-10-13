@@ -420,3 +420,67 @@ def test_safe_get_is_unchanged_and_still_raises_on_404() -> None:
             opener_factory=factory,
         )
     assert caught.value is err
+
+
+# --- safe_get_headers: a header-only probe that never reads a body -------------------
+
+
+class _NoReadResp:
+    status = 200
+
+    def __init__(self) -> None:
+        import email.message
+
+        self.headers = email.message.Message()
+        self.headers["X-Seen"] = "yes"
+
+    def read(self, *a: object) -> bytes:
+        raise AssertionError("the body must never be read")
+
+    def __enter__(self) -> "_NoReadResp":
+        return self
+
+    def __exit__(self, *a: object) -> bool:
+        return False
+
+
+def test_safe_get_headers_returns_a_402_challenge_without_reading_the_body() -> None:
+    import io
+
+    err = urllib.error.HTTPError(
+        "https://x402.example.com/a",
+        402,
+        "Payment Required",
+        {"payment-required": "abc"},  # type: ignore[arg-type]
+        io.BytesIO(b"never read"),
+    )
+    seen: list[object] = []
+
+    def factory(pinned_ip: str | None) -> object:
+        opener = _FakeOpener([err])
+        seen.append(opener)
+        return opener
+
+    status, headers = netguard.safe_get_headers(
+        "https://x402.example.com/a",
+        resolver=_resolver({"x402.example.com": ["93.184.216.34"]}),
+        opener_factory=factory,
+    )
+    assert (status, headers["payment-required"]) == (402, "abc")
+
+
+def test_safe_get_headers_never_reads_a_2xx_body_and_guards_the_url() -> None:
+    status, headers = netguard.safe_get_headers(
+        "https://x402.example.com/a",
+        method="POST",
+        resolver=_resolver({"x402.example.com": ["93.184.216.34"]}),
+        opener_factory=lambda ip: _FakeOpener([_NoReadResp()]),
+    )
+    assert (status, headers["X-Seen"]) == (200, "yes")
+    with pytest.raises(netguard.UnsafeUrlError):
+        netguard.safe_get_headers(
+            "https://inside.example.com/",
+            resolver=_resolver({"inside.example.com": ["10.0.0.5"]}),
+        )
+    with pytest.raises(netguard.UnsafeUrlError):
+        netguard.safe_get_headers("https://x402.example.com/", method="DELETE")

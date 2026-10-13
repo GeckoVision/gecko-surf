@@ -21,10 +21,13 @@ COPY pyproject.toml uv.lock README.md ./
 COPY gecko ./gecko
 
 # Engine + serve (mcp[cli], uvicorn, starlette) + events (pymongo) + solana (solders,
-# for the hosted /ore/mcp Program Surface's derive_pda). --no-dev drops mypy/pytest/ruff;
+# for the hosted /ore/mcp Program Surface's derive_pda) + datasets (pyarrow, for Parquet
+# dataset files). --no-dev drops mypy/pytest/ruff;
 # --frozen pins to uv.lock (must resolve every extra).
+# fcc (the anthropic SDK) is the any-query model planner (/anyquery/mcp); it is imported
+# only when that mount is configured.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra serve --extra events --extra solana
+    uv sync --frozen --no-dev --extra serve --extra events --extra solana --extra datasets --extra fcc
 
 # -----------------------------------------------------------------------------
 # The COURSE corpus for /course/mcp: the PUBLISHED cohort repository, the same files a
@@ -59,6 +62,12 @@ COPY gecko ./gecko
 # Control plane only: no payloads, no secrets.
 COPY examples ./examples
 COPY --from=course /course ./course
+# The any-query planner's catalog: Orthogonal /v1/details records (public catalog metadata)
+# and the observed-field ledgers (field names, counts, prices; no secrets, no customer
+# data). Gitignored, so a fresh clone carries only the .gitkeep files: populate them before
+# building. Empty => any-query logs "no catalog candidates" and is
+# not mounted; nothing else changes.
+COPY data/anyquery ./data/anyquery
 
 RUN chown -R gecko:gecko /app
 USER gecko
@@ -74,7 +83,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
     GECKO_COURSE_ROOT=/app/course \
-    GECKO_COURSE_COMMIT=${COURSE_REF}
+    GECKO_COURSE_COMMIT=${COURSE_REF} \
+    GECKO_ANYQUERY_DETAILS_DIR=/app/data/anyquery/details \
+    GECKO_ANYQUERY_LEDGERS_DIR=/app/data/anyquery/ledgers
 
 EXPOSE 8000
 

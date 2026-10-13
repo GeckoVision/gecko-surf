@@ -2,28 +2,84 @@
 
 # Module index
 
-261 modules in `gecko/` (subpackages included), from their own docstrings.
+389 modules in `gecko/` (subpackages included), from their own docstrings.
 `used by` counts sibling modules that import it — a 0 means nothing in the
 package depends on it, which is worth a look before you add a caller.
 
 | module | what it is | used by |
 | --- | --- | --- |
 | `_ca_bundle` | Frozen-binary CA bundle — point OpenSSL at the certifi store PyInstaller ships. | 0 |
-| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 22 · `authcheck`, `binding`, `cli` +19 |
+| `access` | Access layer — establish an authenticated TxODDS session for an agent. | 29 · `anyquery.demo`, `authcheck`, `binding` +26 |
 | `account_recipes` | IDL -> the seed recipe that lets an account PROVE which account it is. | 2 · `read_accounts`, `value_sources` |
 | `agentnative` | Emit an ingested API's own agent-native discovery surface. | 6 · `comprehend_service`, `docsearch`, `http_server` +3 |
+| `anyquery.billing` | Paying for a run: the quote, the preflight, the one capture BEFORE the run. | 8 · `anyquery.deploy`, `anyquery.golden`, `anyquery.payment_tx` +5 |
+| `anyquery.bundles` | Bundles: a question saved by name, run again for new subjects without a new plan. | 5 · `anyquery.dataset_owner`, `anyquery.dataset_read`, `anyquery.datasets` +2 |
+| `anyquery.calls` | A validated plan's sources as the Orthogonal core's data: an allowlist and call specs. | 4 · `anyquery.billing`, `anyquery.execute`, `anyquery.repair` +1 |
+| `anyquery.candidates` | The catalogs, as :class:`CandidateEndpoint` rows the planner may choose from. | 5 · `anyquery.catalog_load`, `anyquery.retrieve`, `servicemap.importer` +2 |
+| `anyquery.catalog_load` | Load the planner's catalog from disk: Orthogonal details, field ledgers, pay.sh. | 4 · `anyquery.demo`, `anyquery.deploy`, `servicemap.importer` +1 |
+| `anyquery.chain_read` | What a landed transaction moved, read from ``getTransaction`` (json encoding) alone. | 2 · `anyquery.settlement`, `anyquery.solana_billing` |
+| `anyquery.config` | Any-query configuration, read once from the environment. | 19 · `anyquery.billing`, `anyquery.datasets`, `anyquery.demo` +16 |
+| `anyquery.dataset_backfill` | Backfill a dataset from a bundle and one run already paid for. No spend, ever. | 0 |
+| `anyquery.dataset_download` | The dataset downloads: ``GET /d/<id>.json`` and ``GET /d/<id>.parquet``. | 1 · `anyquery.dataset_hosted` |
+| `anyquery.dataset_hosted` | The hosted dataset endpoint: ``/d/<dataset_id>/mcp`` and its two downloads. Transport. | 1 · `serve_mcp` |
+| `anyquery.dataset_owner` | The owner's dataset tools on ``/anyquery/mcp``: create, refresh, list. | 1 · `anyquery.service` |
+| `anyquery.dataset_read` | Shared pieces of the dataset endpoint: who is asking, the argument checks, the cell | 4 · `anyquery.dataset_download`, `anyquery.dataset_hosted`, `anyquery.dataset_owner` +1 |
+| `anyquery.dataset_storage` | Where a dataset's snapshots live, and how many bytes a customer holds. | 0 |
+| `anyquery.dataset_surface` | The dataset endpoint's tools: read one saved dataset, never spend, never call a source. | 1 · `anyquery.dataset_hosted` |
+| `anyquery.dataset_tools` | The dataset endpoint's tool shapes: definitions only (DATASET-DESIGN.md, part A). | 5 · `anyquery.dataset_hosted`, `anyquery.dataset_owner`, `anyquery.dataset_read` +2 |
+| `anyquery.datasets` | Datasets: a customer's living table, built from the facts of the runs it adopted. | 5 · `anyquery.dataset_backfill`, `anyquery.dataset_owner`, `anyquery.dataset_storage` +2 |
+| `anyquery.demo` | The any-query story end to end, in recorded mode: $0, offline, every lane's real code. | 0 |
+| `anyquery.deploy` | The hosted any-query deps, built from settings and the keychain. | 1 · `anyquery.hosted` |
+| `anyquery.enrol` | Onboarding: Gecko MAKES the user's Privy wallet and binds it to their account. | 1 · `anyquery.demo` |
+| `anyquery.execute` | Run a validated plan at its confirmed quote: the ``Execute`` contract of ``run.py``. | 2 · `anyquery.demo`, `anyquery.deploy` |
+| `anyquery.golden` | The planner's golden set and how a plan is scored against it. | 0 |
+| `anyquery.history` | Stored runs of one plan, read back from the ``Store``: what changed, and a cell's | 3 · `anyquery.dataset_surface`, `anyquery.datasets`, `anyquery.service` |
+| `anyquery.host_secrets` | Where the hosted any-query reads its secrets: the keychain, and on a host the platform. | 1 · `anyquery.hosted` |
+| `anyquery.hosted` | The hosted any-query mount: the ten tools at ``/anyquery/mcp``, behind a Gecko key. | 2 · `anyquery.deploy`, `serve_mcp` |
+| `anyquery.model_planner` | The model planner: a question and its catalog candidates in, a :class:`PlanDraft` out. | 2 · `anyquery.demo`, `anyquery.deploy` |
+| `anyquery.mongo` | ``MongoStore``: the ``Store`` protocol on MongoDB, one database per customer. | 2 · `anyquery.deploy`, `servicemap.mongo` |
+| `anyquery.payment_tx` | The unsigned bytes of one run's payment, and the policy that may sign exactly them. | 10 · `anyquery.demo`, `anyquery.deploy`, `anyquery.privy_admin` +7 |
+| `anyquery.pii` | Contact details are PII: stored whole for the customer, masked when a tool shows them. | 3 · `anyquery.datasets`, `anyquery.reader_keys`, `anyquery.views` |
+| `anyquery.plan_query` | One call from a pasted question to a validated plan and its whole-run quote. | 1 · `anyquery.golden` |
+| `anyquery.planner` | The planner seam: a query becomes a :class:`PlanDraft`, and code decides what survives. | 5 · `anyquery.golden`, `anyquery.model_planner`, `anyquery.plan_query` +2 |
+| `anyquery.privy_admin` | Founder-run Privy changes: make the settlement wallet, and rewrite a policy's rules. | 0 |
+| `anyquery.privy_policy` | Privy's policy vocabulary, and the pieces our own pre-sign re-check shares. | 4 · `anyquery.privy_admin`, `anyquery.settlement_policy`, `anyquery.wallet_policy` +1 |
+| `anyquery.reader` | Read one planned field out of one upstream reply, by its declared path. | 1 · `anyquery.repair` |
+| `anyquery.reader_keys` | Reader keys: a key that reads ONE dataset of its owner, and nothing else. | 4 · `anyquery.dataset_download`, `anyquery.dataset_hosted`, `anyquery.dataset_read` +1 |
+| `anyquery.rebates` | Who a relay rebate is credited to, once, and when to remind the founder to sweep. | 3 · `anyquery.demo`, `anyquery.deploy`, `anyquery.solana_billing` |
+| `anyquery.recorded` | The transport edge of recorded mode: every outside party any-query talks to, as data. | 1 · `anyquery.demo` |
+| `anyquery.recorded_chain` | The chain half of recorded mode: a mainnet-SHAPED node and Helius's sender. | 1 · `anyquery.recorded` |
+| `anyquery.repair` | One (subject, field) of a plan: its rank-0 source, then the repair walk. | 1 · `anyquery.execute` |
+| `anyquery.retrieve` | Query -> the top-``k`` catalog candidates the planner is shown (``CandidatesFor``). | 3 · `anyquery.demo`, `anyquery.deploy`, `anyquery.plan_query` |
+| `anyquery.run` | The run contract: a validated plan and its confirmed quote go through the Orthogonal | 4 · `anyquery.demo`, `anyquery.deploy`, `anyquery.execute` +1 |
+| `anyquery.service` | The any-query tools, behind the gate: ``call_anyquery_tool`` and its deps. | 3 · `anyquery.demo`, `anyquery.deploy`, `anyquery.hosted` |
+| `anyquery.settlement` | Settling a landed SOL charge: Gecko's settlement wallet swaps it and pays the treasury. | 3 · `anyquery.demo`, `anyquery.deploy`, `anyquery.solana_billing` |
+| `anyquery.settlement_policy` | What Gecko's settlement wallet may sign, written twice: into Privy, and into our gate. | 2 · `anyquery.privy_admin`, `anyquery.settlement` |
+| `anyquery.settlement_tx` | The unsigned bytes of one settlement: Gecko's own SOL to USDC to the cold treasury. | 4 · `anyquery.deploy`, `anyquery.recorded`, `anyquery.settlement` +1 |
+| `anyquery.snapshots` | Parquet snapshots of a dataset version, and where they are kept. | 6 · `anyquery.dataset_backfill`, `anyquery.dataset_download`, `anyquery.dataset_owner` +3 |
+| `anyquery.solana_billing` | ``SolanaBilling``: the :class:`~gecko.anyquery.billing.Billing` Protocol on chain. | 2 · `anyquery.demo`, `anyquery.deploy` |
+| `anyquery.store` | Where any-query keeps plans, quotes, runs, facts, call rows and the payment ledger. | 19 · `anyquery.billing`, `anyquery.dataset_backfill`, `anyquery.dataset_download` +16 |
+| `anyquery.store_mongo` | The Mongo layout for any-query, as data: one database per customer. | 4 · `anyquery.dataset_backfill`, `anyquery.mongo`, `anyquery.snapshots` +1 |
+| `anyquery.surface` | The any-query MCP tool shapes. Definitions only; ``call_anyquery_tool`` is lane 4. | 3 · `anyquery.dataset_read`, `anyquery.hosted`, `anyquery.service` |
+| `anyquery.types` | Every dataclass and Literal of the any-query contract. The only definition. | 32 · `anyquery.billing`, `anyquery.bundles`, `anyquery.calls` +29 |
+| `anyquery.upstream_spend` | The host-wide upstream spend cap, as one Mongo document every task shares. | 1 · `anyquery.deploy` |
+| `anyquery.upstream_x402` | Pay one Orthogonal call over x402 on Solana, from Gecko's settlement wallet. | 1 · `anyquery.deploy` |
+| `anyquery.validate` | ``validate_plan``: the model proposed a draft; this decides what survives. | 3 · `anyquery.demo`, `anyquery.deploy`, `anyquery.plan_query` |
+| `anyquery.views` | What the any-query tools return: the contract dataclasses as small, safe dicts. | 1 · `anyquery.service` |
+| `anyquery.wallet_policy` | What the user's Privy wallet may sign, written twice: into the wallet, and into our gate. | 3 · `anyquery.enrol`, `anyquery.privy_admin`, `anyquery.solana_billing` |
+| `anyquery.x402_policy` | What the settlement wallet may sign to pay Orthogonal over x402, written twice. | 3 · `anyquery.deploy`, `anyquery.settlement_policy`, `anyquery.upstream_x402` |
 | `arazzo` | Arazzo export — the derived plan as a portable handoff artifact. | 2 · `cli`, `mcp_server` |
 | `artifact` | The per-program artifact — what a catalogue stores beside an IDL so agents can call it. | 3 · `cli`, `instruction_build`, `providers.catalog_surface` |
 | `authcheck` | Live credential check — "do these creds ACTUALLY authenticate?" | 0 |
 | `authlogin` | Hosted login service — email OTP → a minted Gecko key (SERVER-SIDE identity). | 1 · `http_server` |
-| `autonomous_purchase` | One call that prepares, verifies, authorises, signs and settles a purchase. | 1 · `prepare_purchase` |
+| `autonomous_purchase` | One call that prepares, verifies, authorises, signs and settles a purchase. | 11 · `anyquery.payment_tx`, `anyquery.recorded`, `anyquery.recorded_chain` +8 |
 | `binding` | Per-customer binding — the join that makes the day-one model work. | 0 |
-| `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 15 · `authcheck`, `catalog_mcp`, `chain_eval` +12 |
+| `caller` | Caller — turn a question-shaped tool + agent args into a correct HTTP request. | 21 · `anyquery.recorded`, `authcheck`, `catalog_mcp` +18 |
 | `canonical` | Value-domain → canonical-example registry (single source of truth). | 2 · `sample`, `tools` |
 | `capability` | The Capability Card: what a contributor writes, and the check that admits it. | 1 · `cli` |
 | `capture` | Call-outcome capture — the usage-telemetry + opt-in correctness-corpus edge. | 3 · `client`, `http_server`, `validator` |
 | `cards` | In-chat cards for Gecko tools — MCP Apps resources, PayBox-style. | 1 · `http_server` |
-| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 9 · `client`, `endpoint_score`, `find_start` +6 |
+| `catalog` | Lightweight capability catalog — the "find the right endpoint" layer. | 10 · `anyquery.retrieve`, `client`, `endpoint_score` +7 |
 | `catalog_mcp` | Aggregated MCP surface over the whole pay.sh catalog — one MCP, 70 providers. | 1 · `serve_mcp` |
 | `catalogue_export` | The semantic catalogue, serialised so a non-Python consumer can DERIVE it. | 0 |
 | `chain_eval` | Chain-FCC harness — the chain analogue of ``fcc_eval`` (§6, §12 Phase 1). | 0 |
@@ -35,8 +91,8 @@ package depends on it, which is worth a look before you add a caller.
 | `corpus` | Control-plane-safe correctness corpus — Phase 0 capture (metadata only). | 12 · `cli`, `drift`, `drift_watch` +9 |
 | `corrections` | Args-side of the correctness corpus — captured corrections that raise first-call-correct | 1 · `fcc_eval` |
 | `correlate` | The correlation engine (§13 Phase 2) — the confidence, done honestly. | 5 · `catalog_mcp`, `metrics`, `provider_matrix` +2 |
-| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 7 · `autonomous_purchase`, `handoff`, `prepare_instruction` +4 |
-| `credentials` | Local credential resolver — fetch the user's provider key at call time. | 10 · `access`, `authcheck`, `connect` +7 |
+| `cosign` | Assemble one transaction that two parties signed, without trusting either of them. | 8 · `anyquery.upstream_x402`, `autonomous_purchase`, `handoff` +5 |
+| `credentials` | Local credential resolver — fetch the user's provider key at call time. | 24 · `access`, `anyquery.demo`, `anyquery.deploy` +21 |
 | `decision_log` | The decision log: one row per run Gecko carried, served or refused, joined to its end. | 0 |
 | `deeplinks` | One-click add strings for the hosted MCP surface. | 4 · `examples.colosseum`, `examples.jupiter`, `examples.txline` +1 |
 | `demo` | End-to-end demo (recorded mode, $0): natural goal -> discover -> correct call -> data. | 0 |
@@ -74,7 +130,7 @@ package depends on it, which is worth a look before you add a caller.
 | `fork_preflight` | A **state-advancing** fork preflight — chain a lifecycle without ever sending one. | 2 · `sandbox.deliver`, `semantic_seed` |
 | `fusion` | Rank-based fusion of the lexical and dense retrieval arms (S1). | 2 · `client`, `search` |
 | `graph` | Surface graph — correlations & multi-call planning (V2 §4/§5). | 17 · `arazzo`, `chain_eval`, `client` +14 |
-| `handoff` | The signer handoff — a Receipt, the bytes it attests, and a verdict over someone else's. | 3 · `autonomous_purchase`, `prepare_purchase`, `signer` |
+| `handoff` | The signer handoff — a Receipt, the bytes it attests, and a verdict over someone else's. | 4 · `anyquery.upstream_x402`, `autonomous_purchase`, `prepare_purchase` +1 |
 | `hints` | DECLARED entity hints — the top of the §13.2 trust ladder. | 3 · `cli`, `client`, `serve` |
 | `honeypot` | Honeypot tripwire — decoy tools a *comprehended* surface never emits. | 1 · `mcp_server` |
 | `hosted_login` | ``gecko login`` client — talk ONLY to Gecko's server (Privy is a server detail). | 0 |
@@ -82,18 +138,35 @@ package depends on it, which is worth a look before you add a caller.
 | `identity` | SessionIdentity — bind a session to its operator policy (shape-now-token-later). | 1 · `access` |
 | `idl_layout` | Where a field lives inside an Anchor account, computed from the IDL — or refused. | 4 · `ingest_gate`, `pda_extract`, `read_accounts` +1 |
 | `imagescan` | Skill Guard L2 + L3 — deterministic image metadata / trailing-byte / OCR scan. | 1 · `docs_reader.scan` |
-| `ingest` | OpenAPI surface ingestor. | 21 · `catalog`, `chain_eval`, `cli` +18 |
+| `ingest` | OpenAPI surface ingestor. | 23 · `anyquery.retrieve`, `catalog`, `chain_eval` +20 |
 | `ingest_gate` | Should this program be ingested at all? A gate on ingesting, not a step in ingesting. | 1 · `providers.cli` |
 | `inspect` | ``gecko inspect`` — a provider-facing agent-readiness scorecard. | 2 · `http_server`, `report` |
-| `instruction_build` | An IDL instruction -> the exact bytes a program reads, encoded HERE, offline. | 1 · `providers.let_me_buy_build` |
+| `instruction_build` | An IDL instruction -> the exact bytes a program reads, encoded HERE, offline. | 2 · `anyquery.settlement_tx`, `providers.let_me_buy_build` |
 | `jito_surface` | The Jito Block Engine money-boundary — the ONE place both hosts build its surface. | 2 · `serve_mcp`, `serve_providers` |
 | `joincheck` | Cross-domain join detection — a MEASUREMENT of derived-join precision, never a gate. | 0 |
-| `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 1 · `http_server` |
-| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 6 · `authlogin`, `cli`, `http_server` +3 |
+| `keyauth` | Gecko-key access control — verify a login identity + a founder allowlist. | 3 · `anyquery.dataset_hosted`, `anyquery.reader_keys`, `http_server` |
+| `keyregistry` | Gecko API-key registry + resolver — the hosted-plane access credential (Layer 1 ext.). | 9 · `anyquery.dataset_hosted`, `anyquery.reader_keys`, `authlogin` +6 |
 | `kora_surface` | The Kora money-boundary — the ONE place every host builds its surface. | 1 · `serve_mcp` |
-| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 20 · `autonomous_purchase`, `instruction_build`, `prepare_purchase` +17 |
+| `landing` | Assemble the STANDARD landing preludes around a built program instruction — for the | 30 · `anyquery.payment_tx`, `anyquery.recorded`, `anyquery.recorded_chain` +27 |
 | `lexnorm` | Lexical normalization — the shared vocabulary layer under every lexical ranker. | 3 · `find_start`, `purchase_intent_eval`, `rankable` |
 | `lifecycle` | The order a program's instructions must happen in — derived, not described. | 1 · `providers.catalog_surface` |
+| `livingfile.chain` | The mint, read from the chain: supply, decimals, authorities, owner, extensions. | 3 · `livingfile.job`, `livingfile.market`, `livingfile.readings` |
+| `livingfile.checks` | The three checks, computed in code from this run's FRESH rows — red when they fail. | 2 · `livingfile.deps`, `livingfile.readings` |
+| `livingfile.dataset` | The living file as an API: the latest file for a mint, and what changed since a run. | 0 |
+| `livingfile.deps` | Where recorded and live differ for the living file — and nowhere else. | 6 · `livingfile.dataset`, `livingfile.hosted`, `livingfile.job` +3 |
+| `livingfile.errors` | Typed refusals of the living file. All are ``ListJobError``s, so the lists surface | 2 · `livingfile.hosted`, `livingfile.xstocks` |
+| `livingfile.facts` | One row per fact and per check: the value, where it came from, when, and the last | 4 · `livingfile.checks`, `livingfile.job`, `livingfile.readings` +1 |
+| `livingfile.fixture` | Recorded mode: a HAND-WRITTEN, made-up chain, Jupiter, Orthogonal and legal pages. | 1 · `livingfile.deps` |
+| `livingfile.hosted` | The hosted xStock file: ``xstock_file`` and ``xstock_changes_since`` over stored runs. | 1 · `serve_mcp` |
+| `livingfile.job` | The living file for one xStock: plan (free), then run (one paid call, confirmed). | 1 · `livingfile.dataset` |
+| `livingfile.legal` | Legal terms, versioned by hash: what the pages say, without trusting what they say. | 2 · `livingfile.job`, `livingfile.readings` |
+| `livingfile.market` | Token price and liquidity from Jupiter; the real share price from Financial Datasets. | 2 · `livingfile.job`, `livingfile.readings` |
+| `livingfile.plan` | The free step: what the living file will read, and what the one paid read costs. | 1 · `livingfile.job` |
+| `livingfile.readings` | Each source's read, turned into ``Reading``s: canonical value, our summary, source. | 1 · `livingfile.job` |
+| `livingfile.store` | What the living file keeps, through the supplier watch's store. | 0 |
+| `livingfile.surface` | The living file's read tools on ``gecko serve --lists``: two definitions, no logic. | 2 · `livingfile.hosted`, `orthogonal.surface` |
+| `livingfile.wire` | The two wire edges of the living file's free reads. Recorded mode swaps both. | 3 · `livingfile.deps`, `livingfile.legal`, `livingfile.market` |
+| `livingfile.xstocks` | The xStocks the living file knows, and where each fact comes from — as DATA. | 9 · `livingfile.chain`, `livingfile.checks`, `livingfile.dataset` +6 |
 | `login` | `gecko login` — hosted-identity enrollment (email → OTP → sealed credential). | 4 · `connect`, `hosted_login`, `privy_login` +1 |
 | `mainnet_ledger` | Write the prediction down beside the signature, at the moment both exist. | 0 |
 | `mcp_client` | A minimal MCP client — for calling SOMEONE ELSE'S MCP server. | 3 · `orquestra_build`, `partner_delta`, `providers.catalog_surface` |
@@ -101,19 +174,57 @@ package depends on it, which is worth a look before you add a caller.
 | `metadao_state` | Read + decode a MetaDAO launchpad_v7 ``Launch`` account — the state a fund needs. | 1 · `providers.metadao` |
 | `meteora_math` | Meteora DLMM lb_pair state read + bin/price math — the STATE half of a landable swap. | 3 · `providers.meteora`, `providers.meteora_landing`, `whirlpool_math` |
 | `metrics` | Comprehension metrics — the a-ha numbers, measured honestly (control plane only). | 1 · `report` |
-| `modes` | Canonical call-mode type — the single source of truth. | 12 · `binding`, `catalog_mcp`, `cli` +9 |
-| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 23 · `access`, `caller`, `cli` +20 |
-| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 16 · `autonomous_purchase`, `corpus`, `fork_preflight` +13 |
+| `modes` | Canonical call-mode type — the single source of truth. | 19 · `anyquery.types`, `binding`, `catalog_mcp` +16 |
+| `netguard` | Network guard — SSRF defense for every URL Gecko fetches on behalf of an agent. | 31 · `access`, `caller`, `cli` +28 |
+| `networks` | The network vocabulary — ONE closed set, imported everywhere, never re-spelled. | 22 · `anyquery.deploy`, `anyquery.settlement`, `anyquery.solana_billing` +19 |
 | `notebookdoc` | A Jupyter notebook, projected onto markdown so a document corpus can rank it. | 1 · `doccorpus` |
 | `ocrnorm` | Channel-fidelity normalisation for OCR-recovered text (L3). | 0 |
 | `onboard` | `gecko add` onboarding — glue over the engine. Thin, control-plane only. | 1 · `serve` |
 | `ore_state` | Read + decode ORE V3 ``Miner`` / ``Treasury`` accounts — the state a claim needs. | 1 · `providers.ore` |
-| `orquestra_build` | The Orquestra-backed seams for :mod:`gecko.prepare_instruction`. | 1 · `providers.catalog_surface` |
+| `orquestra_build` | The Orquestra-backed seams for :mod:`gecko.prepare_instruction`. | 2 · `anyquery.deploy`, `providers.catalog_surface` |
 | `orquestra_client` | A thin, typed client for Orquestra's machine surface (the program catalog). | 5 · `cli`, `find_start`, `orquestra_comprehend` +2 |
 | `orquestra_comprehend` | Auto-comprehend-on-pick — generate a program config from an Orquestra surface. | 2 · `providers.catalog_surface`, `providers.cli` |
+| `orthogonal.api` | The allowed Orthogonal calls, built by the ordinary engine and sent by a transport. | 6 · `anyquery.demo`, `anyquery.deploy`, `livingfile.deps` +3 |
+| `orthogonal.errors` | Typed failures for the commenter-list job, each one a sentence a person can act on. | 27 · `anyquery.calls`, `anyquery.repair`, `anyquery.service` +24 |
+| `orthogonal.extract` | Read the few fields the job needs out of an Orthogonal reply, and drop the rest. | 7 · `anyquery.upstream_x402`, `livingfile.plan`, `orthogonal.api` +4 |
+| `orthogonal.fixture` | Recorded mode: a HAND-WRITTEN, made-up Orthogonal, answering on the transport seam. | 1 · `orthogonal.job` |
+| `orthogonal.job` | The commenter-list job: plan (free), then run (paid, only when confirmed). | 8 · `anyquery.demo`, `anyquery.deploy`, `anyquery.execute` +5 |
+| `orthogonal.match` | Deterministic commenter -> customer / new / not sure. Code decides, never a model. | 2 · `orthogonal.job`, `orthogonal.record` |
+| `orthogonal.paginate` | Page through one logical Orthogonal search: pay for page 1, follow on for free. | 7 · `orthogonal.job`, `orthogonal.record`, `orthogonal.supplier.calls` +4 |
+| `orthogonal.post` | Accept only an Instagram post or reel link, and name it by its shortcode. | 1 · `orthogonal.job` |
+| `orthogonal.record` | What the job keeps: a three-column list and a receipt with no names in it. | 1 · `orthogonal.job` |
+| `orthogonal.session` | The Orthogonal key, resolved from the OS keyring at call time and nowhere else. | 2 · `anyquery.deploy`, `orthogonal.job` |
+| `orthogonal.sheet` | Read her customer sheet from ONE folder, in memory, and keep only what matching needs. | 4 · `orthogonal.job`, `orthogonal.match`, `orthogonal.supplier.sheet` +1 |
+| `orthogonal.spec` | Orthogonal as DATA: a synthesized three-operation spec, the auth pin, the allowlist. | 19 · `anyquery.calls`, `anyquery.execute`, `anyquery.repair` +16 |
+| `orthogonal.spend` | Our spend cap, in cents, counted from what Orthogonal says it CHARGED. | 10 · `anyquery.demo`, `anyquery.execute`, `livingfile.deps` +7 |
+| `orthogonal.steps` | One free call outside Orthogonal, as the field ledger keeps it: names and counts. | 5 · `livingfile.chain`, `livingfile.legal`, `livingfile.market` +2 |
+| `orthogonal.supplier.calls` | The calls one supplier costs, as data: which target, which inputs, how it pages. | 8 · `anyquery.calls`, `anyquery.repair`, `livingfile.market` +5 |
+| `orthogonal.supplier.collect` | The planned calls for one supplier, and the facts their replies carry. | 1 · `orthogonal.supplier.job` |
+| `orthogonal.supplier.dataset` | The supplier dataset as an API: latest, history, changes since a run, sources. | 0 |
+| `orthogonal.supplier.demo` | Self-repair, shown at $0: two recorded runs, the second with a changed upstream shape. | 0 |
+| `orthogonal.supplier.deps` | Where recorded and live differ for the supplier watch — and nowhere else. | 5 · `orthogonal.supplier.collect`, `orthogonal.supplier.dataset`, `orthogonal.supplier.demo` +2 |
+| `orthogonal.supplier.drift` | Has a source changed under us since its last run? Read from the field ledger only. | 5 · `anyquery.execute`, `anyquery.repair`, `orthogonal.supplier.dataset` +2 |
+| `orthogonal.supplier.field_readers` | One reader per (source, field): the replies in, one canonical ``Reading`` out. | 4 · `anyquery.repair`, `orthogonal.supplier.gleif`, `orthogonal.supplier.repair` +1 |
+| `orthogonal.supplier.fields` | One row per (supplier, field): the value, where it came from, and whether two sources | 13 · `anyquery.execute`, `anyquery.run`, `anyquery.types` +10 |
+| `orthogonal.supplier.fixture` | Recorded mode for the supplier watch: a HAND-WRITTEN, made-up Orthogonal and SDN list. | 2 · `orthogonal.supplier.demo`, `orthogonal.supplier.deps` |
+| `orthogonal.supplier.gleif` | GLEIF, the public LEI register: a free parent-company source outside every catalog. | 4 · `anyquery.run`, `orthogonal.supplier.deps`, `orthogonal.supplier.repair` +1 |
+| `orthogonal.supplier.history` | Stored runs, read back: the last good value per field, latest, history, changes. | 10 · `anyquery.history`, `anyquery.service`, `anyquery.views` +7 |
+| `orthogonal.supplier.job` | The supplier watch: plan (free), then run (paid, only when confirmed). | 1 · `orthogonal.supplier.demo` |
+| `orthogonal.supplier.parquet` | Parquet in and out, with pyarrow imported only when asked for. | 1 · `anyquery.snapshots` |
+| `orthogonal.supplier.plan` | The free step: what the watch will call, for how much, before anything is paid. | 2 · `orthogonal.supplier.collect`, `orthogonal.supplier.job` |
+| `orthogonal.supplier.readers` | Read the few facts each supplier field needs out of an upstream reply. | 9 · `anyquery.reader`, `livingfile.chain`, `livingfile.market` +6 |
+| `orthogonal.supplier.repair` | Repair: when a field's first source drifts or fails, walk its ranked alternatives. | 4 · `anyquery.repair`, `orthogonal.supplier.collect`, `orthogonal.supplier.job` +1 |
+| `orthogonal.supplier.repair_rows` | A resolution, written down: the table row and the field-ledger row. | 1 · `orthogonal.supplier.job` |
+| `orthogonal.supplier.runner` | One logical upstream call for the supplier watch, with its spend and its ledger rows. | 7 · `anyquery.execute`, `anyquery.repair`, `livingfile.job` +4 |
+| `orthogonal.supplier.sanctions` | A name check against OFAC's SDN list: public, free, and outside every catalog. | 3 · `orthogonal.supplier.deps`, `orthogonal.supplier.fields`, `orthogonal.supplier.job` |
+| `orthogonal.supplier.sheet` | Read the supplier sheet (name, domain, ticker) from ``~/gecko-lists/`` and nowhere else. | 6 · `orthogonal.supplier.calls`, `orthogonal.supplier.field_readers`, `orthogonal.supplier.fields` +3 |
+| `orthogonal.supplier.sources` | The source map, as data: per field, a RANKED list of equivalent sources. | 7 · `anyquery.repair`, `orthogonal.supplier.dataset`, `orthogonal.supplier.deps` +4 |
+| `orthogonal.supplier.store` | What a supplier watch keeps, and how to get it back. | 7 · `livingfile.deps`, `livingfile.hosted`, `livingfile.store` +4 |
+| `orthogonal.supplier.text` | Untrusted upstream text, made safe to keep: sanitized, flattened, capped, CSV-safe. | 15 · `anyquery.candidates`, `anyquery.dataset_read`, `anyquery.plan_query` +12 |
+| `orthogonal.surface` | The MCP face of the list jobs: the commenter list and the supplier watch, no logic. | 1 · `serve` |
 | `partner_delta` | What a partner's live surface says about a PDA, and what ours says — side by side. | 0 |
 | `pay_route` | Can this wallet buy this product — and if not, what is the shortest CHECKED route? | 2 · `providers.catalog_surface`, `providers.whirlpool` |
-| `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 3 · `catalog_mcp`, `paysh_watch`, `serve_mcp` |
+| `paysh_catalog` | pay.sh catalog comprehension — aggregate pay.sh's Solana-DeFi x402 catalog into | 7 · `anyquery.candidates`, `anyquery.catalog_load`, `catalog_mcp` +4 |
 | `paysh_watch` | Hourly self-refresh + drift-watch for the aggregated pay.sh catalog surface. | 0 |
 | `pda` | The PDA seed-graph model — the on-chain twin of Gecko's call graph. | 28 · `account_recipes`, `corpus`, `find_start` +25 |
 | `pda_extract` | Recover PDA seed recipes from program SOURCE — the join the IDL/llms.txt loses. | 3 · `lifecycle`, `orquestra_comprehend`, `program_graph` |
@@ -128,6 +239,7 @@ package depends on it, which is worth a look before you add a caller.
 | `prepare_instruction` | Prepare ANY instruction of ANY comprehended program — unsigned, simulated, or refused. | 3 · `providers.catalog_surface`, `providers.let_me_buy`, `sandbox.rehearse_instruction` |
 | `prepare_purchase` | Plan and verify one ``let_me_buy make_purchase`` — and stop at the signature. | 6 · `pay_route`, `providers.catalog_surface`, `providers.whirlpool` +3 |
 | `privy_auth` | PrivyAccountResolver — verify a Privy access-token "Gecko key" → stable account id. | 1 · `http_server` |
+| `privy_backend` | The Privy signing backend — a key holder that is NOT us, behind the existing seam. | 6 · `anyquery.deploy`, `anyquery.enrol`, `anyquery.privy_admin` +3 |
 | `privy_login` | Privy passwordless email-OTP provider for ``gecko login``. | 2 · `privy_auth`, `privy_server` |
 | `privy_server` | Server-side Privy email-OTP — identity for the hosted ``gecko login`` (SERVER-ONLY). | 1 · `authlogin` |
 | `program_errors` | Name a reverted call's error against the program's OWN table — or refuse to name it. | 1 · `prepare_instruction` |
@@ -139,7 +251,7 @@ package depends on it, which is worth a look before you add a caller.
 | `project.probes` | ProgramGraph -> the probe cases a scorecard runs. The list nobody types by hand. | 1 · `capability` |
 | `project.seeds` | Our seed model -> ``resolve.pda@1``'s seed vocabulary. The translation that matters. | 1 · `project.fdl` |
 | `prove` | ``gecko prove`` — from a sentence to a receipt, in one command. | 3 · `cli`, `drift_watch`, `ingest_gate` |
-| `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 9 · `correlate`, `find_start`, `graph` +6 |
+| `provenance` | The provenance ladders — single source of truth (CLAUDE.md: shared Literals | 10 · `correlate`, `find_start`, `graph` +7 |
 | `provider_config` | Provider config — the config-driven backbone of the Provider Control Panel. | 16 · `find_start`, `ingest_gate`, `orquestra_client` +13 |
 | `provider_matrix` | Multi-provider validation matrix — "can Gecko actually connect to MANY providers?" | 0 |
 | `provider_sync` | Surfaces a partner control plane says to mount — fetched at boot, or not at all. | 1 · `serve_mcp` |
@@ -162,7 +274,7 @@ package depends on it, which is worth a look before you add a caller.
 | `providers.orquestra` | The Orquestra provider surface — the agent front door that points at his builder. | 9 · `providers.cli`, `providers.jupiter`, `providers.jurassic_fi` +6 |
 | `providers.pumpfun` | Pump.fun — the second Orquestra program instance (buy/sell against a bonding curve). | 2 · `providers.cli`, `providers.pumpfun_landing` |
 | `providers.pumpfun_landing` | The Pump.fun "buy-that-passes" orchestrator — the Berkay a-ha. | 0 |
-| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 4 · `providers.catalog_surface`, `providers.cli`, `providers.whirlpool_landing` +1 |
+| `providers.whirlpool` | Orca Whirlpool — the `plan_swap` intent, so a HOSTED agent can convert a token pair. | 5 · `anyquery.settlement_tx`, `providers.catalog_surface`, `providers.cli` +2 |
 | `providers.whirlpool_landing` | The Orca Whirlpool ``swap_v2`` landing orchestrator — the program that already RAN. | 0 |
 | `providers.whirlpool_position` | Plan an Orca Whirlpool liquidity position: open it, then fund it by token amounts. | 0 |
 | `pump_curve` | Pump.fun bonding-curve read + buy/sell price math — the STATE half of a landable trade. | 2 · `providers.pumpfun`, `providers.pumpfun_landing` |
@@ -182,9 +294,10 @@ package depends on it, which is worth a look before you add a caller.
 | `registry.class_wallet_store` | Storage for class-wallet registrations: ``(account, cohort) -> public address``. | 2 · `registry.class_wallets`, `registry.wiring` |
 | `registry.class_wallets` | Class-wallet registration: a student proves they control an address before we fund it. | 2 · `registry.api`, `registry.wiring` |
 | `registry.client` | Runner-side registry fetch: TLS fetch -> local cache -> offline fallback. | 3 · `examples.colosseum`, `examples.jupiter`, `serve` |
+| `registry.devnet_faucet` | The bootcamp's DEVNET faucet: one call funds a student's buyer for the class store. | 2 · `registry.api`, `serve_mcp` |
 | `registry.keys` | Gecko key issuance: agent-native email OTP -> ``gk_live_`` key. | 2 · `registry.api`, `registry.wiring` |
 | `registry.store` | Surface store: named surface documents with rev + entitlement tier. | 2 · `registry.api`, `serve_mcp` |
-| `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 1 · `registry.wiring` |
+| `registry.wallets` | The hosted ``account_id -> wallet`` directory, backed by Mongo. | 3 · `anyquery.deploy`, `anyquery.enrol`, `registry.wiring` |
 | `registry.wiring` | Env-driven wiring for the hosted registry: Mongo keys + SES OTP mail. | 1 · `serve_mcp` |
 | `relay` | Accepting a fee payer's co-signature without trusting the fee payer. | 4 · `autonomous_purchase`, `sandbox.rehearse`, `sandbox.rehearse_instruction` +1 |
 | `report` | ``gecko report`` — the Agent-Readiness Scorecard, a provider leave-behind. | 0 |
@@ -192,7 +305,7 @@ package depends on it, which is worth a look before you add a caller.
 | `retrieval_eval` | Retrieval-gate instrumentation v2 — the eval runner for :mod:`gecko.find_start`. | 1 · `providers.cli` |
 | `retrieval_metrics` | recall@k and MRR, once — with the POPULATION carried next to the number. | 1 · `purchase_intent_eval` |
 | `risk` | Semantic risk-score — the comprehension-native security signal. | 5 · `enforce`, `evaluate`, `mcp_server` +2 |
-| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 49 · `autonomous_purchase`, `cli`, `drift_watch` +46 |
+| `rpc` | The single canonical JSON-RPC transport seam for Gecko's on-chain reads. | 61 · `anyquery.deploy`, `anyquery.payment_tx`, `anyquery.settlement` +58 |
 | `safechain` | Safe cross-API chain composition — run a DECLARED-confirmed chain while dropping | 3 · `arazzo`, `cli`, `provider_matrix` |
 | `sample` | Schema -> example generator for recorded mode. | 6 · `client`, `demo`, `report` +3 |
 | `sandbox.agents` | Two roles over one storefront — and the seam where a model would go. | 0 |
@@ -205,7 +318,7 @@ package depends on it, which is worth a look before you add a caller.
 | `sandbox.rehearse_swap` | A Meteora DLMM swap, landed on a proven surfnet and judged by what moved. | 0 |
 | `sandbox.surfnet` | Prove the RPC is a surfnet BEFORE any key material can exist. | 10 · `sandbox.agents`, `sandbox.cheatcodes`, `sandbox.deliver` +7 |
 | `sandbox.try_purchase` | ``try_purchase`` — the rehearsal, as a tool an agent can reach, beside the real one. | 1 · `providers.catalog_surface` |
-| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 12 · `client`, `corpus`, `enrich` +9 |
+| `sanitize` | Anti-poisoning sanitizer for spec-provided text (Priority 3). | 15 · `anyquery.plan_query`, `anyquery.validate`, `client` +12 |
 | `scale` | Below-scale surface sizing — the "don't truncate when you don't have to" rule. | 1 · `client` |
 | `scope` | Retrieval returns a SCOPE, not a surface — the attention budget of one search. | 1 · `mcp_server` |
 | `score` | The provider report — one surface, before and after, and what changed. | 0 |
@@ -219,20 +332,33 @@ package depends on it, which is worth a look before you add a caller.
 | `semantic_runner` | The reference runner: the bounded loop that makes the scenarios passable. | 1 · `semantic_fork_surface` |
 | `semantic_scenarios` | The three semantic scenarios — typed specs a grader can score mechanically. | 1 · `semantic_grader` |
 | `semantic_seed` | Seed a store on a fork from the semantic catalogue — the dev-fast unblock. | 1 · `semantic_fork_surface` |
+| `send_endpoint` | Where Gecko sends a signed transaction: public RPC, or Helius with a backrun rebate. | 5 · `anyquery.demo`, `anyquery.settlement`, `anyquery.solana_billing` +2 |
 | `serve` | ``python -m gecko.serve <openapi-url>`` — paste an API, serve it to agents. | 0 |
 | `serve_mcp` | Container entrypoint — serve the humanitarian MCP surfaces over Streamable HTTP. | 0 |
 | `serve_providers` | Provider-facing MCP host — a SEPARATE space from the humanitarian relief host. | 0 |
+| `servicemap.ids` | Stable ids for registry rows, derived from what the row is, never assigned. | 6 · `servicemap.mongo`, `servicemap.pins`, `servicemap.probe` +3 |
+| `servicemap.importer` | Write reader output into a registry, catalog claims first and observations last. | 0 |
+| `servicemap.merge` | How a new reading of a registry row combines with the one already held. | 2 · `servicemap.mongo`, `servicemap.registry` |
+| `servicemap.mongo` | ``MongoRegistry``: the registry contract on ``gecko_registry``. | 1 · `anyquery.deploy` |
+| `servicemap.observe` | Tier 1 health, the record half: what a challenge probe saw, written to the registry. | 0 |
+| `servicemap.pins` | The payTo a payer may send to, read from the registry's last challenge probe. | 1 · `anyquery.deploy` |
+| `servicemap.probe` | Tier 1 health, the request half: read an operation's free x402 challenge. | 1 · `servicemap.observe` |
+| `servicemap.readers` | Catalog and ledger readers: files in, registry drafts out. No network, no store. | 1 · `servicemap.importer` |
+| `servicemap.registry` | The registry contract, and :class:`MemoryRegistry`, its in-memory implementation. | 8 · `anyquery.deploy`, `anyquery.upstream_x402`, `servicemap.importer` +5 |
+| `servicemap.snapshot` | The planner's catalog, read from the registry instead of from files. | 1 · `anyquery.deploy` |
+| `servicemap.store_mongo` | The Mongo layout of the service registry, as data: one shared database. | 1 · `servicemap.mongo` |
+| `servicemap.types` | Every dataclass and Literal of Gecko's service registry. The only definition. | 11 · `anyquery.types`, `orthogonal.supplier.sources`, `servicemap.ids` +8 |
 | `showcase` | The confusable showcase: which catalogue items go on the LIVE geckocoffee store. | 1 · `providers.let_me_buy` |
-| `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 1 · `autonomous_purchase` |
+| `signer` | The transaction-signer seam — the last hop, and the one that costs money. | 6 · `anyquery.demo`, `anyquery.settlement`, `anyquery.solana_billing` +3 |
 | `signing_gate` | The verdict → signing-gate seam. | 1 · `handoff` |
-| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 32 · `autonomous_purchase`, `corpus`, `drift_watch` +29 |
-| `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 3 · `autonomous_purchase`, `providers.whirlpool_position`, `signer` |
+| `simulate` | The Receipt engine — close a built plan into a legible ``simulateTransaction`` result. | 40 · `anyquery.payment_tx`, `anyquery.settlement`, `anyquery.settlement_policy` +37 |
+| `spend_policy` | The spend policy — AUTHORIZATION, the other half of the signing decision. | 12 · `anyquery.payment_tx`, `anyquery.privy_policy`, `anyquery.settlement` +9 |
 | `start_view` | `start(intent)` — the router's answer projected to the one call an agent makes. | 1 · `providers.catalog_surface` |
 | `store.catalog_sync` | Stage 1 — project a comprehended program Surface into the Mongo catalog. | 0 |
 | `store.collections` | A minimal duck-typed collection seam — in-memory for tests, Mongo in prod. | 5 · `fork_lane`, `recorded_lane`, `store.catalog_sync` +2 |
 | `store.projections` | The ONLY writer into the outcome collection — allowlist-first, fail-closed. | 2 · `fork_lane`, `recorded_lane` |
 | `store.scores` | The observed-only reader — the single source of a PUBLISHED per-endpoint score. | 0 |
-| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 12 · `pay_route`, `prepare_purchase`, `providers.jurassic_fi` +9 |
+| `store_accounts` | A store NAME resolved to the accounts a purchase must carry — from the chain, together. | 16 · `anyquery.hosted`, `anyquery.payment_tx`, `anyquery.settlement_tx` +13 |
 | `store_directory` | Every let_me_buy storefront on a network, read from the chain — never from a wired list. | 9 · `providers.catalog_surface`, `providers.let_me_buy`, `providers.let_me_buy_build` +6 |
 | `submit_transaction` | Submit a Gecko-verified signed transaction and rebroadcast until it lands. | 1 · `providers.catalog_surface` |
 | `surface` | The Agent Surface — one named artifact for the thing Gecko projects. | 10 · `catalog_mcp`, `cli`, `correlate` +7 |
@@ -247,11 +373,11 @@ package depends on it, which is worth a look before you add a caller.
 | `telegram_webhook` | ``POST /telegram/webhook`` — a person in a chat, talking to the engine. | 1 · `serve_mcp` |
 | `telemetry` | Opt-out, control-plane-safe usage telemetry — measure adoption, not data. | 6 · `events`, `http_server`, `onboard` +3 |
 | `testgen` | TDD test generator — comprehend an API, emit the tests that prove the integration. | 0 |
-| `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 2 · `simulate`, `store_directory` |
+| `token_program` | Which token program OWNS a mint — read from the mint account, never inferred. | 4 · `livingfile.chain`, `livingfile.fixture`, `simulate` +1 |
 | `toolerror` | Is this tool result a FAILURE? — the one place both MCP transports ask. | 4 · `demo`, `http_server`, `mcp_server` +1 |
-| `tools` | Question-shaped tool generator — the comprehension payload. | 31 · `agentnative`, `catalog`, `chain_eval` +28 |
+| `tools` | Question-shaped tool generator — the comprehension payload. | 36 · `agentnative`, `anyquery.dataset_tools`, `anyquery.surface` +33 |
 | `trace` | A run that writes down what it did, so a graph can be drawn from the run itself. | 4 · `autonomous_purchase`, `decision_log`, `sandbox.rehearse` +1 |
-| `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 9 · `autonomous_purchase`, `effects`, `handoff` +6 |
+| `txbind` | ``evaluate_tx`` — bind a Receipt to the exact message a signer is about to sign. | 11 · `anyquery.x402_policy`, `autonomous_purchase`, `effects` +8 |
 | `uaclass` | Robot/human classification for a connecting MCP client. | 2 · `http_server`, `waf` |
 | `usage_report` | Who used which surface: calls per surface per day, distinct sessions, top tools. | 0 |
 | `validator` | Correctness validator + outcome log (the flywheel seed). | 1 · `verify` |
@@ -261,11 +387,13 @@ package depends on it, which is worth a look before you add a caller.
 | `vindex` | The value-domain index (§13 Phase 3.3) — "what correlates with X across ALL | 4 · `catalog_mcp`, `cli`, `metrics` +1 |
 | `vocab_gap` | Which words a user said that reach NO card — the input the blurb lever needs. | 0 |
 | `waf` | WAF / robot-block middleware for the hosted multi-surface MCP server. | 1 · `http_server` |
-| `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 3 · `prepare_purchase`, `providers.catalog_surface`, `registry.wallets` |
+| `wallet_binding` | Which wallet belongs to which authenticated account — the identity half of custody. | 6 · `anyquery.demo`, `anyquery.enrol`, `anyquery.solana_billing` +3 |
 | `wellknown` | Host-level ``.well-known`` discovery manifests for the public multi-surface app. | 1 · `http_server` |
-| `whirlpool_math` | Orca Whirlpool price math — the OUTPUT FLOOR a landable swap needs, and its inverse. | 2 · `pay_route`, `providers.whirlpool` |
-| `whirlpool_venue` | Find the pool that converts one mint into another — and make each candidate prove it. | 3 · `pay_route`, `providers.whirlpool`, `providers.whirlpool_position` |
+| `whirlpool_math` | Orca Whirlpool price math — the OUTPUT FLOOR a landable swap needs, and its inverse. | 3 · `anyquery.payment_tx`, `pay_route`, `providers.whirlpool` |
+| `whirlpool_venue` | Find the pool that converts one mint into another — and make each candidate prove it. | 5 · `anyquery.payment_tx`, `pay_route`, `providers.whirlpool` +2 |
 | `workflows` | Derive the workflows an agent will actually want, ranked — no human authoring them. | 1 · `cli` |
 | `x402` | x402 402-challenge validation — the enforce point for the payment-swap scenario. | 3 · `redteam.scenarios`, `redteam.scorer`, `x402_pay` |
 | `x402_facilitator` | Live x402 facilitator adapter — the HTTP relay behind ``X402_MODE=live``. | 1 · `x402_pay` |
+| `x402_http` | The HTTP seam an x402 payer needs: a reply with its status AND its headers. | 1 · `anyquery.upstream_x402` |
 | `x402_pay` | Flow-A x402 billing — Gecko collects its OWN flat per-surface subscription in USDC. | 1 · `x402_facilitator` |
+| `x402_svm` | x402 v2 ``exact`` on Solana, the PAYING side: read a challenge, build the payment bytes, | 5 · `anyquery.upstream_x402`, `anyquery.x402_policy`, `servicemap.pins` +2 |

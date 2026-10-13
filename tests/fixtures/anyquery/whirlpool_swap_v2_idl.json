@@ -1,0 +1,108 @@
+{
+ "about": "HAND-WRITTEN from the account order in @orca-so/whirlpools-client getSwapV2Instruction (snake_case), the same IDL tests/test_anyquery_solana_billing.py uses. Not fetched; the first founder rehearsal confirms the live IDL.",
+ "instructions": [
+  {
+   "name": "swap_v2",
+   "discriminator": [
+    43,
+    4,
+    237,
+    11,
+    26,
+    201,
+    30,
+    98
+   ],
+   "accounts": [
+    {
+     "name": "token_program_a"
+    },
+    {
+     "name": "token_program_b"
+    },
+    {
+     "name": "memo_program",
+     "address": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+    },
+    {
+     "name": "token_authority",
+     "signer": true
+    },
+    {
+     "name": "whirlpool",
+     "writable": true
+    },
+    {
+     "name": "token_mint_a"
+    },
+    {
+     "name": "token_mint_b"
+    },
+    {
+     "name": "token_owner_account_a",
+     "writable": true
+    },
+    {
+     "name": "token_vault_a",
+     "writable": true
+    },
+    {
+     "name": "token_owner_account_b",
+     "writable": true
+    },
+    {
+     "name": "token_vault_b",
+     "writable": true
+    },
+    {
+     "name": "tick_array_0",
+     "writable": true
+    },
+    {
+     "name": "tick_array_1",
+     "writable": true
+    },
+    {
+     "name": "tick_array_2",
+     "writable": true
+    },
+    {
+     "name": "oracle",
+     "writable": true
+    }
+   ],
+   "args": [
+    {
+     "name": "amount",
+     "type": "u64"
+    },
+    {
+     "name": "other_amount_threshold",
+     "type": "u64"
+    },
+    {
+     "name": "sqrt_price_limit",
+     "type": "u128"
+    },
+    {
+     "name": "amount_specified_is_input",
+     "type": "bool"
+    },
+    {
+     "name": "a_to_b",
+     "type": "bool"
+    },
+    {
+     "name": "remaining_accounts_info",
+     "type": {
+      "option": {
+       "defined": {
+        "name": "RemainingAccountsInfo"
+       }
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

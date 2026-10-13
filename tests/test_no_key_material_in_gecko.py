@@ -283,7 +283,7 @@ def test_no_module_in_gecko_imports_a_keypair_type() -> None:
 #: than a rule: an exemption you can enumerate is one a reviewer can read. Adding a second
 #: entry here is the change that deserves an argument, which is exactly why it has to be
 #: made HERE and not by writing a key factory somewhere quieter.
-_KEYPAIR_EXEMPT = frozenset({"surfnet.py"})
+_KEYPAIR_EXEMPT = frozenset({"surfnet.py", "devnet_faucet.py"})
 
 
 def test_the_exempt_module_can_only_make_a_key_from_a_PROOF() -> None:
@@ -306,7 +306,8 @@ def test_the_exempt_module_can_only_make_a_key_from_a_PROOF() -> None:
     assert len(exempt) == len(_KEYPAIR_EXEMPT), (
         f"exempt module missing: {_KEYPAIR_EXEMPT}"
     )
-    tree = ast.parse(exempt[0].read_text(encoding="utf-8"), str(exempt[0]))
+    surfnet = next(path for path in exempt if path.name == "surfnet.py")
+    tree = ast.parse(surfnet.read_text(encoding="utf-8"), str(surfnet))
 
     names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "Keypair"]
     assert names, "the exemption is stale — this module no longer names a keypair type"
@@ -329,3 +330,57 @@ def test_the_exempt_module_can_only_make_a_key_from_a_PROOF() -> None:
     assert [a.arg for a in arguments] == ["proof"]
     assert isinstance(arguments[0].annotation, ast.Name)
     assert arguments[0].annotation.id == "SurfnetProof"
+
+
+def test_the_devnet_faucet_makes_its_key_once_from_the_env_and_checks_devnet_twice() -> (
+    None
+):
+    """The second exemption (#588, the founder's: the first server-held key that signs).
+
+    Safe only while three facts hold, read off the AST:
+
+    * the keypair is constructed in exactly one place, ``FaucetKey.__init__``, which
+      takes no argument: the key comes from ``GECKO_DEVNET_FAUCET_KEY`` and nowhere else;
+    * no public signature in the module takes a key (the scan above covers that);
+    * ``fund`` checks the devnet genesis hash at least twice, the last time after the
+      transaction is signed and before it is sent.
+    """
+    path = next(p for p in _gecko_modules() if p.name == "devnet_faucet.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+
+    def calls_to(node: ast.AST, attr: str) -> list[ast.Call]:
+        return [
+            n
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == attr
+        ]
+
+    makers = calls_to(tree, "from_bytes") + [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "Keypair"
+    ]
+    key_cls = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ClassDef) and n.name == "FaucetKey"
+    )
+    init = next(
+        n
+        for n in key_cls.body
+        if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+    )
+    assert len(makers) == 1 and makers[0] in list(ast.walk(init)), "one key factory"
+    assert [a.arg for a in init.args.args] == ["self"], "the key is never passed in"
+
+    fund = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "fund"
+    )
+    checks = sorted(c.lineno for c in calls_to(fund, "_assert_devnet"))
+    signs = calls_to(fund, "signed_transaction")
+    assert len(checks) >= 2 and len(signs) == 1
+    assert checks[-1] > signs[0].lineno, "devnet is re-checked after signing"

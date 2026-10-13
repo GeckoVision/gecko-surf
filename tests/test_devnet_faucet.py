@@ -18,7 +18,9 @@ from gecko.registry.devnet_faucet import (
     CLASS_MINTS,
     DEVNET_GENESIS,
     KEY_ENV,
+    RPC_ENV,
     DevnetFaucet,
+    FaucetKey,
     FaucetError,
     build_faucet_from_env,
 )
@@ -84,8 +86,17 @@ def stocked(**overrides: Any) -> FakeDevnet:
     )
 
 
+@pytest.fixture(autouse=True)
+def _faucet_key_in_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The env var is the only way a FaucetKey is made, in tests as in the deploy.
+    monkeypatch.setenv(KEY_ENV, json.dumps(list(bytes(FAUCET))))
+    monkeypatch.delenv(RPC_ENV, raising=False)
+
+
 def faucet(chain: FakeDevnet) -> DevnetFaucet:
-    return DevnetFaucet(FAUCET, rpc_call=chain)
+    built = build_faucet_from_env(rpc_call=chain)
+    assert built is not None
+    return built
 
 
 def test_a_new_buyer_gets_both_class_tokens_and_sol_in_one_signed_transaction() -> None:
@@ -169,6 +180,16 @@ def test_the_key_comes_from_the_environment_or_the_faucet_is_off(
     monkeypatch.setenv(KEY_ENV, json.dumps(list(bytes(FAUCET))))
     built = build_faucet_from_env()
     assert built is not None and built.address == str(FAUCET.pubkey())
+
+
+def test_the_faucet_key_never_renders_or_serialises_its_secret() -> None:
+    import pickle
+
+    key = FaucetKey()
+    secret = json.dumps(list(bytes(FAUCET)))
+    assert secret not in repr(key) and str(FAUCET) not in repr(key)
+    with pytest.raises(Exception):
+        pickle.dumps(key)
 
 
 # ---------------------------------------------------------------- the route

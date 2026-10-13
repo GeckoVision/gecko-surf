@@ -31,7 +31,7 @@ import os
 import shlex
 import subprocess
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -177,6 +177,47 @@ class EnvBackend:
             if legacy_value:
                 return legacy_value
         return None
+
+
+#: The value ``infra/push-ssm-params.sh`` provisions for "deliberately not set", so an
+#: ECS ``Secrets:`` ValueFrom resolves at boot without carrying a real value.
+PLATFORM_UNSET_SENTINEL = "__unset__"
+
+
+@dataclass
+class PlatformSecretBackend:
+    """Secrets a hosting platform injects into the process environment, and only those.
+
+    The production host (ECS on Fargate) has no OS keychain. Its secrets live in SSM
+    Parameter Store and arrive as environment variables through the task definition's
+    ``Secrets:`` ValueFrom. This backend reads them under the canonical
+    ``GECKO_CRED_<SLOT>`` name, for an explicit allowlist of slots: any slot not named
+    is a miss even when its variable is set. Unlike :class:`EnvBackend` it has no legacy
+    names, and it treats the SSM sentinel ``__unset__`` as a miss. It never reads a
+    ``.env`` file: the platform puts values in the process environment, nothing else.
+    """
+
+    slots: frozenset[str]
+    #: An explicit mapping for tests; ``None`` reads ``os.environ`` at call time.
+    environ: Mapping[str, str] | None = None
+    name: str = "platform"
+
+    def available(self) -> bool:
+        return True
+
+    def get(self, ref: CredentialRef) -> str | None:
+        if ref.slot() not in self.slots:
+            return None
+        env = os.environ if self.environ is None else self.environ
+        value = (env.get(_env_key(ref)) or "").strip()
+        if not value or value == PLATFORM_UNSET_SENTINEL:
+            return None
+        return value
+
+
+def platform_env_name(slot: str) -> str:
+    """The variable a platform must set for ``slot``: ``GECKO_CRED_<SLOT>``. A name."""
+    return _env_key(CredentialRef(api=slot))
 
 
 # --- Keychain backend (Phase 2) ---------------------------------------------

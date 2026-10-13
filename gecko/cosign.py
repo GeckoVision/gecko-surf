@@ -91,7 +91,15 @@ def _decode(tx: str | bytes) -> Any:
         raise CosignRefused(
             "undecodable-transaction", "these bytes are not valid base64"
         ) from exc
-    for kind in (Transaction, VersionedTransaction):
+    # A v0 message PARSES as a legacy one (into nonsense: measured 9 Oct, a 2-signer v0
+    # payment read as 4 signers), so the shape is read from the version bit, not guessed
+    # by trying the legacy parser first.
+    kinds: tuple[Any, ...] = (
+        (VersionedTransaction, Transaction)
+        if _is_versioned(raw)
+        else (Transaction, VersionedTransaction)
+    )
+    for kind in kinds:
         try:
             return kind.from_bytes(raw)
         except Exception:  # noqa: BLE001 - try the other shape before refusing
@@ -100,6 +108,22 @@ def _decode(tx: str | bytes) -> Any:
         "undecodable-transaction",
         "these bytes are neither a legacy nor a versioned transaction",
     )
+
+
+def _is_versioned(raw: bytes) -> bool:
+    """The message's first byte has its top bit set exactly when it is versioned."""
+    count, pos, shift = 0, 0, 0
+    while pos < len(raw):
+        byte = raw[pos]
+        pos += 1
+        count |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            break
+        shift += 7
+        if shift > 14:
+            return False
+    first = pos + 64 * count
+    return first < len(raw) and bool(raw[first] & 0x80)
 
 
 def _message_bytes(transaction: Any) -> bytes:
@@ -233,7 +257,7 @@ def merge_signatures(
     that looks submittable and is not.
     """
     from solders.signature import Signature
-    from solders.transaction import Transaction
+    from solders.transaction import Transaction, VersionedTransaction
 
     transaction = _decode(unsigned_tx)
     message = transaction.message
@@ -267,7 +291,14 @@ def merge_signatures(
                 f"({', '.join(unfilled)}); this transaction would be rejected on submit",
             )
 
-    merged = Transaction.populate(message, signatures)
+    from solders.message import Message
+
+    # A legacy message keeps the legacy wire format; a v0 one (an x402 payment) keeps v0.
+    merged: Any = (
+        Transaction.populate(message, signatures)
+        if isinstance(message, Message)
+        else VersionedTransaction.populate(message, signatures)
+    )
 
     # Verify against the message rather than trusting that a well-formed signature is a
     # correct one. A signature over the right message by the wrong key is well-formed.

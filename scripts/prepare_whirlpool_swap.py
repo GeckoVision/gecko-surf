@@ -12,6 +12,18 @@ file in this repository that can sign a mainnet transaction.
     uv run python scripts/prepare_whirlpool_swap.py --signer <YOUR_PUBKEY> \
         --keypair ~/.config/solana/id.json --send
 
+    # the same, sent through Helius so any backrun rebate goes to --signer's wallet
+    # (FOUNDER-RUN; needs `gecko auth set HELIUS_API_KEY` first; mainnet only)
+    uv run python scripts/prepare_whirlpool_swap.py --signer <YOUR_PUBKEY> \
+        --keypair ~/.config/solana/id.json --send --rebate
+
+``--rebate`` without ``--send`` signs and sends nothing: it reports what the send WOULD
+ask for (the rebate address derived from the prepared bytes, and whether the keychain
+holds a key). With ``--send`` the signed bytes go through ``submit_transaction`` with
+the Helius transport (:mod:`gecko.send_endpoint`): verify, send, rebroadcast to the
+SAME endpoint, confirm, and a ``rebate`` block that records the request — never a
+payment. A rebate of zero is a valid result.
+
 TWO MODES, AND WHEN EACH IS RIGHT. Without ``--send`` this is a twin of
 ``prepare_purchase.py``: it hands you bytes plus a binding to carry to
 ``sign_and_send.py`` in another terminal. That flow has the stronger substitution check —
@@ -56,6 +68,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -208,6 +221,15 @@ def main(argv: list[str] | None = None) -> int:
         "--send",
         action="store_true",
         help="sign with --keypair and BROADCAST, in this one call. Without it nothing is signed.",
+    )
+    parser.add_argument(
+        "--rebate",
+        action="store_true",
+        help=(
+            "send through Helius with --signer's wallet as the backrun rebate address. "
+            "Key from the OS keychain only (gecko auth set HELIUS_API_KEY); mainnet only. "
+            "Without --send it only reports what would be requested."
+        ),
     )
     parser.add_argument(
         "--keypair",
@@ -399,8 +421,14 @@ def main(argv: list[str] | None = None) -> int:
             "  authority (gecko.sandbox.rehearse_instruction on a fork)."
         )
 
+    if getattr(args, "rebate", False):
+        _report_rebate(args, result["transaction_base64"])
+
     if args.send:
-        return _settle(args, result["transaction_base64"], binding)
+        last_valid = int(
+            (result.get("expires") or {}).get("last_valid_block_height") or 0
+        )
+        return _settle(args, result["transaction_base64"], binding, last_valid)
 
     # sign_and_send.py decodes --tx as BASE58 and nothing converts for you. The binding is
     # computed over the decoded MESSAGE, so it is the same either way — the encoding trap
@@ -425,8 +453,27 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _report_rebate(args: argparse.Namespace, transaction_base64: str) -> None:
+    """What a --rebate send would ask for. Reads the keychain, never prints a key."""
+    from gecko.anyquery.config import RELAY_FEE_PAYER_ENV
+    from gecko.send_endpoint import SendConfigError, helius_send, relay_rebate_for
+
+    # A public address, not a secret: env is fine. The rebate goes only to this relay.
+    relay = os.environ.get(RELAY_FEE_PAYER_ENV, "").strip() or None
+    address, reason = relay_rebate_for(transaction_base64, relay_fee_payer=relay)
+    print(f"\n  rebate address  {address or '(none)'}  ({reason})")
+    try:
+        helius_send(network=coerce_network(args.network), relay_fee_payer=relay)
+        print("  helius          key present in keychain; endpoint helius-mainnet")
+    except SendConfigError as exc:
+        print(f"  helius          UNAVAILABLE: {exc}")
+
+
 def _settle(
-    args: argparse.Namespace, transaction_base64: str, prepared_binding: str
+    args: argparse.Namespace,
+    transaction_base64: str,
+    prepared_binding: str,
+    last_valid_block_height: int = 0,
 ) -> int:
     """Sign these exact bytes and broadcast, without letting them leave the process.
 
@@ -468,6 +515,21 @@ def _settle(
     # raising, so this cannot be the place a bad --network is caught. argparse `choices`
     # is, and "unknown" itself stays a legal answer that refuses at verify_handoff below.
     network = coerce_network(args.network)
+
+    send = None
+    if getattr(args, "rebate", False):
+        # Decided BEFORE anything is signed: an unusable Helius setup stops here with
+        # nothing spent, rather than falling back to a different endpoint mid-send.
+        from gecko.anyquery.config import RELAY_FEE_PAYER_ENV
+        from gecko.send_endpoint import SendConfigError, helius_send
+
+        relay = os.environ.get(RELAY_FEE_PAYER_ENV, "").strip() or None
+        try:
+            send = helius_send(network=network, relay_fee_payer=relay)
+        except SendConfigError as exc:
+            return _stop(f"--rebate: {exc}. Nothing was signed.")
+        if last_valid_block_height <= 0:
+            return _stop("--rebate needs the prepare's expiry; nothing was signed.")
 
     keypair = Keypair.from_bytes(bytes(json.loads(args.keypair.read_text())))
     signer = str(keypair.pubkey())
@@ -527,6 +589,24 @@ def _settle(
     message = verified.message
     signed = Transaction.populate(message, [keypair.sign_message(bytes(message))])
 
+    if send is not None:
+        from gecko.submit_transaction import submit_transaction_result
+
+        out = submit_transaction_result(
+            {
+                "transaction": base64.b64encode(bytes(signed)).decode(),
+                "binding": handoff.binding,
+                "last_valid_block_height": last_valid_block_height,
+                "rpc_url": args.rpc_url,
+            },
+            send=send,
+        )
+        print("\n" + json.dumps(out, indent=2))
+        if out.get("refused") or not out.get("signature"):
+            return 1
+        _record(str(out["signature"]), receipt.units_consumed, network)
+        return 0 if out.get("confirmed") else 1
+
     reply = default_rpc_call(
         args.rpc_url,
         "sendTransaction",
@@ -547,10 +627,15 @@ def _settle(
     # charge of exactly 44,828, and the ledger never heard about it — because this was
     # the one sender that did not record. `record` is mainnet-only and never fatal, so
     # a fork run passes straight through it.
+    _record(str(signature), receipt.units_consumed, network)
+    return 0
+
+
+def _record(signature: str, predicted_cu: int | None, network: object) -> None:
     written = record_ledger(
         LedgerRow(
-            signature=str(signature),
-            predicted_cu=receipt.units_consumed,
+            signature=signature,
+            predicted_cu=predicted_cu,
             predicted_source="scripts/prepare_whirlpool_swap.py (receipt, pre-signature)",
             network=str(network),
             program="whirlpool",
@@ -558,7 +643,6 @@ def _settle(
     )
     if written is not None:
         print(f"  logged  {written}")
-    return 0
 
 
 def _stop(message: str) -> int:
