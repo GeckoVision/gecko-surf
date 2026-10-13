@@ -153,10 +153,63 @@ def _create_ata_idempotent(payer: str, owner: str, mint: str) -> Any:
     )
 
 
+class FaucetKey:
+    """The faucet wallet's key, opaque. Made ONLY from ``GECKO_DEVNET_FAUCET_KEY``.
+
+    No public signature in ``gecko/`` takes or returns a keypair
+    (``tests/test_no_key_material_in_gecko.py``). The constructor takes no argument and
+    reads the one env var itself, so there is no way to hand it a key from elsewhere,
+    and the only thing it gives back is the public key and a signed transaction.
+    """
+
+    __slots__ = ("_keypair", "_pubkey")
+
+    def __init__(self) -> None:
+        raw = (os.environ.get(KEY_ENV) or "").strip()
+        if not raw or raw == "__unset__":
+            raise FaucetKeyMissing(f"{KEY_ENV} is not set")
+        try:
+            from solders.keypair import Keypair
+
+            self._keypair = Keypair.from_bytes(bytes(json.loads(raw)))
+        except Exception:  # noqa: BLE001 - never echo the value, whatever went wrong
+            raise FaucetKeyMissing(
+                f"{KEY_ENV} is set but unreadable (redacted)"
+            ) from None
+        self._pubkey = str(self._keypair.pubkey())
+
+    def pubkey(self) -> str:
+        return self._pubkey
+
+    def signed_transaction(self, instructions: list[Any], blockhash: str) -> bytes:
+        """The faucet as fee payer and only signer, over ``instructions``."""
+        from solders.hash import Hash
+        from solders.message import Message
+        from solders.transaction import Transaction
+
+        recent = Hash.from_string(blockhash)
+        message = Message.new_with_blockhash(
+            instructions, self._keypair.pubkey(), recent
+        )
+        return bytes(Transaction([self._keypair], message, recent))
+
+    def __repr__(self) -> str:
+        return f"FaucetKey(pubkey={self._pubkey}, secret=<redacted>)"
+
+    __str__ = __repr__
+
+    def __reduce__(self) -> Any:
+        raise FaucetKeyMissing("a FaucetKey is never serialised")
+
+
+class FaucetKeyMissing(Exception):
+    """No usable faucet key. The message names the env var, never its value."""
+
+
 class DevnetFaucet:
     def __init__(
         self,
-        keypair: Any,
+        key: FaucetKey,
         *,
         rpc_url: str = DEVNET_RPC,
         rpc_call: RpcCall = default_rpc_call,
@@ -165,7 +218,7 @@ class DevnetFaucet:
         decimals: int = CLASS_DECIMALS,
         sol_target_lamports: int = SOL_TARGET_LAMPORTS,
     ) -> None:
-        self._keypair = keypair
+        self._key = key
         self._rpc_url = rpc_url
         self._rpc = rpc_call
         self.mints = mints
@@ -174,7 +227,7 @@ class DevnetFaucet:
 
     @property
     def address(self) -> str:
-        return str(self._keypair.pubkey())
+        return self._key.pubkey()
 
     def _call(self, method: str, params: list[Any]) -> Any:
         try:
@@ -213,10 +266,8 @@ class DevnetFaucet:
 
     def fund(self, buyer: str) -> Funded:
         """Top `buyer` up to the class kit. Raises FaucetError; never partially signs."""
-        from solders.hash import Hash
-        from solders.message import Message
+        from solders.pubkey import Pubkey
         from solders.system_program import TransferParams, transfer
-        from solders.transaction import Transaction
 
         buyer_key = _pubkey(buyer)
         if str(buyer_key) == self.address:
@@ -253,7 +304,7 @@ class DevnetFaucet:
                 0,
                 transfer(
                     TransferParams(
-                        from_pubkey=self._keypair.pubkey(),
+                        from_pubkey=Pubkey.from_string(self.address),
                         to_pubkey=buyer_key,
                         lamports=lamports,
                     )
@@ -265,10 +316,7 @@ class DevnetFaucet:
         blockhash = (
             self._call("getLatestBlockhash", [{"commitment": "confirmed"}]) or {}
         )["value"]["blockhash"]
-        message = Message.new_with_blockhash(
-            instructions, self._keypair.pubkey(), Hash.from_string(blockhash)
-        )
-        tx = Transaction([self._keypair], message, Hash.from_string(blockhash))
+        tx = self._key.signed_transaction(instructions, blockhash)
         import base64
 
         # Checked again right before the bytes leave: the genesis check above is a
@@ -277,7 +325,7 @@ class DevnetFaucet:
         self._assert_devnet()
         signature = self._call(
             "sendTransaction",
-            [base64.b64encode(bytes(tx)).decode(), {"encoding": "base64"}],
+            [base64.b64encode(tx).decode(), {"encoding": "base64"}],
         )
         if not isinstance(signature, str):
             raise FaucetError(
@@ -287,20 +335,18 @@ class DevnetFaucet:
         return Funded(buyer, lamports, sent_tokens, signature)
 
 
-def build_faucet_from_env() -> DevnetFaucet | None:
+def build_faucet_from_env(rpc_call: RpcCall = default_rpc_call) -> DevnetFaucet | None:
     """The faucet, or None (the route answers 503) when no key is configured.
 
     The key is a JSON byte array, the `solana-keygen` file format, in one env var.
     It is never logged; a malformed value disables the faucet rather than the server.
     """
-    raw = (os.environ.get(KEY_ENV) or "").strip()
-    if not raw or raw == "__unset__":
-        return None
     try:
-        from solders.keypair import Keypair
-
-        keypair = Keypair.from_bytes(bytes(json.loads(raw)))
-    except Exception:  # noqa: BLE001 - a bad secret disables the faucet, not the server
-        logger.warning("devnet faucet: %s is set but unreadable (redacted)", KEY_ENV)
+        key = FaucetKey()
+    except FaucetKeyMissing as missing:
+        if (os.environ.get(KEY_ENV) or "").strip() not in ("", "__unset__"):
+            logger.warning("devnet faucet: %s", missing)
         return None
-    return DevnetFaucet(keypair, rpc_url=os.environ.get(RPC_ENV) or DEVNET_RPC)
+    return DevnetFaucet(
+        key, rpc_url=os.environ.get(RPC_ENV) or DEVNET_RPC, rpc_call=rpc_call
+    )

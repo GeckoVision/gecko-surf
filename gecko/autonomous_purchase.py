@@ -91,7 +91,8 @@ from .relay import (
     RelayRefused,
     sponsor,
 )
-from .rpc import RpcCall, default_rpc_call
+from .rpc import RpcCall, RpcError, default_rpc_call
+from .send_endpoint import RebateDecision, SendTransport
 from .signer import AUTHORITY_ROLE, SignerRefused, TransactionSigner
 from .simulate import (
     AcceptedMint,
@@ -453,6 +454,11 @@ class PurchaseSettled:
     fee_payer: str = ""
     authority: str = ""
     signatures: int = 1
+    #: What was asked of the send endpoint about a backrun rebate, when the caller routed
+    #: this leg through one (:mod:`gecko.send_endpoint`). ``None`` = today's path. It
+    #: records a REQUEST, never a payment: a rebate, if any, lands in another
+    #: transaction and is never netted against what this one moved.
+    rebate: RebateDecision | None = None
     settled: Literal[True] = True
 
     @property
@@ -512,8 +518,13 @@ def run_purchase(
     monotonic: Callable[[], float] = time.monotonic,
     relay: FeePayerRelay | None = None,
     trace: Trace | None = None,
+    send: SendTransport | None = None,
 ) -> PurchaseOutcome:
     """Prepare, verify, authorise, sign and settle one purchase. Fail-closed at every step.
+
+    ``send`` routes the self-paid broadcast through a send endpoint
+    (:mod:`gecko.send_endpoint`); ``None`` keeps the public ``rpc_call`` path exactly.
+    The relay-paid path passes it on to :func:`settle_sponsored`.
 
     ``trace`` records each step's party, outcome and duration (:mod:`gecko.trace`).
 
@@ -539,6 +550,11 @@ def run_purchase(
     cannot supply one, widen one, or skip one.
     """
     call = rpc_call or default_rpc_call
+    if send is not None and send.mainnet_only and network != "mainnet":
+        raise PurchaseConfigurationError(
+            f"the {send.label} send endpoint is mainnet only; this purchase is on "
+            f"{network!r}"
+        )
     if signer.spend_gate is not spend_gate:
         raise PurchaseConfigurationError(
             "the spend gate passed here is not the one the signer holds; one purchase is "
@@ -681,6 +697,7 @@ def run_purchase(
             sleep=sleep,
             monotonic=monotonic,
             trace=log,
+            send=send,
         )
 
     # 6+7. AUTHORISE AND SIGN — ONE consultation, not two.
@@ -745,8 +762,19 @@ def run_purchase(
         )
 
     # 8. SEND, CONFIRM, REPORT.
+    rebate = (
+        send.rebate_for(signed.signed_transaction_base64, authority=plan.buyer)
+        if send is not None
+        else None
+    )
     with log.step("send", "node"):
-        signature = _send(call, rpc_url, signed.signed_transaction_base64)
+        signature = _send(
+            call,
+            rpc_url,
+            signed.signed_transaction_base64,
+            send=send,
+            authority=plan.buyer,
+        )
     with log.step("confirm", "node") as facts:
         consumed = _confirm(
             call,
@@ -771,6 +799,7 @@ def run_purchase(
         fee_payer=plan.fee_payer,
         authority=plan.buyer,
         signatures=1,
+        rebate=rebate,
     )
 
 
@@ -826,6 +855,7 @@ def settle_sponsored(
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     trace: Trace | None = None,
+    send: SendTransport | None = None,
 ) -> PurchaseOutcome:
     """The relay-paid tail: relay signs, we re-verify, buyer signs, we merge and send.
 
@@ -838,12 +868,21 @@ def settle_sponsored(
 
     ``signer`` must hold the gate and sign in the ``authority`` role, and ``authority``
     is the buyer, the account the receipt tracks. Nothing here holds a key.
+
+    ``send`` routes the ONE broadcast through a send endpoint (the backrun-rebate
+    transport); ``None`` is today's path. The only rebate address it may add is the
+    relay fee payer configured on that transport (founder ruling, 8 Oct), and only when
+    the message is a swap. Status and transaction reads stay on ``rpc_url``.
     """
     call = rpc_call or default_rpc_call
     role = signer.profile.signing_as if signer.profile is not None else None
     if role != AUTHORITY_ROLE:
         raise PurchaseConfigurationError(
             "settle_sponsored needs the buyer's signer in the authority role"
+        )
+    if send is not None and send.mainnet_only and network != "mainnet":
+        raise PurchaseConfigurationError(
+            f"the {send.label} send endpoint is mainnet only; this leg is on {network!r}"
         )
 
     log = trace or Trace(lane="settle", network=str(network))
@@ -970,8 +1009,11 @@ def settle_sponsored(
             predicted_units=receipt.units_consumed,
         )
 
-    with log.step("send", "node"):
-        signature = _send(call, rpc_url, merged)
+    rebate = send.rebate_for(merged, authority=authority) if send is not None else None
+    with log.step("send", "node") as facts:
+        signature = _send(call, rpc_url, merged, send=send, authority=authority)
+        if rebate is not None:
+            facts["note"] = f"{rebate.endpoint}, rebate requested: {rebate.requested}"
     with log.step("confirm", "node") as facts:
         consumed = _confirm(
             call,
@@ -997,6 +1039,7 @@ def settle_sponsored(
         fee_payer=relay.pubkey,
         authority=authority,
         signatures=2,
+        rebate=rebate,
     )
 
 
@@ -1100,30 +1143,48 @@ def _current_slot(call: RpcCall, rpc_url: str) -> int:
     return slot
 
 
-def _send(call: RpcCall, rpc_url: str, signed_transaction_base64: str) -> str:
-    """Broadcast, and return the signature. A rejected send raises — it is not a verdict."""
-    reply = call(
-        rpc_url,
-        "sendTransaction",
-        [
-            signed_transaction_base64,
-            {
-                "encoding": "base64",
-                "skipPreflight": False,
-                # The node re-forwards until the blockhash expires. This was 3, and at 3
-                # a zero-priority-fee transaction is leader-luck: 5 of 12 broadcasts on
-                # 2026-08-31 expired unspent. The blockhash window (~60s) is the real
-                # bound; a retry budget below it just drops transactions early.
-                "maxRetries": 40,
-                # WITHOUT THIS THE PREFLIGHT RUNS AT `finalized`, which is the RPC default
-                # and is STRICTER than the commitment the blockhash was issued at. That
-                # combination fails 100% of the time with `BlockhashNotFound` — the
-                # simulation passes (it runs at `processed`) and then the broadcast is
-                # rejected by a node that has not seen the block yet.
-                "preflightCommitment": RPC_COMMITMENT,
-            },
-        ],
-    )
+def _send(
+    call: RpcCall,
+    rpc_url: str,
+    signed_transaction_base64: str,
+    *,
+    send: SendTransport | None = None,
+    authority: str | None = None,
+) -> str:
+    """Broadcast, and return the signature. A rejected send raises — it is not a verdict.
+
+    ``send`` (optional) replaces ``call(rpc_url, ...)`` for this one request.
+    ``authority`` is passed through for the record; the transport never reads it to
+    choose a rebate address (only its configured relay). ``None`` keeps today's call
+    exactly.
+    """
+    params: list[Any] = [
+        signed_transaction_base64,
+        {
+            "encoding": "base64",
+            "skipPreflight": False,
+            # The node re-forwards until the blockhash expires. This was 3, and at 3
+            # a zero-priority-fee transaction is leader-luck: 5 of 12 broadcasts on
+            # 2026-08-31 expired unspent. The blockhash window (~60s) is the real
+            # bound; a retry budget below it just drops transactions early.
+            "maxRetries": 40,
+            # WITHOUT THIS THE PREFLIGHT RUNS AT `finalized`, which is the RPC default
+            # and is STRICTER than the commitment the blockhash was issued at. That
+            # combination fails 100% of the time with `BlockhashNotFound` — the
+            # simulation passes (it runs at `processed`) and then the broadcast is
+            # rejected by a node that has not seen the block yet.
+            "preflightCommitment": RPC_COMMITMENT,
+        },
+    ]
+    if send is None:
+        reply = call(rpc_url, "sendTransaction", params)
+    else:
+        try:
+            reply = send("sendTransaction", params, authority=authority)
+        except RpcError as exc:
+            # Already redacted by the transport; re-typed so the caller's existing
+            # `PurchaseTransportError` handling is the only path a failed send takes.
+            raise PurchaseTransportError(str(exc)) from None
     if "error" in reply:
         raise PurchaseTransportError(
             f"the node rejected the broadcast: {reply.get('error')}"
@@ -1153,6 +1214,40 @@ def _confirm(
     substituted with the prediction, which would make the two columns agree by construction
     and destroy the only comparison worth printing.
     """
+    try:
+        return _poll_confirmation(
+            call,
+            rpc_url,
+            signature,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
+    except PurchaseTransportError:
+        raise
+    except Exception as exc:
+        # The transaction is already broadcast, so the money may have moved. Whatever
+        # the poll raised (a 429 as RpcError, a dropped socket as OSError, a malformed
+        # reply), the caller must still get the signature, or nothing can look it up.
+        # Only the type is kept: a transport message can carry a keyed RPC URL.
+        raise PurchaseTransportError(
+            f"the transaction was broadcast but the confirmation poll failed "
+            f"({type(exc).__name__}); look it up rather than assuming either outcome",
+            signature=signature,
+        ) from None
+
+
+def _poll_confirmation(
+    call: RpcCall,
+    rpc_url: str,
+    signature: str,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+) -> int | None:
     deadline = monotonic() + timeout_seconds
     while True:
         response = call(rpc_url, "getSignatureStatuses", [[signature]])
@@ -1433,6 +1528,7 @@ def settle_route(
     trace: Trace | None = None,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    convert_send: SendTransport | None = None,
 ) -> RouteOutcome:
     """Convert first, then buy; each leg is :func:`settle_sponsored`, in that order.
 
@@ -1453,6 +1549,11 @@ def settle_route(
     convert had landed: converted and stuck. So the purchase leg gets only what the
     shop's policy carries, which is normally nothing.
     This is the mainnet sibling of :func:`gecko.sandbox.rehearse_route.rehearse_gasless_route`.
+
+    ``convert_send`` routes the CONVERT leg's broadcast through a send endpoint (the
+    backrun-rebate transport). It is per leg on purpose: the swap moves a pool price and
+    can be backrun, the store purchase cannot, so the purchase leg always takes today's
+    path and never carries a rebate parameter.
     """
     log = trace or Trace(lane="route", network=str(network))
     with log.step("convert", "gecko") as facts:
@@ -1470,6 +1571,7 @@ def settle_route(
             trace=log,
             sleep=sleep,
             monotonic=monotonic,
+            send=convert_send,
         )
         if isinstance(first, PurchaseSettled):
             facts["units"] = first.consumed_units

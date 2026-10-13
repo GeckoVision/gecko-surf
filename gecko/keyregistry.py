@@ -66,14 +66,16 @@ class KeyRegistryError(Exception):
     asserts this. Names only the operation/reason."""
 
 
-def mint_key() -> str:
-    """Mint a fresh Gecko secret key: ``gecko_sk_`` + 43 base62 chars (256-bit entropy).
+def mint_key(prefix: str = KEY_PREFIX) -> str:
+    """Mint a fresh Gecko secret key: ``prefix`` + 43 base62 chars (256-bit entropy).
 
     Returned to the caller **exactly once** (the login endpoint hands it back and stores only
     its hash); it can never be re-retrieved. Pure — no I/O, never logs the value it returns.
+    ``prefix`` exists for the dataset reader keys (``gecko_rk_``): another prefix keeps them
+    out of :class:`GeckoKeyResolver` before any lookup.
     """
     body = "".join(secrets.choice(_BASE62) for _ in range(_KEY_BODY_LEN))
-    return f"{KEY_PREFIX}{body}"
+    return f"{prefix}{body}"
 
 
 def hash_key(key: str) -> str:

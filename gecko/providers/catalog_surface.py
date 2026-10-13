@@ -59,7 +59,11 @@ from ..sandbox.try_purchase import TRY_PURCHASE_TOOL, try_purchase_result
 from ..pay_route import PLAN_PAYMENT_TOOL, plan_payment_result
 from .whirlpool import PLAN_SWAP_TOOL, plan_swap_result
 from ..store_directory import LIST_STORES_TOOL, list_stores_result
-from ..submit_transaction import SUBMIT_TRANSACTION_TOOL, submit_transaction_result
+from ..submit_transaction import (
+    SUBMIT_TRANSACTION_TOOL,
+    operator_send,
+    submit_transaction_result,
+)
 from ..verify_signed import VERIFY_SIGNED_TOOL, verify_signed_result
 from ..rpc import RpcCall, default_rpc_call
 from ..simulate import BuildCall
@@ -322,7 +326,9 @@ class OrquestraCatalogSurface:
         if name == "verify_signed_transaction":
             return verify_signed_result(args)
         if name == "submit_transaction":
-            return submit_transaction_result(args)
+            # `operator_send` is None unless the operator set GECKO_SEND_REBATE=1, so
+            # the default path is today's. The key never enters `args` or the result.
+            return submit_transaction_result(args, send=operator_send(args))
         # The weakest text on the surface was `unknown tool 'x'` with no
         # recovery — what an agent got for calling `search_capabilities`
         # here, a name Gecko itself taught it one mount over. Name the real

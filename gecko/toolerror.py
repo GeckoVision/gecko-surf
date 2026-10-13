@@ -73,6 +73,10 @@ def ensure_known_tool(surface: Any, name: str) -> None:
         return
     if name in names:
         return
+    # Answered but never listed (a renamed tool's old name, a pointer to another
+    # mount's tool): the surface itself decides what to say.
+    if name in getattr(surface, "hidden_tools", frozenset()):
+        return
     from mcp.shared.exceptions import McpError
     from mcp.types import INVALID_PARAMS, ErrorData
 

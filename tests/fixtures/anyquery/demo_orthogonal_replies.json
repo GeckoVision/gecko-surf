@@ -1,0 +1,264 @@
+{
+ "about": "SYNTHESIZED 2026-10-08 for scripts/any_query_demo.py --mode recorded. Shaped like the data inside Orthogonal /v1/run replies for the endpoints the company-signals plan uses, at the declared field paths. Not captured from a live call; every value is invented. Run 2 changes one headcount and one headline, and breaks brex's rank-0 funding source so the repair walk fails over to fundable.",
+ "runs": [
+  [
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/financing_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "amount_normalized": 6500000000
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 412
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Stripe expands stablecoin payouts to 101 countries"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/financing_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "amount_normalized": 500000000
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 186
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Ramp launches AI agents for procurement teams"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/financing_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "amount_normalized": 235000000
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 94
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Brex adds multi-entity treasury accounts"
+       }
+      }
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/financing_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "amount_normalized": 6500000000
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 398
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/stripe.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Stripe expands stablecoin payouts to 101 countries"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/financing_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "amount_normalized": 500000000
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 186
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/ramp.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Ramp raises $500M at a $22.5B valuation"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/job_openings",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "meta": {
+      "count": 94
+     }
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/news_events",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "data": [
+      {
+       "attributes": {
+        "summary": "Brex adds multi-entity treasury accounts"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "api": "predictleads",
+    "path": "/v3/companies/brex.com/financing_events",
+    "cents": 0,
+    "status": 500,
+    "data": {
+     "error": "upstream timeout"
+    }
+   },
+   {
+    "api": "fundable",
+    "path": "/company",
+    "cents": 6,
+    "status": 200,
+    "data": {
+     "data": {
+      "company": {
+       "latest_deal": {
+        "total_round_raised": 235000000
+       }
+      }
+     }
+    }
+   }
+  ]
+ ]
+}

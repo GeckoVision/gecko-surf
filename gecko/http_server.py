@@ -551,17 +551,7 @@ def _bearer_from_scope(scope: Any) -> str | None:
     Header-only (never the body), so the gate never consumes/blocks the streaming MCP
     transport. UNTRUSTED input — the value is passed straight to the injected resolver
     and NEVER logged. Absent/malformed ⇒ ``None`` (which the gate denies)."""
-    for key, value in scope.get("headers") or []:
-        if bytes(key).lower() == b"authorization":
-            try:
-                raw = bytes(value).decode("latin-1").strip()
-            except Exception:  # noqa: BLE001 - a malformed header is simply no key
-                return None
-            scheme, _, token = raw.partition(" ")
-            if scheme.lower() == "bearer" and token.strip():
-                return token.strip()
-            return None
-    return None
+    return keyauth.bearer_from_scope(scope)
 
 
 class _GeckoKeyGateASGI:
@@ -676,6 +666,37 @@ def _account_from_context(server: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
+def _principal_from_context(server: Any) -> Any:
+    """What a mount's OWN edge resolved for this request (``keyauth.PRINCIPAL_SCOPE_KEY``),
+    or ``None``. Read from the request scope only, like the account: never a header,
+    never an argument. Opaque here; the surface that asked for it checks its type."""
+    try:
+        ctx = server.request_context
+    except LookupError:
+        return None
+    request = getattr(ctx, "request", None)
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return None
+    return scope.get(keyauth.PRINCIPAL_SCOPE_KEY)
+
+
+def _accepts_keyword(call: Any, name: str) -> bool:
+    """Does ``call`` take ``name`` by keyword? By NAME, so ``**kwargs`` never counts."""
+    import inspect
+
+    if call is None:
+        return False
+    try:
+        parameter = inspect.signature(call).parameters.get(name)
+    except (TypeError, ValueError):  # C-implemented or otherwise unintrospectable
+        return False
+    return parameter is not None and parameter.kind in (
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
+
 def _accepts_account(surface: Any) -> bool:
     """Does this surface's ``call_tool`` take an ``account``?
 
@@ -687,19 +708,7 @@ def _accepts_account(surface: Any) -> bool:
     check on top of that rules out the one shape that is named right and still unusable: a
     POSITIONAL-ONLY ``account``, which ``account=`` cannot fill.
     """
-    import inspect
-
-    call = getattr(surface, "call_tool", None)
-    if call is None:
-        return False
-    try:
-        parameter = inspect.signature(call).parameters.get("account")
-    except (TypeError, ValueError):  # C-implemented or otherwise unintrospectable
-        return False
-    return parameter is not None and parameter.kind in (
-        inspect.Parameter.KEYWORD_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    )
+    return _accepts_keyword(getattr(surface, "call_tool", None), "account")
 
 
 def _user_agent_from_context(server: Any) -> str | None:
@@ -894,6 +903,14 @@ def build_http_app(
     # Asked once, at build time: the answer is a property of the surface class, and
     # inspecting a signature on every tool call would be per-request work for a constant.
     surface_takes_account = _accepts_account(surface)
+    # A surface whose own mount edge resolves the caller (see PRINCIPAL_SCOPE_KEY) takes
+    # it as ``principal``, on the tool list too: what it offers may depend on the key.
+    surface_takes_principal = _accepts_keyword(
+        getattr(surface, "call_tool", None), "principal"
+    )
+    list_takes_principal = _accepts_keyword(
+        getattr(surface, "list_tools", None), "principal"
+    )
 
     @server.list_tools()
     async def _list_tools() -> list[Any]:
@@ -909,6 +926,8 @@ def build_http_app(
                 # by UA alone (same UA-only stance as the non-init connect_failed path).
                 client_kind=classify_client(user_agent, None),
             )
+        elif list_takes_principal:
+            tools = surface.list_tools(principal=_principal_from_context(server))
         else:
             tools = (
                 surface.list_tools()
@@ -933,7 +952,11 @@ def build_http_app(
             for t in tools
         ]
 
-    @server.call_tool()
+    # The SDK validates a call against ONE tool cache per server, filled by whichever
+    # session listed last. A list projected per key would then let one key's list decide
+    # another key's call (a reader's list rejecting the owner's reveal_pii), so such a
+    # surface checks its own arguments and the SDK's check is off for it.
+    @server.call_tool(validate_input=not list_takes_principal)
     async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
         args = arguments or {}
         start = time.perf_counter()
@@ -946,6 +969,10 @@ def build_http_app(
         try:
             if not duck_typed:
                 result = surface.call_tool(name, args, session_id=session_id)
+            elif surface_takes_principal:
+                result = surface.call_tool(
+                    name, args, principal=_principal_from_context(server)
+                )
             elif surface_takes_account:
                 # WHO is asking, from the gate that verified them — never from `args`.
                 # Without this the wallet binding is unreachable code: `account` stays
@@ -1944,16 +1971,21 @@ def build_multi_surface_app(
         # carry the full comprehension artifact. Denials stay the same clean 403 the
         # `/mcp` edge already returned (one status, one reason vocabulary). An UNGATED
         # mount is appended exactly as before — the raw sub-app, no wrapper object.
+        # A surface may front its own mount (path routing, its own key edge): the
+        # dataset endpoint routes /d/<dataset_id>/mcp to one MCP app. Generic on
+        # purpose; this module never learns what the wrapper does.
+        wrap = getattr(dict(surfaces).get(name), "wrap_mount", None)
+        mounted: Any = wrap(sub) if callable(wrap) else sub
         routes.append(
             Mount(
                 f"/{name}",
-                app=sub
+                app=mounted
                 if name not in gated_mounts or surface_gate is None
                 # Scoped PER MOUNT: holding a valid enabled key is not enough, the
                 # account must also be granted THIS surface. Without the scoping a
                 # single key opened every gated surface at once.
                 else _GeckoKeyGateASGI(
-                    sub,
+                    mounted,
                     keyauth.scope_gate(surface_gate, name),
                     # HOST-level PRM (the well-known lives at the root, not under
                     # the surface mount), so every gated 401 names one document.

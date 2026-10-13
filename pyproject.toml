@@ -161,6 +161,18 @@ ocr = [
 solana = [
     "solders>=0.21",
 ]
+# Parquet copies of the supplier-watch tables and field ledger (gecko.orthogonal.
+# supplier). OPTIONAL and lazy-imported: absent => CSV/JSONL still written, plus a
+# notice with the install command.
+datasets = [
+    "pyarrow>=15",
+]
+# Dataset snapshots on S3 (gecko.anyquery.snapshots.S3Sink imports boto3 lazily).
+# NOT in the Docker image's `uv sync` yet: adding it there also gives
+# gecko.registry.wiring's SES mailer the boto3 it fails soft without.
+s3 = [
+    "boto3>=1.35",
+]
 
 [build-system]
 requires = ["hatchling"]

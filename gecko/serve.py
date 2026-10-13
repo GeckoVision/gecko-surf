@@ -100,6 +100,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "instead of HTTP. The zero-friction local path — recommended for a single "
         "developer on one machine.",
     )
+    p.add_argument(
+        "--lists",
+        action="store_true",
+        help="Serve the commenter-list and supplier-watch tools (Orthogonal, key from the OS "
+        "keyring) instead of a spec. stdio only: a hosted mount would spend this "
+        "machine's credits for anyone who connects.",
+    )
     p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
     p.add_argument(
@@ -248,6 +255,9 @@ def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) ->
     first-run serve ping is default-on for `gecko serve` while embedded use stays
     network-silent."""
     args = _parse_args(argv)
+
+    if args.lists:
+        return _serve_lists(args)
 
     if bool(args.spec) == bool(args.registry):
         print("Provide exactly one of <spec> or --registry <name>.", file=sys.stderr)
@@ -413,6 +423,27 @@ def main(argv: list[str] | None = None, *, ping_post: PingPost | None = None) ->
         allowed_origins=extra_origins or None,
         public_url=args.public_url,
     )
+    return 0
+
+
+def _serve_lists(args: argparse.Namespace) -> int:
+    """``--lists``: commenter list + supplier watch, over stdio only. Thin by design."""
+    if args.spec or args.registry:
+        print("--lists takes no <spec> or --registry.", file=sys.stderr)
+        return 2
+    if not args.stdio:
+        print("--lists runs over stdio only (add --stdio).", file=sys.stderr)
+        return 2
+    from .orthogonal.surface import lists_surface
+
+    mode = coerce_mode(args.mode)
+    print(
+        f"Serving 'orthogonal-lists' over stdio ({mode}). "
+        "Commenter list: handle, match and post id only. Supplier watch: a summary "
+        "table and field names per call. No comment text, no key.",
+        file=sys.stderr,
+    )
+    serve_stdio(lists_surface(mode), mode=mode, server_name="gecko-lists")
     return 0
 
 

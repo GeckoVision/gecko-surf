@@ -52,6 +52,11 @@ from .http_server import (
 from .examples.ore import build_ore_surface
 from .jito_surface import build_jito_surface, build_jito_tips_surface
 from .kora_surface import build_kora_catalog_surface, build_kora_surface
+from .anyquery.dataset_hosted import dataset_mount, reader_registry_for
+from .anyquery.dataset_tools import DATASET_MOUNT
+from .anyquery.hosted import ANYQUERY_SURFACE, anyquery_deps_from_env, anyquery_mount
+from .keyregistry import registry_from_env
+from .livingfile.hosted import build_xstock_read_surface
 from .mcp_server import McpSurface
 from .provider_sync import fetch_provider_surfaces
 from .providers import course_refresh
@@ -203,15 +208,25 @@ def bootcamp_team_mounts() -> tuple[str, ...]:
 #: purchases are tied to a person. It answered 200 with no key until this.
 CLASS_SURFACE = "bootcamp"
 
+#: The hosted xStock file (``gecko.livingfile.hosted``). Founder ruling 8 Oct 2026: behind
+#: a Gecko key, through the SAME gate as the class mount (`gecko keys grant <account>
+#: --surface xstock`), not a gate of its own.
+XSTOCK_SURFACE = "xstock"
+
 
 def default_gated_surfaces() -> frozenset[str]:
-    """The hosted default gate: the paid surfaces, the class mount, every team mount.
+    """The hosted default gate: the paid surfaces, the class mount, every team mount,
+    the xStock file and any-query (``gecko keys grant <account> --surface anyquery``).
 
     A team mount is the same surface as ``bootcamp`` under another name, so gating one
     and not the others would leave the class door open at a different URL.
     ``GECKO_GATED_SURFACES`` still overrides the whole set at deploy time.
     """
-    return GATED_SURFACES | {CLASS_SURFACE} | frozenset(bootcamp_team_mounts())
+    return (
+        GATED_SURFACES
+        | {CLASS_SURFACE, XSTOCK_SURFACE, ANYQUERY_SURFACE}
+        | frozenset(bootcamp_team_mounts())
+    )
 
 
 def resolve_unlisted_surfaces(default: frozenset[str] = frozenset()) -> frozenset[str]:
@@ -514,6 +529,14 @@ def _build_surfaces(hosted_enforce: EnforceMode) -> list[tuple[str, Any]]:
     if course is not None:
         surfaces.append(("course", course))
 
+    # The xStock FILE: two read tools over the runs stored at GECKO_XSTOCK_ROOT (the image
+    # ships a snapshot). It holds no Orthogonal key and cannot spend: a run is started
+    # from the CLI, never from here. Mounts ONLY when the folder holds xStock runs, for
+    # the course's reason: an empty file answers "no stored file" to every mint.
+    xstock = build_xstock_read_surface()
+    if xstock is not None:
+        surfaces.append((XSTOCK_SURFACE, xstock))
+
     for team_mount in bootcamp_team_mounts():
         surfaces.append(
             (
@@ -675,6 +698,30 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         logger.info("serving the wallet-aware storefront at /%s (gated)", STORE_SURFACE)
         surfaces = surfaces + [store_mount]
 
+    # Any query (gecko.anyquery.hosted): plan, confirm, run, pay once, read the dataset.
+    # Appended here for the storefront's reason: every tool is per-account, so the mount
+    # exists only when the gate is on and covers it, and only once real deps are wired.
+    anyquery_deps = anyquery_deps_from_env()
+    anyquery = anyquery_mount(
+        gated,
+        require_key=resolve_require_gecko_key(None),
+        deps=anyquery_deps,
+    )
+    if anyquery is not None:
+        logger.info("serving any-query at /%s (gated)", ANYQUERY_SURFACE)
+        surfaces = surfaces + [anyquery]
+        # Its datasets' read-only endpoint, /d/<dataset_id>/mcp: same store, its own key
+        # edge (a reader key is no account), never advertised, never spends.
+        keys = registry_from_env()
+        datasets = dataset_mount(
+            anyquery_deps.store if anyquery_deps is not None else None,
+            keys=keys,
+            readers=reader_registry_for(keys) if keys is not None else None,
+        )
+        if datasets is not None:
+            logger.info("serving datasets at /%s/<dataset_id>/mcp", DATASET_MOUNT)
+            surfaces = surfaces + [datasets]
+
     # The TELEGRAM door onto the SAME engine the MCP mounts serve. Not a second
     # comprehension: it calls `list_stores` / `prepare_purchase` on the orquestra catalog
     # surface built above, so a person in a chat and an agent over MCP get the same
@@ -738,8 +785,10 @@ def main() -> None:  # pragma: no cover - run-the-server entrypoint
         # Advertised nowhere, still served. See UNLISTED_SURFACES.
         # Team mounts are unlisted whatever the override says: a team's URL is handed
         # out in class, never shown in the public catalog.
+        # The dataset endpoint too: a dataset's URL is its owner's to hand out.
         unlisted_surfaces=resolve_unlisted_surfaces(UNLISTED_SURFACES)
-        | frozenset(bootcamp_team_mounts()),
+        | frozenset(bootcamp_team_mounts())
+        | {DATASET_MOUNT},
     )
 
 
