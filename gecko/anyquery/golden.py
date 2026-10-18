@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .billing import BillingError
+from .charge import BillingError
 from .config import AnyQueryConfig
 from .plan_query import plan_query
 from .planner import Planner, PlanRejectedError

@@ -13,33 +13,11 @@ and ``anyquery`` is in its scope, like the wallet-aware storefront. Every tool i
 per-account, so an open mount would answer "no account" to every call. That reads like a
 working server and is actually a broken deploy, which is worse than an absent one.
 
-It also mounts only when real deps exist. :func:`anyquery_deps_from_env` builds every
-lane from configuration: the model planner and ``validate_plan``, the catalog from a
-folder of ``/v1/details`` records, ``MongoStore`` from the keychain, the Orthogonal runner
-at a host-wide spend cap, and ``SolanaBilling``. When any of them is missing it returns
-``None`` and logs which, never a value. Billing must be ``solana``: every run is charged
-before it calls a source, and fake billing on a public host would run paid calls for
-free. The fakes are for tests and recorded runs, never a hosted default.
-
-Settings (public, from the environment; secrets come from the OS keychain, or on the
-host from the platform when ``GECKO_HOST_SECRETS=platform``, see
-:mod:`gecko.anyquery.host_secrets`):
-
-* ``GECKO_ANYQUERY_BILLING=solana`` with ``GECKO_FEE_WALLET``, ``GECKO_RELAY_FEE_PAYER``
-  and ``GECKO_REBATE_SPLIT_USER_PCT`` (:func:`~gecko.anyquery.config.load_config`);
-* ``GECKO_ANYQUERY_DETAILS_DIR``: the ``/v1/details`` JSON records the planner may pick
-  from; ``GECKO_ANYQUERY_LEDGERS_DIR`` (optional): observed-field ``*.jsonl`` ledgers.
-  With ``GECKO_ANYQUERY_CATALOG=registry`` neither is read: the pool comes from the
-  service registry in ``gecko_registry`` (:mod:`gecko.servicemap.snapshot`);
-* ``GECKO_ANYQUERY_UPSTREAM_CAP_CENTS``: the most this host spends on Orthogonal, all
-  customers together, recorded in Mongo (:mod:`gecko.anyquery.upstream_spend`) so a
-  deploy does not reset it. Raising it is a hand edit, on purpose;
-* ``GECKO_ANYQUERY_RPC_URL`` (https; it may carry a provider key, so it is never logged)
-  and ``GECKO_ANYQUERY_NETWORK`` (``mainnet`` or ``devnet``, asserted, never inferred).
-
-Keychain slots: ``ANTHROPIC_API_KEY``, ``orthogonal``, ``MONGODB_URI``, ``PRIVY_APP_ID``,
-``PRIVY_APP_SECRET``. ``HELIUS_API_KEY`` is optional and read by the send transport, from
-the same resolver.
+It also mounts only when real deps exist. The open-source engine does not build them:
+the hosted product injects a :data:`DepsBuilder` into :func:`anyquery_deps_from_env`.
+With none injected the function returns ``None``, and the mount is absent. A builder
+must not use fake billing on a public host, because that would run paid calls for free.
+The fakes are for tests and recorded runs, never a hosted default.
 """
 
 from __future__ import annotations
@@ -49,7 +27,7 @@ import os
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from ..credentials import PLATFORM_UNSET_SENTINEL, ChainResolver
+from ..credentials import PLATFORM_UNSET_SENTINEL
 from .config import AnyQueryConfig
 from .service import AnyQueryDeps, call_anyquery_tool
 from .surface import ANYQUERY_TOOL_NAMES, ANYQUERY_TOOLS, RENAMED_TOOLS
@@ -57,6 +35,8 @@ from .surface import ANYQUERY_TOOL_NAMES, ANYQUERY_TOOLS, RENAMED_TOOLS
 __all__ = [
     "ANYQUERY_SURFACE",
     "AnyQuerySurface",
+    "DepsBuilder",
+    "NotServedError",
     "anyquery_deps_from_env",
     "anyquery_mount",
     "payee_usdc_ata",
@@ -65,6 +45,14 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ANYQUERY_SURFACE = "anyquery"
+
+#: The environment (sentinels already dropped) -> the deps. Raises NotServedError.
+DepsBuilder = Callable[[Mapping[str, str]], AnyQueryDeps]
+
+
+class NotServedError(Exception):
+    """Why the mount is absent. Names a setting, never a value."""
+
 
 #: Mainnet USDC is a classic SPL Token mint. Stated, not inferred: the ATA's second seed
 #: is the mint's owning program, and lane 3 should read it from the mint account.
@@ -129,22 +117,18 @@ class AnyQuerySurface:
 def anyquery_deps_from_env(
     environ: Mapping[str, str] | None = None,
     *,
-    resolver: ChainResolver | None = None,
-    connect: Callable[[str], Any] | None = None,
-    swap_idl_fetch: Callable[[str], dict[str, Any]] | None = None,
+    build: DepsBuilder | None = None,
 ) -> AnyQueryDeps | None:
-    """The production deps, or ``None`` with the reason logged (see the module doc).
+    """The deps ``build`` makes from the environment, or ``None`` with the reason logged.
 
-    ``resolver`` defaults to :func:`~gecko.anyquery.host_secrets.anyquery_resolver`: the
-    keychain alone, plus the platform's injected environment only when
-    ``GECKO_HOST_SECRETS=platform``. No secret ever comes from a ``.env`` file.
-    ``connect`` and ``swap_idl_fetch`` are for tests. Nothing here calls a model,
-    Orthogonal, Privy or an RPC; building only opens the Mongo client.
+    ``build`` is injected by whoever hosts the mount. It raises :class:`NotServedError`
+    (naming a setting, never a value) when a lane is not configured. With no ``build``
+    there is nothing to serve, which is the open-source default.
     """
-    from .deploy import NotServedError, deps_from_settings
-    from .host_secrets import HostSecretsError, anyquery_resolver
-
-    # The host provisions every SSM parameter, so "not configured" arrives as the
+    if build is None:
+        logger.info("any-query not served: no deps builder is injected")
+        return None
+    # A host may provision every setting, so "not configured" can arrive as the
     # sentinel rather than as an absent variable; read both the same way.
     env = {
         name: value
@@ -152,16 +136,9 @@ def anyquery_deps_from_env(
         if value.strip() != PLATFORM_UNSET_SENTINEL
     }
     try:
-        return deps_from_settings(
-            env,
-            resolver if resolver is not None else anyquery_resolver(env),
-            connect=connect,
-            swap_idl_fetch=swap_idl_fetch,
-        )
-    except (NotServedError, HostSecretsError) as reason:
-        quiet = not (env.get("GECKO_ANYQUERY_BILLING") or "").strip()
-        log = logger.info if quiet else logger.warning
-        log("any-query not served: %s", reason)
+        return build(env)
+    except NotServedError as reason:
+        logger.warning("any-query not served: %s", reason)
         return None
 
 

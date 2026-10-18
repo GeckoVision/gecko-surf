@@ -124,12 +124,12 @@ def load_fixtures(folder: Path, query_id: str = "company-signals") -> DemoFixtur
 
     golden = {q["id"]: q for q in read("golden_queries.json")["queries"]}[query_id]
     return DemoFixtures(
-        details=read("orthogonal_details_subset.json")["records"],
+        details=read("catalog_details_fixture.json")["records"],
         ledgers=(folder / "observed_fields.jsonl",),
         planner_reply=read("planner_replies.json")["replies"][query_id],
         query=golden["query"],
         subjects=tuple(golden["subjects"]),
-        upstream_runs=read("demo_orthogonal_replies.json")["runs"],
+        upstream_runs=read("demo_upstream_replies.json")["runs"],
         swap_idl=read("whirlpool_swap_v2_idl.json"),
     )
 

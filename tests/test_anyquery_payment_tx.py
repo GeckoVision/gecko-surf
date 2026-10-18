@@ -16,7 +16,7 @@ pytest.importorskip("solders")
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import Transaction  # noqa: E402
 
-from gecko.anyquery.billing import BillingError  # noqa: E402
+from gecko.anyquery.charge import BillingError  # noqa: E402
 from gecko.anyquery.payment_tx import (  # noqa: E402
     build_payment,
     whirlpool_sol_pricer,

@@ -1,0 +1,711 @@
+{
+ "about": "SYNTHETIC catalog records for offline tests. Every API (example-*), path, parameter and price is invented for this fixture and names no real provider. Shaped like the /v1/details records the planner reads. Metadata only: no values, no people.",
+ "records": [
+  {
+   "api": "example-firmo",
+   "path": "/v1/companies/{domain}/funding",
+   "details": {
+    "endpoint": {
+     "path": "/v1/companies/{domain}/funding",
+     "method": "GET",
+     "description": "Funding rounds for a company by domain: latest round amount and date.",
+     "price": 0.04,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "rounds[].amount"
+      },
+      {
+       "name": "rounds[].announced_on"
+      }
+     ],
+     "queryParams": [],
+     "bodyParams": [],
+     "pathParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "api": "example-firmo",
+   "path": "/v1/companies/{domain}/jobs",
+   "details": {
+    "endpoint": {
+     "path": "/v1/companies/{domain}/jobs",
+     "method": "GET",
+     "description": "Open job postings for a company by domain, with a total count.",
+     "price": 0.03,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "meta.open_jobs"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "active_only",
+       "required": false,
+       "type": "boolean"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "api": "example-firmo",
+   "path": "/v1/companies/{domain}/news",
+   "details": {
+    "endpoint": {
+     "path": "/v1/companies/{domain}/news",
+     "method": "GET",
+     "description": "Recent news events about a company by domain.",
+     "price": 0.02,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "items[].headline"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "limit",
+       "required": false,
+       "type": "integer"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "api": "example-ledgerbase",
+   "path": "/v1/company",
+   "details": {
+    "endpoint": {
+     "path": "/v1/company",
+     "method": "GET",
+     "description": "Company profile by domain with total funding raised and investors.",
+     "price": 0.05,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "company.total_raised"
+      },
+      {
+       "name": "company.investors[].name"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-newsfeed",
+   "path": "/v1/search",
+   "details": {
+    "endpoint": {
+     "path": "/v1/search",
+     "method": "POST",
+     "description": "Search news headlines by keyword.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "results[].title"
+      }
+     ],
+     "queryParams": [],
+     "bodyParams": [
+      {
+       "name": "q",
+       "required": true,
+       "type": "string"
+      },
+      {
+       "name": "limit",
+       "required": false,
+       "type": "integer"
+      }
+     ],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-markets",
+   "path": "/v1/quote",
+   "details": {
+    "endpoint": {
+     "path": "/v1/quote",
+     "method": "GET",
+     "description": "Share price snapshot for a stock ticker: last price and day change percent.",
+     "price": 0.02,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "quote.price"
+      },
+      {
+       "name": "quote.day_change_pct"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "symbol",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-markets",
+   "path": "/v1/headlines",
+   "details": {
+    "endpoint": {
+     "path": "/v1/headlines",
+     "method": "GET",
+     "description": "Latest company news headlines for a stock ticker.",
+     "price": 0.02,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "articles[].title"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "symbol",
+       "required": true,
+       "type": "string"
+      },
+      {
+       "name": "limit",
+       "required": false,
+       "type": "integer"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-markets",
+   "path": "/v1/earnings",
+   "details": {
+    "endpoint": {
+     "path": "/v1/earnings",
+     "method": "GET",
+     "description": "Earnings calendar for a stock ticker.",
+     "price": 0.02,
+     "hasDynamicPricing": false,
+     "responseParams": [],
+     "queryParams": [
+      {
+       "name": "symbol",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-orgchart",
+   "path": "/v1/hierarchy/{domain}",
+   "details": {
+    "endpoint": {
+     "path": "/v1/hierarchy/{domain}",
+     "method": "GET",
+     "description": "Company hierarchy by domain: parent company and subsidiaries.",
+     "price": 0.03,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "parent.domain"
+      },
+      {
+       "name": "subsidiaries[].domain"
+      }
+     ],
+     "queryParams": [],
+     "bodyParams": [],
+     "pathParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "api": "example-trust",
+   "path": "/v1/signals",
+   "details": {
+    "endpoint": {
+     "path": "/v1/signals",
+     "method": "GET",
+     "description": "Trust and compliance signals for a company by domain.",
+     "price": 0.03,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "signals.compliance"
+      },
+      {
+       "name": "signals.risk_level"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-peoplefinder",
+   "path": "/v1/domain/emails",
+   "details": {
+    "endpoint": {
+     "path": "/v1/domain/emails",
+     "method": "GET",
+     "description": "Email addresses found at a company domain, filterable by department.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "emails[].address"
+      },
+      {
+       "name": "emails[].department"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      },
+      {
+       "name": "department",
+       "required": false,
+       "type": "string",
+       "description": "One department to keep, such as sales or engineering."
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-peoplefinder",
+   "path": "/v1/company/size",
+   "details": {
+    "endpoint": {
+     "path": "/v1/company/size",
+     "method": "GET",
+     "description": "Company size by domain: employees count and industry.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "company.employees"
+      },
+      {
+       "name": "company.industry"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-peoplefinder",
+   "path": "/v1/deliverability",
+   "details": {
+    "endpoint": {
+     "path": "/v1/deliverability",
+     "method": "GET",
+     "description": "Email deliverability check: is an email address deliverable.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "result.deliverable"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "email",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-peoplefinder",
+   "path": "/v1/person",
+   "details": {
+    "endpoint": {
+     "path": "/v1/person",
+     "method": "GET",
+     "description": "Person behind an email address: full name and title.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "person.full_name"
+      },
+      {
+       "name": "person.title"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "email",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-social",
+   "path": "/v1/post/comments",
+   "details": {
+    "endpoint": {
+     "path": "/v1/post/comments",
+     "method": "GET",
+     "description": "Comments on a social media post by post url.",
+     "price": 0.02,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "comments[].text"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "url",
+       "required": true,
+       "type": "string"
+      },
+      {
+       "name": "cursor",
+       "required": false,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-webtech",
+   "path": "/v1/stack",
+   "details": {
+    "endpoint": {
+     "path": "/v1/stack",
+     "method": "GET",
+     "description": "Technologies a website uses, by domain.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "technologies[].name"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-webtech",
+   "path": "/v1/similar",
+   "details": {
+    "endpoint": {
+     "path": "/v1/similar",
+     "method": "GET",
+     "description": "Similar companies to a domain.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "companies[].domain"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "domain",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-weather",
+   "path": "/v1/forecast",
+   "details": {
+    "endpoint": {
+     "path": "/v1/forecast",
+     "method": "GET",
+     "description": "Weather forecast for a city.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "name"
+      },
+      {
+       "name": "forecast.temp_c"
+      }
+     ],
+     "queryParams": [
+      {
+       "name": "city",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "bodyParams": [],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-mailer",
+   "path": "/v1/send",
+   "details": {
+    "endpoint": {
+     "path": "/v1/send",
+     "method": "POST",
+     "description": "Send an email to a recipient.",
+     "price": 0.01,
+     "hasDynamicPricing": false,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "message_id"
+      }
+     ],
+     "queryParams": [],
+     "bodyParams": [
+      {
+       "name": "to",
+       "required": true,
+       "type": "string"
+      },
+      {
+       "name": "subject",
+       "required": false,
+       "type": "string"
+      }
+     ],
+     "pathParams": []
+    }
+   }
+  },
+  {
+   "api": "example-scraper",
+   "path": "/v1/scrape",
+   "details": {
+    "endpoint": {
+     "path": "/v1/scrape",
+     "method": "POST",
+     "description": "Scrape any page; priced by page weight.",
+     "price": 0.05,
+     "hasDynamicPricing": true,
+     "responseParams": [
+      {
+       "name": "id"
+      },
+      {
+       "name": "html"
+      }
+     ],
+     "queryParams": [],
+     "bodyParams": [
+      {
+       "name": "url",
+       "required": true,
+       "type": "string"
+      }
+     ],
+     "pathParams": []
+    }
+   }
+  }
+ ]
+}

@@ -34,7 +34,7 @@ from gecko.orthogonal.errors import ListJobError
 from gecko.orthogonal.supplier.history import changes_since as history_changes
 from gecko.orthogonal.supplier.text import untrusted_summary
 
-from .billing import (
+from .charge import (
     LEDGER_SCAN_LIMIT,
     Billing,
     BillingError,

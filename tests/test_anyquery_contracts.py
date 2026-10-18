@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-from gecko.anyquery.billing import (
+from gecko.anyquery.charge import (
     BillingError,
-    FakeBilling,
     QuoteOverCapError,
     available_discount,
     build_quote,
     iso_plus,
     rebate_credit_micro,
 )
+from gecko.anyquery.charge_fake import FakeBilling
 from gecko.anyquery.config import AnyQueryConfig, ConfigError, is_pubkey, load_config
 from gecko.anyquery.planner import FakePlanner, PlanRejectedError
 from gecko.anyquery.run import RUN_ID_RE, new_run_id

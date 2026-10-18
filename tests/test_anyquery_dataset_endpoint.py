@@ -444,7 +444,8 @@ def test_the_endpoint_never_imports_anything_that_pays() -> None:
     )
     loaded = set(json.loads(done.stdout.strip().splitlines()[-1]))
     forbidden = {
-        "gecko.anyquery.billing",
+        "gecko.anyquery.charge",
+        "gecko.anyquery.charge_fake",
         "gecko.anyquery.solana_billing",
         "gecko.anyquery.payment_tx",
         "gecko.anyquery.settlement",
@@ -455,8 +456,6 @@ def test_the_endpoint_never_imports_anything_that_pays() -> None:
         "gecko.anyquery.hosted",
         "gecko.anyquery.planner",
         "gecko.anyquery.model_planner",
-        "gecko.anyquery.upstream_x402",
-        "gecko.anyquery.upstream_spend",
         "gecko.anyquery.dataset_owner",
     }
     assert not loaded & forbidden, sorted(loaded & forbidden)

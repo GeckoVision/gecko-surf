@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from gecko.anyquery.billing import QuoteOverCapError
+from gecko.anyquery.charge import QuoteOverCapError
 from gecko.anyquery.candidates import (
     PoolReport,
     candidate_set,
@@ -111,7 +111,7 @@ def _one(record: dict[str, Any], **kw: Any) -> CandidateEndpoint:
 
 @pytest.fixture(scope="module")
 def loaded() -> LoadedCatalog:
-    subset = json.loads((FIXTURES / "orthogonal_details_subset.json").read_text())
+    subset = json.loads((FIXTURES / "catalog_details_fixture.json").read_text())
     return load_catalog(subset["records"], ledgers=[FIXTURES / "observed_fields.jsonl"])
 
 
@@ -232,14 +232,12 @@ def test_path_placeholders_are_required_inputs() -> None:
 
 
 def test_observed_paths_fill_an_endpoint_that_declares_none() -> None:
-    record = _record(api="financial-datasets", path="/prices/snapshot", response=[])
+    record = _record(api="example-markets", path="/v1/quote", response=[])
     observed = {
-        ("financial-datasets", "/prices/snapshot"): frozenset(
-            {"snapshot.price", "credits_consumed"}
-        )
+        ("example-markets", "/v1/quote"): frozenset({"quote.price", "credits_consumed"})
     }
     cand = _one(record, observed=observed)
-    assert cand.response_paths == ("snapshot.price",)
+    assert cand.response_paths == ("quote.price",)
 
 
 def test_descriptions_are_sanitized_and_capped() -> None:
@@ -536,7 +534,7 @@ def test_parse_draft_reads_the_reply_shape(
         "Here is the plan:\n" + replies["finance-watchlist"], loaded.candidates
     )
     assert [f.name for f in draft.fields] == ["price", "news"]
-    assert draft.fields[0].sources[0].inputs == (InputBinding("ticker", "subject"),)
+    assert draft.fields[0].sources[0].inputs == (InputBinding("symbol", "subject"),)
     assert draft.unplanned[0].field == "earnings"
 
 
@@ -548,11 +546,11 @@ def test_an_unusable_reply_refuses(reply: str) -> None:
 
 def test_the_prompt_is_capped_and_marks_required_inputs(loaded: LoadedCatalog) -> None:
     text = render_prompt(
-        PlanRequest("a", "funding news", ("stripe.com",)), loaded.candidates
+        PlanRequest("a", "funding news", ("acme.example",)), loaded.candidates
     )
     assert len(text) <= MAX_PROMPT_CHARS
-    assert "stripe.com" in text
-    assert "company_id_or_domain*" in text
+    assert "acme.example" in text
+    assert "domain*" in text
     big = CandidateSet(loaded.candidates.candidates * 20, "x")
     assert len(render_prompt(PlanRequest("a", "q"), big)) <= MAX_PROMPT_CHARS
 
@@ -563,6 +561,27 @@ def test_no_candidates_refuses_without_asking_the_model() -> None:
 
     with pytest.raises(PlanRejectedError, match="nothing in the catalog"):
         ModelPlanner(call=call).draft(PlanRequest("a", "q"), CandidateSet((), "x"))
+
+
+def test_the_default_prompt_states_the_reply_contract_and_a_host_can_inject_its_own(
+    loaded: LoadedCatalog, replies: dict[str, str]
+) -> None:
+    from gecko.anyquery.model_planner import SYSTEM
+
+    for key in ('"subjects"', '"fields"', '"candidate_id"', '"unplanned"', '"notes"'):
+        assert key in SYSTEM
+    asked: list[str] = []
+
+    def call(system: str, user: str) -> str:
+        asked.append(system)
+        return replies["finance-watchlist"]
+
+    request = PlanRequest("a", "share price and news", ("EXA",))
+    ModelPlanner(call=call).draft(request, loaded.candidates)
+    ModelPlanner(call=call, system="a host's own prompt").draft(
+        request, loaded.candidates
+    )
+    assert asked == [SYSTEM, "a host's own prompt"]
 
 
 class _FakeKeyring:
@@ -656,7 +675,7 @@ def test_plan_query_end_to_end_with_a_recorded_reply(
     planned = plan_query(
         "acct-a",
         "Every Monday: funding, hiring and news for these companies",
-        ["stripe.com", "ramp.com", "brex.com"],
+        ["acme.example", "globex.example", "initech.example"],
         catalog=loaded.candidates,
         planner=planner,
         config=CONFIG,
@@ -683,7 +702,7 @@ def test_a_plan_over_the_run_ceiling_is_refused_with_the_number(
         plan_query(
             "acct-a",
             "funding, hiring and news",
-            ["stripe.com", "ramp.com"],
+            ["acme.example", "globex.example"],
             catalog=loaded.candidates,
             planner=planner,
             config=AnyQueryConfig(max_run_usdc_micro=10_000),
@@ -758,12 +777,12 @@ def test_scoring_matches_fields_by_source_when_names_differ(
         watch.query,
         watch.subjects,
         catalog=loaded.candidates,
-        planner=ModelPlanner(call=lambda s, u: replies["xstock-file"]),
+        planner=ModelPlanner(call=lambda s, u: replies["token-file"]),
         config=CONFIG,
         now=NOW,
     ).plan
     outcomes = {o.field: o.outcome for o in score_plan(watch, plan)}
-    # The xstock reply plans share_price (matched to "price" by source) and news; no earnings.
+    # The token-file reply plans share_price (matched to "price" by source) and news; no earnings.
     assert outcomes == {
         "price": "correct",
         "news": "correct",

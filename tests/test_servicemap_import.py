@@ -62,7 +62,7 @@ PAYSH_TEXT = json.dumps(
 
 
 def _records() -> list[dict[str, Any]]:
-    data = json.loads((FIXTURES / "orthogonal_details_subset.json").read_text("utf-8"))
+    data = json.loads((FIXTURES / "catalog_details_fixture.json").read_text("utf-8"))
     return list(data["records"])
 
 

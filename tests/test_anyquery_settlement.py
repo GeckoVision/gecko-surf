@@ -27,7 +27,7 @@ from solders.instruction import AccountMeta, Instruction  # noqa: E402
 from solders.pubkey import Pubkey  # noqa: E402
 from solders.transaction import Transaction  # noqa: E402
 
-from gecko.anyquery.billing import BillingError  # noqa: E402
+from gecko.anyquery.charge import BillingError  # noqa: E402
 from gecko.anyquery.config import AnyQueryConfig  # noqa: E402
 from gecko.anyquery.payment_tx import usdc_ata  # noqa: E402
 from gecko.anyquery.settlement import MAX_ATTEMPTS, Settlement  # noqa: E402
