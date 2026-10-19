@@ -1,27 +1,25 @@
 {
-  "about": "SYNTHETIC golden set for offline tests: eight any-query intents with the catalog sources that fit each field, labelled against tests/fixtures/anyquery/orthogonal_details_subset.json. accept = any of these at rank 0 is correct; an empty accept list means the field must come back unplanned.",
+  "about": "SYNTHETIC golden set for offline tests: eight invented intents with the catalog sources that fit each field, labelled against tests/fixtures/anyquery/catalog_details_fixture.json. accept = any of these at rank 0 is correct; an empty accept list means the field must come back unplanned.",
   "queries": [
     {
       "id": "company-signals",
       "query": "Every Monday: funding, hiring and news for these companies",
       "subjects": [
-        "stripe.com",
-        "ramp.com",
-        "brex.com"
+        "acme.example",
+        "globex.example",
+        "initech.example"
       ],
       "fields": {
         "funding": [
-          "orthogonal:predictleads:GET:/v3/companies/{company_id_or_domain}/financing_events",
-          "orthogonal:fundable:GET:/company",
-          "orthogonal:apollo:GET:/api/v1/organizations/enrich"
+          "orthogonal:example-firmo:GET:/v1/companies/{domain}/funding",
+          "orthogonal:example-ledgerbase:GET:/v1/company"
         ],
         "hiring": [
-          "orthogonal:predictleads:GET:/v3/companies/{company_id_or_domain}/job_openings",
-          "orthogonal:coresignal:POST:/v2/job_base/search/filter/preview"
+          "orthogonal:example-firmo:GET:/v1/companies/{domain}/jobs"
         ],
         "news": [
-          "orthogonal:predictleads:GET:/v3/companies/{company_id_or_domain}/news_events",
-          "orthogonal:serper:POST:/news"
+          "orthogonal:example-firmo:GET:/v1/companies/{domain}/news",
+          "orthogonal:example-newsfeed:POST:/v1/search"
         ]
       }
     },
@@ -29,16 +27,16 @@
       "id": "finance-watchlist",
       "query": "Daily watchlist: current share price, latest earnings and company news",
       "subjects": [
-        "NVDA",
-        "AAPL",
-        "MSFT"
+        "EXA",
+        "EXB",
+        "EXC"
       ],
       "fields": {
         "price": [
-          "orthogonal:financial-datasets:GET:/prices/snapshot"
+          "orthogonal:example-markets:GET:/v1/quote"
         ],
         "news": [
-          "orthogonal:financial-datasets:GET:/news"
+          "orthogonal:example-markets:GET:/v1/headlines"
         ],
         "earnings": []
       }
@@ -47,20 +45,19 @@
       "id": "supplier-risk",
       "query": "Supplier risk check: parent company, trust and compliance signals, and recent news",
       "subjects": [
-        "jabil.com",
-        "flex.com"
+        "umbrella.example",
+        "hooli.example"
       ],
       "fields": {
         "parent_company": [
-          "orthogonal:akta-pro:GET:/v1/company/enrichment/company_hierarchy/{company}",
-          "orthogonal:predictleads:GET:/v3/companies/{id_or_domain}"
+          "orthogonal:example-orgchart:GET:/v1/hierarchy/{domain}"
         ],
         "trust_signals": [
-          "orthogonal:akta-pro:GET:/v1/company/enrichment/trust_signal/{company}"
+          "orthogonal:example-trust:GET:/v1/signals"
         ],
         "news": [
-          "orthogonal:predictleads:GET:/v3/companies/{company_id_or_domain}/news_events",
-          "orthogonal:serper:POST:/news"
+          "orthogonal:example-firmo:GET:/v1/companies/{domain}/news",
+          "orthogonal:example-newsfeed:POST:/v1/search"
         ]
       }
     },
@@ -68,58 +65,50 @@
       "id": "gtm-list",
       "query": "GTM list: for these accounts, employee headcount, industry, and sales team email addresses",
       "subjects": [
-        "notion.so",
-        "figma.com"
+        "acme.example",
+        "globex.example"
       ],
       "fields": {
         "headcount": [
-          "orthogonal:coresignal:GET:/v2/company_clean/enrich",
-          "orthogonal:apollo:GET:/api/v1/organizations/enrich",
-          "orthogonal:company-enrich:GET:/companies/enrich",
-          "orthogonal:company-enrich:GET:/companies/workforce",
-          "orthogonal:tomba:GET:/v1/companies/find"
+          "orthogonal:example-peoplefinder:GET:/v1/company/size"
         ],
         "industry": [
-          "orthogonal:coresignal:GET:/v2/company_clean/enrich",
-          "orthogonal:apollo:GET:/api/v1/organizations/enrich",
-          "orthogonal:company-enrich:GET:/companies/enrich",
-          "orthogonal:tomba:GET:/v1/companies/find"
+          "orthogonal:example-peoplefinder:GET:/v1/company/size"
         ],
         "sales_emails": [
-          "orthogonal:tomba:GET:/v1/domain-search"
+          "orthogonal:example-peoplefinder:GET:/v1/domain/emails"
         ]
       }
     },
     {
-      "id": "xstock-file",
-      "query": "xStock file for tokenized stocks: underlying share price, day change, news, and token supply on Solana",
+      "id": "token-file",
+      "query": "Token file for tokenized stocks: underlying share price, day change, news, and token supply on chain",
       "subjects": [
-        "NVDA",
-        "TSLA"
+        "EXA",
+        "EXB"
       ],
       "fields": {
         "share_price": [
-          "orthogonal:financial-datasets:GET:/prices/snapshot"
+          "orthogonal:example-markets:GET:/v1/quote"
         ],
         "day_change": [
-          "orthogonal:financial-datasets:GET:/prices/snapshot"
+          "orthogonal:example-markets:GET:/v1/quote"
         ],
         "news": [
-          "orthogonal:financial-datasets:GET:/news"
+          "orthogonal:example-markets:GET:/v1/headlines"
         ],
         "token_supply": []
       }
     },
     {
-      "id": "instagram-comments",
-      "query": "Collect the comments on these Instagram posts",
+      "id": "post-comments",
+      "query": "Collect the comments on these social media posts",
       "subjects": [
-        "https://www.instagram.com/p/C0ABCDEF123/"
+        "https://social.example/p/abc123"
       ],
       "fields": {
         "comments": [
-          "orthogonal:scrapecreators:GET:/v2/instagram/post/comments",
-          "orthogonal:fiber:POST:/v1/instagram/post-comments"
+          "orthogonal:example-social:GET:/v1/post/comments"
         ]
       }
     },
@@ -127,18 +116,14 @@
       "id": "email-hygiene",
       "query": "Are these email addresses deliverable, and who is the person behind each one",
       "subjects": [
-        "jane@example.com"
+        "jane@acme.example"
       ],
       "fields": {
         "deliverable": [
-          "orthogonal:tomba:GET:/v1/email-verifier"
+          "orthogonal:example-peoplefinder:GET:/v1/deliverability"
         ],
         "person": [
-          "orthogonal:tomba:GET:/v1/enrich",
-          "orthogonal:tomba:GET:/v1/people/find",
-          "orthogonal:company-enrich:POST:/people/lookup",
-          "orthogonal:apollo:POST:/api/v1/people/match",
-          "orthogonal:tomba:GET:/v1/combined/find"
+          "orthogonal:example-peoplefinder:GET:/v1/person"
         ]
       }
     },
@@ -146,15 +131,14 @@
       "id": "tech-stack",
       "query": "Which technologies do these websites use, and which companies are similar to them",
       "subjects": [
-        "shopify.com"
+        "acme.example"
       ],
       "fields": {
         "technologies": [
-          "orthogonal:tomba:GET:/v1/technology",
-          "orthogonal:predictleads:GET:/v3/companies/{company_id_or_domain}/technology_detections"
+          "orthogonal:example-webtech:GET:/v1/stack"
         ],
         "similar_companies": [
-          "orthogonal:tomba:GET:/v1/similar"
+          "orthogonal:example-webtech:GET:/v1/similar"
         ]
       }
     }
@@ -162,9 +146,9 @@
   "refusals": [
     {
       "id": "out-of-catalog",
-      "query": "What is the live score of the Flamengo match tonight",
+      "query": "What is the live score of the cup final tonight",
       "subjects": [
-        "Flamengo"
+        "Example FC"
       ]
     }
   ]

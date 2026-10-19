@@ -57,7 +57,7 @@ from ..signer import (
 )
 from ..simulate import Receipt, simulate
 from ..spend_policy import InMemorySpendLedger
-from .billing import LEDGER_SCAN_LIMIT, BillingError
+from .charge import LEDGER_SCAN_LIMIT, BillingError
 from .chain_read import token_delta
 from .config import AnyQueryConfig, ConfigError
 from .settlement_policy import (

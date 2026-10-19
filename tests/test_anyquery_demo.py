@@ -18,7 +18,7 @@ pytest.importorskip("solders")
 from solders.keypair import Keypair  # noqa: E402
 from solders.transaction import Transaction  # noqa: E402
 
-from gecko.anyquery.billing import rebate_credit_micro  # noqa: E402
+from gecko.anyquery.charge import rebate_credit_micro  # noqa: E402
 from gecko.anyquery.demo import build_rig, load_fixtures, run_demo  # noqa: E402
 from gecko.anyquery.recorded import RECORDED_KEY  # noqa: E402
 
@@ -76,8 +76,8 @@ def test_the_plan_comes_from_the_catalog_and_the_quote_prices_every_source(
     _rig, report, _signer = story
     plan = report.get("plan")
     assert [f["name"] for f in plan["plan"]["fields"]] == ["funding", "hiring", "news"]
-    # 3 subjects x (4 + 6 + 4 + 4 + 1) cents = 57 cents, the worst case, + $0.10 fee.
-    assert plan["quote"]["total_usdc"] == "0.670000"
+    # 3 subjects x (4 + 5 + 3 + 2 + 1) cents = 45 cents, the worst case, + $0.10 fee.
+    assert plan["quote"]["total_usdc"] == "0.550000"
 
 
 def test_each_sol_run_is_two_transactions_the_users_transfer_then_gecko_settles(
@@ -93,8 +93,8 @@ def test_each_sol_run_is_two_transactions_the_users_transfer_then_gecko_settles(
     assert signer.asked == 2
     assert [p.tx.kind for p in rig.chain.paid] == ["sol", "sol"]
     assert [p.tx.signer for p in rig.chain.paid] == [signer.pubkey] * 2
-    # 0.67 and 0.640001 USDC at 150 USDC/SOL plus the 2% margin, rounded up.
-    assert [p.tx.lamports for p in rig.chain.paid] == [4_557_824, 4_353_749]
+    # 0.55 and 0.520001 USDC at 150 USDC/SOL plus the 2% margin, rounded up.
+    assert [p.tx.lamports for p in rig.chain.paid] == [3_741_497, 3_537_422]
     # Transaction 2: Gecko's settlement wallet swaps and forwards to the treasury,
     # and only it goes through Helius with the relay as rebate address.
     assert SETTLER.asked == 2
@@ -136,15 +136,15 @@ def test_the_second_run_repairs_a_broken_source_and_run_changes_shows_what_moved
 ) -> None:
     _rig, report, _signer = story
     rows = {(r["subject"], r["field"]): r for r in report.get("run_rows_run_2")["rows"]}
-    assert rows[("brex.com", "funding")]["status"] == "repaired"
+    assert rows[("initech.example", "funding")]["status"] == "repaired"
     changed = {
         (c["subject"], c["field"]): c for c in report.get("run_changes")["changes"]
     }
-    assert changed[("stripe.com", "hiring")]["value_after_untrusted"] == "398"
-    assert changed[("ramp.com", "news")]["value_after_untrusted"].startswith(
-        "Ramp raises"
+    assert changed[("acme.example", "hiring")]["value_after_untrusted"] == "37"
+    assert changed[("globex.example", "news")]["value_after_untrusted"].startswith(
+        "Globex raises"
     )
-    assert changed[("brex.com", "funding")]["source_changed"] is True
+    assert changed[("initech.example", "funding")]["source_changed"] is True
 
 
 def test_no_key_reaches_the_report(story: Any) -> None:

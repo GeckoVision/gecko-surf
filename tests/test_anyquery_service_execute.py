@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from gecko.access import public_session
-from gecko.anyquery.billing import FakeBilling
+from gecko.anyquery.charge_fake import FakeBilling
 from gecko.anyquery.config import AnyQueryConfig
 from gecko.anyquery.execute import execute
 from gecko.anyquery.hosted import payee_usdc_ata

@@ -1,0 +1,238 @@
+{
+ "about": "SYNTHETIC replies for scripts/any_query_demo.py --mode recorded, shaped like the data inside a /v1/run reply for the endpoints the company-signals plan uses, at the declared field paths. Every company, value and price is invented. Run 2 changes one job count and one headline, and breaks initech's rank-0 funding source so the repair walk fails over to example-ledgerbase.",
+ "runs": [
+  [
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/funding",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "rounds": [
+      {
+       "amount": 120000000
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 40
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Acme opens a second factory"
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/funding",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "rounds": [
+      {
+       "amount": 30000000
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 18
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Globex hires a new CFO"
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/funding",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "rounds": [
+      {
+       "amount": 8000000
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 6
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Initech moves to a new office"
+      }
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/funding",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "rounds": [
+      {
+       "amount": 120000000
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 37
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/acme.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Acme opens a second factory"
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/funding",
+    "cents": 4,
+    "status": 200,
+    "data": {
+     "rounds": [
+      {
+       "amount": 30000000
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 18
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/globex.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Globex raises a Series C"
+      }
+     ]
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/funding",
+    "cents": 4,
+    "status": 500,
+    "data": {
+     "error": "upstream timeout"
+    }
+   },
+   {
+    "api": "example-ledgerbase",
+    "path": "/v1/company",
+    "cents": 5,
+    "status": 200,
+    "data": {
+     "company": {
+      "total_raised": 8000000
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/jobs",
+    "cents": 3,
+    "status": 200,
+    "data": {
+     "meta": {
+      "open_jobs": 6
+     }
+    }
+   },
+   {
+    "api": "example-firmo",
+    "path": "/v1/companies/initech.example/news",
+    "cents": 2,
+    "status": 200,
+    "data": {
+     "items": [
+      {
+       "headline": "Initech moves to a new office"
+      }
+     ]
+    }
+   }
+  ]
+ ]
+}

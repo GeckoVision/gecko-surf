@@ -5,7 +5,7 @@
 planning reads the catalog and asks the model; the quote is what a run may cost at most.
 
 Every refusal is a :class:`~gecko.anyquery.planner.PlanRejectedError` in our words, or a
-:class:`~gecko.anyquery.billing.QuoteOverCapError` when the plan is fine but too big for
+:class:`~gecko.anyquery.charge.QuoteOverCapError` when the plan is fine but too big for
 the per-run ceiling. The surface (lane 4) shows either as the answer, not as a failure.
 """
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from gecko.orthogonal.supplier.text import untrusted_summary
 
 from ..sanitize import scan_text
-from .billing import build_quote
+from .charge import build_quote
 from .config import AnyQueryConfig
 from .planner import CandidatesFor, Planner, PlanRejectedError
 from .retrieve import bm25_candidates

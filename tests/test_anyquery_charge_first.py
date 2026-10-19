@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gecko.anyquery.billing import FakeBilling, available_discount
+from gecko.anyquery.charge import available_discount
+from gecko.anyquery.charge_fake import FakeBilling
 from gecko.anyquery.hosted import AnyQuerySurface
 from gecko.anyquery.run import RunDeps, RunResult
 from gecko.anyquery.store import StoreUnavailableError

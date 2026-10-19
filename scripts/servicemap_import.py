@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from gecko.anyquery.catalog_load import load_catalog
-from gecko.anyquery.deploy import DETAILS_ENV, LEDGERS_ENV
+from gecko.anyquery.catalog_load import DETAILS_ENV, LEDGERS_ENV
 from gecko.anyquery.store import StoreError
 from gecko.paysh_catalog import CatalogError
 from gecko.servicemap.importer import import_files

@@ -42,8 +42,8 @@ Transport = Callable[[PreparedRequest], tuple[int, Any]]
 
 class X402Caller(Protocol):
     """Pays for and makes one allowed ``/v1/run``-shaped call over x402 instead of the
-    key (``gecko.anyquery.upstream_x402``). Returns the same envelope the key path
-    returns: ``priceCents`` and ``data``, plus Gecko's own receipt."""
+    key. Injected by the host; the open-source engine ships none. Returns the same
+    envelope the key path returns: ``priceCents`` and ``data``, plus Gecko's receipt."""
 
     def call(self, target: Target, body: dict[str, Any]) -> Any: ...
 

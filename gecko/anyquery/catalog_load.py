@@ -25,8 +25,11 @@ from .candidates import (
 )
 from .types import CandidateSet, Storage
 
-__all__ = ["LoadedCatalog", "load_catalog", "read_jsonl"]
+__all__ = ["DETAILS_ENV", "LEDGERS_ENV", "LoadedCatalog", "load_catalog", "read_jsonl"]
 
+#: The folder of ``/v1/details`` JSON records, and of observed-field ``*.jsonl`` ledgers.
+DETAILS_ENV = "GECKO_ANYQUERY_DETAILS_DIR"
+LEDGERS_ENV = "GECKO_ANYQUERY_LEDGERS_DIR"
 _MAX_LEDGER_BYTES = 20_000_000
 
 

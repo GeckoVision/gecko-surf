@@ -25,7 +25,7 @@ pytest.importorskip("solders")
 from solders.keypair import Keypair  # noqa: E402
 from solders.transaction import Transaction  # noqa: E402
 
-from gecko.anyquery.billing import BillingError, rebate_credit_micro  # noqa: E402
+from gecko.anyquery.charge import BillingError, rebate_credit_micro  # noqa: E402
 from gecko.anyquery.config import AnyQueryConfig  # noqa: E402
 from gecko.anyquery.rebates import MemoryRebateIndex, RebateRow  # noqa: E402
 from gecko.anyquery.payment_tx import (  # noqa: E402

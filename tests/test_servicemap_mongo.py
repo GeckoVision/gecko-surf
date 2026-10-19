@@ -1,4 +1,4 @@
-"""``MongoRegistry`` on the in-memory Mongo fake, the hosted flag, and the import script.
+"""``MongoRegistry`` on the in-memory Mongo fake, and the import script.
 
 No real store: ``FakeMongoClient`` stands in for pymongo, and the script's Mongo path
 is replaced by one that fails, so a dry run that reached it would fail the test.
@@ -24,7 +24,6 @@ from gecko.servicemap.registry import (
 from gecko.servicemap.snapshot import load_from_registry
 from gecko.servicemap.types import Event
 from tests.anyquery_fake_mongo import FakeMongoClient, FakeUnavailableError
-from tests.test_anyquery_hosted_deps import _build, _details_dir, _env
 
 FIXTURES = Path(__file__).parent / "fixtures" / "anyquery"
 LEDGER = FIXTURES / "observed_fields.jsonl"
@@ -32,8 +31,16 @@ NOW = "2026-10-10T00:00:00+00:00"
 
 
 def _records() -> list[dict[str, Any]]:
-    data = json.loads((FIXTURES / "orthogonal_details_subset.json").read_text("utf-8"))
+    data = json.loads((FIXTURES / "catalog_details_fixture.json").read_text("utf-8"))
     return list(data["records"])
+
+
+def _details_dir(tmp_path: Path) -> Path:
+    folder = tmp_path / "details"
+    folder.mkdir()
+    for n, record in enumerate(_records()):
+        (folder / f"{n:03d}.json").write_text(json.dumps(record), encoding="utf-8")
+    return folder
 
 
 def _mongo(client: FakeMongoClient | None = None) -> MongoRegistry:
@@ -127,49 +134,6 @@ def test_probes_expire_after_thirty_days_and_fields_are_unique_per_op() -> None:
     }  # fmt: skip
 
 
-# --- the hosted flag ---------------------------------------------------------------------
-
-
-def test_a_deploy_on_the_registry_serves_the_same_pool_without_a_details_dir(
-    tmp_path: Path,
-) -> None:
-    from gecko.anyquery.hosted import anyquery_deps_from_env
-    from gecko.credentials import ChainResolver
-    from tests.test_anyquery_hosted_deps import SECRETS, DictBackend
-
-    # The hosted test env names no ledger folder, so neither side reads one.
-    client = FakeMongoClient()
-    import_files(_mongo(client), details=_records(), now=NOW)
-    for side in ("files", "registry"):
-        (tmp_path / side).mkdir()
-    files_deps, _ = _build(_env(tmp_path / "files"))
-    env = _env(tmp_path / "registry")
-    del env["GECKO_ANYQUERY_DETAILS_DIR"]
-    env["GECKO_ANYQUERY_CATALOG"] = "registry"
-
-    deps = anyquery_deps_from_env(
-        env,
-        resolver=ChainResolver([DictBackend(dict(SECRETS))]),
-        connect=lambda _uri: client,
-        swap_idl_fetch=lambda _program: {},
-    )
-
-    assert deps is not None and files_deps is not None
-    assert deps.catalog() == files_deps.catalog()
-
-
-def test_a_deploy_on_an_empty_registry_is_not_served(tmp_path: Path) -> None:
-    env = {**_env(tmp_path), "GECKO_ANYQUERY_CATALOG": "registry"}
-    deps, _ = _build(env)
-    assert deps is None
-
-
-def test_a_deploy_with_an_unknown_catalog_flag_is_not_served(tmp_path: Path) -> None:
-    env = {**_env(tmp_path), "GECKO_ANYQUERY_CATALOG": "somewhere"}
-    deps, _ = _build(env)
-    assert deps is None
-
-
 # --- the script ----------------------------------------------------------------------------
 
 
@@ -193,7 +157,7 @@ def test_the_import_script_is_dry_by_default_and_reports_parity(
     out = capsys.readouterr().out
     assert code == 0
     assert "DRY RUN" in out and "same: True" in out
-    assert "sightings orthogonal: 44" in out
+    assert "sightings orthogonal: 20" in out
 
 
 def test_mongo_reads_one_operations_offers_and_health() -> None:

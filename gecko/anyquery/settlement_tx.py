@@ -49,7 +49,7 @@ from ..rpc import RpcCall
 from ..simulate import BuiltTx
 from ..spend_policy import AllowedInstruction, SpendPolicy, TokenCap, TokenCaps
 from ..store_accounts import derive_ata
-from .billing import BillingError
+from .charge import BillingError
 from .payment_tx import FEE_BUDGET_LAMPORTS, IdlFetch, transfer_checked_ix, usdc_ata
 
 __all__ = [

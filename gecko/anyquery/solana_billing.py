@@ -1,4 +1,4 @@
-"""``SolanaBilling``: the :class:`~gecko.anyquery.billing.Billing` Protocol on chain.
+"""``SolanaBilling``: the :class:`~gecko.anyquery.charge.Billing` Protocol on chain.
 
 Pay per run, no balance, no custody. The user's Privy wallet pays one run's confirmed
 price in one transaction it signs itself (``signTransaction`` via
@@ -34,7 +34,7 @@ longer counts). Each rebate signature is claimed in the global
 most once across all customers; relay inflows in no settlement's slot are recorded there
 unattributed. The user's share (``rebate_split_user_pct``) becomes a ``rebate_credit``
 entry, priced at the settlement's own realised rate, which the next quote subtracts as a
-discount (:func:`gecko.anyquery.billing.available_discount`). Each observation also checks
+discount (:func:`gecko.anyquery.charge.available_discount`). Each observation also checks
 the relay's hot balance and logs a top-up or sweep reminder for the founder.
 
 Nothing here reads a secret: the Privy backend and the Helius transport resolve their own
@@ -70,7 +70,7 @@ from ..signer import (
 from ..simulate import BuiltTx, Receipt, simulate
 from ..spend_policy import InMemorySpendLedger
 from ..wallet_binding import WalletBinding, WalletBindingError, WalletDirectory
-from .billing import (
+from .charge import (
     LEDGER_SCAN_LIMIT,
     BillingError,
     Preflight,
@@ -142,7 +142,7 @@ def privy_backend_for(
 
 @dataclass
 class SolanaBilling:
-    """The live :class:`~gecko.anyquery.billing.Billing`. Every seam is injected."""
+    """The live :class:`~gecko.anyquery.charge.Billing`. Every seam is injected."""
 
     config: AnyQueryConfig
     store: Store

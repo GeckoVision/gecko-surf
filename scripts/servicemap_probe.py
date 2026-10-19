@@ -38,7 +38,7 @@ from gecko.servicemap.registry import (  # noqa: E402
 )
 
 #: Which host serves each catalog's x402 routes. Data, not engine: the probe names none.
-#: Orthogonal's is the one the payer pays (``gecko.anyquery.upstream_x402``).
+#: Orthogonal's is the one a hosted payer pays.
 X402_HOSTS = {"orthogonal": X402_HOST}
 
 

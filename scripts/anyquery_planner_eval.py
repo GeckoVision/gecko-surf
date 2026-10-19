@@ -9,7 +9,7 @@ anthropic``) once per golden query. Costs real money; the coordinator runs it, a
 ``--record PATH`` saves the replies so every later run can replay them at $0.
 
     uv run python scripts/anyquery_planner_eval.py
-    uv run python scripts/anyquery_planner_eval.py --details-dir path/to/orthogonal-details --ledger ~/.gecko/orthogonal/field-ledger.jsonl
+    uv run python scripts/anyquery_planner_eval.py --details-dir path/to/details --ledger path/to/field-ledger.jsonl
     uv run python scripts/anyquery_planner_eval.py --live --record /tmp/replies.json
 """
 
@@ -64,10 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         loaded = load_catalog(args.details_dir, ledgers=args.ledger)
         source = str(args.details_dir)
     else:
-        subset = json.loads((FIXTURES / "orthogonal_details_subset.json").read_text())
+        fixture = json.loads((FIXTURES / "catalog_details_fixture.json").read_text())
         ledgers = args.ledger or [FIXTURES / "observed_fields.jsonl"]
-        loaded = load_catalog(subset["records"], ledgers=ledgers)
-        source = "committed subset"
+        loaded = load_catalog(fixture["records"], ledgers=ledgers)
+        source = "synthetic fixture"
     queries, refusals = load_golden(args.golden)
     print(
         f"catalog: {source}: {len(loaded.candidates.candidates)} candidates; "

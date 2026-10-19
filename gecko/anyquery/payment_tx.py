@@ -31,7 +31,7 @@ from ..rpc import RpcCall
 from ..simulate import BuiltTx
 from ..spend_policy import AllowedInstruction, SpendPolicy, TokenCap, TokenCaps
 from ..store_accounts import derive_ata
-from .billing import BillingError
+from .charge import BillingError
 from .types import PayWith
 
 __all__ = [

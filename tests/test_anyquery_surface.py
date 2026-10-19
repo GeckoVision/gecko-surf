@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from gecko.anyquery.billing import FakeBilling
+from gecko.anyquery.charge_fake import FakeBilling
 from gecko.anyquery.config import AnyQueryConfig
 from gecko.anyquery.hosted import (
     ANYQUERY_SURFACE,
