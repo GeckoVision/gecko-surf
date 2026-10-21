@@ -1,15 +1,17 @@
 ---
 name: gecko-setup
-description: Wire Gecko's hosted MCP surface into this user's agent client and verify a first real call. Use when the user asks to "install Gecko", "set up Gecko", "add the Gecko MCP", or pastes the onboarding prompt from geckovision.tech. Ends with a verified read-only call, not just a config edit.
+description: Connect Gecko's hosted MCP surface to this user's agent client, sign in, and verify a first real call. Use when the user asks to "install Gecko", "set up Gecko", "add the Gecko MCP", or pastes the onboarding prompt from geckovision.tech. Ends with a verified read-only call, not just a config edit.
 user-invocable: true
 allowed-tools: Bash(curl:*), Bash(claude:*), Bash(npx:*), Bash(uvx:*), Bash(command:*)
 ---
 
 # gecko-setup — install the hosted Gecko surface and prove it works
 
-Your goal: wire the hosted MCP surface into the client you are running in and
-verify with one real call. Gecko turns APIs and Solana programs into
-first-call-correct tools; it never holds a key and never signs.
+Your goal: connect the hosted MCP surface to the client you are running in,
+sign in, and verify with one real call. Gecko answers questions about
+companies: it picks the data sources, shows the price before anything is
+spent, and returns every value with its source, date and cost. It never holds
+your keys and never signs.
 
 ## Step 1: Fetch the canonical config
 
@@ -24,7 +26,7 @@ curl -s https://geckovision.tech/mcp-config.json
 
 - **Claude Code**:
   ```bash
-  claude mcp add --transport http gecko https://mcp.geckovision.tech/orquestra/mcp
+  claude mcp add --transport http gecko https://mcp.geckovision.tech/anyquery/mcp
   ```
 - **Claude web / desktop**: Settings -> Connectors -> Add custom connector with
   the `clients.claude_web.connector_url` from the config (the web UI takes
@@ -33,17 +35,32 @@ curl -s https://geckovision.tech/mcp-config.json
 - **VS Code**: merge `clients.vscode.json` into `.vscode/mcp.json`.
 - **Anything else that reads mcp.json**: `clients.generic_mcp_json`.
 
-No account and no API key for the open surfaces. Gated surfaces answer 401
-with a self-serve mint path — https://geckovision.tech/auth.md.
+## Step 3: Sign in once
 
-## Step 3: Verify with a real call
+This surface needs a credential. A client that supports MCP sign-in (OAuth)
+opens a sign-in page on first connect: the user gives an email and types the
+code that arrives. Raw HTTP or a client without OAuth mints a Gecko key
+self-serve and sends `Authorization: Bearer <key>`; the steps are in
+https://geckovision.tech/auth.md. Keep the key in the environment or the OS
+keychain, never in a chat message.
 
-List the new server's tools, then make one read-only call: `list_stores`
-(browses real Solana storefronts, free) or `search_capabilities` with a
-question. Setup is DONE when that call answers — a config edit alone is not
-done.
+## Step 4: Verify with a real call
 
-## Step 4 (optional): local comprehension of the user's own API
+List the new server's tools, then call `plan_query` with a plain question. It
+returns the fields, the sources it would use and a quote, and spends nothing.
+Setup is DONE when that call answers. A config edit alone is not done, and a
+401 means no credential reached the server.
+
+Paid tools (`run_query`, `cnpj_lookup`, `open_dataset_download`) quote first
+and charge only on a second call with the quote id and `confirm: true`. Show
+the user the quote and get a yes first.
+
+Buying or swapping on Solana uses a different surface,
+`https://mcp.geckovision.tech/orquestra/mcp` (open, no key): start with
+`list_stores`, and follow https://geckovision.tech/agents.md for the money
+path order.
+
+## Step 5 (optional): local comprehension of the user's own API
 
 ```bash
 npx @geckovision/gecko add https://api.example.com/openapi.json
